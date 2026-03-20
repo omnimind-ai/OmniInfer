@@ -1,0 +1,22 @@
+{
+  "dim": 2048,
+  "ffn_dim_multiplier": 1,
+  "hidden_dim": 11008,
+  "n_heads": 16,
+  "n_kv_heads": 2,
+  "n_layers": 36,
+  "norm_eps": 1e-06,
+  "rope_theta": 1000000.0,
+  "use_scaled_rope": false,
+  "vocab_size": 151936,
+  "use_hf_rope": true,
+  "use_mrope": true,
+  "mrope_section": [16,24,24],
+  "attention_qkv_bias": true,
+  "bos_idx": 151643,
+  "eos_idx": 151645,
+  "vision_start_token_id": 151652,
+  "vision_end_token_id": 151653,
+  "vision_token_id": 151654,
+  "image_token_id": 151655
+}
