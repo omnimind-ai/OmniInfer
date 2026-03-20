@@ -1,0 +1,22 @@
+/* FastRPC IDL interface */
+
+#ifndef HTP_OPS_IDL
+#define HTP_OPS_IDL
+
+#include "AEEStdDef.idl"
+#include "remote.idl"
+
+interface htp_ops : remote_handle64 {
+    AEEResult init_backend();
+    AEEResult create_channel(in int32 fd, in uint32 size);
+    AEEResult destroy_channel();
+
+    /* ops RPC interface */
+    AEEResult rms_norm_f32(in int32 fd0, in int32 offset0, in int32 fd1, in int32 offset1, in int32 ne0, in int32 ne1);
+    AEEResult mat_mul_permuted_w16a32(in int32 fd0, in int32 offset0, in int32 fd1, in int32 offset1, in int32 fd2, in int32 offset2,
+        in int32 m, in int32 k, in int32 n);
+    
+    AEEResult test_ops();
+};
+
+#endif /* HTP_OPS_IDL */
