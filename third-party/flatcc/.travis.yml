@@ -1,0 +1,29 @@
+language: c
+
+dist: focal
+
+os:
+  - linux
+  - osx
+
+compiler:
+  - gcc
+  - clang
+
+addons:
+  apt:
+    packages:
+      - ninja-build
+
+# macos builds are too slow on travis, and now brew update doesn't work without additional configuration
+#before_install:
+#  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; fi
+#
+#install:
+#  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install ninja; fi
+
+script:
+  - if [[ "$TRAVIS_OS_NAME" != "osx" ]]; then scripts/initbuild.sh ninja; fi
+  - if [[ "$TRAVIS_OS_NAME" != "osx" ]]; then scripts/test.sh; fi
+  - scripts/initbuild.sh make-concurrent
+  - scripts/test.sh

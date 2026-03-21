@@ -1,0 +1,3 @@
+eigen_add_benchmark(bench_matrix_exponential bench_matrix_exponential.cpp)
+eigen_add_benchmark(bench_matrix_logarithm bench_matrix_logarithm.cpp)
+eigen_add_benchmark(bench_matrix_power bench_matrix_power.cpp)

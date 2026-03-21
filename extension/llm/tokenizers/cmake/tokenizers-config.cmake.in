@@ -1,0 +1,43 @@
+# Config file for the tokenizers package
+# It defines the following variables:
+#  TOKENIZERS_FOUND        - True if the tokenizers library was found
+#  TOKENIZERS_INCLUDE_DIRS - Include directories for tokenizers
+#  TOKENIZERS_LIBRARIES    - Libraries to link against
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+include(GNUInstallDirs)
+# Directly include sentencepiece library
+set_and_check(TOKENIZERS_LIBDIR "@PACKAGE_CMAKE_INSTALL_LIBDIR@")
+if(WIN32)
+    set(SENTENCEPIECE_LIBRARY "${TOKENIZERS_LIBDIR}/sentencepiece.lib")
+else()
+    set(SENTENCEPIECE_LIBRARY "${TOKENIZERS_LIBDIR}/libsentencepiece.a")
+endif()
+if(NOT EXISTS "${SENTENCEPIECE_LIBRARY}")
+  message(
+    FATAL_ERROR
+      "Could not find sentencepiece library at ${SENTENCEPIECE_LIBRARY}"
+  )
+endif()
+
+find_dependency(re2 REQUIRED)
+find_dependency(absl REQUIRED)
+
+# Include the exported targets file
+include("${CMAKE_CURRENT_LIST_DIR}/tokenizers-targets.cmake")
+
+# Set the include directories
+set_and_check(TOKENIZERS_INCLUDE_DIRS "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+
+# Set the libraries and link options
+set(TOKENIZERS_LIBRARIES tokenizers::tokenizers)
+set_property(
+  TARGET tokenizers::tokenizers
+  APPEND
+  PROPERTY INTERFACE_LINK_OPTIONS "${TOKENIZERS_LINK_OPTIONS}"
+)
+
+# Check if the library was found
+check_required_components(tokenizers)

@@ -1,0 +1,8 @@
+eigen_add_benchmark(bench_contraction bench_contraction.cpp)
+eigen_add_benchmark(bench_convolution bench_convolution.cpp)
+eigen_add_benchmark(bench_reduction bench_reduction.cpp)
+eigen_add_benchmark(bench_broadcasting bench_broadcasting.cpp)
+eigen_add_benchmark(bench_shuffling bench_shuffling.cpp)
+eigen_add_benchmark(bench_tensor_fft bench_tensor_fft.cpp)
+eigen_add_benchmark(bench_morphing bench_morphing.cpp)
+eigen_add_benchmark(bench_coefficient_wise bench_coefficient_wise.cpp)

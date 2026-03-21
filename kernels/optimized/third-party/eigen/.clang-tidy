@@ -1,0 +1,37 @@
+---
+# Conservative clang-tidy configuration for Eigen.
+#
+# Focuses on bug-finding checks with low false-positive rates.
+# Intentionally omits style-enforcement checks (modernize-*, google-*,
+# cppcoreguidelines-*) since Eigen has its own conventions and is a
+# heavily-templated math library where many "modern C++" idioms don't apply.
+
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-narrowing-conversions,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-exception-escape,
+  misc-redundant-expression,
+  misc-unused-using-decls,
+  misc-misleading-identifier,
+  performance-for-range-copy,
+  performance-implicit-conversion-in-loop,
+  performance-unnecessary-copy-initialization,
+  performance-unnecessary-value-param,
+  readability-container-size-empty,
+  readability-duplicate-include,
+  readability-misleading-indentation,
+  readability-redundant-control-flow,
+  readability-redundant-smartptr-get,
+
+WarningsAsErrors: ''
+
+HeaderFilterRegex: 'Eigen/.*|test/.*|blas/.*|lapack/.*|unsupported/Eigen/.*'
+
+# Eigen uses its own assert macros.
+CheckOptions:
+  - key: bugprone-assert-side-effect.AssertMacros
+    value: 'eigen_assert,eigen_internal_assert,EIGEN_STATIC_ASSERT,VERIFY,VERIFY_IS_APPROX,VERIFY_IS_EQUAL,VERIFY_IS_MUCH_SMALLER_THAN,VERIFY_IS_NOT_APPROX,VERIFY_IS_NOT_EQUAL,VERIFY_IS_UNITARY,VERIFY_RAISES_ASSERT'
+...

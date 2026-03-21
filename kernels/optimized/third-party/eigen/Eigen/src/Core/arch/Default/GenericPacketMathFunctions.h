@@ -1,0 +1,608 @@
+// This file is part of Eigen, a lightweight C++ template library
+// for linear algebra.
+//
+// Copyright (C) 2007 Julien Pommier
+// Copyright (C) 2014 Pedro Gonnet (pedro.gonnet@gmail.com)
+// Copyright (C) 2009-2019 Gael Guennebaud <gael.guennebaud@inria.fr>
+// Copyright (C) 2018-2025 Rasmus Munk Larsen <rmlarsen@gmail.com>
+//
+// This Source Code Form is subject to the terms of the Mozilla
+// Public License v. 2.0. If a copy of the MPL was not distributed
+// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+/* The exp and log functions of this file initially come from
+ * Julien Pommier's sse math library: http://gruntthepeon.free.fr/ssemath/
+ */
+
+#ifndef EIGEN_ARCH_GENERIC_PACKET_MATH_FUNCTIONS_H
+#define EIGEN_ARCH_GENERIC_PACKET_MATH_FUNCTIONS_H
+
+// IWYU pragma: private
+#include "../../InternalHeaderCheck.h"
+#include "GenericPacketMathPolynomials.h"
+#include "GenericPacketMathFrexpLdexp.h"
+#include "GenericPacketMathDoubleWord.h"
+
+namespace Eigen {
+namespace internal {
+
+//----------------------------------------------------------------------
+// Exponential and Logarithmic Functions
+//----------------------------------------------------------------------
+
+// Natural or base 2 logarithm.
+// Computes log(x) as log(2^e * m) = C*e + log(m), where the constant C =log(2)
+// and m is in the range [sqrt(1/2),sqrt(2)). In this range, the logarithm can
+// be easily approximated by a polynomial centered on m=1 for stability.
+// TODO(gonnet): Further reduce the interval allowing for lower-degree
+//               polynomial interpolants -> ... -> profit!
+template <typename Packet, bool base2>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet plog_impl_float(const Packet _x) {
+  const Packet cst_1 = pset1<Packet>(1.0f);
+  const Packet cst_minus_inf = pset1frombits<Packet>(static_cast<Eigen::numext::uint32_t>(0xff800000u));
+  const Packet cst_pos_inf = pset1frombits<Packet>(static_cast<Eigen::numext::uint32_t>(0x7f800000u));
+
+  const Packet cst_cephes_SQRTHF = pset1<Packet>(0.707106781186547524f);
+  Packet e, x;
+  // extract significant in the range [0.5,1) and exponent
+  x = pfrexp(_x, e);
+
+  // part2: Shift the inputs from the range [0.5,1) to [sqrt(1/2),sqrt(2))
+  // and shift by -1. The values are then centered around 0, which improves
+  // the stability of the polynomial evaluation.
+  //   if( x < SQRTHF ) {
+  //     e -= 1;
+  //     x = x + x - 1.0;
+  //   } else { x = x - 1.0; }
+  Packet mask = pcmp_lt(x, cst_cephes_SQRTHF);
+  Packet tmp = pand(x, mask);
+  x = psub(x, cst_1);
+  e = psub(e, pand(cst_1, mask));
+  x = padd(x, tmp);
+
+  // Polynomial coefficients for rational r(x) = p(x)/q(x)
+  // approximating log(1+x) on [sqrt(0.5)-1;sqrt(2)-1].
+  constexpr float alpha[] = {0.18256296349849254f, 1.0000000190281063f, 1.0000000190281136f};
+  constexpr float beta[] = {0.049616247954120038f, 0.59923249590823520f, 1.4999999999999927f, 1.0f};
+
+  Packet p = ppolevl<Packet, 2>::run(x, alpha);
+  p = pmul(x, p);
+  Packet q = ppolevl<Packet, 3>::run(x, beta);
+  x = pdiv(p, q);
+
+  // Add the logarithm of the exponent back to the result of the interpolation.
+  if (base2) {
+    const Packet cst_log2e = pset1<Packet>(static_cast<float>(EIGEN_LOG2E));
+    x = pmadd(x, cst_log2e, e);
+  } else {
+    const Packet cst_ln2 = pset1<Packet>(static_cast<float>(EIGEN_LN2));
+    x = pmadd(e, cst_ln2, x);
+  }
+
+  Packet invalid_mask = pcmp_lt_or_nan(_x, pzero(_x));
+  Packet iszero_mask = pcmp_eq(_x, pzero(_x));
+  Packet pos_inf_mask = pcmp_eq(_x, cst_pos_inf);
+  // Filter out invalid inputs, i.e.:
+  //  - negative arg will be NAN
+  //  - 0 will be -INF
+  //  - +INF will be +INF
+  return pselect(iszero_mask, cst_minus_inf, por(pselect(pos_inf_mask, cst_pos_inf, x), invalid_mask));
+}
+
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet plog_float(const Packet _x) {
+  return plog_impl_float<Packet, /* base2 */ false>(_x);
+}
+
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet plog2_float(const Packet _x) {
+  return plog_impl_float<Packet, /* base2 */ true>(_x);
+}
+
+/* Returns the base e (2.718...) or base 2 logarithm of x.
+ * The argument is separated into its exponent and fractional parts.
+ * The logarithm of the fraction in the interval [sqrt(1/2), sqrt(2)],
+ * is approximated by
+ *
+ *     log(1+x) = x - 0.5 x**2 + x**3 P(x)/Q(x).
+ *
+ * for more detail see: http://www.netlib.org/cephes/
+ */
+template <typename Packet, bool base2>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet plog_impl_double(const Packet _x) {
+  Packet x = _x;
+
+  const Packet cst_1 = pset1<Packet>(1.0);
+  const Packet cst_neg_half = pset1<Packet>(-0.5);
+  const Packet cst_minus_inf = pset1frombits<Packet>(static_cast<uint64_t>(0xfff0000000000000ull));
+  const Packet cst_pos_inf = pset1frombits<Packet>(static_cast<uint64_t>(0x7ff0000000000000ull));
+
+  // Polynomial Coefficients for log(1+x) = x - x**2/2 + x**3 P(x)/Q(x)
+  //                             1/sqrt(2) <= x < sqrt(2)
+  const Packet cst_cephes_SQRTHF = pset1<Packet>(0.70710678118654752440E0);
+  const Packet cst_cephes_log_p0 = pset1<Packet>(1.01875663804580931796E-4);
+  const Packet cst_cephes_log_p1 = pset1<Packet>(4.97494994976747001425E-1);
+  const Packet cst_cephes_log_p2 = pset1<Packet>(4.70579119878881725854E0);
+  const Packet cst_cephes_log_p3 = pset1<Packet>(1.44989225341610930846E1);
+  const Packet cst_cephes_log_p4 = pset1<Packet>(1.79368678507819816313E1);
+  const Packet cst_cephes_log_p5 = pset1<Packet>(7.70838733755885391666E0);
+
+  const Packet cst_cephes_log_q0 = pset1<Packet>(1.0);
+  const Packet cst_cephes_log_q1 = pset1<Packet>(1.12873587189167450590E1);
+  const Packet cst_cephes_log_q2 = pset1<Packet>(4.52279145837532221105E1);
+  const Packet cst_cephes_log_q3 = pset1<Packet>(8.29875266912776603211E1);
+  const Packet cst_cephes_log_q4 = pset1<Packet>(7.11544750618563894466E1);
+  const Packet cst_cephes_log_q5 = pset1<Packet>(2.31251620126765340583E1);
+
+  Packet e;
+  // extract significant in the range [0.5,1) and exponent
+  x = pfrexp(x, e);
+
+  // Shift the inputs from the range [0.5,1) to [sqrt(1/2),sqrt(2))
+  // and shift by -1. The values are then centered around 0, which improves
+  // the stability of the polynomial evaluation.
+  //   if( x < SQRTHF ) {
+  //     e -= 1;
+  //     x = x + x - 1.0;
+  //   } else { x = x - 1.0; }
+  Packet mask = pcmp_lt(x, cst_cephes_SQRTHF);
+  Packet tmp = pand(x, mask);
+  x = psub(x, cst_1);
+  e = psub(e, pand(cst_1, mask));
+  x = padd(x, tmp);
+
+  Packet x2 = pmul(x, x);
+  Packet x3 = pmul(x2, x);
+
+  // Evaluate the polynomial in factored form for better instruction-level parallelism.
+  // y = x - 0.5*x^2 + x^3 * polevl( x, P, 5 ) / p1evl( x, Q, 5 ) );
+  Packet y, y1, y_;
+  y = pmadd(cst_cephes_log_p0, x, cst_cephes_log_p1);
+  y1 = pmadd(cst_cephes_log_p3, x, cst_cephes_log_p4);
+  y = pmadd(y, x, cst_cephes_log_p2);
+  y1 = pmadd(y1, x, cst_cephes_log_p5);
+  y_ = pmadd(y, x3, y1);
+
+  y = pmadd(cst_cephes_log_q0, x, cst_cephes_log_q1);
+  y1 = pmadd(cst_cephes_log_q3, x, cst_cephes_log_q4);
+  y = pmadd(y, x, cst_cephes_log_q2);
+  y1 = pmadd(y1, x, cst_cephes_log_q5);
+  y = pmadd(y, x3, y1);
+
+  y_ = pmul(y_, x3);
+  y = pdiv(y_, y);
+
+  y = pmadd(cst_neg_half, x2, y);
+  x = padd(x, y);
+
+  // Add the logarithm of the exponent back to the result of the interpolation.
+  if (base2) {
+    const Packet cst_log2e = pset1<Packet>(static_cast<double>(EIGEN_LOG2E));
+    x = pmadd(x, cst_log2e, e);
+  } else {
+    const Packet cst_ln2 = pset1<Packet>(static_cast<double>(EIGEN_LN2));
+    x = pmadd(e, cst_ln2, x);
+  }
+
+  Packet invalid_mask = pcmp_lt_or_nan(_x, pzero(_x));
+  Packet iszero_mask = pcmp_eq(_x, pzero(_x));
+  Packet pos_inf_mask = pcmp_eq(_x, cst_pos_inf);
+  // Filter out invalid inputs, i.e.:
+  //  - negative arg will be NAN
+  //  - 0 will be -INF
+  //  - +INF will be +INF
+  return pselect(iszero_mask, cst_minus_inf, por(pselect(pos_inf_mask, cst_pos_inf, x), invalid_mask));
+}
+
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet plog_double(const Packet _x) {
+  return plog_impl_double<Packet, /* base2 */ false>(_x);
+}
+
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet plog2_double(const Packet _x) {
+  return plog_impl_double<Packet, /* base2 */ true>(_x);
+}
+
+/** \internal \returns log(1 + x) computed using W. Kahan's formula.
+    See: http://www.plunk.org/~hatch/rightway.php
+ */
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet generic_log1p(const Packet& x) {
+  typedef typename unpacket_traits<Packet>::type ScalarType;
+  const Packet one = pset1<Packet>(ScalarType(1));
+  Packet xp1 = padd(x, one);
+  Packet small_mask = pcmp_eq(xp1, one);
+  Packet log1 = plog(xp1);
+  Packet inf_mask = pcmp_eq(xp1, log1);
+  Packet log_large = pmul(x, pdiv(log1, psub(xp1, one)));
+  return pselect(por(small_mask, inf_mask), x, log_large);
+}
+
+/** \internal \returns exp(x)-1 computed using W. Kahan's formula.
+    See: http://www.plunk.org/~hatch/rightway.php
+ */
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet generic_expm1(const Packet& x) {
+  typedef typename unpacket_traits<Packet>::type ScalarType;
+  const Packet one = pset1<Packet>(ScalarType(1));
+  const Packet neg_one = pset1<Packet>(ScalarType(-1));
+  Packet u = pexp(x);
+  Packet one_mask = pcmp_eq(u, one);
+  Packet u_minus_one = psub(u, one);
+  Packet neg_one_mask = pcmp_eq(u_minus_one, neg_one);
+  Packet logu = plog(u);
+  // The following comparison is to catch the case where
+  // exp(x) = +inf. It is written in this way to avoid having
+  // to form the constant +inf, which depends on the packet
+  // type.
+  Packet pos_inf_mask = pcmp_eq(logu, u);
+  Packet expm1 = pmul(u_minus_one, pdiv(x, logu));
+  expm1 = pselect(pos_inf_mask, u, expm1);
+  return pselect(one_mask, x, pselect(neg_one_mask, neg_one, expm1));
+}
+
+// Exponential function. Works by writing "x = m*log(2) + r" where
+// "m = floor(x/log(2)+1/2)" and "r" is the remainder. The result is then
+// "exp(x) = 2^m*exp(r)" where exp(r) is in the range [-1,1).
+// exp(r) is computed using a 6th order minimax polynomial approximation.
+template <typename Packet, bool IsFinite>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet pexp_float(const Packet _x) {
+  const Packet cst_zero = pset1<Packet>(0.0f);
+  const Packet cst_one = pset1<Packet>(1.0f);
+  const Packet cst_half = pset1<Packet>(0.5f);
+  const Packet cst_exp_hi = pset1<Packet>(88.723f);
+  const Packet cst_exp_lo = pset1<Packet>(-104.f);
+  const Packet cst_pldexp_threshold = pset1<Packet>(87.0);
+
+  const Packet cst_cephes_LOG2EF = pset1<Packet>(1.44269504088896341f);
+  const Packet cst_p2 = pset1<Packet>(0.49999988079071044921875f);
+  const Packet cst_p3 = pset1<Packet>(0.16666518151760101318359375f);
+  const Packet cst_p4 = pset1<Packet>(4.166965186595916748046875e-2f);
+  const Packet cst_p5 = pset1<Packet>(8.36894474923610687255859375e-3f);
+  const Packet cst_p6 = pset1<Packet>(1.37449637986719608306884765625e-3f);
+  Packet zero_mask;
+  Packet x;
+  if (!IsFinite) {
+    // Clamp x.
+    zero_mask = pcmp_lt(_x, cst_exp_lo);
+    x = pmin(_x, cst_exp_hi);
+  } else {
+    x = _x;
+  }
+
+  // Express exp(x) as exp(m*ln(2) + r), start by extracting
+  // m = floor(x/ln(2) + 0.5).
+  Packet m = pfloor(pmadd(x, cst_cephes_LOG2EF, cst_half));
+
+  // Get r = x - m*ln(2). If no FMA instructions are available, m*ln(2) is
+  // subtracted out in two parts, m*C1+m*C2 = m*ln(2), to avoid accumulating
+  // truncation errors.
+  const Packet cst_cephes_exp_C1 = pset1<Packet>(-0.693359375f);
+  const Packet cst_cephes_exp_C2 = pset1<Packet>(2.12194440e-4f);
+  Packet r = pmadd(m, cst_cephes_exp_C1, x);
+  r = pmadd(m, cst_cephes_exp_C2, r);
+
+  // Evaluate the 6th order polynomial approximation to exp(r)
+  // with r in the interval [-ln(2)/2;ln(2)/2].
+  const Packet r2 = pmul(r, r);
+  Packet p_even = pmadd(r2, cst_p6, cst_p4);
+  const Packet p_odd = pmadd(r2, cst_p5, cst_p3);
+  p_even = pmadd(r2, p_even, cst_p2);
+  const Packet p_low = padd(r, cst_one);
+  Packet y = pmadd(r, p_odd, p_even);
+  y = pmadd(r2, y, p_low);
+  if (IsFinite) {
+    return pldexp_fast(y, m);
+  }
+  // Return 2^m * exp(r).
+  const Packet fast_pldexp_unsafe = pcmp_lt(cst_pldexp_threshold, pabs(x));
+  if (!predux_any(fast_pldexp_unsafe)) {
+    // For |x| <= 87, we know the result is not zero or inf, and we can safely use
+    // the fast version of pldexp.
+    return pmax(pldexp_fast(y, m), _x);
+  }
+  return pselect(zero_mask, cst_zero, pmax(pldexp(y, m), _x));
+}
+
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet pexp_double(const Packet _x) {
+  const Packet cst_zero = pset1<Packet>(0.0);
+  const Packet cst_1 = pset1<Packet>(1.0);
+  const Packet cst_2 = pset1<Packet>(2.0);
+  const Packet cst_half = pset1<Packet>(0.5);
+
+  const Packet cst_exp_hi = pset1<Packet>(709.784);
+  const Packet cst_exp_lo = pset1<Packet>(-745.519);
+  const Packet cst_pldexp_threshold = pset1<Packet>(708.0);
+  const Packet cst_cephes_LOG2EF = pset1<Packet>(1.4426950408889634073599);
+  const Packet cst_cephes_exp_p0 = pset1<Packet>(1.26177193074810590878e-4);
+  const Packet cst_cephes_exp_p1 = pset1<Packet>(3.02994407707441961300e-2);
+  const Packet cst_cephes_exp_p2 = pset1<Packet>(9.99999999999999999910e-1);
+  const Packet cst_cephes_exp_q0 = pset1<Packet>(3.00198505138664455042e-6);
+  const Packet cst_cephes_exp_q1 = pset1<Packet>(2.52448340349684104192e-3);
+  const Packet cst_cephes_exp_q2 = pset1<Packet>(2.27265548208155028766e-1);
+  const Packet cst_cephes_exp_q3 = pset1<Packet>(2.00000000000000000009e0);
+  const Packet cst_cephes_exp_C1 = pset1<Packet>(0.693145751953125);
+  const Packet cst_cephes_exp_C2 = pset1<Packet>(1.42860682030941723212e-6);
+
+  Packet tmp, fx;
+
+  // clamp x
+  Packet zero_mask = pcmp_lt(_x, cst_exp_lo);
+  Packet x = pmin(_x, cst_exp_hi);
+
+  // Express exp(x) as exp(g + n*log(2)).
+  fx = pmadd(cst_cephes_LOG2EF, x, cst_half);
+
+  // Get the integer modulus of log(2), i.e. the "n" described above.
+  fx = pfloor(fx);
+
+  // Get the remainder modulo log(2), i.e. the "g" described above. Subtract
+  // n*log(2) out in two steps, i.e. n*C1 + n*C2, C1+C2=log2 to get the last
+  // digits right.
+  tmp = pmul(fx, cst_cephes_exp_C1);
+  Packet z = pmul(fx, cst_cephes_exp_C2);
+  x = psub(x, tmp);
+  x = psub(x, z);
+
+  Packet x2 = pmul(x, x);
+
+  // Evaluate the numerator polynomial of the rational interpolant.
+  Packet px = cst_cephes_exp_p0;
+  px = pmadd(px, x2, cst_cephes_exp_p1);
+  px = pmadd(px, x2, cst_cephes_exp_p2);
+  px = pmul(px, x);
+
+  // Evaluate the denominator polynomial of the rational interpolant.
+  Packet qx = cst_cephes_exp_q0;
+  qx = pmadd(qx, x2, cst_cephes_exp_q1);
+  qx = pmadd(qx, x2, cst_cephes_exp_q2);
+  qx = pmadd(qx, x2, cst_cephes_exp_q3);
+
+  // I don't really get this bit, copied from the SSE2 routines, so...
+  // TODO(gonnet): Figure out what is going on here, perhaps find a better
+  // rational interpolant?
+  x = pdiv(px, psub(qx, px));
+  x = pmadd(cst_2, x, cst_1);
+
+  // Construct the result 2^n * exp(g) = e * x. The max is used to catch
+  // non-finite values in the input.
+  const Packet fast_pldexp_unsafe = pcmp_lt(cst_pldexp_threshold, pabs(_x));
+  if (!predux_any(fast_pldexp_unsafe)) {
+    // For |x| <= 708, we know the result is not zero or inf, and we can safely use
+    // the fast version of pldexp.
+    return pmax(pldexp_fast(x, fx), _x);
+  }
+  return pselect(zero_mask, cst_zero, pmax(pldexp(x, fx), _x));
+}
+
+// This function computes exp2(x) = exp(ln(2) * x).
+// To improve accuracy, the product ln(2)*x is computed using the twoprod
+// algorithm, such that ln(2) * x = p_hi + p_lo holds exactly. Then exp2(x) is
+// computed as exp2(x) = exp(p_hi) * exp(p_lo) ~= exp(p_hi) * (1 + p_lo). This
+// correction step this reduces the maximum absolute error as follows:
+//
+// type   | max error (simple product) | max error (twoprod) |
+// -----------------------------------------------------------
+// float  |       35 ulps              |       4 ulps        |
+// double |      363 ulps              |     110 ulps        |
+//
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet generic_exp2(const Packet& _x) {
+  typedef typename unpacket_traits<Packet>::type Scalar;
+  constexpr int max_exponent = std::numeric_limits<Scalar>::max_exponent;
+  constexpr int digits = std::numeric_limits<Scalar>::digits;
+  constexpr Scalar max_cap = Scalar(max_exponent + 1);
+  constexpr Scalar min_cap = -Scalar(max_exponent + digits - 1);
+  Packet x = pmax(pmin(_x, pset1<Packet>(max_cap)), pset1<Packet>(min_cap));
+  Packet p_hi, p_lo;
+  twoprod(pset1<Packet>(Scalar(EIGEN_LN2)), x, p_hi, p_lo);
+  Packet exp2_hi = pexp(p_hi);
+  Packet exp2_lo = padd(pset1<Packet>(Scalar(1)), p_lo);
+  return pmul(exp2_hi, exp2_lo);
+}
+
+}  // end namespace internal
+}  // end namespace Eigen
+
+// Include the split-out sections. Order matters: Pow depends on exp/log and FrexpLdexp,
+// Trig depends on exp (for ptanh_float), Complex depends on Trig (for psincos_selector).
+#include "GenericPacketMathPow.h"
+#include "GenericPacketMathTrig.h"
+#include "GenericPacketMathComplex.h"
+
+namespace Eigen {
+namespace internal {
+
+//----------------------------------------------------------------------
+// Sign Function
+//----------------------------------------------------------------------
+
+template <typename Packet>
+struct psign_impl<Packet, std::enable_if_t<!is_scalar<Packet>::value &&
+                                           !NumTraits<typename unpacket_traits<Packet>::type>::IsComplex &&
+                                           !NumTraits<typename unpacket_traits<Packet>::type>::IsInteger>> {
+  static EIGEN_DEVICE_FUNC inline Packet run(const Packet& a) {
+    using Scalar = typename unpacket_traits<Packet>::type;
+    const Packet cst_one = pset1<Packet>(Scalar(1));
+    const Packet cst_zero = pzero(a);
+
+    const Packet abs_a = pabs(a);
+    const Packet sign_mask = pandnot(a, abs_a);
+    const Packet nonzero_mask = pcmp_lt(cst_zero, abs_a);
+
+    return pselect(nonzero_mask, por(sign_mask, cst_one), abs_a);
+  }
+};
+
+template <typename Packet>
+struct psign_impl<Packet, std::enable_if_t<!is_scalar<Packet>::value &&
+                                           !NumTraits<typename unpacket_traits<Packet>::type>::IsComplex &&
+                                           NumTraits<typename unpacket_traits<Packet>::type>::IsSigned &&
+                                           NumTraits<typename unpacket_traits<Packet>::type>::IsInteger>> {
+  static EIGEN_DEVICE_FUNC inline Packet run(const Packet& a) {
+    using Scalar = typename unpacket_traits<Packet>::type;
+    const Packet cst_one = pset1<Packet>(Scalar(1));
+    const Packet cst_minus_one = pset1<Packet>(Scalar(-1));
+    const Packet cst_zero = pzero(a);
+
+    const Packet positive_mask = pcmp_lt(cst_zero, a);
+    const Packet positive = pand(positive_mask, cst_one);
+    const Packet negative_mask = pcmp_lt(a, cst_zero);
+    const Packet negative = pand(negative_mask, cst_minus_one);
+
+    return por(positive, negative);
+  }
+};
+
+template <typename Packet>
+struct psign_impl<Packet, std::enable_if_t<!is_scalar<Packet>::value &&
+                                           !NumTraits<typename unpacket_traits<Packet>::type>::IsComplex &&
+                                           !NumTraits<typename unpacket_traits<Packet>::type>::IsSigned &&
+                                           NumTraits<typename unpacket_traits<Packet>::type>::IsInteger>> {
+  static EIGEN_DEVICE_FUNC inline Packet run(const Packet& a) {
+    using Scalar = typename unpacket_traits<Packet>::type;
+    const Packet cst_one = pset1<Packet>(Scalar(1));
+    const Packet cst_zero = pzero(a);
+
+    const Packet zero_mask = pcmp_eq(cst_zero, a);
+    return pandnot(cst_one, zero_mask);
+  }
+};
+
+// \internal \returns the sign of a complex number z, defined as z / abs(z).
+template <typename Packet>
+struct psign_impl<Packet, std::enable_if_t<!is_scalar<Packet>::value &&
+                                           NumTraits<typename unpacket_traits<Packet>::type>::IsComplex &&
+                                           unpacket_traits<Packet>::vectorizable>> {
+  static EIGEN_DEVICE_FUNC inline Packet run(const Packet& a) {
+    typedef typename unpacket_traits<Packet>::type Scalar;
+    typedef typename Scalar::value_type RealScalar;
+    typedef typename unpacket_traits<Packet>::as_real RealPacket;
+
+    // Step 1. Compute (for each element z = x + i*y in a)
+    //     l = abs(z) = sqrt(x^2 + y^2).
+    // To avoid over- and underflow, we use the stable formula for each hypotenuse
+    //    l = (zmin == 0 ? zmax : zmax * sqrt(1 + (zmin/zmax)**2)),
+    // where zmax = max(|x|, |y|), zmin = min(|x|, |y|),
+    RealPacket a_abs = pabs(a.v);
+    RealPacket a_abs_flip = pcplxflip(Packet(a_abs)).v;
+    RealPacket a_max = pmax(a_abs, a_abs_flip);
+    RealPacket a_min = pmin(a_abs, a_abs_flip);
+    RealPacket a_min_zero_mask = pcmp_eq(a_min, pzero(a_min));
+    RealPacket a_max_zero_mask = pcmp_eq(a_max, pzero(a_max));
+    RealPacket r = pdiv(a_min, a_max);
+    const RealPacket cst_one = pset1<RealPacket>(RealScalar(1));
+    RealPacket l = pmul(a_max, psqrt(padd(cst_one, pmul(r, r))));  // [l0, l0, l1, l1]
+    // Set l to a_max if a_min is zero, since the roundtrip sqrt(a_max^2) may be
+    // lossy.
+    l = pselect(a_min_zero_mask, a_max, l);
+    // Step 2 compute a / abs(a).
+    RealPacket sign_as_real = pandnot(pdiv(a.v, l), a_max_zero_mask);
+    Packet sign;
+    sign.v = sign_as_real;
+    return sign;
+  }
+};
+
+//----------------------------------------------------------------------
+// Rounding Functions
+//----------------------------------------------------------------------
+
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet generic_rint(const Packet& a) {
+  using Scalar = typename unpacket_traits<Packet>::type;
+  using IntType = typename numext::get_integer_by_size<sizeof(Scalar)>::signed_type;
+  // Adds and subtracts signum(a) * 2^kMantissaBits to force rounding.
+  const IntType kLimit = IntType(1) << (NumTraits<Scalar>::digits() - 1);
+  const Packet cst_limit = pset1<Packet>(static_cast<Scalar>(kLimit));
+  Packet abs_a = pabs(a);
+  Packet sign_a = pandnot(a, abs_a);
+  Packet rint_a = padd(abs_a, cst_limit);
+  // Don't compile-away addition and subtraction.
+  EIGEN_OPTIMIZATION_BARRIER(rint_a);
+  rint_a = psub(rint_a, cst_limit);
+  rint_a = por(rint_a, sign_a);
+  // If greater than limit (or NaN), simply return a.
+  Packet mask = pcmp_lt(abs_a, cst_limit);
+  Packet result = pselect(mask, rint_a, a);
+  return result;
+}
+
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet generic_floor(const Packet& a) {
+  using Scalar = typename unpacket_traits<Packet>::type;
+  const Packet cst_1 = pset1<Packet>(Scalar(1));
+  Packet rint_a = generic_rint(a);
+  // if a < rint(a), then rint(a) == ceil(a)
+  Packet mask = pcmp_lt(a, rint_a);
+  Packet offset = pand(cst_1, mask);
+  Packet result = psub(rint_a, offset);
+  return result;
+}
+
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet generic_ceil(const Packet& a) {
+  using Scalar = typename unpacket_traits<Packet>::type;
+  const Packet cst_1 = pset1<Packet>(Scalar(1));
+  const Packet sign_mask = pset1<Packet>(static_cast<Scalar>(-0.0));
+  Packet rint_a = generic_rint(a);
+  // if rint(a) < a, then rint(a) == floor(a)
+  Packet mask = pcmp_lt(rint_a, a);
+  Packet offset = pand(cst_1, mask);
+  Packet result = padd(rint_a, offset);
+  // Signed zero must remain signed (e.g. ceil(-0.02) == -0).
+  result = por(result, pand(sign_mask, a));
+  return result;
+}
+
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet generic_trunc(const Packet& a) {
+  Packet abs_a = pabs(a);
+  Packet sign_a = pandnot(a, abs_a);
+  Packet floor_abs_a = generic_floor(abs_a);
+  Packet result = por(floor_abs_a, sign_a);
+  return result;
+}
+
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet generic_round(const Packet& a) {
+  using Scalar = typename unpacket_traits<Packet>::type;
+  const Packet cst_half = pset1<Packet>(Scalar(0.5));
+  const Packet cst_1 = pset1<Packet>(Scalar(1));
+  Packet abs_a = pabs(a);
+  Packet sign_a = pandnot(a, abs_a);
+  Packet floor_abs_a = generic_floor(abs_a);
+  Packet diff = psub(abs_a, floor_abs_a);
+  Packet mask = pcmp_le(cst_half, diff);
+  Packet offset = pand(cst_1, mask);
+  Packet result = padd(floor_abs_a, offset);
+  result = por(result, sign_a);
+  return result;
+}
+
+template <typename Packet>
+struct nearest_integer_packetop_impl<Packet, /*IsScalar*/ false, /*IsInteger*/ false> {
+  using Scalar = typename unpacket_traits<Packet>::type;
+  static_assert(packet_traits<Scalar>::HasRound, "Generic nearest integer functions are disabled for this type.");
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_floor(const Packet& x) { return generic_floor(x); }
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_ceil(const Packet& x) { return generic_ceil(x); }
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_rint(const Packet& x) { return generic_rint(x); }
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_round(const Packet& x) { return generic_round(x); }
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_trunc(const Packet& x) { return generic_trunc(x); }
+};
+
+template <typename Packet>
+struct nearest_integer_packetop_impl<Packet, /*IsScalar*/ false, /*IsInteger*/ true> {
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_floor(const Packet& x) { return x; }
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_ceil(const Packet& x) { return x; }
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_rint(const Packet& x) { return x; }
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_round(const Packet& x) { return x; }
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet run_trunc(const Packet& x) { return x; }
+};
+
+}  // end namespace internal
+}  // end namespace Eigen
+
+#endif  // EIGEN_ARCH_GENERIC_PACKET_MATH_FUNCTIONS_H

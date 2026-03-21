@@ -1,0 +1,1 @@
+eigen_add_benchmark(bench_kronecker bench_kronecker.cpp)

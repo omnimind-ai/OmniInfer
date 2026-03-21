@@ -1,0 +1,41 @@
+# System files
+.DS_Store
+
+# Python environment and cache
+.hypothesis
+.mypy_cache/
+.venv/
+__pycache__/
+
+# Build and tool-generated files
+build/
+cmake-out*
+.cache/clangd
+dist/
+pip-out/
+*.egg-info
+
+# Editor temporaries
+*.swa
+*.swb
+*.swc
+*.swd
+*.swe
+*.swf
+*.swg
+*.swh
+*.swi
+*.swj
+*.swk
+*.swl
+*.swm
+*.swn
+*.swo
+*.swp
+*~
+.~lock.*
+*.idea
+
+*.so
+*.dylib
+*.pyd

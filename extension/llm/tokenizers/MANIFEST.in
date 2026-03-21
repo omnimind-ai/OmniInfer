@@ -1,0 +1,39 @@
+# Include CMake files
+include CMakeLists.txt
+include Utils.cmake
+recursive-include cmake *
+
+# Include C++ source files
+recursive-include src *.cpp *.h *.hpp
+recursive-include include *.h *.hpp
+
+# Include third-party dependencies
+recursive-include third-party *
+
+# Include test files
+recursive-include test *.py *.cpp *.h
+
+# Include examples
+recursive-include examples *
+
+# Include documentation
+include README.md
+include LICENSE
+include CONTRIBUTING.md
+include CODE_OF_CONDUCT
+
+# Include other necessary files
+include pyproject.toml
+include pytest.ini
+include TARGETS
+include targets.bzl
+
+# Exclude build artifacts and unnecessary files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__
+global-exclude .git*
+global-exclude .DS_Store
+prune build
+prune dist
+prune *.egg-info

@@ -1,0 +1,41 @@
+#!/bin/bash
+
+set -e
+
+CC=${CC:-cc}
+
+# assume we are in a subdirectory of the project to build
+HERE=$(dirname $0)/..
+cd $HERE
+ROOT=$(pwd)
+NAME=$(basename $ROOT)
+
+mkdir -p build
+mkdir -p generated
+
+cd build
+
+# we cannot link with debug library unless we use the sanitize flag.
+SANFLAG_DEBUG=""
+compiler_info="$($CC --version 2>&1)"
+echo "using compiler: $compiler_info"
+if echo $compiler_info | grep -q -i "clang"; then
+    SANFLAG_DEBUG="-fsanitize=undefined"
+    echo "debug sanitizer flag: $SANFLAG_DEBUG"
+fi
+
+if [[ "$FLATCC_PORTABLE" = "yes" ]]; then
+    CFLAGS="$CFLAGS -DFLATCC_PORTABLE"
+fi
+
+CFLAGS="$CFLAGS -I ${ROOT}/include -I ${ROOT}/generated"
+CFLAGS_DEBUG=${CFLAGS_DEBUG:--g $SANFLAG_DEBUG}
+CFLAGS_RELEASE=${CFLAGS_RELEASE:--O2 -DNDEBUG}
+
+${ROOT}/bin/flatcc -a -o ${ROOT}/generated ${ROOT}/src/*.fbs
+
+echo "building '$NAME' for debug"
+$CC $CFLAGS $CFLAGS_DEBUG ${ROOT}/src/*.c ${ROOT}/lib/libflatccrt_d.a -o ${NAME}_d
+
+echo "building '$NAME' for release"
+$CC $CFLAGS $CFLAGS_RELEASE ${ROOT}/src/*.c ${ROOT}/lib/libflatccrt.a -o ${NAME}

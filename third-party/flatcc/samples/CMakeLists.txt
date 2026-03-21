@@ -1,0 +1,8 @@
+if (FLATCC_NEED_C89_VAR_DECLS)
+    MESSAGE( STATUS "Disabling monster sample: needed C99 style variable declarations not supported by target compiler")
+else()
+add_subdirectory(monster)
+endif()
+if (FLATCC_REFLECTION)
+    add_subdirectory(reflection)
+endif()

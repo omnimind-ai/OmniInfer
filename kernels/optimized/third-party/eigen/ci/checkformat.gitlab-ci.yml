@@ -1,0 +1,52 @@
+checkformat:clangformat:
+  stage: checkformat
+  image: alpine:3.20
+  only:
+    - merge_requests
+  allow_failure: true
+  before_script:
+    - apk add --no-cache git clang17-extra-tools python3
+  script:
+    - git clang-format --diff --commit ${CI_MERGE_REQUEST_DIFF_BASE_SHA}
+
+checkformat:codespell:
+  stage: checkformat
+  image: alpine:3.20
+  only:
+    - merge_requests
+  allow_failure: true
+  before_script:
+    - apk add --no-cache py3-codespell
+  script:
+    - codespell --config setup.cfg
+
+checkformat:clangtidy:
+  stage: checkformat
+  image: ubuntu:24.04
+  only:
+    - merge_requests
+  allow_failure: true
+  timeout: 15m
+  tags:
+    - saas-linux-medium-amd64
+  variables:
+    DEBIAN_FRONTEND: noninteractive
+  before_script:
+    - apt-get update -y > /dev/null
+    - apt-get install -y --no-install-recommends
+        git cmake ninja-build clang-tidy clang python3 ca-certificates > /dev/null
+  script:
+    - mkdir -p .tidy-build
+    - cmake -G Ninja -B .tidy-build
+        -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_C_COMPILER=clang
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        -DEIGEN_BUILD_TESTING=ON
+    - chmod +x ci/scripts/run-clang-tidy.sh
+    - ci/scripts/run-clang-tidy.sh ${CI_MERGE_REQUEST_DIFF_BASE_SHA} .tidy-build
+  cache:
+    key: clang-tidy-config
+    paths:
+      - .tidy-build/compile_commands.json
+      - .tidy-build/CMakeCache.txt
+      - .tidy-build/CMakeFiles/

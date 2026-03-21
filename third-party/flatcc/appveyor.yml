@@ -1,0 +1,38 @@
+version: "win#{build}"
+
+image: Visual Studio 2015
+
+init:
+  - git config --global core.autocrlf input
+  - cmake --version
+  - msbuild /version
+
+shallow_clone: true
+
+clone_folder: c:\projects\flatcc
+
+platform:
+  - Win32 
+  - x64
+
+configuration:
+  - Debug
+  - Release
+
+skip_tags: true
+
+before_build:
+  - echo Running cmake...
+  - cd c:\projects\flatcc
+  - mkdir build\MSVC
+  - cd build\MSVC
+  - if "%platform%"=="Win32" cmake -G "Visual Studio 14 2015" -DCMAKE_BUILD_TYPE=%configuration% ..\..
+  - if "%platform%"=="x64" cmake -G "Visual Studio 14 2015 Win64" -DCMAKE_BUILD_TYPE=%configuration% ..\..
+
+build:
+  parallel: true # enable MSBuild parallel builds
+  project: c:\projects\flatcc\build\MSVC\FlatCC.sln
+
+test_script:
+  - ctest -C "%configuration%" -VV
+

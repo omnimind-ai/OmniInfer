@@ -1,0 +1,12 @@
+        namespace Eclectic;
+
+        enum Fruit : byte { Banana = -1, Orange = 42 }
+        table FooBar {
+            meal      : Fruit = Banana;
+            density   : long (deprecated);
+            say       : string;
+            height    : short;
+        }
+        file_identifier "NOOB";
+        root_type FooBar;
+

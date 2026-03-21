@@ -1,0 +1,35 @@
+cmake_minimum_required(VERSION 3.10)
+project(EigenUnsupportedBenchmarks CXX)
+
+find_package(benchmark REQUIRED)
+find_package(Threads REQUIRED)
+
+set(EIGEN_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+
+# Helper: add a Google Benchmark target (mirrors benchmarks/CMakeLists.txt).
+#   eigen_add_benchmark(name source [LIBRARIES lib1 lib2 ...] [DEFINITIONS def1 def2 ...])
+function(eigen_add_benchmark name source)
+  cmake_parse_arguments(BENCH "" "" "LIBRARIES;DEFINITIONS" ${ARGN})
+  if(NOT IS_ABSOLUTE "${source}")
+    set(source "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+  endif()
+  add_executable(${name} ${source})
+  target_include_directories(${name} PRIVATE ${EIGEN_SOURCE_DIR})
+  target_link_libraries(${name} PRIVATE benchmark::benchmark benchmark::benchmark_main
+                                        Threads::Threads)
+  if(BENCH_LIBRARIES)
+    target_link_libraries(${name} PRIVATE ${BENCH_LIBRARIES})
+  endif()
+  target_compile_options(${name} PRIVATE -O3 -DNDEBUG)
+  if(BENCH_DEFINITIONS)
+    target_compile_definitions(${name} PRIVATE ${BENCH_DEFINITIONS})
+  endif()
+endfunction()
+
+add_subdirectory(Tensor)
+add_subdirectory(MatrixFunctions)
+add_subdirectory(SpecialFunctions)
+add_subdirectory(AutoDiff)
+add_subdirectory(Splines)
+add_subdirectory(IterativeSolvers)
+add_subdirectory(KroneckerProduct)

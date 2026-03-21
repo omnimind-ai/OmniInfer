@@ -1,0 +1,3 @@
+FLATCC_BUILD_GEN="Unix Makefiles"
+FLATCC_BUILD_CMD="make -j"
+FLATCC_BUILD_FLAGS=""

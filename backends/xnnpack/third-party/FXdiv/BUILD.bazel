@@ -1,0 +1,87 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+licenses(["notice"])
+
+exports_files(["LICENSE"])
+
+################################# FXdiv library ################################
+
+cc_library(
+    name = "FXdiv",
+    hdrs = [
+        "include/fxdiv.h",
+    ],
+    includes = [
+        "include",
+    ],
+    strip_include_prefix = "include",
+    deps = [],
+    visibility = ["//visibility:public"],
+)
+
+################################## Unit tests ##################################
+
+cc_test(
+    name = "multiply_high_test",
+    srcs = ["test/multiply-high.cc"],
+    deps = [
+        ":FXdiv",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "quotient_test",
+    srcs = ["test/quotient.cc"],
+    deps = [
+        ":FXdiv",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+################################## Benchmarks ##################################
+
+cc_binary(
+    name = "init_bench",
+    srcs = ["bench/init.cc"],
+    deps = [
+        ":FXdiv",
+        "@com_google_benchmark//:benchmark",
+    ],
+)
+
+cc_binary(
+    name = "multiply_bench",
+    srcs = ["bench/multiply.cc"],
+    deps = [
+        ":FXdiv",
+        "@com_google_benchmark//:benchmark",
+    ],
+)
+
+cc_binary(
+    name = "divide_bench",
+    srcs = ["bench/divide.cc"],
+    deps = [
+        ":FXdiv",
+        "@com_google_benchmark//:benchmark",
+    ],
+)
+
+cc_binary(
+    name = "quotient_bench",
+    srcs = ["bench/quotient.cc"],
+    deps = [
+        ":FXdiv",
+        "@com_google_benchmark//:benchmark",
+    ],
+)
+
+cc_binary(
+    name = "round_down_bench",
+    srcs = ["bench/round-down.cc"],
+    deps = [
+        ":FXdiv",
+        "@com_google_benchmark//:benchmark",
+    ],
+)
