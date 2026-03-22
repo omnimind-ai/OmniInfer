@@ -41,7 +41,7 @@ OmniInfer supports multiple inference backends, currently organized as separate 
 | **llama.cpp** | `main` | GGML-based inference with broad model format support |
 | **OmniInfer Native** | `feature/llm-backend` | Our self-developed inference engine with optimized performance |
 
-> **Note:** We are actively working on a unified architecture that will provide a more streamlined and user-friendly multi-backend experience. Stay tuned for updates!
+> **🚧 Work in Progress:** We are actively integrating multiple backends into a unified architecture. A more streamlined and user-friendly multi-backend experience is coming soon!
 
 ## Supported Platforms
 
