@@ -1,0 +1,19 @@
+
+[submodule "framework/llama.cpp"]
+	path = framework/llama.cpp
+	url = https://github.com/ggml-org/llama.cpp
+[submodule "framework/mlx"]
+	path = framework/mlx
+	url = https://github.com/ml-explore/mlx
+[submodule "framework/mnn"]
+	path = framework/mnn
+	url = https://github.com/alibaba/mnn
+[submodule "framework/OmniInfer-LLM"]
+	path = framework/OmniInfer-LLM
+	url = https://github.com/omnimind-ai/OmniInfer-LLM
+[submodule "framework/OmniInfer-VLM"]
+	path = framework/OmniInfer-VLM
+	url = https://github.com/omnimind-ai/OmniInfer-VLM
+[submodule "framework/OmniOp-NPU"]
+	path = framework/OmniOp-NPU
+	url = https://github.com/omnimind-ai/OmniOp-NPU
