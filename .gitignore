@@ -13,7 +13,15 @@ out/
 # Python
 __pycache__/
 *.pyc
+.venv/
 
 # Local environment files
 .env
 .env.*
+
+# OmniInfer runtime files
+platform/Windows/llama.cpp-CPU/logs/*.log
+platform/Windows/llama.cpp-CPU/models/*
+!platform/Windows/llama.cpp-CPU/models/.gitkeep
+
+/tmp
