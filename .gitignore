@@ -23,5 +23,14 @@ __pycache__/
 platform/Windows/llama.cpp-CPU/logs/*.log
 platform/Windows/llama.cpp-CPU/models/*
 !platform/Windows/llama.cpp-CPU/models/.gitkeep
+platform/Windows/llama.cpp-GPU/logs/*.log
+platform/Windows/llama.cpp-GPU/bin/*
+!platform/Windows/llama.cpp-GPU/bin/.gitkeep
+platform/Windows/llama.cpp-GPU/models/*
+!platform/Windows/llama.cpp-GPU/models/.gitkeep
 
 /tmp
+tmp_gateway_*.log
+release/build/
+release/portable/
+release.zip
