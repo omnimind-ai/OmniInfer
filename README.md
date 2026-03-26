@@ -1,207 +1,53 @@
 # OmniInfer
-# Omni Studio
 
-A Unified Orchestration Platform for Cross-Platform LLM & VLM Inference
+Easy, fast, and private LLM & VLM inference for every device
 
-Features • Architecture • Backends • Platforms • License
+| [Documentation](#getting-started) | [Architecture](#architecture) | [Supported Models](#supported-models) |
 
-## Overview
+## About
 
-**Omni Studio** 是一个统一的模型推理调度平台，基于 [OmniInfer](https://github.com/omnimind-ai/OmniInfer) 高性能跨平台推理引擎构建，旨在为用户提供跨平台、多后端、多模型的智能推理服务。
+OmniInfer is a high-performance, cross-platform inference engine for running Large Language Models (LLM) and Vision-Language Models (VLM) locally. It abstracts away model compilation, hardware adaptation, and deployment complexity, enabling efficient local inference with minimal configuration.
 
-Omni Studio 在 OmniInfer 的多后端抽象架构之上，扩展了智能调度和优化能力。它抽象了模型编译、硬件适配和部署的复杂性，让用户能够以最小配置在本地高效运行大语言模型（LLM）和视觉语言模型（VLM）。
+> OmniInfer powers the inference layer of [Omni Studio](https://github.com/omnimind-ai/OmniStudio), a unified model orchestration platform.
 
-## Features
+OmniInfer is fast with:
 
-### 中间调度层（Omni Studio 扩展）
+- Optimized token generation speed and minimal memory footprint
+- Efficient KV Cache management
+- Multiple backend engines (llama.cpp, vLLM, OmniInfer Native) for best-fit performance
+- Hardware-aware adaptation and optimization
 
-- **智能平台选择** - 自动适配 Linux、macOS、Windows、Android、iOS 等多操作系统
-- **灵活后端切换** - 支持 llama.cpp、vLLM、OmniInfer Native 等多种推理引擎
-- **多模型管理** - 统一管理 LLM、VLM、World Model 等多种模型类型
-- **参数调优配置** - 支持上下文长度、GPU卸载、KV cache 等精细化参数配置
-- **平台分选算法** - 根据硬件特性智能选择最优运行平台
-- **后端引擎分选** - 根据模型类型和性能需求自动匹配最优后端
-- **全局最优调度** - 综合评估平台-引擎-模型组合，提供全局最优方案
+OmniInfer is flexible and easy to use with:
 
-### 底座能力层（OmniInfer 核心）
+- Seamless multi-backend switching — choose the best engine for your workload
+- OpenAI-compatible API server for drop-in integration
+- Support for LLM, VLM, and World Models
+- Fine-grained parameter control (context length, GPU offloading, KV cache, etc.)
 
-- **🚀 高性能推理 (High Performance)** - 优化的 token 生成速度和最小内存占用
-- **🔧 多后端支持 (Multi-Backend Support)** - 灵活的后端架构，支持多种推理引擎
-- **📱 跨平台支持 (Cross-Platform)** - 在 Android、iOS、macOS、Windows 和 Linux 上运行模型
-- **🤖 LLM & VLM 支持** - 同时支持大语言模型和视觉语言模型
-- **🔌 OpenAI API 兼容** - 无缝集成现有应用和工作流
-- **🛡️ 隐私优先 (Privacy First)** - 所有推理在本地执行，数据完全私密
+OmniInfer runs everywhere:
+
+- Linux, macOS, Windows — desktop & server
+- Android, iOS — mobile & edge devices
+- One codebase, all platforms
+
+## Getting Started
+
+
 
 ## Architecture
 
-Omni Studio 采用**三层架构设计**，基于 OmniInfer 的底座能力，构建统一的模型推理调度平台。
+![omni_studio_architecture](D:\omni_studio\OmniInfer\image_en.png)
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          Omni Studio 系统架构                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                          功能管理层                                 │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌──────────────┐     │   │
-│  │  │平台选择  │  │后端选择  │  │  模型管理    │  │  参数配置    │     │   │
-│  │  │          │  │          │  │  (多模型)    │  │  (多参数)    │     │   │
-│  │  └────┬─────┘  └────┬─────┘  └──────┬───────┘  └──────┬───────┘     │   │
-│  └───────┼────────────┼────────────────┼──────────────────┼─────────────┘   │
-│          │            │                │                  │                 │
-│          ▼            ▼                ▼                  ▼                 │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         中间调度层  (OmniInfer Plus)                               │   │
-│  │  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐     │   │
-│  │  │  平台分选算法    │ │  后端引擎分选    │ │ 全局最优调度    │     │   │
-│  │  │  Platform        │ │  Backend Engine  │ │ Platform+Engine │     │   │
-│  │  │  Selection       │ │  Selection       │ │ Optimal Match   │     │   │
-│  │  └──────────────────┘ └──────────────────┘ └──────────────────┘     │   │
-│  │                               ↓                                     │   │
-│  │                    统一调度抽象层                                    │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                       │
-│                                    ▼                                       │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         底座能力层 (OmniInfer)                       │   │
-│  │  ┌──────────────────────────────────────────────────────────────┐   │   │
-│  │  │                     核心能力                                 │   │   │
-│  │  │  高性能推理 │ 跨平台支持 │ LLM&VLM │ API兼容 │ 隐私保护      │   │   │
-│  │  └──────────────────────────────────────────────────────────────┘   │   │
-│  │                                                                       │   │
-│  │  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐     │   │
-│  │  │参数验证│批量配置  │ │数据上报│状态上报  │ │结果输出│规则绘制  │     │   │
-│  │  │远程升级           │ │配置上报           │ │算法更新           │     │   │
-│  │  └──────────────────┘ └──────────────────┘ └──────────────────┘     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
 
-![Omni Studio Architecture](image.png)
 
-### 功能管理层
 
-| 功能模块     | 说明               | 可选项                              |
-| ------------ | ------------------ | ----------------------------------- |
-| **平台选择** | 选择目标运行平台   | Linux、Windows、macOS、Android、iOS |
-| **后端选择** | 选择推理引擎后端   | llama.cpp、vLLM、OmniInfer Native   |
-| **模型管理** | 管理不同类型的模型 | LLM、VLM、World Model               |
-| **参数配置** | 配置模型运行参数   | 上下文长度、GPU卸载、KV cache       |
 
-#### 支持的模型类型
+## Contributing
 
-- **LLM（Large Language Model）**：纯文本大语言模型
-- **VLM（Vision-Language Model）**：视觉-语言多模态模型
-- **World Model**：世界模型，具备理解和模拟能力
+We welcome and value any contributions and collaborations. Please check out [Contributing to OmniInfer](CONTRIBUTING.md) for how to get involved.
 
-### 中间调度层
 
-中间调度层是系统的**核心调度中枢**，基于 OmniInfer 的多后端抽象架构，提供智能分派和优化能力。
-
-#### 核心调度算法
-
-| 算法             | 输入               | 输出                         |
-| ---------------- | ------------------ | ---------------------------- |
-| **平台分选算法** | 用户选择的平台类型 | 针对特定平台优化的调度策略   |
-| **后端引擎分选** | 用户选择的后端类型 | 最优后端引擎配置             |
-| **全局最优调度** | 平台+后端组合      | 全局最优的平台-引擎-模型方案 |
-
-#### 统一调度抽象层
-
-- 协调各调度模块之间的交互
-- 实现调度策略的统一管理和分发
-- 提供调度算法的扩展接口
-
-### 底座能力层 (OmniInfer)
-
-底座能力层基于 OmniInfer 高性能推理引擎，提供核心能力支撑。
-
-#### 核心能力
-
-| 能力                | 说明                                           |
-| ------------------- | ---------------------------------------------- |
-| **高性能推理**      | 优化的 token 生成速度和最小内存占用            |
-| **跨平台支持**      | Android、iOS、macOS、Windows、Linux 全平台覆盖 |
-| **LLM & VLM 支持**  | 同时支持大语言模型和视觉语言模型               |
-| **OpenAI API 兼容** | 无缝集成现有应用和工作流                       |
-| **隐私优先**        | 所有推理在本地执行，数据完全私密               |
-
-#### 功能模块
-
-| 配置管理 | 数据上报 | 输出与优化 |
-| -------- | -------- | ---------- |
-| 参数验证 | 数据上报 | 结果输出   |
-| 批量配置 | 状态上报 | 规则绘制   |
-| 远程升级 | 配置上报 | 算法更新   |
-
-## Supported Backends
-
-Omni Studio 通过 OmniInfer 支持多种推理后端，目前以独立分支形式组织：
-
-| 后端             | 分支                | 描述                                 |
-| ---------------- | ------------------- | ------------------------------------ |
-| llama.cpp        | main                | 基于 GGML 的推理，支持广泛的模型格式 |
-| OmniInfer Native | feature/llm-backend | 自研推理引擎，性能优化               |
-
-🚧 **开发中**：我们正在积极整合多个后端到统一架构中。更简化、用户友好的多后端体验即将到来！
-
-## Supported Platforms
-
-| 平台    | 状态   |
-| ------- | ------ |
-| Linux   | ✅ 支持 |
-| macOS   | ✅ 支持 |
-| Windows | ✅ 支持 |
-| Android | ✅ 支持 |
-| iOS     | ✅ 支持 |
-
-## Data Flow
-
-```
-用户配置
-   │
-   ▼
-功能管理层（收集需求）
-   │
-   ├─→ 平台选择 ────────┐
-   ├─→ 后端选择 ────────┤
-   ├─→ 模型选择 ────────┼──→ 中间调度层
-   └─→ 参数配置 ────────┘         │
-                                │
-                                ▼
-                         统一调度抽象层
-                                │
-        ┌───────────────────────┼───────────────────────┐
-        ▼                       ▼                       ▼
-   平台分选算法            后端引擎分选算法         全局最优调度
-        │                       │                       │
-        └───────────────────────┴───────────────────────┘
-                                │
-                                ▼
-                         底座能力层 (OmniInfer)
-                                │
-        ┌───────────────────────┼───────────────────────┐
-        ▼                       ▼                       ▼
-   配置管理                数据上报                输出与优化
-```
-
-## Use Cases
-
-1. **本地开发与测试**：开发者可在本地快速切换不同平台和后端进行测试
-2. **生产环境部署**：根据实际硬件环境自动选择最优配置
-3. **模型性能调优**：通过多参数测试找到最佳配置组合
-4. **A/B 测试**：对比不同后端和配置的性能差异
-5. **跨平台迁移**：轻松将模型从一个平台迁移到另一个平台
 
 ## License
 
-本项目采用 Apache License 2.0 许可证 - 详见 LICENSE 文件。
-
-## Acknowledgments
-
-Omni Studio 构建于开源社区的杰出工作之上，包括：
-
-- [OmniInfer](https://github.com/omnimind-ai/OmniInfer) - 高性能推理引擎
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) - 基于 GGML 的推理
-- [GGML](https://github.com/ggerganov/ggml) - 机器学习张量库
+This project is licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
