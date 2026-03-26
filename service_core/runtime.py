@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import json
 import os
 import signal
 import socket
@@ -20,8 +22,10 @@ def resolve_input_path(value: str, base_dir: Path) -> str:
     return str(path.resolve())
 
 
-def display_path_reference(path: str, root_dir: str) -> str:
+def display_path_reference(path: str, root_dir: str | None) -> str:
     target = Path(path).resolve()
+    if not root_dir:
+        return str(target)
     root = Path(root_dir).resolve()
     try:
         return target.relative_to(root).as_posix()
@@ -49,12 +53,42 @@ def pick_available_port(host: str) -> int:
         return int(sock.getsockname()[1])
 
 
+def get_available_memory_bytes() -> int:
+    if os.name == "nt":
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_uint32),
+                ("dwMemoryLoad", ctypes.c_uint32),
+                ("ullTotalPhys", ctypes.c_uint64),
+                ("ullAvailPhys", ctypes.c_uint64),
+                ("ullTotalPageFile", ctypes.c_uint64),
+                ("ullAvailPageFile", ctypes.c_uint64),
+                ("ullTotalVirtual", ctypes.c_uint64),
+                ("ullAvailVirtual", ctypes.c_uint64),
+                ("sullAvailExtendedVirtual", ctypes.c_uint64),
+            ]
+
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            raise OSError("GlobalMemoryStatusEx failed")
+        return int(status.ullAvailPhys)
+
+    page_size = os.sysconf("SC_PAGE_SIZE")
+    avail_pages = os.sysconf("SC_AVPHYS_PAGES")
+    return int(page_size * avail_pages)
+
+
+def bytes_to_gib(value: int) -> float:
+    return round(float(value) / float(1024 ** 3), 2)
+
+
 def is_gguf_model(filename: str) -> bool:
     low = filename.lower()
     return low.endswith(".gguf") and "mmproj" not in low
 
 
-def maybe_auto_mmproj(models_dir: str, model_path: str) -> str | None:
+def maybe_auto_mmproj(models_dir: str | None, model_path: str) -> str | None:
     model_file = Path(model_path)
     sibling_candidates = [
         model_file.with_name("mmproj-F32.gguf"),
@@ -65,6 +99,9 @@ def maybe_auto_mmproj(models_dir: str, model_path: str) -> str | None:
     for candidate in sibling_candidates:
         if candidate.is_file():
             return str(candidate)
+
+    if not models_dir:
+        return None
 
     root = Path(models_dir)
     flat_candidates = [
@@ -85,7 +122,8 @@ class BackendSpec:
     label: str
     runtime_dir: str
     llama_server_path: str
-    models_dir: str
+    models_dir: str | None
+    catalog_url: str | None
     description: str
     capabilities: list[str]
     default_args: list[str] = field(default_factory=list)
@@ -148,6 +186,7 @@ class RuntimeManager:
             else self._discover_runtime_root()
         )
         self.backend_overrides = backend_overrides or {}
+        self.catalog_cache: dict[str, dict[str, Any]] = {}
         self.backends = self._build_default_backends()
         self.selected_backend_id = (
             default_backend_id if default_backend_id in self.backends else next(iter(self.backends))
@@ -166,6 +205,25 @@ class RuntimeManager:
             return Path(resolve_input_path(str(override), self.app_root)).resolve()
         return default_root.resolve()
 
+    def _resolve_backend_models_dir(
+        self,
+        backend_id: str,
+        override: dict[str, Any],
+        env_var: str,
+        default_root: Path,
+    ) -> str | None:
+        env_value = os.environ.get(env_var)
+        if env_value:
+            return resolve_input_path(env_value, self.app_root)
+
+        if "models_dir" in override:
+            override_value = override.get("models_dir")
+            if override_value in (None, ""):
+                return None
+            return resolve_input_path(str(override_value), self.app_root)
+
+        return resolve_input_path(str(default_root), self.app_root)
+
     def _build_default_backends(self) -> dict[str, BackendSpec]:
         cpu_root = self._resolve_backend_runtime_dir("llama.cpp-CPU", self.runtime_root / "llama.cpp-CPU")
         gpu_root = self._resolve_backend_runtime_dir("llama.cpp-GPU", self.runtime_root / "llama.cpp-GPU")
@@ -183,13 +241,13 @@ class RuntimeManager:
                 ),
                 self.app_root,
             ),
-            models_dir=resolve_input_path(
-                os.environ.get(
-                    "OMNIINFER_LLAMA_CPP_CPU_MODELS_DIR",
-                    str(cpu_override.get("models_dir") or (cpu_root / "models")),
-                ),
-                self.app_root,
+            models_dir=self._resolve_backend_models_dir(
+                "llama.cpp-CPU",
+                cpu_override,
+                "OMNIINFER_LLAMA_CPP_CPU_MODELS_DIR",
+                cpu_root / "models",
             ),
+            catalog_url=str(cpu_override.get("catalog_url") or "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/llama.cpp-cpu/model_list.json"),
             description="llama.cpp CPU backend managed by OmniInfer",
             capabilities=["chat", "vision", "stream", "cpu"],
         )
@@ -206,13 +264,13 @@ class RuntimeManager:
                 ),
                 self.app_root,
             ),
-            models_dir=resolve_input_path(
-                os.environ.get(
-                    "OMNIINFER_LLAMA_CPP_GPU_MODELS_DIR",
-                    str(gpu_override.get("models_dir") or (gpu_root / "models")),
-                ),
-                self.app_root,
+            models_dir=self._resolve_backend_models_dir(
+                "llama.cpp-GPU",
+                gpu_override,
+                "OMNIINFER_LLAMA_CPP_GPU_MODELS_DIR",
+                gpu_root / "models",
             ),
+            catalog_url=str(gpu_override.get("catalog_url")) if gpu_override.get("catalog_url") else None,
             description="llama.cpp CUDA backend managed by OmniInfer",
             capabilities=["chat", "vision", "stream", "gpu", "cuda"],
             default_args=["-ngl", gpu_ngl],
@@ -255,13 +313,42 @@ class RuntimeManager:
     def _resolve_model_path(self, backend: BackendSpec, model: str) -> str:
         path = Path(model).expanduser()
         if not path.is_absolute():
+            if not backend.models_dir:
+                raise ValueError("relative model path requires a configured models_dir or an absolute model path")
             path = Path(backend.models_dir) / path
         return str(path.resolve())
+
+    def _resolve_models_scan_root(self, backend: BackendSpec, models_path: str | None) -> Path:
+        if models_path:
+            return Path(resolve_input_path(models_path, self.app_root)).resolve()
+        if not backend.models_dir:
+            raise ValueError("models_path is required because this backend has no default models_dir configured")
+        return Path(backend.models_dir).resolve()
+
+    def _fetch_backend_catalog(self, backend: BackendSpec, refresh: bool = False) -> dict[str, Any]:
+        if not backend.catalog_url:
+            return {}
+        if not refresh and backend.id in self.catalog_cache:
+            return self.catalog_cache[backend.id]
+
+        req = urllib.request.Request(
+            backend.catalog_url,
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"invalid model catalog payload for backend: {backend.id}")
+        self.catalog_cache[backend.id] = payload
+        return payload
 
     def _resolve_mmproj_path(self, backend: BackendSpec, mmproj: str | None, model_path: str) -> str | None:
         if mmproj:
             path = Path(mmproj).expanduser()
             if not path.is_absolute():
+                if not backend.models_dir:
+                    raise ValueError("relative mmproj path requires a configured models_dir or an absolute mmproj path")
                 path = Path(backend.models_dir) / path
             resolved = str(path.resolve())
             if not Path(resolved).is_file():
@@ -369,7 +456,7 @@ class RuntimeManager:
             self._stop_runtime_locked()
             return {"ok": True, "stopped": True, "selected_backend": self.selected_backend_id}
 
-    def list_models(self, backend_id: str | None = None) -> list[dict[str, Any]]:
+    def list_models(self, backend_id: str | None = None, models_path: str | None = None) -> list[dict[str, Any]]:
         targets: list[BackendSpec]
         if backend_id and backend_id != "all":
             targets = [self._get_backend(backend_id)]
@@ -380,21 +467,110 @@ class RuntimeManager:
 
         entries: list[dict[str, Any]] = []
         for backend in targets:
-            root = Path(backend.models_dir)
+            root = self._resolve_models_scan_root(backend, models_path)
             if not root.is_dir():
-                continue
+                raise FileNotFoundError(f"models path not found: {root}")
             for path in sorted(root.rglob("*.gguf")):
                 if not path.is_file() or not is_gguf_model(path.name):
                     continue
                 rel = path.relative_to(root).as_posix()
+                mmproj_path = maybe_auto_mmproj(str(root), str(path))
                 entries.append(
                     {
                         "id": rel,
                         "backend": backend.id,
                         "path": str(path),
+                        "models_path": str(root),
+                        "mmproj_path": mmproj_path,
                     }
                 )
         return entries
+
+    def list_supported_models(self, backend_id: str | None = None, refresh: bool = False) -> dict[str, Any]:
+        backend = self._get_backend(backend_id)
+        if not backend.catalog_url:
+            return {
+                "backend": backend.id,
+                "catalog_available": False,
+                "catalog_url": None,
+                "device": {
+                    "available_memory_gib": bytes_to_gib(get_available_memory_bytes()),
+                    "safety_margin_gib": 1.0,
+                },
+                "data": [],
+            }
+
+        catalog = self._fetch_backend_catalog(backend, refresh=refresh)
+        available_memory_gib = bytes_to_gib(get_available_memory_bytes())
+        safety_margin_gib = 1.0
+        entries: list[dict[str, Any]] = []
+
+        for family_name, family_models in catalog.items():
+            if not isinstance(family_models, dict):
+                continue
+            for model_name, model_info in family_models.items():
+                if not isinstance(model_info, dict):
+                    continue
+                tags = model_info.get("tag")
+                if not isinstance(tags, list):
+                    tags = []
+                readme_path = model_info.get("README")
+                quantizations = model_info.get("quantization")
+                if not isinstance(quantizations, dict):
+                    continue
+
+                vision_info = model_info.get("vision")
+                vision_download = None
+                vision_size_gib = 0.0
+                if isinstance(vision_info, dict):
+                    vision_download = vision_info.get("download")
+                    try:
+                        vision_size_gib = float(vision_info.get("size") or 0.0)
+                    except (TypeError, ValueError):
+                        vision_size_gib = 0.0
+
+                for quant_name, quant_info in quantizations.items():
+                    if not isinstance(quant_info, dict):
+                        continue
+                    try:
+                        model_size_gib = float(quant_info.get("size") or 0.0)
+                    except (TypeError, ValueError):
+                        model_size_gib = 0.0
+                    required_memory_gib = round(model_size_gib + vision_size_gib, 2)
+                    suitable = available_memory_gib >= round(required_memory_gib + safety_margin_gib, 2)
+                    entries.append(
+                        {
+                            "id": f"{model_name}:{quant_name}",
+                            "family": family_name,
+                            "model": model_name,
+                            "quantization": quant_name,
+                            "backend": backend.id,
+                            "tags": tags,
+                            "vision": bool(vision_info),
+                            "download": quant_info.get("download"),
+                            "size_gib": model_size_gib,
+                            "mmproj_download": vision_download,
+                            "mmproj_size_gib": vision_size_gib if vision_info else 0.0,
+                            "required_memory_gib": required_memory_gib,
+                            "available_memory_gib": available_memory_gib,
+                            "safety_margin_gib": safety_margin_gib,
+                            "suitable": suitable,
+                            "readme": readme_path,
+                        }
+                    )
+
+        entries.sort(key=lambda item: (item["model"], item["quantization"]))
+        return {
+            "backend": backend.id,
+            "catalog_available": True,
+            "catalog_url": backend.catalog_url,
+            "device": {
+                "available_memory_gib": available_memory_gib,
+                "safety_margin_gib": safety_margin_gib,
+                "rule": "available_memory_gib >= required_memory_gib + safety_margin_gib",
+            },
+            "data": entries,
+        }
 
     def ensure_model_loaded(
         self,

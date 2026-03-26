@@ -5,7 +5,7 @@ This directory contains the files needed to build a portable Windows release:
 - `OmniInfer.exe`
 - `config/omniinfer.json`
 - bundled backend files
-- bundled model directory
+- no bundled model weights
 
 Build the portable package from the repository root with:
 
@@ -24,3 +24,6 @@ Run the packaged service with:
 ```powershell
 .\release\portable\OmniInfer\OmniInfer.exe
 ```
+
+Model discovery is driven by the caller-provided `models_path` query parameter on `GET /omni/models`.
+Portable builds do not ship with a default `runtime\models` directory.

@@ -274,19 +274,49 @@ class OmniHandler(BaseHTTPRequestHandler):
 
         if path == "/omni/models":
             backend = query.get("backend", [None])[0]
+            models_path = query.get("models_path", [None])[0]
+            try:
+                models = self.manager.list_models(backend_id=backend, models_path=models_path)
+            except (ValueError, FileNotFoundError) as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
             self._send_json(
                 200,
                 {
                     "object": "list",
                     "backend": backend or self.manager.snapshot()["backend"],
-                    "data": self.manager.list_models(backend_id=backend),
+                    "models_path": models_path,
+                    "data": models,
+                },
+            )
+            return
+
+        if path == "/omni/supported-models":
+            backend = query.get("backend", [None])[0]
+            refresh_raw = query.get("refresh", ["0"])[0]
+            refresh = str(refresh_raw).strip().lower() in {"1", "true", "yes", "on"}
+            try:
+                payload = self.manager.list_supported_models(backend_id=backend, refresh=refresh)
+            except (ValueError, RuntimeError, urllib.error.URLError) as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
+            self._send_json(
+                200,
+                {
+                    "object": "list",
+                    **payload,
                 },
             )
             return
 
         if path == "/v1/models":
             backend = query.get("backend", [None])[0]
-            models = self.manager.list_models(backend_id=backend)
+            models_path = query.get("models_path", [None])[0]
+            try:
+                models = self.manager.list_models(backend_id=backend, models_path=models_path)
+            except (ValueError, FileNotFoundError) as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
             payload = {
                 "object": "list",
                 "data": [
@@ -466,7 +496,7 @@ def main() -> int:
     print(f"OmniInfer listening on http://{args.host}:{args.port}")
     print(f"Selected backend on startup: {manager.snapshot()['backend']}")
     print(f"Default thinking mode: {'on' if httpd.default_thinking else 'off'}")
-    print("Use GET /omni/backends -> GET /omni/models -> POST /omni/model/select")
+    print("Use GET /omni/backends -> GET /omni/supported-models -> GET /omni/models -> POST /omni/model/select")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

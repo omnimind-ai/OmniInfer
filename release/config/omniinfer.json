@@ -6,10 +6,10 @@
   "startup_timeout": 60,
   "backends": {
     "llama.cpp-CPU": {
-      "models_dir": "runtime/models"
+      "models_dir": ""
     },
     "llama.cpp-GPU": {
-      "models_dir": "runtime/models",
+      "models_dir": "",
       "ngl": "999"
     }
   }

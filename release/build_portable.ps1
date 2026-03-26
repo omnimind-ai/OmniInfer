@@ -76,11 +76,6 @@ Copy-RuntimeBin `
     -SourceRoot (Join-Path $RepoRoot "platform\Windows\llama.cpp-GPU") `
     -TargetRoot (Join-Path $DistRoot "runtime\llama.cpp-GPU")
 
-Copy-Item `
-    -LiteralPath (Join-Path $RepoRoot "platform\Windows\llama.cpp-CPU\models") `
-    -Destination (Join-Path $DistRoot "runtime\models") `
-    -Recurse -Force
-
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README.md") -Destination (Join-Path $DistRoot "README.md") -Force
 
 Write-Host ""
