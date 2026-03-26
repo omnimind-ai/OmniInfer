@@ -69,12 +69,12 @@ New-Item -ItemType Directory -Force -Path (Join-Path $DistRoot "runtime") | Out-
 Copy-Item -LiteralPath $ConfigTemplate -Destination (Join-Path $DistRoot "config\omniinfer.json") -Force
 
 Copy-RuntimeBin `
-    -SourceRoot (Join-Path $RepoRoot "platform\Windows\llama.cpp-CPU") `
-    -TargetRoot (Join-Path $DistRoot "runtime\llama.cpp-CPU")
+    -SourceRoot (Join-Path $RepoRoot "platform\Windows\llama.cpp-cpu") `
+    -TargetRoot (Join-Path $DistRoot "runtime\llama.cpp-cpu")
 
 Copy-RuntimeBin `
-    -SourceRoot (Join-Path $RepoRoot "platform\Windows\llama.cpp-GPU") `
-    -TargetRoot (Join-Path $DistRoot "runtime\llama.cpp-GPU")
+    -SourceRoot (Join-Path $RepoRoot "platform\Windows\llama.cpp-cuda") `
+    -TargetRoot (Join-Path $DistRoot "runtime\llama.cpp-cuda")
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README.md") -Destination (Join-Path $DistRoot "README.md") -Force
 

@@ -25,5 +25,7 @@ Run the packaged service with:
 .\release\portable\OmniInfer\OmniInfer.exe
 ```
 
-Model discovery is driven by the caller-provided `models_path` query parameter on `GET /omni/models`.
 Portable builds do not ship with a default `runtime\models` directory.
+`GET /v1/models` is currently not maintained in OmniInfer.
+Use `GET /omni/supported-models?system=windows` or `GET /omni/supported-models?system=mac`
+to fetch the latest supported-model catalog from the remote source.

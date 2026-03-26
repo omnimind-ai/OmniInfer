@@ -20,14 +20,16 @@ __pycache__/
 .env.*
 
 # OmniInfer runtime files
-platform/Windows/llama.cpp-CPU/logs/*.log
-platform/Windows/llama.cpp-CPU/models/*
-!platform/Windows/llama.cpp-CPU/models/.gitkeep
-platform/Windows/llama.cpp-GPU/logs/*.log
-platform/Windows/llama.cpp-GPU/bin/*
-!platform/Windows/llama.cpp-GPU/bin/.gitkeep
-platform/Windows/llama.cpp-GPU/models/*
-!platform/Windows/llama.cpp-GPU/models/.gitkeep
+platform/Windows/llama.cpp-cpu/build/
+platform/Windows/llama.cpp-cpu/logs/*.log
+platform/Windows/llama.cpp-cpu/models/*
+!platform/Windows/llama.cpp-cpu/models/.gitkeep
+platform/Windows/llama.cpp-cuda/build/
+platform/Windows/llama.cpp-cuda/logs/*.log
+platform/Windows/llama.cpp-cuda/bin/*
+!platform/Windows/llama.cpp-cuda/bin/.gitkeep
+platform/Windows/llama.cpp-cuda/models/*
+!platform/Windows/llama.cpp-cuda/models/.gitkeep
 
 /tmp
 tmp_gateway_*.log

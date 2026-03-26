@@ -14,6 +14,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+SYSTEM_MODEL_LIST_URLS: dict[str, str] = {
+    "windows": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/windows/model_list.json",
+    "mac": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/mac/model_list.json",
+}
+
 
 def resolve_input_path(value: str, base_dir: Path) -> str:
     path = Path(value).expanduser()
@@ -79,8 +84,50 @@ def get_available_memory_bytes() -> int:
     return int(page_size * avail_pages)
 
 
+def get_available_cuda_memory_bytes() -> int | None:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.free",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    free_mib_values: list[int] = []
+    for line in result.stdout.splitlines():
+        value = line.strip()
+        if not value:
+            continue
+        try:
+            free_mib_values.append(int(value))
+        except ValueError:
+            continue
+
+    if not free_mib_values:
+        return None
+
+    # Current runtime uses one CUDA backend at a time; pick the GPU with the most free VRAM.
+    return max(free_mib_values) * 1024 * 1024
+
+
 def bytes_to_gib(value: int) -> float:
     return round(float(value) / float(1024 ** 3), 2)
+
+
+def parse_size_gib(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def is_gguf_model(filename: str) -> bool:
@@ -172,7 +219,7 @@ class RuntimeManager:
         startup_timeout_s: int,
         runtime_root: str | None = None,
         backend_overrides: dict[str, dict[str, Any]] | None = None,
-        default_backend_id: str = "llama.cpp-CPU",
+        default_backend_id: str = "llama.cpp-cpu",
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.app_root = Path(app_root).resolve() if app_root else self.repo_root
@@ -186,7 +233,6 @@ class RuntimeManager:
             else self._discover_runtime_root()
         )
         self.backend_overrides = backend_overrides or {}
-        self.catalog_cache: dict[str, dict[str, Any]] = {}
         self.backends = self._build_default_backends()
         self.selected_backend_id = (
             default_backend_id if default_backend_id in self.backends else next(iter(self.backends))
@@ -225,14 +271,14 @@ class RuntimeManager:
         return resolve_input_path(str(default_root), self.app_root)
 
     def _build_default_backends(self) -> dict[str, BackendSpec]:
-        cpu_root = self._resolve_backend_runtime_dir("llama.cpp-CPU", self.runtime_root / "llama.cpp-CPU")
-        gpu_root = self._resolve_backend_runtime_dir("llama.cpp-GPU", self.runtime_root / "llama.cpp-GPU")
-        cpu_override = self.backend_overrides.get("llama.cpp-CPU", {})
-        gpu_override = self.backend_overrides.get("llama.cpp-GPU", {})
+        cpu_root = self._resolve_backend_runtime_dir("llama.cpp-cpu", self.runtime_root / "llama.cpp-cpu")
+        gpu_root = self._resolve_backend_runtime_dir("llama.cpp-cuda", self.runtime_root / "llama.cpp-cuda")
+        cpu_override = self.backend_overrides.get("llama.cpp-cpu", {})
+        gpu_override = self.backend_overrides.get("llama.cpp-cuda", {})
 
         cpu = BackendSpec(
-            id="llama.cpp-CPU",
-            label="llama.cpp CPU",
+            id="llama.cpp-cpu",
+            label="llama.cpp cpu",
             runtime_dir=str(cpu_root),
             llama_server_path=resolve_input_path(
                 os.environ.get(
@@ -242,32 +288,32 @@ class RuntimeManager:
                 self.app_root,
             ),
             models_dir=self._resolve_backend_models_dir(
-                "llama.cpp-CPU",
+                "llama.cpp-cpu",
                 cpu_override,
                 "OMNIINFER_LLAMA_CPP_CPU_MODELS_DIR",
                 cpu_root / "models",
             ),
-            catalog_url=str(cpu_override.get("catalog_url") or "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/llama.cpp-cpu/model_list.json"),
+            catalog_url=None,
             description="llama.cpp CPU backend managed by OmniInfer",
             capabilities=["chat", "vision", "stream", "cpu"],
         )
 
-        gpu_ngl = os.environ.get("OMNIINFER_LLAMA_CPP_GPU_NGL", str(gpu_override.get("ngl", "999")))
+        gpu_ngl = os.environ.get("OMNIINFER_LLAMA_CPP_CUDA_NGL", str(gpu_override.get("ngl", "999")))
         gpu = BackendSpec(
-            id="llama.cpp-GPU",
-            label="llama.cpp GPU",
+            id="llama.cpp-cuda",
+            label="llama.cpp CUDA",
             runtime_dir=str(gpu_root),
             llama_server_path=resolve_input_path(
                 os.environ.get(
-                    "OMNIINFER_LLAMA_CPP_GPU_SERVER_PATH",
+                    "OMNIINFER_LLAMA_CPP_CUDA_SERVER_PATH",
                     str(gpu_override.get("server_path") or (gpu_root / "bin" / "llama-server.exe")),
                 ),
                 self.app_root,
             ),
             models_dir=self._resolve_backend_models_dir(
-                "llama.cpp-GPU",
+                "llama.cpp-cuda",
                 gpu_override,
-                "OMNIINFER_LLAMA_CPP_GPU_MODELS_DIR",
+                "OMNIINFER_LLAMA_CPP_CUDA_MODELS_DIR",
                 gpu_root / "models",
             ),
             catalog_url=str(gpu_override.get("catalog_url")) if gpu_override.get("catalog_url") else None,
@@ -325,22 +371,68 @@ class RuntimeManager:
             raise ValueError("models_path is required because this backend has no default models_dir configured")
         return Path(backend.models_dir).resolve()
 
-    def _fetch_backend_catalog(self, backend: BackendSpec, refresh: bool = False) -> dict[str, Any]:
-        if not backend.catalog_url:
-            return {}
-        if not refresh and backend.id in self.catalog_cache:
-            return self.catalog_cache[backend.id]
-
+    def _fetch_system_catalog(self, system_name: str) -> dict[str, Any]:
+        system_key = (system_name or "").strip().lower()
+        if system_key not in SYSTEM_MODEL_LIST_URLS:
+            raise ValueError("field 'system' must be one of: windows, mac")
         req = urllib.request.Request(
-            backend.catalog_url,
+            SYSTEM_MODEL_LIST_URLS[system_key],
             headers={"Accept": "application/json"},
             method="GET",
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         if not isinstance(payload, dict):
-            raise RuntimeError(f"invalid model catalog payload for backend: {backend.id}")
-        self.catalog_cache[backend.id] = payload
+            raise RuntimeError(f"invalid model catalog payload for system: {system_key}")
+        return payload
+
+    def _available_memory_gib_for_backend(self, backend_name: str) -> float:
+        if backend_name == "llama.cpp-cuda":
+            cuda_free_bytes = get_available_cuda_memory_bytes()
+            if cuda_free_bytes is not None:
+                return bytes_to_gib(cuda_free_bytes)
+            return 0.0
+        return bytes_to_gib(get_available_memory_bytes())
+
+    def _safety_margin_gib_for_backend(self, backend_name: str) -> float:
+        if backend_name == "llama.cpp-cuda":
+            return 0.5
+        return 1.0
+
+    def _annotate_supported_models(self, payload: Any, available_memory_gib: float, safety_margin_gib: float) -> Any:
+        if isinstance(payload, dict):
+            quantizations = payload.get("quantization")
+            if isinstance(quantizations, dict):
+                vision = payload.get("vision")
+                vision_size_gib = parse_size_gib(vision.get("size")) if isinstance(vision, dict) else 0.0
+                annotated: dict[str, Any] = {}
+                for key, value in payload.items():
+                    if key != "quantization":
+                        annotated[key] = self._annotate_supported_models(value, available_memory_gib, safety_margin_gib)
+                        continue
+
+                    quantization_payload: dict[str, Any] = {}
+                    for quant_name, quant_info in value.items():
+                        if not isinstance(quant_info, dict):
+                            quantization_payload[quant_name] = quant_info
+                            continue
+                        required_memory_gib = round(parse_size_gib(quant_info.get("size")) + vision_size_gib, 2)
+                        quantization_payload[quant_name] = {
+                            **quant_info,
+                            "required_memory_gib": required_memory_gib,
+                            "suitable": available_memory_gib >= round(required_memory_gib + safety_margin_gib, 2),
+                        }
+                    annotated[key] = quantization_payload
+                return annotated
+
+            return {
+                key: self._annotate_supported_models(value, available_memory_gib, safety_margin_gib)
+                for key, value in payload.items()
+            }
+
+        if isinstance(payload, list):
+            return [self._annotate_supported_models(item, available_memory_gib, safety_margin_gib) for item in payload]
+
         return payload
 
     def _resolve_mmproj_path(self, backend: BackendSpec, mmproj: str | None, model_path: str) -> str | None:
@@ -456,121 +548,16 @@ class RuntimeManager:
             self._stop_runtime_locked()
             return {"ok": True, "stopped": True, "selected_backend": self.selected_backend_id}
 
-    def list_models(self, backend_id: str | None = None, models_path: str | None = None) -> list[dict[str, Any]]:
-        targets: list[BackendSpec]
-        if backend_id and backend_id != "all":
-            targets = [self._get_backend(backend_id)]
-        elif backend_id == "all":
-            targets = list(self.backends.values())
-        else:
-            targets = [self._get_backend()]
-
-        entries: list[dict[str, Any]] = []
-        for backend in targets:
-            root = self._resolve_models_scan_root(backend, models_path)
-            if not root.is_dir():
-                raise FileNotFoundError(f"models path not found: {root}")
-            for path in sorted(root.rglob("*.gguf")):
-                if not path.is_file() or not is_gguf_model(path.name):
-                    continue
-                rel = path.relative_to(root).as_posix()
-                mmproj_path = maybe_auto_mmproj(str(root), str(path))
-                entries.append(
-                    {
-                        "id": rel,
-                        "backend": backend.id,
-                        "path": str(path),
-                        "models_path": str(root),
-                        "mmproj_path": mmproj_path,
-                    }
-                )
-        return entries
-
-    def list_supported_models(self, backend_id: str | None = None, refresh: bool = False) -> dict[str, Any]:
-        backend = self._get_backend(backend_id)
-        if not backend.catalog_url:
-            return {
-                "backend": backend.id,
-                "catalog_available": False,
-                "catalog_url": None,
-                "device": {
-                    "available_memory_gib": bytes_to_gib(get_available_memory_bytes()),
-                    "safety_margin_gib": 1.0,
-                },
-                "data": [],
-            }
-
-        catalog = self._fetch_backend_catalog(backend, refresh=refresh)
-        available_memory_gib = bytes_to_gib(get_available_memory_bytes())
-        safety_margin_gib = 1.0
-        entries: list[dict[str, Any]] = []
-
-        for family_name, family_models in catalog.items():
-            if not isinstance(family_models, dict):
-                continue
-            for model_name, model_info in family_models.items():
-                if not isinstance(model_info, dict):
-                    continue
-                tags = model_info.get("tag")
-                if not isinstance(tags, list):
-                    tags = []
-                readme_path = model_info.get("README")
-                quantizations = model_info.get("quantization")
-                if not isinstance(quantizations, dict):
-                    continue
-
-                vision_info = model_info.get("vision")
-                vision_download = None
-                vision_size_gib = 0.0
-                if isinstance(vision_info, dict):
-                    vision_download = vision_info.get("download")
-                    try:
-                        vision_size_gib = float(vision_info.get("size") or 0.0)
-                    except (TypeError, ValueError):
-                        vision_size_gib = 0.0
-
-                for quant_name, quant_info in quantizations.items():
-                    if not isinstance(quant_info, dict):
-                        continue
-                    try:
-                        model_size_gib = float(quant_info.get("size") or 0.0)
-                    except (TypeError, ValueError):
-                        model_size_gib = 0.0
-                    required_memory_gib = round(model_size_gib + vision_size_gib, 2)
-                    suitable = available_memory_gib >= round(required_memory_gib + safety_margin_gib, 2)
-                    entries.append(
-                        {
-                            "id": f"{model_name}:{quant_name}",
-                            "family": family_name,
-                            "model": model_name,
-                            "quantization": quant_name,
-                            "backend": backend.id,
-                            "tags": tags,
-                            "vision": bool(vision_info),
-                            "download": quant_info.get("download"),
-                            "size_gib": model_size_gib,
-                            "mmproj_download": vision_download,
-                            "mmproj_size_gib": vision_size_gib if vision_info else 0.0,
-                            "required_memory_gib": required_memory_gib,
-                            "available_memory_gib": available_memory_gib,
-                            "safety_margin_gib": safety_margin_gib,
-                            "suitable": suitable,
-                            "readme": readme_path,
-                        }
-                    )
-
-        entries.sort(key=lambda item: (item["model"], item["quantization"]))
-        return {
-            "backend": backend.id,
-            "catalog_available": True,
-            "catalog_url": backend.catalog_url,
-            "device": {
-                "available_memory_gib": available_memory_gib,
-                "safety_margin_gib": safety_margin_gib,
-                "rule": "available_memory_gib >= required_memory_gib + safety_margin_gib",
-            },
-            "data": entries,
-        }
+    def list_supported_models(self, system_name: str) -> dict[str, Any]:
+        catalog = self._fetch_system_catalog(system_name)
+        annotated: dict[str, Any] = {}
+        for backend_name, backend_payload in catalog.items():
+            annotated[backend_name] = self._annotate_supported_models(
+                backend_payload,
+                self._available_memory_gib_for_backend(backend_name),
+                self._safety_margin_gib_for_backend(backend_name),
+            )
+        return annotated
 
     def ensure_model_loaded(
         self,

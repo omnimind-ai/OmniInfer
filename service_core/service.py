@@ -38,18 +38,18 @@ def load_app_config(app_root: Path) -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "host": "127.0.0.1",
         "port": 9000,
-        "default_backend": "llama.cpp-CPU",
+        "default_backend": "llama.cpp-cpu",
         "default_thinking": "off",
         "startup_timeout": 60,
         "runtime_root": "runtime",
         "backends": {
-            "llama.cpp-CPU": {
-                "runtime_dir": "runtime/llama.cpp-CPU",
-                "models_dir": "runtime/llama.cpp-CPU/models",
+            "llama.cpp-cpu": {
+                "runtime_dir": "runtime/llama.cpp-cpu",
+                "models_dir": "runtime/llama.cpp-cpu/models",
             },
-            "llama.cpp-GPU": {
-                "runtime_dir": "runtime/llama.cpp-GPU",
-                "models_dir": "runtime/llama.cpp-GPU/models",
+            "llama.cpp-cuda": {
+                "runtime_dir": "runtime/llama.cpp-cuda",
+                "models_dir": "runtime/llama.cpp-cuda/models",
                 "ngl": "999",
             },
         },
@@ -273,63 +273,35 @@ class OmniHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/omni/models":
-            backend = query.get("backend", [None])[0]
-            models_path = query.get("models_path", [None])[0]
-            try:
-                models = self.manager.list_models(backend_id=backend, models_path=models_path)
-            except (ValueError, FileNotFoundError) as e:
-                self._send_json(400, {"error": {"message": str(e)}})
-                return
             self._send_json(
-                200,
+                410,
                 {
-                    "object": "list",
-                    "backend": backend or self.manager.snapshot()["backend"],
-                    "models_path": models_path,
-                    "data": models,
+                    "error": {
+                        "message": "GET /omni/models has been deprecated and is no longer maintained"
+                    }
                 },
             )
             return
 
         if path == "/omni/supported-models":
-            backend = query.get("backend", [None])[0]
-            refresh_raw = query.get("refresh", ["0"])[0]
-            refresh = str(refresh_raw).strip().lower() in {"1", "true", "yes", "on"}
+            system_name = query.get("system", [None])[0]
             try:
-                payload = self.manager.list_supported_models(backend_id=backend, refresh=refresh)
+                payload = self.manager.list_supported_models(system_name=system_name or "")
             except (ValueError, RuntimeError, urllib.error.URLError) as e:
                 self._send_json(400, {"error": {"message": str(e)}})
                 return
-            self._send_json(
-                200,
-                {
-                    "object": "list",
-                    **payload,
-                },
-            )
+            self._send_json(200, payload)
             return
 
         if path == "/v1/models":
-            backend = query.get("backend", [None])[0]
-            models_path = query.get("models_path", [None])[0]
-            try:
-                models = self.manager.list_models(backend_id=backend, models_path=models_path)
-            except (ValueError, FileNotFoundError) as e:
-                self._send_json(400, {"error": {"message": str(e)}})
-                return
-            payload = {
-                "object": "list",
-                "data": [
-                    {
-                        "id": item["id"],
-                        "object": "model",
-                        "owned_by": item["backend"],
-                        "root": item["backend"],
+            self._send_json(
+                410,
+                {
+                    "error": {
+                        "message": "GET /v1/models is not maintained in OmniInfer right now"
                     }
-                    for item in models
-                ],
-            }
-            self._send_json(200, payload)
+                },
+            )
             return
 
         self._send_json(404, {"error": {"message": f"not found: {path}"}})
@@ -463,7 +435,7 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
     p.add_argument(
         "--default-backend",
         default=config["default_backend"],
-        help="Backend selected on startup (llama.cpp-CPU or llama.cpp-GPU)",
+        help="Backend selected on startup (llama.cpp-cpu or llama.cpp-cuda)",
     )
     p.add_argument(
         "--default-thinking",
@@ -496,7 +468,7 @@ def main() -> int:
     print(f"OmniInfer listening on http://{args.host}:{args.port}")
     print(f"Selected backend on startup: {manager.snapshot()['backend']}")
     print(f"Default thinking mode: {'on' if httpd.default_thinking else 'off'}")
-    print("Use GET /omni/backends -> GET /omni/supported-models -> GET /omni/models -> POST /omni/model/select")
+    print("Use GET /omni/backends -> GET /omni/supported-models -> POST /omni/model/select")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
