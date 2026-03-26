@@ -36,7 +36,7 @@ OmniInfer runs everywhere:
 
 ## Architecture
 
-![omni_studio_architecture](D:\omni_studio\OmniInfer\image_en.png)
+![omni_studio_architecture](./image_en.png)
 
 
 
