@@ -13,8 +13,7 @@ OmniInfer is a high-performance, cross-platform inference engine for running Lar
 OmniInfer is fast with:
 
 - Optimized token generation speed and minimal memory footprint
-- Efficient KV Cache management
-- Multiple backend engines (llama.cpp, vLLM, OmniInfer Native) for best-fit performance
+- Multiple backend engines (llama.cpp, mnn, et, mlx, OmniInfer Native) for best-fit performance
 - Hardware-aware adaptation and optimization
 
 OmniInfer is flexible and easy to use with:
