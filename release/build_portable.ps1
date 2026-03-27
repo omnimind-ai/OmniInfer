@@ -11,6 +11,7 @@ $DistRoot = Join-Path $PortableRoot $PackageName
 $WorkRoot = Join-Path $BuildRoot "pyinstaller-work"
 $SpecRoot = Join-Path $BuildRoot "pyinstaller-spec"
 $ConfigTemplate = Join-Path $PSScriptRoot "config\omniinfer.json"
+$UsageTemplate = Join-Path $RepoRoot "tmp\usage.md"
 
 function Require-Command {
     param([string]$Name)
@@ -57,6 +58,7 @@ python -m PyInstaller `
     --noconfirm `
     --clean `
     --onedir `
+    --windowed `
     --name $PackageName `
     --distpath $PortableRoot `
     --workpath $WorkRoot `
@@ -76,7 +78,9 @@ Copy-RuntimeBin `
     -SourceRoot (Join-Path $RepoRoot "platform\Windows\llama.cpp-cuda") `
     -TargetRoot (Join-Path $DistRoot "runtime\llama.cpp-cuda")
 
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README.md") -Destination (Join-Path $DistRoot "README.md") -Force
+if (Test-Path $UsageTemplate) {
+    Copy-Item -LiteralPath $UsageTemplate -Destination (Join-Path $DistRoot "usage.md") -Force
+}
 
 Write-Host ""
 Write-Host "Portable package ready:"
@@ -84,3 +88,4 @@ Write-Host "  $DistRoot"
 Write-Host ""
 Write-Host "Run with:"
 Write-Host "  $DistRoot\\$PackageName.exe"
+Write-Host "  $DistRoot\\$PackageName.exe --window-mode visible"

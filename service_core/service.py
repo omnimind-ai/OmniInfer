@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,16 +41,12 @@ def load_app_config(app_root: Path) -> dict[str, Any]:
         "port": 9000,
         "default_backend": "llama.cpp-cpu",
         "default_thinking": "off",
+        "window_mode": "hidden",
         "startup_timeout": 60,
         "runtime_root": "runtime",
         "backends": {
-            "llama.cpp-cpu": {
-                "runtime_dir": "runtime/llama.cpp-cpu",
-                "models_dir": "runtime/llama.cpp-cpu/models",
-            },
+            "llama.cpp-cpu": {},
             "llama.cpp-cuda": {
-                "runtime_dir": "runtime/llama.cpp-cuda",
-                "models_dir": "runtime/llama.cpp-cuda/models",
                 "ngl": "999",
             },
         },
@@ -219,13 +216,16 @@ class OmniHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            return
 
     def _read_json(self) -> dict[str, Any]:
         n = int(self.headers.get("Content-Length", "0") or "0")
         raw = self.rfile.read(n) if n > 0 else b"{}"
         try:
-            obj = json.loads(raw.decode("utf-8"))
+            obj = json.loads(raw.decode("utf-8-sig"))
             if isinstance(obj, dict):
                 return obj
         except json.JSONDecodeError:
@@ -293,6 +293,16 @@ class OmniHandler(BaseHTTPRequestHandler):
             self._send_json(200, payload)
             return
 
+        if path == "/omni/supported-models/best":
+            system_name = query.get("system", [None])[0]
+            try:
+                payload = self.manager.list_supported_models_best(system_name=system_name or "")
+            except (ValueError, RuntimeError, urllib.error.URLError) as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
+            self._send_json(200, payload)
+            return
+
         if path == "/v1/models":
             self._send_json(
                 410,
@@ -327,6 +337,11 @@ class OmniHandler(BaseHTTPRequestHandler):
             self._send_json(200, self.manager.stop_runtime())
             return
 
+        if path == "/omni/shutdown":
+            self._send_json(200, {"ok": True, "message": "shutdown requested"})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
+
         if path == "/omni/thinking/select":
             payload = self._read_json()
             raw_enabled = payload.get("enabled", payload.get("think"))
@@ -352,7 +367,7 @@ class OmniHandler(BaseHTTPRequestHandler):
             try:
                 result = self.manager.select_model(model=model, mmproj=mmproj, backend_id=backend)
             except (ValueError, FileNotFoundError, RuntimeError) as e:
-                status = 400 if isinstance(e, (ValueError, FileNotFoundError)) else 500
+                status = 400 if isinstance(e, (ValueError, FileNotFoundError)) else 409
                 self._send_json(status, {"error": {"message": str(e)}})
                 return
             self._send_json(200, result)
@@ -443,6 +458,12 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
         default=str(config["default_thinking"]),
         help="Default thinking mode for chat requests when not overridden per request",
     )
+    p.add_argument(
+        "--window-mode",
+        choices=("visible", "hidden"),
+        default=str(config.get("window_mode", config.get("backend_window_mode", "hidden"))),
+        help="Whether OmniInfer and managed backend console windows should be visible or hidden",
+    )
     p.add_argument("--startup-timeout", type=int, default=int(config["startup_timeout"]), help="Backend startup timeout seconds")
     return p.parse_args()
 
@@ -456,6 +477,7 @@ def main() -> int:
         backend_host=args.backend_host,
         backend_port=args.backend_port,
         startup_timeout_s=args.startup_timeout,
+        backend_window_mode=args.window_mode,
         runtime_root=str(config.get("runtime_root", "runtime")),
         backend_overrides=config.get("backends"),
         default_backend_id=args.default_backend,
@@ -468,7 +490,7 @@ def main() -> int:
     print(f"OmniInfer listening on http://{args.host}:{args.port}")
     print(f"Selected backend on startup: {manager.snapshot()['backend']}")
     print(f"Default thinking mode: {'on' if httpd.default_thinking else 'off'}")
-    print("Use GET /omni/backends -> GET /omni/supported-models -> POST /omni/model/select")
+    print("Use GET /omni/backends -> GET /omni/supported-models/best -> POST /omni/model/select")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
