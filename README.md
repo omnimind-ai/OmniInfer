@@ -1,71 +1,52 @@
 # OmniInfer
 
-<p align="center">
-  <img src="assets/OmniInfer_logo.png" alt="OmniInfer Logo" width="400">
-</p>
+Easy, fast, and private LLM & VLM inference for every device
 
-<p align="center">
-  <strong>A High-Performance Cross-Platform Inference Engine for LLMs and VLMs</strong>
-</p>
+| [Documentation](#getting-started) | [Architecture](#architecture) | [Supported Models](#supported-models) |
 
-<p align="center">
-  <a href="#features">Features</a> •
-  <a href="#supported-backends">Backends</a> •
-  <a href="#supported-platforms">Platforms</a> •
-  <a href="#license">License</a>
-</p>
+## About
 
----
+OmniInfer is a high-performance, cross-platform inference engine for running Large Language Models (LLM) and Vision-Language Models (VLM) locally. It abstracts away model compilation, hardware adaptation, and deployment complexity, enabling efficient local inference with minimal configuration.
 
-## Overview
+> OmniInfer powers the inference layer of [Omni Studio](https://github.com/omnimind-ai/OmniStudio), a unified model orchestration platform.
 
-**OmniInfer** is the high-performance inference backend engine for [Omni Studio](https://github.com/omnimind-ai), designed to enable efficient local deployment of large language models (LLMs) and vision-language models (VLMs) across multiple platforms and backends.
+OmniInfer is fast with:
 
-OmniInfer abstracts away the complexity of model compilation, hardware adaptation, and deployment, allowing users to run LLMs and VLMs locally with minimal configuration. It serves as the core inference engine powering Omni Studio's seamless cross-platform experience.
+- Optimized token generation speed and minimal memory footprint
+- Multiple backend engines (llama.cpp, mnn, et, mlx, OmniInfer Native) for best-fit performance
+- Hardware-aware adaptation and optimization
 
-## Features
+OmniInfer is flexible and easy to use with:
 
-- **🚀 High Performance** - Optimized inference with minimal memory footprint and fast token generation
-- **🔧 Multi-Backend Support** - Flexible backend architecture supporting various inference engines
-- **📱 Cross-Platform** - Run models on Android, iOS, macOS, Windows, and Linux
-- **🤖 LLM & VLM Support** - Run both large language models and vision-language models
-- **🔌 OpenAI API Compatible** - Easy integration with existing applications and workflows
-- **🛡️ Privacy First** - All inference runs locally, keeping your data private
+- Seamless multi-backend switching — choose the best engine for your workload
+- OpenAI-compatible API server for drop-in integration
+- Support for LLM, VLM, and World Models
+- Fine-grained parameter control (context length, GPU offloading, KV cache, etc.)
 
-## Supported Backends
+OmniInfer runs everywhere:
 
-OmniInfer supports multiple inference backends, currently organized as separate branches:
+- Linux, macOS, Windows — desktop & server
+- Android, iOS — mobile & edge devices
+- One codebase, all platforms
 
-| Backend | Branch | Description |
-|---------|--------|-------------|
-| **llama.cpp** | `main` | GGML-based inference with broad model format support |
-| **OmniInfer Native** | `feature/llm-backend` | Our self-developed inference engine with optimized performance |
+## Getting Started
 
-> **🚧 Work in Progress:** We are actively integrating multiple backends into a unified architecture. A more streamlined and user-friendly multi-backend experience is coming soon!
 
-## Supported Platforms
 
-| Platform | Status |
-|----------|--------|
-| Linux | ✅ Supported |
-| macOS | ✅ Supported |
-| Windows | ✅ Supported |
-| Android | ✅ Supported |
-| iOS | ✅ Supported |
+## Architecture
+
+![omni_studio_architecture](./image_en.png)
+
+
+
+
+
+## Contributing
+
+We welcome and value any contributions and collaborations. Please check out [Contributing to OmniInfer](CONTRIBUTING.md) for how to get involved.
+
+
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-OmniInfer builds upon the excellent work of the open-source community, including:
-
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) - GGML-based inference
-- [GGML](https://github.com/ggerganov/ggml) - Tensor library for machine learning
-
----
-
-<p align="center">
-  Made with ❤️ by the <a href="https://github.com/omnimind-ai">OmniMind AI</a> team
-</p>
+This project is licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
