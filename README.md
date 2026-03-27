@@ -35,7 +35,7 @@ OmniInfer runs everywhere:
 
 ## Architecture
 
-![omni_studio_architecture](./image_en.png)
+![omni_studio_architecture](./image_en_clear_hires.png)
 
 
 
