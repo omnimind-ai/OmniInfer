@@ -25,6 +25,12 @@ INTERNAL_BACKEND_HOST = "127.0.0.1"
 INTERNAL_BACKEND_PORT = 0
 
 
+def default_backend_for_host() -> str:
+    if sys.platform == "darwin":
+        return "llama.cpp-mac"
+    return "llama.cpp-cpu"
+
+
 def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in extra.items():
@@ -39,12 +45,15 @@ def load_app_config(app_root: Path) -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "host": "127.0.0.1",
         "port": 9000,
-        "default_backend": "llama.cpp-cpu",
+        "default_backend": default_backend_for_host(),
         "default_thinking": "off",
         "window_mode": "hidden",
         "startup_timeout": 60,
         "runtime_root": "runtime",
         "backends": {
+            "llama.cpp-mac": {
+                "ngl": "999",
+            },
             "llama.cpp-cpu": {},
             "llama.cpp-cuda": {
                 "ngl": "999",
@@ -450,7 +459,7 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
     p.add_argument(
         "--default-backend",
         default=config["default_backend"],
-        help="Backend selected on startup (llama.cpp-cpu or llama.cpp-cuda)",
+        help="Backend selected on startup (llama.cpp-mac, llama.cpp-cpu, or llama.cpp-cuda)",
     )
     p.add_argument(
         "--default-thinking",

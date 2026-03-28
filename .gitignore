@@ -32,7 +32,11 @@ platform/Windows/llama.cpp-cuda/models/*
 !platform/Windows/llama.cpp-cuda/models/.gitkeep
 
 /tmp
+CODEX.md
+QWEN.md
 tmp_gateway_*.log
 release/build/
 release/portable/
 release.zip
+
+/release

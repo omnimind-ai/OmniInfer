@@ -5,6 +5,7 @@ import ctypes
 import json
 import os
 import platform
+import re
 import signal
 import socket
 import subprocess
@@ -22,6 +23,7 @@ SYSTEM_MODEL_LIST_URLS: dict[str, str] = {
 }
 
 BACKEND_PRIORITY: dict[str, int] = {
+    "llama.cpp-mac": 0,
     "llama.cpp-cuda": 0,
     "llama.cpp-cpu": 1,
 }
@@ -85,6 +87,47 @@ def get_available_memory_bytes() -> int:
         if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
             raise OSError("GlobalMemoryStatusEx failed")
         return int(status.ullAvailPhys)
+
+    if platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["vm_stat"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        else:
+            page_size = 4096
+            counts: dict[str, int] = {}
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if "page size of" in line:
+                    match = re.search(r"page size of (\d+) bytes", line)
+                    if match:
+                        page_size = int(match.group(1))
+                    continue
+
+                if ":" not in line:
+                    continue
+                key, raw_value = line.split(":", 1)
+                digits = "".join(ch for ch in raw_value if ch.isdigit())
+                if digits:
+                    counts[key.strip()] = int(digits)
+
+            available_pages = (
+                counts.get("Pages free", 0)
+                + counts.get("Pages inactive", 0)
+                + counts.get("Pages speculative", 0)
+            )
+            if available_pages > 0:
+                return int(page_size * available_pages)
 
     page_size = os.sysconf("SC_PAGE_SIZE")
     avail_pages = os.sysconf("SC_AVPHYS_PAGES")
@@ -263,7 +306,15 @@ class RuntimeManager:
         portable_root = self.app_root / "runtime"
         if portable_root.is_dir():
             return portable_root.resolve()
+        system_name = current_system_name()
+        if system_name == "mac":
+            return (self.repo_root / "platform" / "Mac").resolve()
         return (self.repo_root / "platform" / "Windows").resolve()
+
+    def _resolve_catalog_backend_id(self, backend_id: str) -> str:
+        if current_system_name() == "mac" and backend_id == "llama.cpp-cpu":
+            return "llama.cpp-mac"
+        return backend_id
 
     def _resolve_backend_runtime_dir(self, backend_id: str, default_root: Path) -> Path:
         override = self.backend_overrides.get(backend_id, {}).get("runtime_dir")
@@ -291,6 +342,35 @@ class RuntimeManager:
         return resolve_input_path(str(default_root), self.app_root)
 
     def _build_default_backends(self) -> dict[str, BackendSpec]:
+        system_name = current_system_name()
+        if system_name == "mac":
+            mac_root = self._resolve_backend_runtime_dir("llama.cpp-mac", self.runtime_root / "llama.cpp-mac")
+            mac_override = self.backend_overrides.get("llama.cpp-mac", {})
+            mac_ngl = os.environ.get("OMNIINFER_LLAMA_CPP_MAC_NGL", str(mac_override.get("ngl", "999")))
+            mac = BackendSpec(
+                id="llama.cpp-mac",
+                label="llama.cpp Metal",
+                runtime_dir=str(mac_root),
+                llama_server_path=resolve_input_path(
+                    os.environ.get(
+                        "OMNIINFER_LLAMA_CPP_MAC_SERVER_PATH",
+                        str(mac_override.get("server_path") or (mac_root / "bin" / "llama-server")),
+                    ),
+                    self.app_root,
+                ),
+                models_dir=self._resolve_backend_models_dir(
+                    "llama.cpp-mac",
+                    mac_override,
+                    "OMNIINFER_LLAMA_CPP_MAC_MODELS_DIR",
+                    mac_root / "models",
+                ),
+                catalog_url=str(mac_override.get("catalog_url")) if mac_override.get("catalog_url") else None,
+                description="llama.cpp Metal backend managed by OmniInfer",
+                capabilities=["chat", "vision", "stream", "metal", "apple", "shared-memory"],
+                default_args=["-ngl", mac_ngl],
+            )
+            return {mac.id: mac}
+
         cpu_root = self._resolve_backend_runtime_dir("llama.cpp-cpu", self.runtime_root / "llama.cpp-cpu")
         gpu_root = self._resolve_backend_runtime_dir("llama.cpp-cuda", self.runtime_root / "llama.cpp-cuda")
         cpu_override = self.backend_overrides.get("llama.cpp-cpu", {})
@@ -401,7 +481,7 @@ class RuntimeManager:
             method="GET",
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            payload = json.loads(resp.read().decode("utf-8-sig"))
         if not isinstance(payload, dict):
             raise RuntimeError(f"invalid model catalog payload for system: {system_key}")
         return payload
@@ -477,6 +557,9 @@ class RuntimeManager:
         quantization_candidates: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
 
         for backend_name, backend_payload in annotated_catalog.items():
+            runtime_backend_id = self._resolve_catalog_backend_id(backend_name)
+            if runtime_backend_id not in self.backends:
+                continue
             if not isinstance(backend_payload, dict):
                 continue
             for family_name, family_models in backend_payload.items():
@@ -501,7 +584,7 @@ class RuntimeManager:
                         if not isinstance(quant_info, dict):
                             continue
                         candidate = {
-                            "backend": backend_name,
+                            "backend": runtime_backend_id,
                             "payload": copy.deepcopy(quant_info),
                             "required_memory_gib": quant_info.get("required_memory_gib"),
                             "suitable": bool(quant_info.get("suitable")),
@@ -530,7 +613,8 @@ class RuntimeManager:
     def _flatten_catalog_candidates(self, annotated_catalog: dict[str, Any]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         for backend_name, backend_payload in annotated_catalog.items():
-            if backend_name not in self.backends or not isinstance(backend_payload, dict):
+            runtime_backend_id = self._resolve_catalog_backend_id(backend_name)
+            if runtime_backend_id not in self.backends or not isinstance(backend_payload, dict):
                 continue
             for family_name, family_models in backend_payload.items():
                 if not isinstance(family_models, dict):
@@ -552,7 +636,7 @@ class RuntimeManager:
                             continue
                         candidates.append(
                             {
-                                "backend": backend_name,
+                                "backend": runtime_backend_id,
                                 "family": family_name,
                                 "model_name": model_name,
                                 "quantization": quant_name,
