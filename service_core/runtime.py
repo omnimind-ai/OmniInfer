@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,19 @@ def pick_available_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+
+
+def hidden_subprocess_kwargs() -> dict[str, Any]:
+    if os.name != "nt":
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+    startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
 
 
 def get_available_memory_bytes() -> int:
@@ -150,6 +164,7 @@ def get_available_cuda_memory_bytes() -> int | None:
             errors="replace",
             timeout=10,
             check=True,
+            **hidden_subprocess_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -270,6 +285,8 @@ class LoadedRuntime:
     host: str
     port: int
     process: subprocess.Popen[Any]
+    log_path: str | None = None
+    log_handle: TextIOWrapper | None = None
 
 
 class RuntimeManager:
@@ -489,6 +506,12 @@ class RuntimeManager:
                     proc.kill()
                 except OSError:
                     pass
+        if runtime.log_handle:
+            try:
+                runtime.log_handle.flush()
+                runtime.log_handle.close()
+            except OSError:
+                pass
 
     def _resolve_model_path(self, backend: BackendSpec, model: str) -> str:
         path = Path(model).expanduser()
@@ -744,13 +767,26 @@ class RuntimeManager:
         env = os.environ.copy()
         env.update(backend.env)
 
+        logs_dir = backend.runtime_path / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "llama-server.log"
+        log_handle = log_path.open("a", encoding="utf-8", buffering=1)
+
         creationflags = 0
+        startupinfo = None
         if os.name == "nt" and self.backend_window_mode == "hidden":
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            creationflags = (
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+            )
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+            startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
@@ -758,17 +794,16 @@ class RuntimeManager:
             cwd=str(Path(backend.llama_server_path).resolve().parent),
             env=env,
             creationflags=creationflags,
+            startupinfo=startupinfo,
         )
 
         if not wait_http_ready(self.backend_host, target_port, self.startup_timeout_s):
             message = "backend did not become ready in time"
-            if proc.poll() is not None and proc.stdout:
-                lines: list[str] = []
-                for _ in range(60):
-                    line = proc.stdout.readline()
-                    if not line:
-                        break
-                    lines.append(line.rstrip())
+            if proc.poll() is not None:
+                try:
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    lines = []
                 if lines:
                     message += "; backend output: " + " | ".join(lines[-6:])
             self.loaded_runtime = LoadedRuntime(
@@ -780,6 +815,8 @@ class RuntimeManager:
                 host=self.backend_host,
                 port=target_port,
                 process=proc,
+                log_path=str(log_path),
+                log_handle=log_handle,
             )
             self._stop_runtime_locked()
             raise RuntimeError(message)
@@ -793,6 +830,8 @@ class RuntimeManager:
             host=self.backend_host,
             port=target_port,
             process=proc,
+            log_path=str(log_path),
+            log_handle=log_handle,
         )
         self.loaded_runtime = runtime
         return runtime
