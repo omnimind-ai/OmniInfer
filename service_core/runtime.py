@@ -5,6 +5,8 @@ import ctypes
 import json
 import os
 import platform
+import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -13,16 +15,20 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
 
 SYSTEM_MODEL_LIST_URLS: dict[str, str] = {
     "windows": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/windows/model_list.json",
     "mac": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/mac/model_list.json",
+    "linux": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/linux/model_list.json",
 }
 
 BACKEND_PRIORITY: dict[str, int] = {
+    "llama.cpp-mac": 0,
     "llama.cpp-cuda": 0,
+    "llama.cpp-linux": 0,
     "llama.cpp-cpu": 1,
 }
 
@@ -45,6 +51,11 @@ def display_path_reference(path: str, root_dir: str | None) -> str:
         return str(target)
 
 
+def prepend_env_path(env: dict[str, str], key: str, value: str) -> None:
+    current = env.get(key, "").strip()
+    env[key] = value if not current else f"{value}{os.pathsep}{current}"
+
+
 def wait_http_ready(host: str, port: int, timeout_s: int) -> bool:
     deadline = time.time() + timeout_s
     url = f"http://{host}:{port}/health"
@@ -63,6 +74,19 @@ def pick_available_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+
+
+def hidden_subprocess_kwargs() -> dict[str, Any]:
+    if os.name != "nt":
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+    startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
 
 
 def get_available_memory_bytes() -> int:
@@ -86,6 +110,47 @@ def get_available_memory_bytes() -> int:
             raise OSError("GlobalMemoryStatusEx failed")
         return int(status.ullAvailPhys)
 
+    if platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["vm_stat"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        else:
+            page_size = 4096
+            counts: dict[str, int] = {}
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if "page size of" in line:
+                    match = re.search(r"page size of (\d+) bytes", line)
+                    if match:
+                        page_size = int(match.group(1))
+                    continue
+
+                if ":" not in line:
+                    continue
+                key, raw_value = line.split(":", 1)
+                digits = "".join(ch for ch in raw_value if ch.isdigit())
+                if digits:
+                    counts[key.strip()] = int(digits)
+
+            available_pages = (
+                counts.get("Pages free", 0)
+                + counts.get("Pages inactive", 0)
+                + counts.get("Pages speculative", 0)
+            )
+            if available_pages > 0:
+                return int(page_size * available_pages)
+
     page_size = os.sysconf("SC_PAGE_SIZE")
     avail_pages = os.sysconf("SC_AVPHYS_PAGES")
     return int(page_size * avail_pages)
@@ -105,6 +170,7 @@ def get_available_cuda_memory_bytes() -> int | None:
             errors="replace",
             timeout=10,
             check=True,
+            **hidden_subprocess_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -137,12 +203,33 @@ def parse_size_gib(value: Any) -> float:
         return 0.0
 
 
+def parse_optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_extra_args(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return shlex.split(value, posix=False)
+    return []
+
+
 def current_system_name() -> str:
     system = platform.system().lower()
     if system.startswith("win"):
         return "windows"
     if system.startswith("darwin") or system.startswith("mac"):
         return "mac"
+    if system.startswith("linux"):
+        return "linux"
     raise ValueError(f"unsupported host system: {platform.system()}")
 
 
@@ -220,9 +307,12 @@ class LoadedRuntime:
     model_ref: str
     mmproj_path: str | None
     mmproj_ref: str | None
+    ctx_size: int | None
     host: str
     port: int
     process: subprocess.Popen[Any]
+    log_path: str | None = None
+    log_handle: TextIOWrapper | None = None
 
 
 class RuntimeManager:
@@ -263,7 +353,17 @@ class RuntimeManager:
         portable_root = self.app_root / "runtime"
         if portable_root.is_dir():
             return portable_root.resolve()
+        system_name = current_system_name()
+        if system_name == "mac":
+            return (self.repo_root / "platform" / "Mac").resolve()
+        if system_name == "linux":
+            return (self.repo_root / "platform" / "Linux").resolve()
         return (self.repo_root / "platform" / "Windows").resolve()
+
+    def _resolve_catalog_backend_id(self, backend_id: str) -> str:
+        if current_system_name() == "mac" and backend_id == "llama.cpp-cpu":
+            return "llama.cpp-mac"
+        return backend_id
 
     def _resolve_backend_runtime_dir(self, backend_id: str, default_root: Path) -> Path:
         override = self.backend_overrides.get(backend_id, {}).get("runtime_dir")
@@ -290,7 +390,118 @@ class RuntimeManager:
 
         return resolve_input_path(str(default_root), self.app_root)
 
+    def _backend_server_args(
+        self,
+        override: dict[str, Any],
+        *,
+        env_prefix: str,
+        default_ngl: str | None = None,
+    ) -> list[str]:
+        args: list[str] = []
+
+        ngl_value = os.environ.get(f"{env_prefix}_NGL", str(override.get("ngl", default_ngl))) if default_ngl is not None else None
+        if ngl_value not in (None, ""):
+            args.extend(["-ngl", str(ngl_value)])
+
+        ctx_size = parse_optional_int(os.environ.get(f"{env_prefix}_CTX_SIZE", override.get("ctx_size")))
+        if ctx_size is not None and ctx_size > 0:
+            args.extend(["-c", str(ctx_size)])
+
+        parallel = parse_optional_int(os.environ.get(f"{env_prefix}_PARALLEL", override.get("parallel")))
+        if parallel is not None and parallel > 0:
+            args.extend(["-np", str(parallel)])
+
+        cache_ram = parse_optional_int(os.environ.get(f"{env_prefix}_CACHE_RAM", override.get("cache_ram")))
+        if cache_ram is not None:
+            args.extend(["-cram", str(cache_ram)])
+
+        args.extend(parse_extra_args(override.get("extra_args")))
+        return args
+
+    def _extract_server_arg_value(self, args: list[str], flags: tuple[str, ...]) -> str | None:
+        value: str | None = None
+        i = 0
+        while i < len(args):
+            token = args[i]
+            if token in flags:
+                if i + 1 < len(args):
+                    value = args[i + 1]
+                    i += 2
+                    continue
+                break
+            i += 1
+        return value
+
+    def _with_server_arg(self, args: list[str], flags: tuple[str, ...], value: Any | None) -> list[str]:
+        updated: list[str] = []
+        i = 0
+        while i < len(args):
+            token = args[i]
+            if token in flags:
+                i += 2 if i + 1 < len(args) else 1
+                continue
+            updated.append(token)
+            i += 1
+        if value is not None:
+            updated.extend([flags[0], str(value)])
+        return updated
+
     def _build_default_backends(self) -> dict[str, BackendSpec]:
+        system_name = current_system_name()
+        if system_name == "mac":
+            mac_root = self._resolve_backend_runtime_dir("llama.cpp-mac", self.runtime_root / "llama.cpp-mac")
+            mac_override = self.backend_overrides.get("llama.cpp-mac", {})
+            mac = BackendSpec(
+                id="llama.cpp-mac",
+                label="llama.cpp Metal",
+                runtime_dir=str(mac_root),
+                llama_server_path=resolve_input_path(
+                    os.environ.get(
+                        "OMNIINFER_LLAMA_CPP_MAC_SERVER_PATH",
+                        str(mac_override.get("server_path") or (mac_root / "bin" / "llama-server")),
+                    ),
+                    self.app_root,
+                ),
+                models_dir=self._resolve_backend_models_dir(
+                    "llama.cpp-mac",
+                    mac_override,
+                    "OMNIINFER_LLAMA_CPP_MAC_MODELS_DIR",
+                    mac_root / "models",
+                ),
+                catalog_url=str(mac_override.get("catalog_url")) if mac_override.get("catalog_url") else None,
+                description="llama.cpp Metal backend managed by OmniInfer",
+                capabilities=["chat", "vision", "stream", "metal", "apple", "shared-memory"],
+                default_args=self._backend_server_args(mac_override, env_prefix="OMNIINFER_LLAMA_CPP_MAC", default_ngl="999"),
+            )
+            return {mac.id: mac}
+
+        if system_name == "linux":
+            linux_root = self._resolve_backend_runtime_dir("llama.cpp-linux", self.runtime_root / "llama.cpp-linux")
+            linux_override = self.backend_overrides.get("llama.cpp-linux", {})
+            linux = BackendSpec(
+                id="llama.cpp-linux",
+                label="llama.cpp Linux",
+                runtime_dir=str(linux_root),
+                llama_server_path=resolve_input_path(
+                    os.environ.get(
+                        "OMNIINFER_LLAMA_CPP_LINUX_SERVER_PATH",
+                        str(linux_override.get("server_path") or (linux_root / "bin" / "llama-server")),
+                    ),
+                    self.app_root,
+                ),
+                models_dir=self._resolve_backend_models_dir(
+                    "llama.cpp-linux",
+                    linux_override,
+                    "OMNIINFER_LLAMA_CPP_LINUX_MODELS_DIR",
+                    linux_root / "models",
+                ),
+                catalog_url=str(linux_override.get("catalog_url")) if linux_override.get("catalog_url") else None,
+                description="llama.cpp Linux backend managed by OmniInfer",
+                capabilities=["chat", "vision", "stream", "cpu", "linux"],
+                default_args=self._backend_server_args(linux_override, env_prefix="OMNIINFER_LLAMA_CPP_LINUX", default_ngl="999"),
+            )
+            return {linux.id: linux}
+
         cpu_root = self._resolve_backend_runtime_dir("llama.cpp-cpu", self.runtime_root / "llama.cpp-cpu")
         gpu_root = self._resolve_backend_runtime_dir("llama.cpp-cuda", self.runtime_root / "llama.cpp-cuda")
         cpu_override = self.backend_overrides.get("llama.cpp-cpu", {})
@@ -316,9 +527,9 @@ class RuntimeManager:
             catalog_url=None,
             description="llama.cpp CPU backend managed by OmniInfer",
             capabilities=["chat", "vision", "stream", "cpu"],
+            default_args=self._backend_server_args(cpu_override, env_prefix="OMNIINFER_LLAMA_CPP_CPU"),
         )
 
-        gpu_ngl = os.environ.get("OMNIINFER_LLAMA_CPP_CUDA_NGL", str(gpu_override.get("ngl", "999")))
         gpu = BackendSpec(
             id="llama.cpp-cuda",
             label="llama.cpp CUDA",
@@ -339,7 +550,7 @@ class RuntimeManager:
             catalog_url=str(gpu_override.get("catalog_url")) if gpu_override.get("catalog_url") else None,
             description="llama.cpp CUDA backend managed by OmniInfer",
             capabilities=["chat", "vision", "stream", "gpu", "cuda"],
-            default_args=["-ngl", gpu_ngl],
+            default_args=self._backend_server_args(gpu_override, env_prefix="OMNIINFER_LLAMA_CPP_CUDA", default_ngl="999"),
         )
 
         return {backend.id: backend for backend in (cpu, gpu)}
@@ -375,6 +586,12 @@ class RuntimeManager:
                     proc.kill()
                 except OSError:
                     pass
+        if runtime.log_handle:
+            try:
+                runtime.log_handle.flush()
+                runtime.log_handle.close()
+            except OSError:
+                pass
 
     def _resolve_model_path(self, backend: BackendSpec, model: str) -> str:
         path = Path(model).expanduser()
@@ -401,7 +618,7 @@ class RuntimeManager:
             method="GET",
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            payload = json.loads(resp.read().decode("utf-8-sig"))
         if not isinstance(payload, dict):
             raise RuntimeError(f"invalid model catalog payload for system: {system_key}")
         return payload
@@ -477,6 +694,9 @@ class RuntimeManager:
         quantization_candidates: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
 
         for backend_name, backend_payload in annotated_catalog.items():
+            runtime_backend_id = self._resolve_catalog_backend_id(backend_name)
+            if runtime_backend_id not in self.backends:
+                continue
             if not isinstance(backend_payload, dict):
                 continue
             for family_name, family_models in backend_payload.items():
@@ -501,7 +721,7 @@ class RuntimeManager:
                         if not isinstance(quant_info, dict):
                             continue
                         candidate = {
-                            "backend": backend_name,
+                            "backend": runtime_backend_id,
                             "payload": copy.deepcopy(quant_info),
                             "required_memory_gib": quant_info.get("required_memory_gib"),
                             "suitable": bool(quant_info.get("suitable")),
@@ -530,7 +750,8 @@ class RuntimeManager:
     def _flatten_catalog_candidates(self, annotated_catalog: dict[str, Any]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         for backend_name, backend_payload in annotated_catalog.items():
-            if backend_name not in self.backends or not isinstance(backend_payload, dict):
+            runtime_backend_id = self._resolve_catalog_backend_id(backend_name)
+            if runtime_backend_id not in self.backends or not isinstance(backend_payload, dict):
                 continue
             for family_name, family_models in backend_payload.items():
                 if not isinstance(family_models, dict):
@@ -552,7 +773,7 @@ class RuntimeManager:
                             continue
                         candidates.append(
                             {
-                                "backend": backend_name,
+                                "backend": runtime_backend_id,
                                 "family": family_name,
                                 "model_name": model_name,
                                 "quantization": quant_name,
@@ -604,11 +825,23 @@ class RuntimeManager:
 
         return maybe_auto_mmproj(backend.models_dir, model_path)
 
-    def _start_runtime_locked(self, backend: BackendSpec, model_path: str, mmproj_path: str | None) -> LoadedRuntime:
+    def _start_runtime_locked(
+        self,
+        backend: BackendSpec,
+        model_path: str,
+        mmproj_path: str | None,
+        ctx_size: int | None = None,
+    ) -> LoadedRuntime:
         if not backend.binary_exists:
             raise FileNotFoundError(f"llama-server not found: {backend.llama_server_path}")
 
         target_port = self.backend_port if self.backend_port > 0 else pick_available_port(self.backend_host)
+        server_args = list(backend.default_args)
+        if ctx_size is not None:
+            server_args = self._with_server_arg(server_args, ("-c", "--ctx-size"), ctx_size)
+        effective_ctx_size = parse_optional_int(
+            self._extract_server_arg_value(server_args, ("-c", "--ctx-size"))
+        )
         cmd = [
             backend.llama_server_path,
             "-m",
@@ -618,21 +851,37 @@ class RuntimeManager:
             "--port",
             str(target_port),
             "--no-webui",
-            *backend.default_args,
+            *server_args,
         ]
         if mmproj_path:
             cmd.extend(["-mm", mmproj_path])
 
         env = os.environ.copy()
         env.update(backend.env)
+        backend_bin_dir = str(Path(backend.llama_server_path).resolve().parent)
+        if os.name != "nt":
+            prepend_env_path(env, "LD_LIBRARY_PATH", backend_bin_dir)
+
+        logs_dir = backend.runtime_path / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "llama-server.log"
+        log_handle = log_path.open("a", encoding="utf-8", buffering=1)
 
         creationflags = 0
+        startupinfo = None
         if os.name == "nt" and self.backend_window_mode == "hidden":
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            creationflags = (
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+            )
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+            startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
@@ -640,17 +889,16 @@ class RuntimeManager:
             cwd=str(Path(backend.llama_server_path).resolve().parent),
             env=env,
             creationflags=creationflags,
+            startupinfo=startupinfo,
         )
 
         if not wait_http_ready(self.backend_host, target_port, self.startup_timeout_s):
             message = "backend did not become ready in time"
-            if proc.poll() is not None and proc.stdout:
-                lines: list[str] = []
-                for _ in range(60):
-                    line = proc.stdout.readline()
-                    if not line:
-                        break
-                    lines.append(line.rstrip())
+            if proc.poll() is not None:
+                try:
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    lines = []
                 if lines:
                     message += "; backend output: " + " | ".join(lines[-6:])
             self.loaded_runtime = LoadedRuntime(
@@ -659,9 +907,12 @@ class RuntimeManager:
                 model_ref=display_path_reference(model_path, backend.models_dir),
                 mmproj_path=mmproj_path,
                 mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
+                ctx_size=effective_ctx_size,
                 host=self.backend_host,
                 port=target_port,
                 process=proc,
+                log_path=str(log_path),
+                log_handle=log_handle,
             )
             self._stop_runtime_locked()
             raise RuntimeError(message)
@@ -672,9 +923,12 @@ class RuntimeManager:
             model_ref=display_path_reference(model_path, backend.models_dir),
             mmproj_path=mmproj_path,
             mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
+            ctx_size=effective_ctx_size,
             host=self.backend_host,
             port=target_port,
             process=proc,
+            log_path=str(log_path),
+            log_handle=log_handle,
         )
         self.loaded_runtime = runtime
         return runtime
@@ -719,13 +973,25 @@ class RuntimeManager:
         model: str | None,
         mmproj: str | None = None,
         backend_id: str | None = None,
+        ctx_size: int | None = None,
     ) -> LoadedRuntime:
         with self.lock:
             if not model:
                 if self._is_runtime_running_locked() and self.loaded_runtime:
                     if backend_id and self.loaded_runtime.backend_id != backend_id:
                         raise RuntimeError("a different backend is currently loaded; reload the model to switch")
-                    return self.loaded_runtime
+                    if ctx_size is None or self.loaded_runtime.ctx_size == ctx_size:
+                        return self.loaded_runtime
+                    current_runtime = self.loaded_runtime
+                    backend = self._get_backend(current_runtime.backend_id)
+                    self.selected_backend_id = backend.id
+                    self._stop_runtime_locked()
+                    return self._start_runtime_locked(
+                        backend,
+                        current_runtime.model_path,
+                        current_runtime.mmproj_path,
+                        ctx_size=ctx_size,
+                    )
                 raise RuntimeError("no backend model loaded; call /omni/model/select first or provide 'model'")
 
             preferred_backend = self._get_backend(backend_id) if backend_id else self._get_backend()
@@ -746,19 +1012,27 @@ class RuntimeManager:
                     current.backend_id == backend.id
                     and Path(current.model_path).resolve() == Path(model_path).resolve()
                     and current_mmproj == wanted_mmproj
+                    and (ctx_size is None or current.ctx_size == ctx_size)
                 ):
                     return current
 
             self._stop_runtime_locked()
-            return self._start_runtime_locked(backend, model_path, mmproj_path)
+            return self._start_runtime_locked(backend, model_path, mmproj_path, ctx_size=ctx_size)
 
-    def select_model(self, model: str, mmproj: str | None = None, backend_id: str | None = None) -> dict[str, Any]:
-        runtime = self.ensure_model_loaded(model=model, mmproj=mmproj, backend_id=backend_id)
+    def select_model(
+        self,
+        model: str,
+        mmproj: str | None = None,
+        backend_id: str | None = None,
+        ctx_size: int | None = None,
+    ) -> dict[str, Any]:
+        runtime = self.ensure_model_loaded(model=model, mmproj=mmproj, backend_id=backend_id, ctx_size=ctx_size)
         return {
             "ok": True,
             "selected_backend": runtime.backend_id,
             "selected_model": runtime.model_ref,
             "selected_mmproj": runtime.mmproj_ref,
+            "selected_ctx_size": runtime.ctx_size,
         }
 
     def current_proxy_target(self) -> tuple[str, int] | None:
@@ -774,5 +1048,6 @@ class RuntimeManager:
                 "backend": self.selected_backend_id,
                 "model": runtime.model_ref if runtime else None,
                 "mmproj": runtime.mmproj_ref if runtime else None,
+                "ctx_size": runtime.ctx_size if runtime else None,
                 "backend_ready": bool(runtime),
             }
