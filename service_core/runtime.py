@@ -20,11 +20,13 @@ from typing import Any
 SYSTEM_MODEL_LIST_URLS: dict[str, str] = {
     "windows": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/windows/model_list.json",
     "mac": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/mac/model_list.json",
+    "linux": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/linux/model_list.json",
 }
 
 BACKEND_PRIORITY: dict[str, int] = {
     "llama.cpp-mac": 0,
     "llama.cpp-cuda": 0,
+    "llama.cpp-linux": 0,
     "llama.cpp-cpu": 1,
 }
 
@@ -186,6 +188,8 @@ def current_system_name() -> str:
         return "windows"
     if system.startswith("darwin") or system.startswith("mac"):
         return "mac"
+    if system.startswith("linux"):
+        return "linux"
     raise ValueError(f"unsupported host system: {platform.system()}")
 
 
@@ -309,6 +313,8 @@ class RuntimeManager:
         system_name = current_system_name()
         if system_name == "mac":
             return (self.repo_root / "platform" / "Mac").resolve()
+        if system_name == "linux":
+            return (self.repo_root / "platform" / "Linux").resolve()
         return (self.repo_root / "platform" / "Windows").resolve()
 
     def _resolve_catalog_backend_id(self, backend_id: str) -> str:
@@ -370,6 +376,34 @@ class RuntimeManager:
                 default_args=["-ngl", mac_ngl],
             )
             return {mac.id: mac}
+
+        if system_name == "linux":
+            linux_root = self._resolve_backend_runtime_dir("llama.cpp-linux", self.runtime_root / "llama.cpp-linux")
+            linux_override = self.backend_overrides.get("llama.cpp-linux", {})
+            linux_ngl = os.environ.get("OMNIINFER_LLAMA_CPP_LINUX_NGL", str(linux_override.get("ngl", "999")))
+            linux = BackendSpec(
+                id="llama.cpp-linux",
+                label="llama.cpp Linux",
+                runtime_dir=str(linux_root),
+                llama_server_path=resolve_input_path(
+                    os.environ.get(
+                        "OMNIINFER_LLAMA_CPP_LINUX_SERVER_PATH",
+                        str(linux_override.get("server_path") or (linux_root / "bin" / "llama-server")),
+                    ),
+                    self.app_root,
+                ),
+                models_dir=self._resolve_backend_models_dir(
+                    "llama.cpp-linux",
+                    linux_override,
+                    "OMNIINFER_LLAMA_CPP_LINUX_MODELS_DIR",
+                    linux_root / "models",
+                ),
+                catalog_url=str(linux_override.get("catalog_url")) if linux_override.get("catalog_url") else None,
+                description="llama.cpp Linux backend managed by OmniInfer",
+                capabilities=["chat", "vision", "stream", "cpu", "linux"],
+                default_args=["-ngl", linux_ngl],
+            )
+            return {linux.id: linux}
 
         cpu_root = self._resolve_backend_runtime_dir("llama.cpp-cpu", self.runtime_root / "llama.cpp-cpu")
         gpu_root = self._resolve_backend_runtime_dir("llama.cpp-cuda", self.runtime_root / "llama.cpp-cuda")

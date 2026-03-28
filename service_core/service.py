@@ -28,6 +28,8 @@ INTERNAL_BACKEND_PORT = 0
 def default_backend_for_host() -> str:
     if sys.platform == "darwin":
         return "llama.cpp-mac"
+    if sys.platform.startswith("linux"):
+        return "llama.cpp-linux"
     return "llama.cpp-cpu"
 
 
