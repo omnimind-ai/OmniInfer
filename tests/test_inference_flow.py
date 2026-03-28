@@ -334,7 +334,7 @@ class FlowRunner:
 
         text_payload = {
             "think": False,
-            "messages": [{"role": "user", "content": "请用一句中文介绍你自己。"}],
+            "messages": [{"role": "user", "content": "Introduce yourself in one sentence."}],
             "temperature": 0.2,
             "max_tokens": 128,
         }
@@ -355,7 +355,7 @@ class FlowRunner:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": "请用中文简要描述这张图片。"},
+                            {"type": "text", "text": "Briefly describe this image."},
                             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
                         ],
                     }
@@ -374,7 +374,7 @@ class FlowRunner:
 
         stream_payload = {
             "think": False,
-            "messages": [{"role": "user", "content": "请连续输出三句短句，每句单独成行。"}],
+            "messages": [{"role": "user", "content": "Output three short lines, one per line."}],
             "stream": True,
             "stream_options": {"include_usage": True},
             "temperature": 0.2,
@@ -392,7 +392,7 @@ class FlowRunner:
         direct_payload: Dict[str, Any] = {
             "model": str(self.model),
             "think": False,
-            "messages": [{"role": "user", "content": "请再次用一句中文介绍你自己。"}],
+            "messages": [{"role": "user", "content": "Introduce yourself again in one sentence."}],
             "temperature": 0.2,
             "max_tokens": 128,
         }
