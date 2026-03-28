@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 import threading
+import traceback
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -77,6 +78,16 @@ def json_dumps(obj: Any) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode("utf-8")
 
 
+def summarize_for_log(value: Any, max_len: int = 800) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        text = repr(value)
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
 def parse_boolish(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -89,6 +100,31 @@ def parse_boolish(value: Any) -> bool:
         if low in {"0", "false", "no", "off", "disable", "disabled"}:
             return False
     raise ValueError(f"cannot parse boolean value from {value!r}")
+
+
+def parse_optional_positive_int_field(
+    payload: dict[str, Any],
+    *names: str,
+    pop: bool = False,
+) -> int | None:
+    raw_value: Any = None
+    found = False
+    for name in names:
+        if name in payload:
+            raw_value = payload.pop(name) if pop else payload.get(name)
+            found = True
+            break
+    if not found or raw_value in (None, ""):
+        return None
+    if isinstance(raw_value, bool):
+        raise ValueError(f"field '{names[0]}' must be a positive integer")
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"field '{names[0]}' must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"field '{names[0]}' must be a positive integer")
+    return parsed
 
 
 def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
@@ -218,7 +254,25 @@ class OmniHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {self.address_string()} {fmt % args}")
 
+    def _debug_enabled(self) -> bool:
+        return bool(getattr(self.server, "debug_http", False))  # type: ignore[attr-defined]
+
+    def _debug_body_enabled(self) -> bool:
+        return bool(getattr(self.server, "debug_body", False))  # type: ignore[attr-defined]
+
+    def _debug(self, message: str) -> None:
+        if self._debug_enabled():
+            print(f"[debug] {message}", flush=True)
+
+    @property
+    def forced_backend(self) -> str | None:
+        value = getattr(self.server, "forced_backend", "")  # type: ignore[attr-defined]
+        return str(value).strip() or None
+
     def _send_json(self, status: int, payload: Any) -> None:
+        self._debug(f"{self.command} {self.path} -> {status}")
+        if self._debug_body_enabled():
+            self._debug(f"response body: {summarize_for_log(payload)}")
         body = json_dumps(payload)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -238,9 +292,13 @@ class OmniHandler(BaseHTTPRequestHandler):
         try:
             obj = json.loads(raw.decode("utf-8-sig"))
             if isinstance(obj, dict):
+                if self._debug_body_enabled():
+                    self._debug(f"request body: {summarize_for_log(obj)}")
                 return obj
         except json.JSONDecodeError:
             pass
+        if self._debug_body_enabled() and raw:
+            self._debug(f"request body (invalid json): {raw[:400]!r}")
         return {}
 
     def _parse_request_target(self) -> tuple[str, dict[str, list[str]]]:
@@ -255,6 +313,14 @@ class OmniHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        self._debug(f"{self.command} {self.path} from {self.client_address[0]}")
+        try:
+            self._do_GET_impl()
+        except Exception as e:  # pragma: no cover - defensive server-side fallback
+            traceback.print_exc()
+            self._send_json(500, {"error": {"message": f"internal server error: {e}"}})
+
+    def _do_GET_impl(self) -> None:
         path, query = self._parse_request_target()
 
         if path == "/health":
@@ -328,11 +394,19 @@ class OmniHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": {"message": f"not found: {path}"}})
 
     def do_POST(self) -> None:  # noqa: N802
+        self._debug(f"{self.command} {self.path} from {self.client_address[0]}")
+        try:
+            self._do_POST_impl()
+        except Exception as e:  # pragma: no cover - defensive server-side fallback
+            traceback.print_exc()
+            self._send_json(500, {"error": {"message": f"internal server error: {e}"}})
+
+    def _do_POST_impl(self) -> None:
         path, _query = self._parse_request_target()
 
         if path == "/omni/backend/select":
             payload = self._read_json()
-            backend = str(payload.get("backend", "")).strip()
+            backend = self.forced_backend or str(payload.get("backend", "")).strip()
             if not backend:
                 self._send_json(400, {"error": {"message": "field 'backend' is required"}})
                 return
@@ -371,12 +445,22 @@ class OmniHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             model = str(payload.get("model", "")).strip()
             mmproj = str(payload.get("mmproj", "")).strip() or None
-            backend = str(payload.get("backend", "")).strip() or None
+            backend = self.forced_backend or (str(payload.get("backend", "")).strip() or None)
+            try:
+                ctx_size = parse_optional_positive_int_field(payload, "ctx_size", "ctx-size")
+            except ValueError as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
             if not model:
                 self._send_json(400, {"error": {"message": "field 'model' is required"}})
                 return
             try:
-                result = self.manager.select_model(model=model, mmproj=mmproj, backend_id=backend)
+                result = self.manager.select_model(
+                    model=model,
+                    mmproj=mmproj,
+                    backend_id=backend,
+                    ctx_size=ctx_size,
+                )
             except (ValueError, FileNotFoundError, RuntimeError) as e:
                 status = 400 if isinstance(e, (ValueError, FileNotFoundError)) else 409
                 self._send_json(status, {"error": {"message": str(e)}})
@@ -386,9 +470,19 @@ class OmniHandler(BaseHTTPRequestHandler):
 
         if path == "/v1/chat/completions":
             payload = self._read_json()
-            requested_backend = str(payload.pop("backend", "")).strip() or None
+            requested_backend = self.forced_backend or (str(payload.pop("backend", "")).strip() or None)
             requested_model = str(payload.get("model", "")).strip() or None
             requested_mmproj = str(payload.pop("mmproj", "")).strip() or None
+            try:
+                requested_ctx_size = parse_optional_positive_int_field(
+                    payload,
+                    "ctx_size",
+                    "ctx-size",
+                    pop=True,
+                )
+            except ValueError as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
             try:
                 apply_thinking_mode(payload, default_enabled=self.default_thinking)
             except ValueError as e:
@@ -400,6 +494,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                     model=requested_model,
                     mmproj=requested_mmproj,
                     backend_id=requested_backend,
+                    ctx_size=requested_ctx_size,
                 )
             except (ValueError, FileNotFoundError) as e:
                 self._send_json(400, {"error": {"message": str(e)}})
@@ -418,6 +513,7 @@ class OmniHandler(BaseHTTPRequestHandler):
             host, port = target
 
             if payload.get("stream") is True:
+                self._debug(f"proxy stream -> http://{host}:{port}/v1/chat/completions")
                 stream_http_request(
                     self,
                     "POST",
@@ -433,6 +529,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 payload=payload,
                 timeout=600,
             )
+            self._debug(f"proxy chat -> http://{host}:{port}/v1/chat/completions -> {code}")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -470,10 +567,25 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
         help="Default thinking mode for chat requests when not overridden per request",
     )
     p.add_argument(
+        "--force-backend",
+        default=str(config.get("force_backend", "")),
+        help="Force all model selection and chat requests to use a specific backend",
+    )
+    p.add_argument(
         "--window-mode",
         choices=("visible", "hidden"),
         default=str(config.get("window_mode", config.get("backend_window_mode", "hidden"))),
         help="Whether OmniInfer and managed backend console windows should be visible or hidden",
+    )
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print request routing and response status logs to the console",
+    )
+    p.add_argument(
+        "--debug-body",
+        action="store_true",
+        help="With --verbose, also print truncated request/response JSON bodies",
     )
     p.add_argument("--startup-timeout", type=int, default=int(config["startup_timeout"]), help="Backend startup timeout seconds")
     return p.parse_args()
@@ -497,11 +609,18 @@ def main() -> int:
     httpd = ThreadingHTTPServer((args.host, args.port), OmniHandler)
     httpd.manager = manager  # type: ignore[attr-defined]
     httpd.default_thinking = args.default_thinking == "on"  # type: ignore[attr-defined]
+    httpd.debug_http = bool(args.verbose)  # type: ignore[attr-defined]
+    httpd.debug_body = bool(args.debug_body)  # type: ignore[attr-defined]
+    httpd.forced_backend = args.force_backend.strip()  # type: ignore[attr-defined]
 
     print(f"OmniInfer listening on http://{args.host}:{args.port}")
     print(f"Selected backend on startup: {manager.snapshot()['backend']}")
     print(f"Default thinking mode: {'on' if httpd.default_thinking else 'off'}")
+    if httpd.forced_backend:
+        print(f"Forced backend: {httpd.forced_backend}")
     print("Use GET /omni/backends -> GET /omni/supported-models/best -> POST /omni/model/select")
+    if httpd.debug_http:
+        print(f"Debug logging enabled (body={'on' if httpd.debug_body else 'off'})")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
