@@ -50,6 +50,11 @@ def display_path_reference(path: str, root_dir: str | None) -> str:
         return str(target)
 
 
+def prepend_env_path(env: dict[str, str], key: str, value: str) -> None:
+    current = env.get(key, "").strip()
+    env[key] = value if not current else f"{value}{os.pathsep}{current}"
+
+
 def wait_http_ready(host: str, port: int, timeout_s: int) -> bool:
     deadline = time.time() + timeout_s
     url = f"http://{host}:{port}/health"
@@ -766,6 +771,9 @@ class RuntimeManager:
 
         env = os.environ.copy()
         env.update(backend.env)
+        backend_bin_dir = str(Path(backend.llama_server_path).resolve().parent)
+        if os.name != "nt":
+            prepend_env_path(env, "LD_LIBRARY_PATH", backend_bin_dir)
 
         logs_dir = backend.runtime_path / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
