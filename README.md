@@ -8,7 +8,7 @@ Easy, fast, and private LLM & VLM inference for every device
 
 OmniInfer is a high-performance, cross-platform inference engine for running Large Language Models (LLM) and Vision-Language Models (VLM) locally. It abstracts away model compilation, hardware adaptation, and deployment complexity, enabling efficient local inference with minimal configuration.
 
-> OmniInfer powers the inference layer of [Omni Studio](https://github.com/omnimind-ai/OmniStudio), a unified model orchestration platform.
+> OmniInfer powers the inference layer of [Omni Studio](https://omnimind.com.cn/omnistudio), a unified model orchestration platform.
 
 OmniInfer is fast with:
 
@@ -29,7 +29,7 @@ OmniInfer runs everywhere:
 - Android, iOS — mobile & edge devices
 - One codebase, all platforms
 
-## Getting Started
+<!-- ## Getting Started -->
 
 
 
