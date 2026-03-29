@@ -163,6 +163,8 @@ def request_json(
             raise SystemExit(f"{method} {endpoint} failed with status {status}: {message}") from exc
     except urllib.error.URLError as exc:
         raise SystemExit(f"unable to reach local OmniInfer service: {exc}") from exc
+    except OSError as exc:
+        raise SystemExit(f"unable to reach local OmniInfer service: {exc}") from exc
 
     return status, try_parse_json(raw), raw
 

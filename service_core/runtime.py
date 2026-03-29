@@ -28,7 +28,8 @@ SYSTEM_MODEL_LIST_URLS: dict[str, str] = {
 BACKEND_PRIORITY: dict[str, int] = {
     "llama.cpp-mac": 0,
     "llama.cpp-cuda": 0,
-    "llama.cpp-linux": 0,
+    "llama.cpp-linux-rocm": 0,
+    "llama.cpp-linux": 1,
     "llama.cpp-cpu": 1,
 }
 
@@ -190,6 +191,55 @@ def get_available_cuda_memory_bytes() -> int | None:
 
     # Current runtime uses one CUDA backend at a time; pick the GPU with the most free VRAM.
     return max(free_mib_values) * 1024 * 1024
+
+
+def get_available_rocm_memory_bytes() -> int | None:
+    candidate_commands = [
+        ["rocm-smi", "--showmeminfo", "vram", "--json"],
+        ["/opt/rocm/bin/rocm-smi", "--showmeminfo", "vram", "--json"],
+    ]
+    for rocm_dir in sorted(Path("/opt").glob("rocm-*")):
+        candidate_commands.append([str(rocm_dir / "bin" / "rocm-smi"), "--showmeminfo", "vram", "--json"])
+
+    for command in candidate_commands:
+        tool = Path(command[0])
+        if "/" in command[0] and not tool.is_file():
+            continue
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=True,
+                **hidden_subprocess_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+
+        free_bytes: list[int] = []
+        for row in payload.values():
+            if not isinstance(row, dict):
+                continue
+            total = parse_optional_int(row.get("VRAM Total Memory (B)"))
+            used = parse_optional_int(row.get("VRAM Total Used Memory (B)"))
+            if total is None or used is None:
+                continue
+            free_bytes.append(max(total - used, 0))
+
+        if free_bytes:
+            return max(free_bytes)
+
+    return None
 
 
 def bytes_to_gib(value: int) -> float:
@@ -477,7 +527,16 @@ class RuntimeManager:
 
         if system_name == "linux":
             linux_root = self._resolve_backend_runtime_dir("llama.cpp-linux", self.runtime_root / "llama.cpp-linux")
+            linux_rocm_default_root = self.runtime_root / "llama.cpp-linux-rocm"
+            legacy_linux_rocm_root = self.runtime_root / "llama.cpp-linux-ROCm"
+            if not linux_rocm_default_root.exists() and legacy_linux_rocm_root.exists():
+                linux_rocm_default_root = legacy_linux_rocm_root
+            linux_rocm_root = self._resolve_backend_runtime_dir(
+                "llama.cpp-linux-rocm",
+                linux_rocm_default_root,
+            )
             linux_override = self.backend_overrides.get("llama.cpp-linux", {})
+            linux_rocm_override = self.backend_overrides.get("llama.cpp-linux-rocm", {})
             linux = BackendSpec(
                 id="llama.cpp-linux",
                 label="llama.cpp Linux",
@@ -500,7 +559,36 @@ class RuntimeManager:
                 capabilities=["chat", "vision", "stream", "cpu", "linux"],
                 default_args=self._backend_server_args(linux_override, env_prefix="OMNIINFER_LLAMA_CPP_LINUX", default_ngl="999"),
             )
-            return {linux.id: linux}
+            linux_rocm = BackendSpec(
+                id="llama.cpp-linux-rocm",
+                label="llama.cpp Linux ROCm",
+                runtime_dir=str(linux_rocm_root),
+                llama_server_path=resolve_input_path(
+                    os.environ.get(
+                        "OMNIINFER_LLAMA_CPP_LINUX_ROCM_SERVER_PATH",
+                        str(linux_rocm_override.get("server_path") or (linux_rocm_root / "bin" / "llama-server")),
+                    ),
+                    self.app_root,
+                ),
+                models_dir=self._resolve_backend_models_dir(
+                    "llama.cpp-linux-rocm",
+                    linux_rocm_override,
+                    "OMNIINFER_LLAMA_CPP_LINUX_ROCM_MODELS_DIR",
+                    linux_rocm_root / "models",
+                ),
+                catalog_url=str(linux_rocm_override.get("catalog_url")) if linux_rocm_override.get("catalog_url") else None,
+                description="llama.cpp Linux ROCm backend managed by OmniInfer",
+                capabilities=["chat", "vision", "stream", "gpu", "rocm", "linux"],
+                default_args=self._backend_server_args(
+                    linux_rocm_override,
+                    env_prefix="OMNIINFER_LLAMA_CPP_LINUX_ROCM",
+                    default_ngl="999",
+                ),
+            )
+            return {
+                linux.id: linux,
+                linux_rocm.id: linux_rocm,
+            }
 
         cpu_root = self._resolve_backend_runtime_dir("llama.cpp-cpu", self.runtime_root / "llama.cpp-cpu")
         gpu_root = self._resolve_backend_runtime_dir("llama.cpp-cuda", self.runtime_root / "llama.cpp-cuda")
@@ -629,10 +717,15 @@ class RuntimeManager:
             if cuda_free_bytes is not None:
                 return bytes_to_gib(cuda_free_bytes)
             return 0.0
+        if backend_name == "llama.cpp-linux-rocm":
+            rocm_free_bytes = get_available_rocm_memory_bytes()
+            if rocm_free_bytes is not None:
+                return bytes_to_gib(rocm_free_bytes)
+            return 0.0
         return bytes_to_gib(get_available_memory_bytes())
 
     def _safety_margin_gib_for_backend(self, backend_name: str) -> float:
-        if backend_name == "llama.cpp-cuda":
+        if backend_name in {"llama.cpp-cuda", "llama.cpp-linux-rocm"}:
             return 0.5
         return 1.0
 
