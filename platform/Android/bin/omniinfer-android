@@ -1,0 +1,594 @@
+#!/bin/sh
+
+set -eu
+
+SCRIPT_PATH="$0"
+case "$SCRIPT_PATH" in
+    /*) ;;
+    *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
+esac
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
+ANDROID_ROOT="$REPO_ROOT/platform/Android"
+ANDROID_LIB_DIR="$ANDROID_ROOT/lib/arm64-v8a"
+
+BACKEND_LLAMA="llama.cpp-llama"
+BACKEND_MTMD="llama.cpp-mtmd"
+
+repo_state_root="$REPO_ROOT/.omniinfer/android-cli"
+home_state_root=""
+if [ "${HOME:-}" != "" ] && [ "${HOME:-}" != "/" ] && [ -d "${HOME:-}" ] && [ -w "${HOME:-}" ]; then
+    home_state_root="$HOME/.config/omniinfer"
+fi
+
+if [ "$home_state_root" != "" ]; then
+    STATE_ROOT="$home_state_root"
+else
+    STATE_ROOT="$repo_state_root"
+fi
+
+STATE_DIR="$STATE_ROOT/state"
+CACHE_DIR="$STATE_ROOT/cache"
+LOG_DIR="$STATE_ROOT/logs"
+TMP_DIR="$STATE_ROOT/tmp"
+MODEL_DIR="$ANDROID_ROOT/models"
+
+mkdir -p "$STATE_DIR" "$CACHE_DIR" "$LOG_DIR" "$TMP_DIR" "$MODEL_DIR"
+
+if [ -x "$ANDROID_LIB_DIR/libllama-cli.so" ]; then
+    LLAMA_BIN="$ANDROID_LIB_DIR/libllama-cli.so"
+else
+    LLAMA_BIN="$ANDROID_ROOT/libllama-cli.so"
+fi
+
+if [ -x "$ANDROID_LIB_DIR/libmtmd-cli.so" ]; then
+    MTMD_BIN="$ANDROID_LIB_DIR/libmtmd-cli.so"
+else
+    MTMD_BIN="$ANDROID_ROOT/libmtmd-cli.so"
+fi
+
+export LLAMA_CACHE="$CACHE_DIR"
+export TMPDIR="$TMP_DIR"
+export HOME="$STATE_ROOT"
+
+state_file_path() {
+    printf '%s/%s\n' "$STATE_DIR" "$1"
+}
+
+read_state() {
+    key="$1"
+    file="$(state_file_path "$key")"
+    if [ -f "$file" ]; then
+        cat "$file"
+    fi
+}
+
+write_state() {
+    key="$1"
+    value="$2"
+    file="$(state_file_path "$key")"
+    printf '%s' "$value" > "$file"
+}
+
+clear_state() {
+    key="$1"
+    file="$(state_file_path "$key")"
+    rm -f "$file"
+}
+
+selected_backend() {
+    value="$(read_state selected_backend)"
+    if [ -n "$value" ]; then
+        printf '%s\n' "$value"
+        return
+    fi
+    printf '%s\n' "$BACKEND_LLAMA"
+}
+
+thinking_default() {
+    value="$(read_state thinking_enabled)"
+    if [ -n "$value" ]; then
+        printf '%s\n' "$value"
+        return
+    fi
+    printf 'off\n'
+}
+
+backend_binary_for() {
+    backend="$1"
+    case "$backend" in
+        "$BACKEND_LLAMA") printf '%s\n' "$LLAMA_BIN" ;;
+        "$BACKEND_MTMD")
+            if [ -x "$MTMD_BIN" ]; then
+                printf '%s\n' "$MTMD_BIN"
+            else
+                printf '%s\n' "$LLAMA_BIN"
+            fi
+            ;;
+        *)
+            printf 'unknown backend: %s\n' "$backend" >&2
+            exit 1
+            ;;
+    esac
+}
+
+backend_available() {
+    backend="$1"
+    bin="$(backend_binary_for "$backend")"
+    [ -x "$bin" ]
+}
+
+normalize_bool() {
+    value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$value" in
+        1|true|yes|on|enable|enabled) printf 'on\n' ;;
+        0|false|no|off|disable|disabled) printf 'off\n' ;;
+        *)
+            printf 'invalid boolean value: %s\n' "$1" >&2
+            exit 1
+            ;;
+    esac
+}
+
+resolve_path() {
+    target="$1"
+    if [ -z "$target" ]; then
+        exit 1
+    fi
+    case "$target" in
+        /*) printf '%s\n' "$target" ;;
+        *) printf '%s/%s\n' "$(pwd)" "$target" ;;
+    esac
+}
+
+detect_mmproj_for_model() {
+    model_path="$1"
+    model_dir="$(dirname "$model_path")"
+    model_name="$(basename "$model_path")"
+    model_prefix="${model_name%.[Gg][Gg][Uu][Ff]}"
+    model_prefix="${model_prefix%-Q*}"
+
+    prefer_match() {
+        list="$1"
+        if [ -n "$model_prefix" ]; then
+            exact="$(printf '%s\n' "$list" | grep -iF "$model_prefix" | head -n 1 || true)"
+            if [ -n "$exact" ]; then
+                printf '%s\n' "$exact"
+                return
+            fi
+        fi
+        printf '%s\n' "$list" | head -n 1
+    }
+
+    candidates="$(find "$model_dir" -maxdepth 1 -type f 2>/dev/null | grep -i 'mmproj.*\.gguf$' | sort || true)"
+    if [ -n "$candidates" ]; then
+        prefer_match "$candidates"
+        return
+    fi
+
+    candidates="$(find /data/local/tmp -maxdepth 2 -type f 2>/dev/null | grep -i 'mmproj.*\.gguf$' | sort || true)"
+    if [ -n "$candidates" ]; then
+        prefer_match "$candidates"
+    fi
+}
+
+model_looks_multimodal() {
+    model_name="$(basename "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$model_name" in
+        *-vl-*|*vl-*|*vision*|*llava*|*minicpm-v*|*internvl*|*qvq*|*omni*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+print_help() {
+    cat <<EOF
+OmniInfer CLI
+
+Android direct mode
+
+Common commands:
+  omniinfer backend list
+  omniinfer select <backend>
+  omniinfer status
+  omniinfer model list
+  omniinfer model load -m /path/to/model.gguf
+  omniinfer chat --message "Introduce yourself in one sentence."
+  omniinfer chat -m /path/to/model.gguf --message "Introduce yourself."
+  omniinfer chat -m /path/to/model.gguf -mm /path/to/mmproj.gguf --image /path/to/image.jpg --message "Describe this image."
+  omniinfer shutdown
+
+Notes:
+  1. Android runs in direct mode, so there is no local HTTP gateway.
+  2. State is stored in $STATE_ROOT.
+  3. The selected backend, loaded model, ctx size, and default thinking mode persist across runs.
+  4. The current Android build uses llama.cpp native binaries directly.
+EOF
+}
+
+print_backend_list() {
+    current="$(selected_backend)"
+    echo "Available backends"
+    for backend in "$BACKEND_LLAMA" "$BACKEND_MTMD"; do
+        marker="  "
+        if [ "$backend" = "$current" ]; then
+            marker="* "
+        fi
+        binary="$(backend_binary_for "$backend")"
+        available="no"
+        if [ -x "$binary" ]; then
+            available="yes"
+        fi
+        echo "${marker}${backend}"
+        echo "    Selected in CLI: $( [ "$backend" = "$current" ] && echo yes || echo no )"
+        echo "    Binary available: $available"
+        echo "    Binary path: $binary"
+    done
+}
+
+set_backend() {
+    backend="$1"
+    case "$backend" in
+        "$BACKEND_LLAMA"|"$BACKEND_MTMD") ;;
+        *)
+            printf 'unknown backend: %s\n' "$backend" >&2
+            exit 1
+            ;;
+    esac
+    if ! backend_available "$backend"; then
+        printf 'backend binary is not available: %s\n' "$backend" >&2
+        exit 1
+    fi
+    write_state selected_backend "$backend"
+    echo "Selected backend: $backend"
+}
+
+print_status() {
+    backend="$(selected_backend)"
+    model="$(read_state model_path)"
+    mmproj="$(read_state mmproj_path)"
+    ctx_size="$(read_state ctx_size)"
+    thinking="$(thinking_default)"
+    binary="$(backend_binary_for "$backend")"
+
+    echo "OmniInfer status"
+    echo "  Mode: android-direct"
+    echo "  Backend: $backend"
+    echo "  Backend binary: $binary"
+    echo "  Backend available: $( [ -x "$binary" ] && echo yes || echo no )"
+    echo "  Model: ${model:-none}"
+    echo "  Mmproj: ${mmproj:-none}"
+    echo "  Ctx size: ${ctx_size:-default}"
+    echo "  Thinking default: $thinking"
+}
+
+list_models() {
+    found=0
+    echo "Local GGUF models"
+    for dir in "$MODEL_DIR" "$REPO_ROOT/models" "/data/local/tmp" "/sdcard/Download"; do
+        if [ -d "$dir" ]; then
+            echo "  [$dir]"
+            matches="$(find "$dir" -maxdepth 3 -type f 2>/dev/null | grep -i '\.gguf$' | grep -vi '/vocab\.gguf$' | sort || true)"
+            if [ -n "$matches" ]; then
+                found=1
+                printf '%s\n' "$matches" | sed 's/^/    /'
+            else
+                echo "    (none found)"
+            fi
+        fi
+    done
+    if [ "$found" -eq 0 ]; then
+        echo "No GGUF files were found in the default Android search paths."
+    fi
+}
+
+load_model() {
+    model=""
+    mmproj=""
+    backend=""
+    ctx_size=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -m|--model)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                model="$2"
+                shift 2
+                ;;
+            -mm|--mmproj)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                mmproj="$2"
+                shift 2
+                ;;
+            --backend)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                backend="$2"
+                shift 2
+                ;;
+            --ctx-size)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                ctx_size="$2"
+                shift 2
+                ;;
+            *)
+                echo "unknown model load argument: $1" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    [ -n "$model" ] || { echo "model load requires -m/--model" >&2; exit 1; }
+    model="$(resolve_path "$model")"
+    [ -f "$model" ] || { echo "model file not found: $model" >&2; exit 1; }
+    if [ -n "$mmproj" ]; then
+        mmproj="$(resolve_path "$mmproj")"
+        [ -f "$mmproj" ] || { echo "mmproj file not found: $mmproj" >&2; exit 1; }
+    elif model_looks_multimodal "$model"; then
+        detected_mmproj="$(detect_mmproj_for_model "$model" || true)"
+        if [ -n "$detected_mmproj" ]; then
+            mmproj="$detected_mmproj"
+        fi
+    fi
+    if [ -n "$backend" ]; then
+        set_backend "$backend" >/dev/null
+    fi
+    write_state model_path "$model"
+    if [ -n "$mmproj" ]; then
+        write_state mmproj_path "$mmproj"
+    else
+        clear_state mmproj_path
+    fi
+    if [ -n "$ctx_size" ]; then
+        write_state ctx_size "$ctx_size"
+    else
+        clear_state ctx_size
+    fi
+    echo "Loaded model configuration"
+    echo "  Backend: $(selected_backend)"
+    echo "  Model: $model"
+    echo "  Mmproj: ${mmproj:-none}"
+    echo "  Ctx size: ${ctx_size:-default}"
+}
+
+thinking_show() {
+    echo "Default thinking: $(thinking_default)"
+}
+
+thinking_set() {
+    [ $# -ge 1 ] || { echo "thinking set requires a boolean value" >&2; exit 1; }
+    value="$(normalize_bool "$1")"
+    write_state thinking_enabled "$value"
+    echo "Default thinking: $value"
+}
+
+chat_command() {
+    backend="$(selected_backend)"
+    model="$(read_state model_path)"
+    mmproj="$(read_state mmproj_path)"
+    ctx_size="$(read_state ctx_size)"
+    message=""
+    system_prompt=""
+    image=""
+    no_stream="0"
+    think="$(thinking_default)"
+    predict=""
+    threads=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --message|-p|--prompt)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                message="$2"
+                shift 2
+                ;;
+            -m|--model)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                model="$(resolve_path "$2")"
+                shift 2
+                ;;
+            -mm|--mmproj)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                mmproj="$(resolve_path "$2")"
+                shift 2
+                ;;
+            --image)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                image="$(resolve_path "$2")"
+                shift 2
+                ;;
+            --backend)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                backend="$2"
+                shift 2
+                ;;
+            --ctx-size)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                ctx_size="$2"
+                shift 2
+                ;;
+            --system-prompt|-sys)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                system_prompt="$2"
+                shift 2
+                ;;
+            --no-stream)
+                no_stream="1"
+                shift
+                ;;
+            --think)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                think="$(normalize_bool "$2")"
+                shift 2
+                ;;
+            -n|--n-predict|--predict)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                predict="$2"
+                shift 2
+                ;;
+            -t|--threads)
+                [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
+                threads="$2"
+                shift 2
+                ;;
+            *)
+                echo "unknown chat argument: $1" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    [ -n "$message" ] || { echo "chat requires --message" >&2; exit 1; }
+    [ -n "$model" ] || { echo "no model configured; run 'omniinfer model load -m <model>' first" >&2; exit 1; }
+    [ -f "$model" ] || { echo "model file not found: $model" >&2; exit 1; }
+    if [ -z "$mmproj" ] && { [ -n "$image" ] || model_looks_multimodal "$model"; }; then
+        mmproj="$(detect_mmproj_for_model "$model" || true)"
+    fi
+    if [ -n "$mmproj" ] && [ ! -f "$mmproj" ]; then
+        echo "mmproj file not found: $mmproj" >&2
+        exit 1
+    fi
+    if [ -n "$image" ] && [ ! -f "$image" ]; then
+        echo "image file not found: $image" >&2
+        exit 1
+    fi
+
+    binary="$(backend_binary_for "$backend")"
+    [ -x "$binary" ] || { echo "backend binary is not executable: $binary" >&2; exit 1; }
+
+    reasoning="auto"
+    if [ "$think" = "on" ]; then
+        reasoning="on"
+    elif [ "$think" = "off" ]; then
+        reasoning="off"
+    fi
+
+    cmd="$binary --simple-io --no-warmup --no-display-prompt --no-show-timings -st -m \"$model\" -p \"$message\" --reasoning $reasoning"
+    if [ -n "$system_prompt" ]; then
+        cmd="$cmd -sys \"$system_prompt\""
+    fi
+    if [ -n "$mmproj" ]; then
+        cmd="$cmd -mm \"$mmproj\""
+    fi
+    if [ -n "$image" ]; then
+        cmd="$cmd --image \"$image\""
+    fi
+    if [ -n "$ctx_size" ]; then
+        cmd="$cmd -c \"$ctx_size\""
+    fi
+    if [ -n "$predict" ]; then
+        cmd="$cmd -n \"$predict\""
+    fi
+    if [ -n "$threads" ]; then
+        cmd="$cmd -t \"$threads\""
+    fi
+
+    if [ "$no_stream" = "1" ]; then
+        sh -c "$cmd" > "$TMP_DIR/chat.out" 2>&1
+        cat "$TMP_DIR/chat.out"
+    else
+        exec sh -c "$cmd"
+    fi
+}
+
+backend_stop() {
+    echo "Android direct mode does not keep a background gateway process."
+    echo "The backend exits automatically after each direct CLI run."
+}
+
+shutdown_cli() {
+    backend_stop
+}
+
+serve_cli() {
+    echo "serve is not used on Android because OmniInfer runs in direct mode."
+}
+
+completion_bash() {
+    cat <<'EOF'
+# bash completion for omniinfer on Android
+_omniinfer_completion() {
+    local cur
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    COMPREPLY=( $(compgen -W "backend select status model thinking chat shutdown serve completion" -- "$cur") )
+}
+
+complete -F _omniinfer_completion omniinfer
+EOF
+}
+
+main() {
+    if [ $# -eq 0 ]; then
+        print_help
+        exit 0
+    fi
+
+    command="$1"
+    shift
+
+    case "$command" in
+        -h|--help|help)
+            print_help
+            ;;
+        backend)
+            sub="${1:-}"
+            shift || true
+            case "$sub" in
+                list) print_backend_list ;;
+                stop) backend_stop ;;
+                *) echo "unknown backend subcommand: ${sub:-<none>}" >&2; exit 1 ;;
+            esac
+            ;;
+        select)
+            [ $# -ge 1 ] || { echo "select requires a backend id" >&2; exit 1; }
+            set_backend "$1"
+            ;;
+        status)
+            print_status
+            ;;
+        model)
+            sub="${1:-}"
+            shift || true
+            case "$sub" in
+                list) list_models ;;
+                load) load_model "$@" ;;
+                *) echo "unknown model subcommand: ${sub:-<none>}" >&2; exit 1 ;;
+            esac
+            ;;
+        thinking)
+            sub="${1:-}"
+            shift || true
+            case "$sub" in
+                show) thinking_show ;;
+                set) thinking_set "$@" ;;
+                *) echo "unknown thinking subcommand: ${sub:-<none>}" >&2; exit 1 ;;
+            esac
+            ;;
+        chat)
+            chat_command "$@"
+            ;;
+        shutdown)
+            shutdown_cli
+            ;;
+        serve)
+            serve_cli
+            ;;
+        completion)
+            sub="${1:-}"
+            case "$sub" in
+                bash) completion_bash ;;
+                *) echo "unknown completion subcommand: ${sub:-<none>}" >&2; exit 1 ;;
+            esac
+            ;;
+        *)
+            echo "unknown command: $command" >&2
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
