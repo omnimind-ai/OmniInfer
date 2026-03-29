@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from service_core.platforms import current_host_platform, default_backend_for_current_host
 from service_core.runtime import RuntimeManager
 
 
@@ -26,14 +27,6 @@ INTERNAL_BACKEND_HOST = "127.0.0.1"
 INTERNAL_BACKEND_PORT = 0
 
 
-def default_backend_for_host() -> str:
-    if sys.platform == "darwin":
-        return "llama.cpp-mac"
-    if sys.platform.startswith("linux"):
-        return "llama.cpp-linux"
-    return "llama.cpp-cpu"
-
-
 def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in extra.items():
@@ -45,23 +38,16 @@ def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_app_config(app_root: Path) -> dict[str, Any]:
+    host_platform = current_host_platform()
     defaults: dict[str, Any] = {
         "host": "127.0.0.1",
         "port": 9000,
-        "default_backend": default_backend_for_host(),
+        "default_backend": default_backend_for_current_host(),
         "default_thinking": "off",
         "window_mode": "hidden",
         "startup_timeout": 60,
         "runtime_root": "runtime",
-        "backends": {
-            "llama.cpp-mac": {
-                "ngl": "999",
-            },
-            "llama.cpp-cpu": {},
-            "llama.cpp-cuda": {
-                "ngl": "999",
-            },
-        },
+        "backends": host_platform.default_config_backends(),
     }
     config_path = app_root / "config" / "omniinfer.json"
     if not config_path.is_file():
@@ -541,6 +527,7 @@ class OmniHandler(BaseHTTPRequestHandler):
 
 
 def parse_args(config: dict[str, Any]) -> argparse.Namespace:
+    backend_names = ", ".join(template.id for template in current_host_platform().backend_templates)
     p = argparse.ArgumentParser(description="OmniInfer unified API service")
     p.add_argument("--host", default=config["host"], help="Gateway bind host")
     p.add_argument("--port", type=int, default=int(config["port"]), help="Gateway bind port")
@@ -558,7 +545,7 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
     p.add_argument(
         "--default-backend",
         default=config["default_backend"],
-        help="Backend selected on startup (llama.cpp-mac, llama.cpp-cpu, or llama.cpp-cuda)",
+        help=f"Backend selected on startup ({backend_names})",
     )
     p.add_argument(
         "--default-thinking",
