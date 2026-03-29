@@ -25,6 +25,8 @@ QWEN.md
 # OmniInfer runtime files
 platform/Windows/llama.cpp-cpu/build/
 platform/Windows/llama.cpp-cpu/logs/*.log
+platform/Windows/llama.cpp-cpu/bin/*
+!platform/Windows/llama.cpp-cpu/bin/.gitkeep
 platform/Windows/llama.cpp-cpu/models/*
 !platform/Windows/llama.cpp-cpu/models/.gitkeep
 platform/Windows/llama.cpp-cuda/build/
