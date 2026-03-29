@@ -31,7 +31,32 @@ OmniInfer runs everywhere:
 
 ## Getting Started
 
+Start with the OmniInfer CLI from the repository root:
 
+Linux and macOS:
+
+```sh
+./omniinfer --help
+```
+
+Windows:
+
+```powershell
+.\omniinfer.cmd --help
+```
+
+Android:
+
+```sh
+./omniinfer --help
+```
+
+Recommended docs:
+
+- [CLI Guide](CLI.md): end-to-end CLI usage for Linux, macOS, Windows, and Android
+- [Android CLI Notes](platform/Android/README.md): Android direct-mode details
+- [Build Guide](build.md): build and platform packaging notes
+- [API Reference](API.md): OpenAI-compatible local API usage
 
 ## Architecture
 
