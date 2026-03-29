@@ -1,7 +1,0 @@
-build/
-bin/*
-logs/*
-models/*
-!bin/.gitkeep
-!logs/.gitkeep
-!models/.gitkeep

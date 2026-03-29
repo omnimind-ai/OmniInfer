@@ -23,36 +23,7 @@ QWEN.md
 .env.*
 
 # OmniInfer runtime files
-platform/Windows/llama.cpp-cpu/build/
-platform/Windows/llama.cpp-cpu/logs/*.log
-platform/Windows/llama.cpp-cpu/bin/*
-!platform/Windows/llama.cpp-cpu/bin/.gitkeep
-platform/Windows/llama.cpp-cpu/models/*
-!platform/Windows/llama.cpp-cpu/models/.gitkeep
-platform/Windows/llama.cpp-cuda/build/
-platform/Windows/llama.cpp-cuda/logs/*.log
-platform/Windows/llama.cpp-cuda/bin/*
-!platform/Windows/llama.cpp-cuda/bin/.gitkeep
-platform/Windows/llama.cpp-cuda/models/*
-!platform/Windows/llama.cpp-cuda/models/.gitkeep
-platform/Linux/llama.cpp-linux/build/
-platform/Linux/llama.cpp-linux/bin/*
-!platform/Linux/llama.cpp-linux/bin/.gitkeep
-platform/Linux/llama.cpp-linux/logs/*.log
-platform/Linux/llama.cpp-linux/models/*
-!platform/Linux/llama.cpp-linux/models/.gitkeep
-platform/Linux/llama.cpp-linux-rocm/build/
-platform/Linux/llama.cpp-linux-rocm/bin/*
-!platform/Linux/llama.cpp-linux-rocm/bin/.gitkeep
-platform/Linux/llama.cpp-linux-rocm/logs/*.log
-platform/Linux/llama.cpp-linux-rocm/models/*
-!platform/Linux/llama.cpp-linux-rocm/models/.gitkeep
-platform/Linux/llama.cpp-linux-ROCm/build/
-platform/Linux/llama.cpp-linux-ROCm/logs/*.log
-platform/Linux/llama.cpp-linux-ROCm/bin/*
-!platform/Linux/llama.cpp-linux-ROCm/bin/.gitkeep
-platform/Linux/llama.cpp-linux-ROCm/models/*
-!platform/Linux/llama.cpp-linux-ROCm/models/.gitkeep
+/platform
 
 /tmp
 CODEX.md
