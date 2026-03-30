@@ -6,7 +6,7 @@ This guide shows how to use the OmniInfer CLI on Linux, macOS, Windows, and Andr
 
 If you are running OmniInfer from a source checkout, prepare at least one local runtime backend before using the CLI.
 
-- Windows: build `llama.cpp-cpu` or `llama.cpp-cuda` first. See [Build Guide: Windows](build.md#windows).
+- Windows: build `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan` first. See [Build Guide: Windows](build.md#windows).
 - Linux: build `llama.cpp-linux` or `llama.cpp-linux-rocm` first. See [Build Guide: Linux](build.md#linux).
 - macOS: build `llama.cpp-mac` first. See [Build Guide: macOS](build.md#macos).
 - Android: prepare the Android runtime assets first. See [Build Guide: Android](build.md#android).
@@ -85,7 +85,7 @@ Examples:
 
 - Linux: `llama.cpp-linux` or `llama.cpp-linux-rocm`
 - macOS: `llama.cpp-mac`
-- Windows: `llama.cpp-cpu` or `llama.cpp-cuda`
+- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan`
 - Android: `llama.cpp-llama` or `llama.cpp-mtmd`
 
 ### 3. Load a model

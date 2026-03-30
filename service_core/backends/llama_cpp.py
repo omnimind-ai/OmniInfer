@@ -23,6 +23,16 @@ WINDOWS_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
         env_prefix="OMNIINFER_LLAMA_CPP_CUDA",
         default_ngl="999",
     ),
+    BackendTemplate(
+        id="llama.cpp-vulkan",
+        label="llama.cpp Vulkan",
+        runtime_dir_name="llama.cpp-vulkan",
+        server_binary_name="llama-server.exe",
+        description="llama.cpp Vulkan backend managed by OmniInfer",
+        capabilities=("chat", "vision", "stream", "gpu", "vulkan"),
+        env_prefix="OMNIINFER_LLAMA_CPP_VULKAN",
+        default_ngl="999",
+    ),
 )
 
 

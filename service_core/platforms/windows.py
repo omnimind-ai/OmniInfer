@@ -27,4 +27,4 @@ class WindowsPlatform(HostPlatform):
 
     @property
     def gpu_backend_ids(self) -> frozenset[str]:
-        return frozenset({"llama.cpp-cuda"})
+        return frozenset({"llama.cpp-cuda", "llama.cpp-vulkan"})

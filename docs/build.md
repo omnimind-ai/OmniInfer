@@ -36,6 +36,7 @@ Backend builds emit runtime files into local platform folders:
 
 - Windows CPU: `.local/runtime/windows/llama.cpp-cpu`
 - Windows CUDA: `.local/runtime/windows/llama.cpp-cuda`
+- Windows Vulkan: `.local/runtime/windows/llama.cpp-vulkan`
 - Linux CPU: `.local/runtime/linux/llama.cpp-linux`
 - Linux ROCm: `.local/runtime/linux/llama.cpp-linux-rocm`
 - macOS Metal: `.local/runtime/macos/llama.cpp-mac`
@@ -58,6 +59,8 @@ Typical runtime subfolders:
   Build the Windows CPU backend.
 - `scripts/platforms/windows/build-llama-cuda.ps1`
   Build the Windows CUDA backend.
+- `scripts/platforms/windows/build-llama-vulkan.ps1`
+  Build the Windows Vulkan backend.
 - `scripts/platforms/windows/build-release.ps1`
   Package a Windows portable release.
 
@@ -76,6 +79,15 @@ CUDA backend:
 - `cmake`
 - NVIDIA CUDA Toolkit with `nvcc`
 - MSVC `cl.exe` available in `PATH`
+
+Vulkan backend:
+
+- `cmake`
+- One supported Windows C/C++ toolchain:
+  - Visual Studio 2022 Build Tools with the C++ workload, or
+  - MSYS2 UCRT64 with `gcc`, `g++`, `ninja`, `vulkan-devel`, and `shaderc`, or
+  - MinGW POSIX with `gcc`, `g++`, `mingw32-make`, and a Vulkan SDK that exposes `glslc.exe`
+- A Windows Vulkan SDK install, or an MSYS2 environment that already provides Vulkan headers/libs and `glslc`
 
 Recommended:
 
@@ -117,6 +129,23 @@ Expected output:
 - `.local/runtime/windows/llama.cpp-cuda/bin/llama-server.exe`
 - CUDA runtime DLLs copied into the same directory when available
 
+### Build The Vulkan Backend
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-vulkan.ps1
+```
+
+Optional:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-vulkan.ps1 -BuildType Release
+```
+
+Expected output:
+
+- `.local/runtime/windows/llama.cpp-vulkan/bin/llama-server.exe`
+- Vulkan backend DLLs copied from the llama.cpp build output into the same directory
+
 ### Build A Windows Portable Release
 
 The Windows release build packages:
@@ -137,6 +166,8 @@ Optional:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -BuildCpuBackend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -BuildCpuBackend -BuildCudaBackend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -BuildVulkanBackend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -BuildCpuBackend -BuildVulkanBackend
 ```
 
 Expected output:
@@ -148,6 +179,7 @@ Expected output:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-cpu.ps1 -DryRun
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-cuda.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-vulkan.ps1 -DryRun
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -DryRun
 ```
 

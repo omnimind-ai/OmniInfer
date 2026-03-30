@@ -78,6 +78,8 @@ Example response:
 
 Returns all local backends.
 
+On Windows, the list may include `llama.cpp-cpu`, `llama.cpp-cuda`, and `llama.cpp-vulkan` depending on which runtime folders are present locally.
+
 Example response:
 
 ```json

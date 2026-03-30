@@ -8,6 +8,7 @@ from typing import Any
 BACKEND_PRIORITY: dict[str, int] = {
     "llama.cpp-mac": 0,
     "llama.cpp-cuda": 0,
+    "llama.cpp-vulkan": 0,
     "llama.cpp-linux-rocm": 0,
     "llama.cpp-linux": 1,
     "llama.cpp-cpu": 1,
