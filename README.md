@@ -9,7 +9,7 @@
 
 Easy, fast, and private LLM & VLM inference for every device
 
-| [Documentation](#getting-started) | [Architecture](#architecture) | [Supported Models](#supported-models) |
+| [Getting Started](#getting-started) | [Documentation](#documentation) | [Architecture](#architecture) |
 
 ## About
 
@@ -36,7 +36,7 @@ OmniInfer runs everywhere:
 - Android, iOS — mobile & edge devices
 - One codebase, all platforms
 
-<!-- ## Getting Started -->
+## Getting Started
 
 Choose the setup path that matches how you want to run OmniInfer:
 
@@ -84,6 +84,8 @@ Linux and macOS:
 ```sh
 ./omniinfer --help
 ```
+
+## Documentation
 
 Recommended docs:
 
