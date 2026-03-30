@@ -38,7 +38,18 @@ OmniInfer runs everywhere:
 
 ## Getting Started
 
-Start with the OmniInfer CLI from the repository root:
+Choose the setup path that matches how you want to run OmniInfer:
+
+### Source Checkout
+
+If you cloned this repository, build or prepare at least one local runtime backend first.
+
+- Windows: see [Build Guide: Windows](docs/build.md#windows)
+- Linux: see [Build Guide: Linux](docs/build.md#linux)
+- macOS: see [Build Guide: macOS](docs/build.md#macos)
+- Android: see [Build Guide: Android](docs/build.md#android)
+
+After the runtime is ready, start with the OmniInfer CLI from the repository root.
 
 Linux and macOS:
 
@@ -53,6 +64,22 @@ Windows:
 ```
 
 Android:
+
+```sh
+./omniinfer --help
+```
+
+### Packaged Release
+
+If you are using a packaged release that already includes `runtime/`, you can run the CLI immediately from the release directory:
+
+Windows:
+
+```powershell
+.\omniinfer.cmd --help
+```
+
+Linux and macOS:
 
 ```sh
 ./omniinfer --help
