@@ -26,9 +26,19 @@ For all platforms:
 
 - Git
 - Python 3
-- `framework/llama.cpp` available in the repository
+- `framework/llama.cpp` available in the repository for `llama.cpp-*` backend builds
 
-If the `framework/llama.cpp` submodule is missing, the Linux and macOS backend scripts can bootstrap it automatically unless you pass `--no-bootstrap`.
+Submodule behavior:
+
+- Linux `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`.
+- macOS `llama.cpp-mac` can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`.
+- Windows `llama.cpp-*` scripts do not bootstrap submodules automatically. If `framework/llama.cpp` is missing, initialize it first:
+
+```bash
+git submodule update --init --recursive framework/llama.cpp
+```
+
+- The current embedded `mlx-mac` flow does not require `framework/mlx` to be checked out, because OmniInfer uses the Python packages installed into the selected runtime environment instead of building that submodule.
 
 ## Output Conventions
 
@@ -279,11 +289,14 @@ bash ./scripts/platforms/linux/build-release.sh --dry-run
 
 - `scripts/platforms/macos/build-llama-mac.sh`
   Build the macOS Metal backend.
+- `scripts/platforms/macos/build-mlx-mac.sh`
+  Prepare the embedded `mlx-mac` Python runtime.
 
 The macOS build scripts use the same two-layer pattern as the other desktop platforms:
 
 - Platform entry: `scripts/platforms/macos/build-llama-mac.sh`
 - Backend implementation: `scripts/platforms/macos/llama.cpp-mac/build.sh`
+- Embedded MLX runtime: `scripts/platforms/macos/mlx-mac/build.sh`
 
 ### Prerequisites
 
@@ -313,10 +326,39 @@ Expected output:
 
 - `.local/runtime/macos/llama.cpp-mac/bin/llama-server`
 
+### Prepare The macOS MLX Runtime
+
+The current `mlx-mac` backend is embedded inside the OmniInfer gateway. It does not build a separate server binary.
+
+Prepare its Python runtime like this:
+
+```bash
+bash ./scripts/platforms/macos/build-mlx-mac.sh
+```
+
+Optional:
+
+```bash
+bash ./scripts/platforms/macos/build-mlx-mac.sh --python /absolute/path/to/python3.11
+```
+
+Expected output:
+
+- `.local/runtime/macos/mlx-mac/venv/bin/python3`
+- `.local/runtime/macos/mlx-mac/models/`
+- `.local/runtime/macos/mlx-mac/logs/`
+
+Notes:
+
+- `mlx-mac` requires Python `3.10+`.
+- Its dependencies are installed from `scripts/platforms/macos/mlx-mac/requirements.txt`.
+- For source runs, `./omniinfer` automatically prefers `.local/runtime/macos/mlx-mac/venv/bin/python3` when that venv exists.
+
 ### Dry-Run Validation
 
 ```bash
 bash ./scripts/platforms/macos/build-llama-mac.sh --dry-run
+bash ./scripts/platforms/macos/build-mlx-mac.sh --dry-run
 ```
 
 ### Build A macOS Portable Release
@@ -328,6 +370,8 @@ The macOS release build packages:
 - `config/omniinfer.json`
 - `release-metadata.json`
 - `OmniInfer-macos-<arch>.tar.gz`
+
+The current portable macOS package is built around `llama.cpp-mac`. It does not yet bundle the embedded `mlx-mac` runtime.
 
 Before packaging, build or prepare the macOS runtime binary first:
 
@@ -344,20 +388,20 @@ bash ./release/mac/build_portable.sh
 Optional package name:
 
 ```bash
-bash ./release/mac/build_portable.sh OmniInferDev
+bash ./release/mac/build_portable.sh OmniInfer-v0.1.0
 ```
 
 Expected output:
 
-- `release/mac/portable/OmniInfer`
-- `release/mac/portable/OmniInfer-macos-<arch>.tar.gz`
+- `release/mac/portable/<package-name>`
+- `release/mac/portable/<package-name>-macos-<arch>.tar.gz`
 
 ### Validate The macOS Release
 
 Run the release validation script:
 
 ```bash
-python3 ./release/mac/test_release.py --package-dir ./release/mac/portable/OmniInfer
+python3 ./release/mac/test_release.py --package-dir ./release/mac/portable/<package-name>
 ```
 
 This validation checks:
