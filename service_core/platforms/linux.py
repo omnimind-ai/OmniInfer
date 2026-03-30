@@ -11,7 +11,11 @@ class LinuxPlatform(HostPlatform):
 
     @property
     def runtime_folder_name(self) -> str:
-        return "Linux"
+        return "linux"
+
+    @property
+    def legacy_runtime_folder_names(self) -> tuple[str, ...]:
+        return ("Linux",)
 
     @property
     def default_backend_id(self) -> str:

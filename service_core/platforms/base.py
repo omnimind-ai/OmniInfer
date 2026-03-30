@@ -30,6 +30,10 @@ class HostPlatform(ABC):
         raise NotImplementedError
 
     @property
+    def legacy_runtime_folder_names(self) -> tuple[str, ...]:
+        return ()
+
+    @property
     @abstractmethod
     def default_backend_id(self) -> str:
         raise NotImplementedError
@@ -66,7 +70,16 @@ class HostPlatform(ABC):
         if portable_root.is_dir():
             return portable_root.resolve()
 
-        return (repo_root / "platform" / self.runtime_folder_name).resolve()
+        canonical_local_root = (repo_root / ".local" / "runtime" / self.runtime_folder_name).resolve()
+        if canonical_local_root.is_dir():
+            return canonical_local_root
+
+        for legacy_name in self.legacy_runtime_folder_names:
+            legacy_root = (repo_root / "platform" / legacy_name).resolve()
+            if legacy_root.is_dir():
+                return legacy_root
+
+        return canonical_local_root
 
     def resolve_catalog_backend_id(self, backend_id: str) -> str:
         return self.catalog_backend_aliases.get(backend_id, backend_id)

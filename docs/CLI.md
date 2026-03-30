@@ -156,6 +156,6 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 ### Android
 
 - The repo-root [omniinfer](../omniinfer) script detects Android automatically.
-- Android direct mode uses the local launcher at `platform/Android/bin/omniinfer-android`.
-- Android backend binaries live under `platform/Android/lib/arm64-v8a`.
+- Android direct mode uses the local launcher at `.local/runtime/android/bin/omniinfer-android`.
+- Android backend binaries live under `.local/runtime/android/lib/arm64-v8a`.
 - For more Android-specific details, see [Android CLI Notes](android-cli.md).

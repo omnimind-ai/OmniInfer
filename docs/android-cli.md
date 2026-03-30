@@ -4,11 +4,11 @@ OmniInfer supports Android in direct mode.
 
 ## Layout
 
-- `platform/Android/bin/omniinfer-android`
+- `.local/runtime/android/bin/omniinfer-android`
   Local Android shell frontend used by the repo-root `./omniinfer` entrypoint.
-- `platform/Android/lib/arm64-v8a/libllama-cli.so`
+- `.local/runtime/android/lib/arm64-v8a/libllama-cli.so`
   Local Android llama.cpp backend binary.
-- `platform/Android/lib/arm64-v8a/libmtmd-cli.so`
+- `.local/runtime/android/lib/arm64-v8a/libmtmd-cli.so`
   Local Android multimodal backend binary.
 
 At the moment both backend files are wired through the same validated Android llama.cpp CLI binary,
@@ -20,13 +20,13 @@ still being stabilized.
 Android does not run the local HTTP gateway.
 
 Instead, the repo-root `./omniinfer` script detects Android and forwards commands to
-`platform/Android/bin/omniinfer-android`, which:
+`.local/runtime/android/bin/omniinfer-android`, which:
 
 - persists backend/model state
 - maps OmniInfer commands to Android-native llama.cpp backends
 - runs text and multimodal inference directly in the current shell
 
-These Android runtime assets stay under the local `platform/Android/` directory even though that directory is not tracked in Git.
+These Android runtime assets stay under the local `.local/runtime/android/` directory even though that directory is not tracked in Git.
 
 ## State
 

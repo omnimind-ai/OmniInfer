@@ -18,7 +18,11 @@ if command -v getprop >/dev/null 2>&1; then
 fi
 
 if [ "$is_android" -eq 1 ]; then
-    exec "$SCRIPT_DIR/platform/Android/bin/omniinfer-android" "$@"
+    android_launcher="$SCRIPT_DIR/.local/runtime/android/bin/omniinfer-android"
+    if [ ! -x "$android_launcher" ]; then
+        android_launcher="$SCRIPT_DIR/platform/Android/bin/omniinfer-android"
+    fi
+    exec "$android_launcher" "$@"
 fi
 
 if command -v python3 >/dev/null 2>&1; then

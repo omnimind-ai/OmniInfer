@@ -64,7 +64,7 @@ done
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_ROOT}/../../../.." && pwd)"
-PACKAGE_ROOT="${REPO_ROOT}/platform/Linux/llama.cpp-linux"
+PACKAGE_ROOT="${REPO_ROOT}/.local/runtime/linux/llama.cpp-linux"
 LLAMA_ROOT="${REPO_ROOT}/framework/llama.cpp"
 BUILD_ROOT="${PACKAGE_ROOT}/build/llama.cpp-linux"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
