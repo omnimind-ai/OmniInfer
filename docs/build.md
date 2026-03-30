@@ -42,8 +42,6 @@ Backend builds emit runtime files into local platform folders:
 - macOS Metal: `.local/runtime/macos/llama.cpp-mac`
 - Android CLI assets: `.local/runtime/android`
 
-OmniInfer still falls back to the legacy `platform/<Platform>/...` layout if it already exists locally, but new builds should use `.local/runtime/<platform>/...`.
-
 Typical runtime subfolders:
 
 - `bin/`

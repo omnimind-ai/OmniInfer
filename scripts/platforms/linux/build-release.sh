@@ -4,8 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-PLATFORM_ROOT="${REPO_ROOT}/.local/runtime/linux"
-LEGACY_PLATFORM_ROOT="${REPO_ROOT}/platform/Linux"
+LOCAL_RUNTIME_ROOT="${REPO_ROOT}/.local/runtime/linux"
 CPU_SCRIPT="${SCRIPT_DIR}/build-llama-cpu.sh"
 ROCM_SCRIPT="${SCRIPT_DIR}/build-llama-rocm.sh"
 
@@ -133,10 +132,7 @@ cp -a "${REPO_ROOT}/tests/pictures/test1.png" "${TEST_ASSETS_ROOT}/test1.png"
 find "${RELEASE_ROOT}/service_core" -type d -name '__pycache__' -prune -exec rm -rf {} +
 
 for backend_dir in llama.cpp-linux llama.cpp-linux-rocm; do
-  source_root="${PLATFORM_ROOT}/${backend_dir}"
-  if [[ ! -d "${source_root}" && -d "${LEGACY_PLATFORM_ROOT}/${backend_dir}" ]]; then
-    source_root="${LEGACY_PLATFORM_ROOT}/${backend_dir}"
-  fi
+  source_root="${LOCAL_RUNTIME_ROOT}/${backend_dir}"
   if [[ ! -d "${source_root}" ]]; then
     continue
   fi
