@@ -96,6 +96,18 @@ Recommended docs:
 
 ![omni_studio_architecture](./docs/architecture_used_v2_en.png)
 
+## Citation
+
+If you use OmniInfer in research, please cite this repository.
+GitHub can automatically generate citation formats from [CITATION.cff](CITATION.cff).
+
+```bibtex
+@software{omniinfer,
+  author = {{Omnimind AI}},
+  title = {OmniInfer},
+  url = {https://github.com/omnimind-ai/OmniInfer}
+}
+```
 
 
 ## Contributing
