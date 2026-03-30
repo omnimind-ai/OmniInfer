@@ -48,6 +48,7 @@ Design notes:
   3. `omniinfer select <backend>` persists the current backend selection.
   4. `omniinfer chat` uses the selected backend by default. If none is selected, it prompts you to run `omniinfer backend list` and `omniinfer select <backend>`.
   5. Output is designed for a local inference workflow rather than exposing raw HTTP JSON.
+  6. `omniinfer chat` streams tokens to stdout by default. Use `--no-stream` if you want the final response after completion instead.
 
 Command map:
   backend list              -> show available backends
@@ -56,7 +57,7 @@ Command map:
   model list                -> show models supported on the current system
   model load                -> choose and load a model
   thinking show/set         -> show or change the default think setting
-  chat                      -> run text or multimodal inference with optional streaming
+  chat                      -> run text or multimodal inference with streaming enabled by default
   backend stop              -> stop the currently running backend process
   shutdown                  -> stop the OmniInfer service
   serve                     -> start the service in the foreground
@@ -162,6 +163,8 @@ def request_json(
             raise SystemExit(f"{method} {endpoint} failed with status {status}: {message}") from exc
     except urllib.error.URLError as exc:
         raise SystemExit(f"unable to reach local OmniInfer service: {exc}") from exc
+    except OSError as exc:
+        raise SystemExit(f"unable to reach local OmniInfer service: {exc}") from exc
 
     return status, try_parse_json(raw), raw
 
@@ -206,22 +209,14 @@ def start_service_background() -> None:
     default_backend = str(config.get("default_backend", ""))
     default_thinking = str(config.get("default_thinking", "off"))
 
-    command = [
-        sys.executable,
-        str(Path(REPO_ROOT) / "omniinfer_gateway.py"),
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "--startup-timeout",
-        str(startup_timeout),
-        "--window-mode",
-        window_mode,
-        "--default-thinking",
-        default_thinking,
-    ]
-    if default_backend:
-        command.extend(["--default-backend", default_backend])
+    command = gateway_launch_command(
+        host=host,
+        port=port,
+        startup_timeout=startup_timeout,
+        window_mode=window_mode,
+        default_thinking=default_thinking,
+        default_backend=default_backend,
+    )
 
     CLI_LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_handle = CLI_LOG_FILE.open("a", encoding="utf-8")
@@ -257,6 +252,57 @@ def wait_for_service_ready(timeout_s: int) -> None:
     if CLI_LOG_FILE.is_file():
         tail = CLI_LOG_FILE.read_text(encoding="utf-8", errors="replace")[-4000:]
     raise SystemExit(f"failed to start local OmniInfer service in time\n{tail}")
+
+
+def resolve_gateway_binary() -> Path | None:
+    if not getattr(sys, "frozen", False):
+        return None
+
+    current_exe = Path(sys.executable).resolve()
+    candidates = [
+        current_exe.with_name("OmniInfer.exe"),
+        current_exe.with_name("OmniInfer"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file() and candidate.resolve() != current_exe:
+            return candidate
+    return None
+
+
+def gateway_launch_command(
+    *,
+    host: str,
+    port: int,
+    startup_timeout: int,
+    window_mode: str,
+    default_thinking: str,
+    default_backend: str,
+) -> list[str]:
+    if getattr(sys, "frozen", False):
+        gateway_binary = resolve_gateway_binary()
+        if gateway_binary is None:
+            raise SystemExit("unable to locate the packaged OmniInfer gateway binary next to the CLI")
+        command = [str(gateway_binary)]
+    else:
+        command = [sys.executable, str(Path(REPO_ROOT) / "omniinfer_gateway.py")]
+
+    command.extend(
+        [
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--startup-timeout",
+            str(startup_timeout),
+            "--window-mode",
+            window_mode,
+            "--default-thinking",
+            default_thinking,
+        ]
+    )
+    if default_backend:
+        command.extend(["--default-backend", default_backend])
+    return command
 
 
 def ensure_service_running() -> None:
@@ -351,6 +397,7 @@ def print_status() -> int:
     print(f"Backend ready: {'yes' if payload.get('backend_ready') else 'no'}")
     print(f"Loaded model: {payload.get('model') or 'not loaded'}")
     print(f"Loaded mmproj: {payload.get('mmproj') or 'not loaded'}")
+    print(f"Loaded ctx-size: {payload.get('ctx_size') or 'not loaded'}")
     thinking = payload.get("thinking") if isinstance(payload.get("thinking"), dict) else {}
     print(f"Default thinking: {format_bool(thinking.get('default_enabled'))}")
     return 0
@@ -463,11 +510,15 @@ def print_model_load(args: argparse.Namespace) -> int:
     mmproj_file = Path(args.mmproj).expanduser().resolve() if args.mmproj else None
     if mmproj_file and not mmproj_file.is_file():
         raise SystemExit(f"mmproj file does not exist: {mmproj_file}")
+    if args.ctx_size is not None and args.ctx_size <= 0:
+        raise SystemExit("--ctx-size must be a positive integer")
 
     selected_backend = require_selected_backend(allow_auto=args.auto)
     payload: dict[str, Any] = {"model": str(model_file)}
     if mmproj_file:
         payload["mmproj"] = str(mmproj_file)
+    if args.ctx_size is not None:
+        payload["ctx_size"] = args.ctx_size
     if selected_backend:
         payload["backend"] = selected_backend
 
@@ -478,6 +529,7 @@ def print_model_load(args: argparse.Namespace) -> int:
     print(f"Backend: {response.get('selected_backend') or '-'}")
     print(f"Model: {response.get('selected_model') or '-'}")
     print(f"mmproj: {response.get('selected_mmproj') or '-'}")
+    print(f"ctx-size: {response.get('selected_ctx_size') or '-'}")
     return 0
 
 
@@ -645,6 +697,8 @@ def chat(args: argparse.Namespace) -> int:
     mmproj_path = Path(args.mmproj).expanduser().resolve() if args.mmproj else None
     if mmproj_path and not mmproj_path.is_file():
         raise SystemExit(f"mmproj file does not exist: {mmproj_path}")
+    if args.ctx_size is not None and args.ctx_size <= 0:
+        raise SystemExit("--ctx-size must be a positive integer")
 
     if model_path is None and not state.get("model"):
         raise SystemExit(
@@ -676,7 +730,7 @@ def chat(args: argparse.Namespace) -> int:
     payload: dict[str, Any] = {
         "messages": messages,
         "temperature": args.temperature,
-        "max_tokens": args.max_tokens if args.max_tokens is not None else (64 if args.stream else 128),
+        "max_tokens": args.max_tokens if args.max_tokens is not None else 128,
         "stream": bool(args.stream),
         "think": parse_boolish(args.think) if args.think is not None else False,
     }
@@ -684,6 +738,8 @@ def chat(args: argparse.Namespace) -> int:
         payload["model"] = str(model_path)
     if mmproj_path:
         payload["mmproj"] = str(mmproj_path)
+    if args.ctx_size is not None:
+        payload["ctx_size"] = args.ctx_size
     if selected_backend:
         payload["backend"] = selected_backend
 
@@ -715,8 +771,16 @@ def shutdown_service() -> int:
 
 
 def serve_foreground() -> int:
-    gateway_script = Path(REPO_ROOT) / "omniinfer_gateway.py"
-    os.execv(sys.executable, [sys.executable, str(gateway_script)])
+    config = get_service_config()
+    command = gateway_launch_command(
+        host=str(config.get("host", "127.0.0.1")),
+        port=int(config.get("port", 9000)),
+        startup_timeout=int(config.get("startup_timeout", 60)),
+        window_mode=str(config.get("window_mode", "hidden")),
+        default_thinking=str(config.get("default_thinking", "off")),
+        default_backend=str(config.get("default_backend", "")),
+    )
+    os.execv(command[0], command)
     return 0
 
 
@@ -802,6 +866,7 @@ def build_parser() -> argparse.ArgumentParser:
     model_load = model_sub.add_parser("load", help="Load a model")
     model_load.add_argument("-m", "--model", required=True, help="Path to the model file")
     model_load.add_argument("-mm", "--mmproj", help="Path to the mmproj file")
+    model_load.add_argument("--ctx-size", type=int, help="Optional llama.cpp context length override for this load")
     model_load.add_argument("--auto", action="store_true", help="Let OmniInfer auto-select a backend for this command instead of using the saved selection")
 
     thinking = sub.add_parser("thinking", help="Default thinking controls")
@@ -812,9 +877,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat_cmd = sub.add_parser("chat", help="Run model inference")
     chat_cmd.add_argument("--message", required=True, help="User message")
-    chat_cmd.add_argument("--stream", action="store_true", help="Stream tokens to stdout")
+    stream_group = chat_cmd.add_mutually_exclusive_group()
+    stream_group.add_argument("--stream", dest="stream", action="store_true", default=True, help="Stream tokens to stdout (default)")
+    stream_group.add_argument("--no-stream", dest="stream", action="store_false", help="Wait for the final response before printing")
     chat_cmd.add_argument("-m", "--model", help="Model path for this request")
     chat_cmd.add_argument("-mm", "--mmproj", help="mmproj path for this request")
+    chat_cmd.add_argument("--ctx-size", type=int, help="Optional llama.cpp context length override for this request")
     chat_cmd.add_argument("--image", help="Optional image path for multimodal inference")
     chat_cmd.add_argument("--think", choices=("on", "off"), help="Thinking mode for this request")
     chat_cmd.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature, defaults to 0.2")

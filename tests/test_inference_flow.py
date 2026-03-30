@@ -62,6 +62,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reuse-running", action="store_true", help="Reuse an already running gateway on the target host:port")
     parser.add_argument("--keep-server", action="store_true", help="Do not shut down the gateway if this script launched it")
     parser.add_argument("--keep-artifacts", action="store_true", help="Keep temp logs and response files even when the script succeeds")
+    parser.add_argument("--gateway-program", help="Optional gateway program to launch instead of the repo-root omniinfer_gateway.py")
+    parser.add_argument("--gateway-workdir", help="Optional working directory for the launched gateway process")
+    parser.add_argument("--scenario-label", default="", help="Short label printed in logs, for example: linux-source or linux-release")
     return parser.parse_args()
 
 
@@ -79,6 +82,33 @@ class FlowRunner:
         self.own_gateway = False
         self.success = False
         atexit.register(self.cleanup)
+
+    def gateway_program(self) -> Path:
+        if self.args.gateway_program:
+            return Path(self.args.gateway_program).expanduser().resolve()
+        return REPO_ROOT / "omniinfer_gateway.py"
+
+    def gateway_workdir(self) -> Path:
+        if self.args.gateway_workdir:
+            return Path(self.args.gateway_workdir).expanduser().resolve()
+        program = self.gateway_program()
+        if program.suffix.lower() == ".py":
+            return REPO_ROOT
+        return program.parent
+
+    def gateway_command(self) -> list[str]:
+        program = self.gateway_program()
+        if program.suffix.lower() == ".py":
+            return [
+                sys.executable,
+                "-u",
+                str(program),
+                "--host",
+                self.args.host,
+                "--port",
+                str(self.args.port),
+            ]
+        return [str(program), "--host", self.args.host, "--port", str(self.args.port)]
 
     def cleanup(self) -> None:
         if self.own_gateway and not self.args.keep_server:
@@ -232,17 +262,11 @@ class FlowRunner:
         log(f"Starting OmniInfer gateway on {self.base_url}")
         self.gateway_log.parent.mkdir(parents=True, exist_ok=True)
         self.gateway_log_handle = self.gateway_log.open("w", encoding="utf-8")
+        command = self.gateway_command()
+        log(f"Gateway command: {' '.join(command)}")
         self.gateway_proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-u",
-                str(REPO_ROOT / "omniinfer_gateway.py"),
-                "--host",
-                self.args.host,
-                "--port",
-                str(self.args.port),
-            ],
-            cwd=str(REPO_ROOT),
+            command,
+            cwd=str(self.gateway_workdir()),
             stdout=self.gateway_log_handle,
             stderr=subprocess.STDOUT,
             text=True,
@@ -252,6 +276,10 @@ class FlowRunner:
 
     def run(self) -> None:
         self.ensure_inputs()
+        label = self.args.scenario_label.strip() or "default"
+        log(f"Scenario: {label}")
+        log(f"Host platform: {platform.platform()}")
+        log(f"Gateway program: {self.gateway_program()}")
         self.start_gateway_if_needed()
 
         log("GET /health")

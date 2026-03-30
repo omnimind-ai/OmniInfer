@@ -23,23 +23,12 @@ QWEN.md
 .env.*
 
 # OmniInfer runtime files
-platform/Windows/llama.cpp-cpu/build/
-platform/Windows/llama.cpp-cpu/logs/*.log
-platform/Windows/llama.cpp-cpu/models/*
-!platform/Windows/llama.cpp-cpu/models/.gitkeep
-platform/Windows/llama.cpp-cuda/build/
-platform/Windows/llama.cpp-cuda/logs/*.log
-platform/Windows/llama.cpp-cuda/bin/*
-!platform/Windows/llama.cpp-cuda/bin/.gitkeep
-platform/Windows/llama.cpp-cuda/models/*
-!platform/Windows/llama.cpp-cuda/models/.gitkeep
+/platform
 
 /tmp
 CODEX.md
 QWEN.md
 tmp_gateway_*.log
-release/build/
-release/portable/
 release.zip
 
 /release
