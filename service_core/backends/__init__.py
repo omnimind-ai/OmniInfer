@@ -5,6 +5,7 @@ from service_core.backends.llama_cpp import (
     MAC_LLAMA_CPP_TEMPLATES,
     WINDOWS_LLAMA_CPP_TEMPLATES,
 )
+from service_core.backends.mlx import MAC_MLX_TEMPLATES
 
 __all__ = [
     "BACKEND_PRIORITY",
@@ -13,5 +14,6 @@ __all__ = [
     "ANDROID_LLAMA_CPP_TEMPLATES",
     "WINDOWS_LLAMA_CPP_TEMPLATES",
     "MAC_LLAMA_CPP_TEMPLATES",
+    "MAC_MLX_TEMPLATES",
     "LINUX_LLAMA_CPP_TEMPLATES",
 ]

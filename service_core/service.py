@@ -222,6 +222,30 @@ def stream_http_request(
         return
 
 
+def stream_embedded_events(
+    handler: BaseHTTPRequestHandler,
+    events: list[dict[str, Any]],
+) -> None:
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("Connection", "close")
+    handler.send_header("X-Accel-Buffering", "no")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    handler.end_headers()
+    try:
+        for event in events:
+            body = json.dumps(event, ensure_ascii=False).encode("utf-8")
+            handler.wfile.write(b"data: " + body + b"\n\n")
+            handler.wfile.flush()
+        handler.wfile.write(b"data: [DONE]\n\n")
+        handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+        return
+
+
 class OmniHandler(BaseHTTPRequestHandler):
     server_version = "OmniInfer/0.2"
 
@@ -491,6 +515,23 @@ class OmniHandler(BaseHTTPRequestHandler):
 
             if not payload.get("model"):
                 payload["model"] = runtime.model_ref
+
+            runtime_mode = self.manager.current_runtime_mode()
+            if runtime_mode == "embedded":
+                try:
+                    if payload.get("stream") is True:
+                        events = self.manager.stream_chat_completion(payload)
+                        stream_embedded_events(self, events)
+                        return
+                    response = self.manager.chat_completion(payload)
+                except ValueError as e:
+                    self._send_json(400, {"error": {"message": str(e)}})
+                    return
+                except RuntimeError as e:
+                    self._send_json(409, {"error": {"message": str(e)}})
+                    return
+                self._send_json(200, response)
+                return
 
             target = self.manager.current_proxy_target()
             if not target:

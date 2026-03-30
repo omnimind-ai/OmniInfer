@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from service_core.backends import BackendSpec
+from service_core.drivers import EmbeddedBackendDriver, get_embedded_backend_driver
 from service_core.model_catalog import SupportedModelCatalog
 from service_core.platforms import (
     HostPlatform,
@@ -30,11 +31,14 @@ class LoadedRuntime:
     mmproj_path: str | None
     mmproj_ref: str | None
     ctx_size: int | None
-    host: str
-    port: int
-    process: subprocess.Popen[Any]
+    runtime_mode: str
+    host: str | None
+    port: int | None
+    process: subprocess.Popen[Any] | None
     log_path: str | None = None
     log_handle: TextIOWrapper | None = None
+    embedded_driver: EmbeddedBackendDriver | None = None
+    embedded_state: Any = None
 
 
 class RuntimeManager:
@@ -116,7 +120,11 @@ class RuntimeManager:
         return self.backends[target]
 
     def _is_runtime_running_locked(self) -> bool:
-        return bool(self.loaded_runtime and self.loaded_runtime.process.poll() is None)
+        if not self.loaded_runtime:
+            return False
+        if self.loaded_runtime.runtime_mode == "embedded":
+            return True
+        return bool(self.loaded_runtime.process and self.loaded_runtime.process.poll() is None)
 
     def _stop_runtime_locked(self) -> None:
         runtime = self.loaded_runtime
@@ -124,8 +132,16 @@ class RuntimeManager:
         if runtime is None:
             return
 
+        if runtime.runtime_mode == "embedded":
+            if runtime.embedded_driver is not None:
+                try:
+                    runtime.embedded_driver.unload_model(runtime.embedded_state)
+                except Exception:
+                    pass
+            return
+
         proc = runtime.process
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             try:
                 if os.name == "nt":
                     proc.terminate()
@@ -155,7 +171,25 @@ class RuntimeManager:
             path = Path(backend.models_dir) / path
         return str(path.resolve())
 
+    def _ensure_supported_model_artifact(self, backend: BackendSpec, model_path: str) -> None:
+        target = Path(model_path)
+        if backend.model_artifact == "directory":
+            if not target.is_dir():
+                raise FileNotFoundError(f"model directory not found: {model_path}")
+            return
+        if backend.model_artifact == "file":
+            if not target.is_file():
+                raise FileNotFoundError(f"model file not found: {model_path}")
+            return
+        if not target.exists():
+            raise FileNotFoundError(f"model path not found: {model_path}")
+
     def _resolve_mmproj_path(self, backend: BackendSpec, mmproj: str | None, model_path: str) -> str | None:
+        if not backend.supports_mmproj:
+            if mmproj:
+                raise ValueError(f"{backend.id} does not support mmproj files")
+            return None
+
         if mmproj:
             path = Path(mmproj).expanduser()
             if not path.is_absolute():
@@ -176,8 +210,57 @@ class RuntimeManager:
         mmproj_path: str | None,
         ctx_size: int | None = None,
     ) -> LoadedRuntime:
+        if backend.runtime_mode == "embedded":
+            return self._start_embedded_runtime_locked(backend, model_path, mmproj_path, ctx_size=ctx_size)
+        return self._start_external_runtime_locked(backend, model_path, mmproj_path, ctx_size=ctx_size)
+
+    def _start_embedded_runtime_locked(
+        self,
+        backend: BackendSpec,
+        model_path: str,
+        mmproj_path: str | None,
+        ctx_size: int | None = None,
+    ) -> LoadedRuntime:
         if not backend.binary_exists:
-            raise FileNotFoundError(f"llama-server not found: {backend.llama_server_path}")
+            raise RuntimeError(
+                f"{backend.id} is not available in the current Python environment; "
+                "install its required Python packages before loading a model"
+            )
+
+        driver = get_embedded_backend_driver(backend.id)
+        model_ref = display_path_reference(model_path, backend.models_dir)
+        state = driver.load_model(
+            model_path=model_path,
+            model_ref=model_ref,
+            mmproj_path=mmproj_path,
+            ctx_size=ctx_size,
+        )
+        runtime = LoadedRuntime(
+            backend_id=backend.id,
+            model_path=model_path,
+            model_ref=model_ref,
+            mmproj_path=mmproj_path,
+            mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
+            ctx_size=ctx_size,
+            runtime_mode="embedded",
+            host=None,
+            port=None,
+            process=None,
+            embedded_driver=driver,
+            embedded_state=state,
+        )
+        self.loaded_runtime = runtime
+        return runtime
+
+    def _start_external_runtime_locked(
+        self,
+        backend: BackendSpec,
+        model_path: str,
+        mmproj_path: str | None,
+        ctx_size: int | None = None,
+    ) -> LoadedRuntime:
+        if not backend.binary_exists or not backend.launcher_path:
+            raise FileNotFoundError(f"backend launcher not found: {backend.launcher_path or '(unset)'}")
 
         target_port = self.backend_port if self.backend_port > 0 else pick_available_port(self.backend_host)
         server_args = list(backend.default_args)
@@ -187,7 +270,7 @@ class RuntimeManager:
             self._extract_server_arg_value(server_args, ("-c", "--ctx-size"))
         )
         cmd = [
-            backend.llama_server_path,
+            backend.launcher_path,
             "-m",
             model_path,
             "--host",
@@ -228,7 +311,7 @@ class RuntimeManager:
             text=True,
             encoding="utf-8",
             errors="replace",
-            cwd=str(Path(backend.llama_server_path).resolve().parent),
+            cwd=str(Path(backend.launcher_path).resolve().parent),
             env=env,
             creationflags=creationflags,
             startupinfo=startupinfo,
@@ -250,6 +333,7 @@ class RuntimeManager:
                 mmproj_path=mmproj_path,
                 mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
                 ctx_size=effective_ctx_size,
+                runtime_mode="external_server",
                 host=self.backend_host,
                 port=target_port,
                 process=proc,
@@ -266,6 +350,7 @@ class RuntimeManager:
             mmproj_path=mmproj_path,
             mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
             ctx_size=effective_ctx_size,
+            runtime_mode="external_server",
             host=self.backend_host,
             port=target_port,
             process=proc,
@@ -327,6 +412,8 @@ class RuntimeManager:
                         return self.loaded_runtime
                     current_runtime = self.loaded_runtime
                     backend = self._get_backend(current_runtime.backend_id)
+                    if not backend.supports_ctx_size:
+                        raise ValueError(f"{backend.id} does not support ctx_size overrides")
                     self.selected_backend_id = backend.id
                     self._stop_runtime_locked()
                     return self._start_runtime_locked(
@@ -338,13 +425,21 @@ class RuntimeManager:
                 raise RuntimeError("no backend model loaded; call /omni/model/select first or provide 'model'")
 
             preferred_backend = self._get_backend(requested_backend_id) if requested_backend_id else self._get_backend()
+            if ctx_size is not None and not preferred_backend.supports_ctx_size:
+                raise ValueError(f"{preferred_backend.id} does not support ctx_size overrides")
             model_path = self._resolve_model_path(preferred_backend, model)
-            if not Path(model_path).is_file():
-                raise FileNotFoundError(f"model file not found: {model_path}")
+            self._ensure_supported_model_artifact(preferred_backend, model_path)
 
             mmproj_path = self._resolve_mmproj_path(preferred_backend, mmproj, model_path)
-            resolved_backend_id = requested_backend_id or self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
+            if requested_backend_id:
+                resolved_backend_id = requested_backend_id
+            elif preferred_backend.runtime_mode == "embedded":
+                resolved_backend_id = preferred_backend.id
+            else:
+                resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
             backend = self._get_backend(resolved_backend_id)
+            if ctx_size is not None and not backend.supports_ctx_size:
+                raise ValueError(f"{backend.id} does not support ctx_size overrides")
             self.selected_backend_id = backend.id
 
             current = self.loaded_runtime if self._is_runtime_running_locked() else None
@@ -380,9 +475,35 @@ class RuntimeManager:
 
     def current_proxy_target(self) -> tuple[str, int] | None:
         with self.lock:
-            if self._is_runtime_running_locked() and self.loaded_runtime:
+            if (
+                self._is_runtime_running_locked()
+                and self.loaded_runtime
+                and self.loaded_runtime.runtime_mode == "external_server"
+                and self.loaded_runtime.host
+                and self.loaded_runtime.port is not None
+            ):
                 return self.loaded_runtime.host, self.loaded_runtime.port
             return None
+
+    def current_runtime_mode(self) -> str | None:
+        with self.lock:
+            if self._is_runtime_running_locked() and self.loaded_runtime:
+                return self.loaded_runtime.runtime_mode
+            return None
+
+    def chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
+            if runtime is None or runtime.runtime_mode != "embedded" or runtime.embedded_driver is None:
+                raise RuntimeError("selected backend is not ready for embedded inference")
+            return runtime.embedded_driver.chat_completion(runtime.embedded_state, payload)
+
+    def stream_chat_completion(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        with self.lock:
+            runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
+            if runtime is None or runtime.runtime_mode != "embedded" or runtime.embedded_driver is None:
+                raise RuntimeError("selected backend is not ready for embedded inference")
+            return list(runtime.embedded_driver.stream_chat_completion(runtime.embedded_state, payload))
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:

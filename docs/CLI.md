@@ -8,10 +8,34 @@ If you are running OmniInfer from a source checkout, prepare at least one local 
 
 - Windows: build `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan` first. See [Build Guide: Windows](build.md#windows).
 - Linux: build `llama.cpp-linux` or `llama.cpp-linux-rocm` first. See [Build Guide: Linux](build.md#linux).
-- macOS: build `llama.cpp-mac` first. See [Build Guide: macOS](build.md#macos).
+- macOS: build `llama.cpp-mac` or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
 - Android: prepare the Android runtime assets first. See [Build Guide: Android](build.md#android).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
+
+### macOS `mlx-mac` prerequisites
+
+If you want to use the embedded `mlx-mac` backend from a source checkout:
+
+- Use Python `3.10+`.
+- Make sure the Python interpreter that launches OmniInfer can import `mlx` and `mlx_lm`.
+- The repository includes [`scripts/platforms/macos/mlx-mac/requirements.txt`](../scripts/platforms/macos/mlx-mac/requirements.txt) for that runtime.
+- The recommended local setup is your `conda` environment named `mlx`.
+
+Examples:
+
+```sh
+export OMNIINFER_PYTHON="$HOME/miniconda3/envs/mlx/bin/python"
+./omniinfer backend list
+```
+
+or:
+
+```sh
+"$HOME/miniconda3/envs/mlx/bin/python" omniinfer.py backend list
+```
+
+On macOS source checkouts, `./omniinfer` also auto-prefers `.local/runtime/macos/mlx-mac/venv/bin/python3` when that runtime venv exists.
 
 ## Platform Behavior
 
@@ -84,7 +108,7 @@ Windows:
 Examples:
 
 - Linux: `llama.cpp-linux` or `llama.cpp-linux-rocm`
-- macOS: `llama.cpp-mac`
+- macOS: `llama.cpp-mac` or `mlx-mac`
 - Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan`
 - Android: `llama.cpp-llama` or `llama.cpp-mtmd`
 
@@ -94,6 +118,13 @@ Text model:
 
 ```sh
 ./omniinfer model load -m /path/to/model.gguf
+```
+
+For `mlx-mac`, pass the model directory instead of a single file:
+
+```sh
+./omniinfer select mlx-mac
+./omniinfer model load -m /path/to/mlx-model-directory
 ```
 
 Windows:
@@ -151,6 +182,8 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 - `select` stores your current backend choice for later runs.
 - `model load` stores the current model path, optional `mmproj`, and optional `ctx-size`.
+- `llama.cpp-*` backends expect a model file such as `.gguf`, while `mlx-mac` expects a model directory.
+- `mlx-mac` is text-only in the current phase. Do not pass `-mm/--mmproj` or `--image` when using it.
 - `chat` streams output by default.
 - `status` shows the current backend, model, and thinking state.
 - `shutdown` stops the local desktop service. On Android it just confirms that direct mode has no background gateway.
@@ -161,6 +194,7 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 - The CLI uses the Python entrypoint in [omniinfer.py](../omniinfer.py).
 - The desktop CLI auto-starts the local OmniInfer gateway when required.
+- If you use `mlx-mac`, keep the same Python interpreter for both the CLI and the auto-started gateway. `OMNIINFER_PYTHON` is the safest way to enforce that.
 - If you want to run the gateway in the foreground, use:
 
 ```sh

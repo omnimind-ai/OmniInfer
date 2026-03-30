@@ -22,10 +22,6 @@ class AndroidPlatform(HostPlatform):
         return "android"
 
     @property
-    def legacy_runtime_folder_names(self) -> tuple[str, ...]:
-        return ("Android",)
-
-    @property
     def default_backend_id(self) -> str:
         return "llama.cpp-android"
 

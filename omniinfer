@@ -20,9 +20,21 @@ fi
 if [ "$is_android" -eq 1 ]; then
     android_launcher="$SCRIPT_DIR/.local/runtime/android/bin/omniinfer-android"
     if [ ! -x "$android_launcher" ]; then
-        android_launcher="$SCRIPT_DIR/platform/Android/bin/omniinfer-android"
+        echo "Android launcher was not found at $android_launcher" >&2
+        exit 1
     fi
     exec "$android_launcher" "$@"
+fi
+
+if [ -n "${OMNIINFER_PYTHON:-}" ] && [ -x "${OMNIINFER_PYTHON}" ]; then
+    exec "${OMNIINFER_PYTHON}" "$SCRIPT_DIR/omniinfer.py" "$@"
+fi
+
+if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ]; then
+    local_venv_python="$SCRIPT_DIR/.local/runtime/macos/mlx-mac/venv/bin/python3"
+    if [ -x "$local_venv_python" ]; then
+        exec "$local_venv_python" "$SCRIPT_DIR/omniinfer.py" "$@"
+    fi
 fi
 
 if command -v python3 >/dev/null 2>&1; then

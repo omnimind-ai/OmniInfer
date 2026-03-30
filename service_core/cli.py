@@ -37,6 +37,8 @@ Common commands:
   omniinfer select <backend>
   omniinfer status
   omniinfer model load -m /path/to/model.gguf
+  omniinfer select mlx-mac
+  omniinfer model load -m /path/to/mlx-model-directory
   omniinfer chat --message "Introduce yourself in one sentence."
   omniinfer chat -m /path/to/model.gguf --message "Introduce yourself."
   omniinfer chat -m /path/to/model.gguf -mm /path/to/mmproj.gguf --image tests/pictures/test1.png --message "Describe this image."
@@ -352,13 +354,13 @@ def print_backend_list() -> int:
     for item in rows:
         backend_id = str(item.get("id", ""))
         marker = "* " if backend_id == saved_backend else "  "
-        binary_exists = "yes" if item.get("binary_exists") else "no"
+        runtime_available = "yes" if item.get("binary_exists") else "no"
         selected = "yes" if item.get("selected") else "no"
         capabilities = ", ".join(item.get("capabilities") or [])
         print(f"{marker}{backend_id}")
         print(f"    Selected in CLI: {'yes' if backend_id == saved_backend else 'no'}")
         print(f"    Active in service: {selected}")
-        print(f"    Binary available: {binary_exists}")
+        print(f"    Runtime available: {runtime_available}")
         if capabilities:
             print(f"    Capabilities: {capabilities}")
         description = str(item.get('description', '')).strip()
@@ -501,12 +503,17 @@ def require_selected_backend(allow_auto: bool) -> str | None:
     )
 
 
+def resolve_model_reference(path_text: str) -> Path:
+    path = Path(path_text).expanduser().resolve()
+    if not path.exists():
+        raise SystemExit(f"Model path does not exist: {path}")
+    return path
+
+
 def print_model_load(args: argparse.Namespace) -> int:
     if not args.model:
         raise SystemExit("Please specify a model path with -m or --model.")
-    model_file = Path(args.model).expanduser().resolve()
-    if not model_file.is_file():
-        raise SystemExit(f"Model file does not exist: {model_file}")
+    model_ref = resolve_model_reference(args.model)
     mmproj_file = Path(args.mmproj).expanduser().resolve() if args.mmproj else None
     if mmproj_file and not mmproj_file.is_file():
         raise SystemExit(f"mmproj file does not exist: {mmproj_file}")
@@ -514,7 +521,7 @@ def print_model_load(args: argparse.Namespace) -> int:
         raise SystemExit("--ctx-size must be a positive integer")
 
     selected_backend = require_selected_backend(allow_auto=args.auto)
-    payload: dict[str, Any] = {"model": str(model_file)}
+    payload: dict[str, Any] = {"model": str(model_ref)}
     if mmproj_file:
         payload["mmproj"] = str(mmproj_file)
     if args.ctx_size is not None:
@@ -691,9 +698,7 @@ def chat(args: argparse.Namespace) -> int:
     selected_backend = require_selected_backend(allow_auto=args.auto)
     state = current_runtime_state()
 
-    model_path = Path(args.model).expanduser().resolve() if args.model else None
-    if model_path and not model_path.is_file():
-        raise SystemExit(f"Model file does not exist: {model_path}")
+    model_path = resolve_model_reference(args.model) if args.model else None
     mmproj_path = Path(args.mmproj).expanduser().resolve() if args.mmproj else None
     if mmproj_path and not mmproj_path.is_file():
         raise SystemExit(f"mmproj file does not exist: {mmproj_path}")

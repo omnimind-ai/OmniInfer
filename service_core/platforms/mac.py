@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from service_core.backends import MAC_LLAMA_CPP_TEMPLATES
+from service_core.backends import MAC_LLAMA_CPP_TEMPLATES, MAC_MLX_TEMPLATES
 from service_core.platforms.base import HostPlatform
 
 
@@ -14,16 +14,12 @@ class MacPlatform(HostPlatform):
         return "macos"
 
     @property
-    def legacy_runtime_folder_names(self) -> tuple[str, ...]:
-        return ("Mac",)
-
-    @property
     def default_backend_id(self) -> str:
         return "llama.cpp-mac"
 
     @property
     def backend_templates(self):
-        return MAC_LLAMA_CPP_TEMPLATES
+        return MAC_LLAMA_CPP_TEMPLATES + MAC_MLX_TEMPLATES
 
     @property
     def catalog_backend_aliases(self) -> dict[str, str]:

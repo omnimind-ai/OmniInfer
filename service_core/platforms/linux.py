@@ -14,10 +14,6 @@ class LinuxPlatform(HostPlatform):
         return "linux"
 
     @property
-    def legacy_runtime_folder_names(self) -> tuple[str, ...]:
-        return ("Linux",)
-
-    @property
     def default_backend_id(self) -> str:
         return "llama.cpp-linux"
 
