@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/omniinfer-logo-dark.svg">
+    <img src="docs/assets/omniinfer-logo-light.svg" alt="OmniInfer logo" width="520">
+  </picture>
+</p>
+
 # OmniInfer
 
 Easy, fast, and private LLM & VLM inference for every device
