@@ -289,6 +289,56 @@ Expected output:
 bash ./scripts/platforms/macos/build-llama-mac.sh --dry-run
 ```
 
+### Build A macOS Portable Release
+
+The macOS release build packages:
+
+- `OmniInfer` (gateway executable)
+- `runtime/llama.cpp-mac/`
+- `config/omniinfer.json`
+- `release-metadata.json`
+- `OmniInfer-macos-<arch>.tar.gz`
+
+Before packaging, build or prepare the macOS runtime binary first:
+
+```bash
+bash ./scripts/platforms/macos/build-llama-mac.sh --build-type Release
+```
+
+Then package the portable release:
+
+```bash
+bash ./release/mac/build_portable.sh
+```
+
+Optional package name:
+
+```bash
+bash ./release/mac/build_portable.sh OmniInferDev
+```
+
+Expected output:
+
+- `release/mac/portable/OmniInfer`
+- `release/mac/portable/OmniInfer-macos-<arch>.tar.gz`
+
+### Validate The macOS Release
+
+Run the release validation script:
+
+```bash
+python3 ./release/mac/test_release.py --package-dir ./release/mac/portable/OmniInfer
+```
+
+This validation checks:
+
+- gateway startup and health endpoint
+- backend list/state and `llama.cpp-mac` availability
+- control APIs such as thinking toggle, backend stop, and shutdown
+- release metadata consistency (`git_commit`, source fingerprint, and packaged `llama-server` hash)
+
+For strict "latest build" checks, build from a clean working tree so `release-metadata.json` reflects the current committed source exactly.
+
 ## Android
 
 ### Current Repository Model
