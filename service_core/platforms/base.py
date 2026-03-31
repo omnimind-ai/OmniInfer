@@ -143,12 +143,15 @@ class HostPlatform(ABC):
                     override=override,
                     env_prefix=template.env_prefix,
                     default_ngl=template.default_ngl,
+                    default_extra_args=template.default_extra_args,
                 ),
                 runtime_mode=template.runtime_mode,
                 model_artifact=template.model_artifact,
                 supports_mmproj=template.supports_mmproj,
                 supports_ctx_size=template.supports_ctx_size,
                 python_modules=template.python_modules,
+                external_server_protocol=template.external_server_protocol,
+                log_file_name=template.log_file_name,
             )
         return backends
 
@@ -192,8 +195,9 @@ class HostPlatform(ABC):
         override: dict[str, Any],
         env_prefix: str,
         default_ngl: str | None,
+        default_extra_args: tuple[str, ...],
     ) -> list[str]:
-        args: list[str] = []
+        args: list[str] = list(default_extra_args)
         ngl_value = (
             os.environ.get(f"{env_prefix}_NGL", str(override.get("ngl", default_ngl)))
             if default_ngl is not None

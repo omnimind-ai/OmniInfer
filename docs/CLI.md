@@ -8,7 +8,7 @@ If you are running OmniInfer from a source checkout, prepare at least one local 
 
 - Windows: build `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan` first. See [Build Guide: Windows](build.md#windows).
 - Linux: build `llama.cpp-linux` or `llama.cpp-linux-rocm` first. See [Build Guide: Linux](build.md#linux).
-- macOS: build `llama.cpp-mac` or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
+- macOS: build `llama.cpp-mac`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
 - Android: prepare the Android runtime assets first. See [Build Guide: Android](build.md#android).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
@@ -108,7 +108,7 @@ Windows:
 Examples:
 
 - Linux: `llama.cpp-linux` or `llama.cpp-linux-rocm`
-- macOS: `llama.cpp-mac` or `mlx-mac`
+- macOS: `llama.cpp-mac`, `turboquant-mac`, or `mlx-mac`
 - Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan`
 - Android: `llama.cpp-llama` or `llama.cpp-mtmd`
 
@@ -193,8 +193,10 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - `select` stores your current backend choice for later runs.
 - `model load` stores the current model path, optional `mmproj`, and optional `ctx-size`.
 - `llama.cpp-*` backends expect a model file such as `.gguf`, while `mlx-mac` expects a model directory.
+- `turboquant-mac` also expects a `.gguf` model file and can use `-mm/--mmproj` the same way as `llama.cpp-mac`.
 - `mlx-mac` supports both text models and vision-language model directories.
 - `mlx-mac` does not use `-mm/--mmproj`; multimodal support is provided by the selected MLX model directory itself.
+- `turboquant-mac` is a separate backend id even though OmniInfer launches it through the same `llama-server` HTTP protocol family.
 - `chat` streams output by default.
 - `status` shows the current backend, model, and thinking state.
 - `shutdown` stops the local desktop service. On Android it just confirms that direct mode has no background gateway.

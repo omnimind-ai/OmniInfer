@@ -169,10 +169,13 @@ class MlxDriverTests(unittest.TestCase):
         self.assertEqual(response["choices"][0]["message"]["content"], "hello world")
         self.assertEqual(response["usage"]["prompt_tokens"], 3)
         self.assertEqual(response["usage"]["completion_tokens"], 2)
+        self.assertIn("timings", response)
+        self.assertIn("prompt_ms", response["timings"])
         self.assertEqual(events[0]["choices"][0]["delta"]["role"], "assistant")
         self.assertEqual(events[1]["choices"][0]["delta"]["content"], "hello ")
         self.assertEqual(events[2]["choices"][0]["delta"]["content"], "world")
         self.assertEqual(events[-1]["choices"][0]["finish_reason"], "stop")
+        self.assertIn("timings", events[-1])
 
     def test_vision_chat_completion_and_streaming(self) -> None:
         payload = {
@@ -202,11 +205,13 @@ class MlxDriverTests(unittest.TestCase):
         self.assertEqual(response["choices"][0]["message"]["content"], "vision response")
         self.assertEqual(response["usage"]["prompt_tokens"], 11)
         self.assertEqual(response["usage"]["completion_tokens"], 4)
+        self.assertIn("timings", response)
         self.assertEqual(events[0]["choices"][0]["delta"]["role"], "assistant")
         self.assertEqual(events[1]["choices"][0]["delta"]["content"], "vision ")
         self.assertEqual(events[2]["choices"][0]["delta"]["content"], "response")
         self.assertEqual(events[-1]["usage"]["prompt_tokens"], 11)
         self.assertEqual(events[-1]["choices"][0]["finish_reason"], "stop")
+        self.assertIn("timings", events[-1])
 
     def test_text_model_rejects_image_inputs(self) -> None:
         payload = {
