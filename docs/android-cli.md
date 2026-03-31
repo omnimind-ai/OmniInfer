@@ -2,6 +2,12 @@
 
 OmniInfer supports Android in direct mode.
 
+The repository now includes an Android runtime preparation script:
+
+```sh
+bash ./scripts/platforms/android/build-runtime.sh --artifact-dir /path/to/android/artifacts
+```
+
 ## Layout
 
 - `.local/runtime/android/bin/omniinfer-android`
