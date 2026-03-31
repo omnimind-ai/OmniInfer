@@ -8,13 +8,20 @@ from typing import Any
 
 BACKEND_PRIORITY: dict[str, int] = {
     "llama.cpp-mac": 0,
+    "llama.cpp-mac-intel": 1,
     "turboquant-mac": 0,
     "mlx-mac": 0,
     "llama.cpp-cuda": 0,
     "llama.cpp-vulkan": 0,
+    "llama.cpp-sycl": 0,
+    "llama.cpp-hip": 0,
     "llama.cpp-linux-rocm": 0,
+    "llama.cpp-linux-vulkan": 0,
+    "llama.cpp-linux-openvino": 0,
     "llama.cpp-linux": 1,
+    "llama.cpp-linux-s390x": 1,
     "llama.cpp-cpu": 1,
+    "llama.cpp-windows-arm64": 1,
 }
 
 

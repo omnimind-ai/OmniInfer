@@ -1,61 +1,75 @@
 # Building OmniInfer
 
-This guide explains how to build OmniInfer runtime backends and package local releases on Windows, Linux, macOS, and Android.
+This guide explains how OmniInfer builds local runtime backends from a source checkout.
 
 ## Build Model
 
-OmniInfer uses the same high-level structure across desktop platforms:
+Desktop build scripts follow one consistent layout:
 
-- `scripts/platforms/<platform>/...`
-  Tracked build and packaging scripts committed to Git.
-- `.local/runtime/<platform>/...`
-  Local runtime output directories. Build artifacts are written here, but the directory is intentionally not tracked in Git.
-- `release/portable/...`
-  Locally packaged portable releases.
+- `scripts/platforms/<platform>/build-*.{sh,ps1}`
+  Stable user-facing entrypoints committed to Git.
+- `scripts/platforms/<platform>/<backend>/build.{sh,ps1}`
+  Backend-specific implementation scripts.
+- `.local/runtime/<platform>/<backend>/`
+  Local runtime output directories for binaries, logs, models, and intermediate build files.
 
-The tracked scripts are split into two layers:
+Portable releases are separate from source builds:
 
-- Platform entry scripts
-  Stable entrypoints such as `scripts/platforms/windows/build-llama-cpu.ps1`.
-- Backend implementation scripts
-  Backend-specific build logic such as `scripts/platforms/windows/llama.cpp-cpu/build.ps1`.
+- `runtime/`
+  Runtime tree inside a packaged release.
+- `release/portable/`
+  Release output area used by platform packaging scripts.
+
+Android uses a direct-mode runtime installer instead of the desktop-style backend-per-runtime build layout.
 
 ## Common Prerequisites
 
-For all platforms:
+For all desktop builds:
 
 - Git
 - Python 3
-- `framework/llama.cpp` available in the repository for `llama.cpp-*` backend builds
-- `framework/llama-cpp-turboquant` available in the repository for `turboquant-mac` backend builds
+- `cmake`
+- `framework/llama.cpp` available for every `llama.cpp-*` backend
+
+Additional framework notes:
+
+- `framework/llama-cpp-turboquant` is required for `turboquant-mac`
+- `mlx-mac` is embedded and uses Python packages instead of building `framework/mlx`
 
 Submodule behavior:
 
-- Linux `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`.
-- macOS `llama.cpp-mac` can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`.
-- macOS `turboquant-mac` can bootstrap `framework/llama-cpp-turboquant` automatically unless you pass `--no-bootstrap`.
-- Windows `llama.cpp-*` scripts do not bootstrap submodules automatically. If `framework/llama.cpp` is missing, initialize it first:
+- Linux `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`
+- macOS `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`
+- macOS `turboquant-mac` can bootstrap `framework/llama-cpp-turboquant` automatically unless you pass `--no-bootstrap`
+- Windows `llama.cpp-*` scripts do not bootstrap submodules automatically; initialize `framework/llama.cpp` first if it is missing
+
+Example:
 
 ```bash
 git submodule update --init --recursive framework/llama.cpp
 ```
 
-- The current embedded `mlx-mac` flow does not require `framework/mlx` to be checked out, because OmniInfer uses the Python packages installed into the selected runtime environment instead of building that submodule.
+## Runtime Output Layout
 
-## Output Conventions
+Current desktop runtime directories:
 
-Backend builds emit runtime files into local platform folders:
-
-- Windows CPU: `.local/runtime/windows/llama.cpp-cpu`
-- Windows CUDA: `.local/runtime/windows/llama.cpp-cuda`
-- Windows Vulkan: `.local/runtime/windows/llama.cpp-vulkan`
-- Linux CPU: `.local/runtime/linux/llama.cpp-linux`
-- Linux ROCm: `.local/runtime/linux/llama.cpp-linux-rocm`
-- macOS Metal: `.local/runtime/macos/llama.cpp-mac`
+- Windows x64 CPU: `.local/runtime/windows/llama.cpp-cpu`
+- Windows x64 CUDA: `.local/runtime/windows/llama.cpp-cuda`
+- Windows x64 Vulkan: `.local/runtime/windows/llama.cpp-vulkan`
+- Windows arm64 CPU: `.local/runtime/windows/llama.cpp-windows-arm64`
+- Windows x64 SYCL: `.local/runtime/windows/llama.cpp-sycl`
+- Windows x64 HIP: `.local/runtime/windows/llama.cpp-hip`
+- Linux x64 CPU: `.local/runtime/linux/llama.cpp-linux`
+- Linux x64 ROCm: `.local/runtime/linux/llama.cpp-linux-rocm`
+- Linux x64 Vulkan: `.local/runtime/linux/llama.cpp-linux-vulkan`
+- Linux s390x CPU: `.local/runtime/linux/llama.cpp-linux-s390x`
+- Linux x64 OpenVINO: `.local/runtime/linux/llama.cpp-linux-openvino`
+- macOS Apple Silicon Metal: `.local/runtime/macos/llama.cpp-mac`
+- macOS Intel x64 CPU: `.local/runtime/macos/llama.cpp-mac-intel`
 - macOS TurboQuant: `.local/runtime/macos/turboquant-mac`
-- Android CLI assets: `.local/runtime/android`
+- macOS MLX embedded runtime: `.local/runtime/macos/mlx-mac`
 
-Typical runtime subfolders:
+Typical subfolders:
 
 - `bin/`
 - `logs/`
@@ -64,458 +78,325 @@ Typical runtime subfolders:
 
 ## Windows
 
-### Scripts
+### Available Scripts
 
 - `scripts/platforms/windows/build-llama-cpu.ps1`
-  Build the Windows CPU backend.
 - `scripts/platforms/windows/build-llama-cuda.ps1`
-  Build the Windows CUDA backend.
 - `scripts/platforms/windows/build-llama-vulkan.ps1`
-  Build the Windows Vulkan backend.
+- `scripts/platforms/windows/build-llama-arm64.ps1`
+- `scripts/platforms/windows/build-llama-sycl.ps1`
+- `scripts/platforms/windows/build-llama-hip.ps1`
 - `scripts/platforms/windows/build-release.ps1`
-  Package a Windows portable release.
 
-### Prerequisites
+### Backend Notes
 
-CPU backend:
+`llama.cpp-cpu`:
 
-- `cmake`
-- One supported Windows C/C++ toolchain:
-  - Visual Studio 2022 Build Tools with the C++ workload, or
-  - MSYS2 UCRT64 with `gcc`, `g++`, and `ninja`, or
-  - MinGW POSIX with `gcc`, `g++`, and `mingw32-make`
+- Target: Windows x64 CPU
+- Toolchains: Visual Studio 2022 Build Tools, MSYS2 UCRT64, or MinGW POSIX
 
-CUDA backend:
+`llama.cpp-cuda`:
 
-- `cmake`
-- NVIDIA CUDA Toolkit with `nvcc`
-- MSVC `cl.exe` available in `PATH`
+- Target: Windows x64 CUDA
+- Requires: NVIDIA CUDA Toolkit, `nvcc`, and MSVC `cl.exe`
 
-Vulkan backend:
+`llama.cpp-vulkan`:
 
-- `cmake`
-- One supported Windows C/C++ toolchain:
-  - Visual Studio 2022 Build Tools with the C++ workload, or
-  - MSYS2 UCRT64 with `gcc`, `g++`, `ninja`, `vulkan-devel`, and `shaderc`, or
-  - MinGW POSIX with `gcc`, `g++`, `mingw32-make`, and a Vulkan SDK that exposes `glslc.exe`
-- A Windows Vulkan SDK install, or an MSYS2 environment that already provides Vulkan headers/libs and `glslc`
+- Target: Windows x64 Vulkan
+- Requires: Vulkan SDK or equivalent MSYS2 Vulkan toolchain
 
-Recommended:
+`llama.cpp-windows-arm64`:
 
-- Run CUDA builds from a Visual Studio 2022 Developer PowerShell.
+- Target: Windows arm64 CPU
+- Uses llama.cpp's `cmake/arm64-windows-llvm.cmake`
+- Best run from a Visual Studio 2022 Developer PowerShell with arm64-capable LLVM/MSVC tooling available
 
-### Build The CPU Backend
+`llama.cpp-sycl`:
 
-From the repository root:
+- Target: Windows x64 SYCL
+- Requires: Intel oneAPI compiler/runtime environment
+- Best run from the Intel oneAPI command prompt after `setvars.bat`
+
+`llama.cpp-hip`:
+
+- Target: Windows x64 HIP
+- Requires: AMD HIP SDK / ROCm for Windows
+- Optional: pass `-GpuTargets` to tune for a specific AMD GPU architecture
+
+### Build Commands
+
+Windows x64 CPU:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-cpu.ps1
 ```
 
-Optional:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-cpu.ps1 -BuildType Release
-```
-
-Expected output:
-
-- `.local/runtime/windows/llama.cpp-cpu/bin/llama-server.exe`
-- Required runtime DLLs copied into the same directory when needed
-
-### Build The CUDA Backend
+Windows x64 CUDA:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-cuda.ps1
 ```
 
-Optional architecture override:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-cuda.ps1 -CudaArchitectures 86
-```
-
-Expected output:
-
-- `.local/runtime/windows/llama.cpp-cuda/bin/llama-server.exe`
-- CUDA runtime DLLs copied into the same directory when available
-
-### Build The Vulkan Backend
+Windows x64 Vulkan:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-vulkan.ps1
 ```
 
-Optional:
+Windows arm64 CPU:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-vulkan.ps1 -BuildType Release
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-arm64.ps1
 ```
 
-Expected output:
-
-- `.local/runtime/windows/llama.cpp-vulkan/bin/llama-server.exe`
-- Vulkan backend DLLs copied from the llama.cpp build output into the same directory
-
-### Build A Windows Portable Release
-
-The Windows release build packages:
-
-- `OmniInfer.exe`
-- `omniinfer-cli.exe`
-- `omniinfer.cmd`
-- `runtime/`
-- `config/omniinfer.json`
-- `usage.md`
+Windows x64 SYCL:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-sycl.ps1
 ```
 
-Optional:
+Windows x64 HIP:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -BuildCpuBackend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -BuildCpuBackend -BuildCudaBackend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -BuildVulkanBackend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -BuildCpuBackend -BuildVulkanBackend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-hip.ps1
 ```
 
-Expected output:
-
-- `release/portable/OmniInfer`
-
-### Dry-Run Validation
+Optional HIP GPU target override:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-cpu.ps1 -DryRun
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-cuda.ps1 -DryRun
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-vulkan.ps1 -DryRun
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-release.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-hip.ps1 -GpuTargets gfx1151
 ```
+
+### Dry-Run Checks
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-arm64.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-sycl.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\build-llama-hip.ps1 -DryRun
+```
+
+### Windows Packaging Wrapper
+
+`scripts/platforms/windows/build-release.ps1` is a wrapper around the repository's Windows portable packager.
+
+- It can prebuild any of the Windows runtimes above before packaging
+- It still expects a repo-specific `release/build_portable.ps1` packager to exist
 
 ## Linux
 
-### Scripts
+### Available Scripts
 
 - `scripts/platforms/linux/build-llama-cpu.sh`
-  Build the Linux CPU backend.
 - `scripts/platforms/linux/build-llama-rocm.sh`
-  Build the Linux ROCm backend.
+- `scripts/platforms/linux/build-llama-vulkan.sh`
+- `scripts/platforms/linux/build-llama-s390x.sh`
+- `scripts/platforms/linux/build-llama-openvino.sh`
 - `scripts/platforms/linux/build-release.sh`
-  Package a Linux portable release.
 
-### Prerequisites
+### Backend Notes
 
-CPU backend:
+`llama.cpp-linux`:
 
-- `cmake`
-- A C/C++ compiler toolchain such as `gcc` and `g++`
-- `ninja` recommended
+- Target: Linux x64 CPU
 
-ROCm backend:
+`llama.cpp-linux-rocm`:
 
-- `cmake`
-- ROCm with `hipcc` and `hipconfig`
-- A compatible AMD GPU and working ROCm userspace installation
-- `ninja` recommended
+- Target: Linux x64 ROCm
+- Requires: ROCm userspace plus `hipcc` / `hipconfig`
 
-Recommended:
+`llama.cpp-linux-vulkan`:
 
-- Ensure your user has the correct render and ROCm device permissions before running the ROCm backend.
+- Target: Linux x64 Vulkan
+- Requires: Vulkan loader, headers, and shader tooling
 
-### Build The Linux CPU Backend
+`llama.cpp-linux-s390x`:
+
+- Target: Linux s390x CPU
+- Uses the same `llama-server` flow as other Linux CPU builds but writes to its own runtime directory
+
+`llama.cpp-linux-openvino`:
+
+- Target: Linux x64 OpenVINO
+- Requires: OpenVINO runtime and build environment
+- The script accepts `--openvino-root` and also honors `OPENVINO_ROOT`
+- Runtime selection remains controlled at inference time with environment variables such as `GGML_OPENVINO_DEVICE=CPU` or `GGML_OPENVINO_DEVICE=GPU`
+
+### Build Commands
+
+Linux x64 CPU:
 
 ```bash
 bash ./scripts/platforms/linux/build-llama-cpu.sh
 ```
 
-Useful options:
-
-```bash
-bash ./scripts/platforms/linux/build-llama-cpu.sh --build-type Release --smoke-test
-bash ./scripts/platforms/linux/build-llama-cpu.sh --clean
-```
-
-Expected output:
-
-- `.local/runtime/linux/llama.cpp-linux/bin/llama-server`
-
-### Build The Linux ROCm Backend
+Linux x64 ROCm:
 
 ```bash
 bash ./scripts/platforms/linux/build-llama-rocm.sh
 ```
 
-Useful options:
+Linux x64 Vulkan:
 
 ```bash
-bash ./scripts/platforms/linux/build-llama-rocm.sh --gpu-targets gfx1151
-bash ./scripts/platforms/linux/build-llama-rocm.sh --rocm-path /opt/rocm
-bash ./scripts/platforms/linux/build-llama-rocm.sh --smoke-test
+bash ./scripts/platforms/linux/build-llama-vulkan.sh
 ```
 
-Expected output:
-
-- `.local/runtime/linux/llama.cpp-linux-rocm/bin/llama-server`
-- Required ROCm shared libraries copied into the same directory
-
-### Build A Linux Portable Release
+Linux s390x CPU:
 
 ```bash
-bash ./scripts/platforms/linux/build-release.sh
+bash ./scripts/platforms/linux/build-llama-s390x.sh
 ```
 
-Optional:
+Linux x64 OpenVINO:
 
 ```bash
-bash ./scripts/platforms/linux/build-release.sh --build-cpu-backend
-bash ./scripts/platforms/linux/build-release.sh --build-rocm-backend
-bash ./scripts/platforms/linux/build-release.sh --build-cpu-backend --build-rocm-backend
+bash ./scripts/platforms/linux/build-llama-openvino.sh --openvino-root /opt/intel/openvino
 ```
 
-Expected output:
+### Linux Portable Packaging
 
-- `release/portable/OmniInfer`
+`scripts/platforms/linux/build-release.sh` can now package any Linux runtime directories that already exist locally, including:
 
-### Dry-Run Validation
+- `llama.cpp-linux`
+- `llama.cpp-linux-rocm`
+- `llama.cpp-linux-vulkan`
+- `llama.cpp-linux-s390x`
+- `llama.cpp-linux-openvino`
+
+Optional prebuild examples:
 
 ```bash
-bash ./scripts/platforms/linux/build-llama-cpu.sh --dry-run
-bash ./scripts/platforms/linux/build-llama-rocm.sh --dry-run
-bash ./scripts/platforms/linux/build-release.sh --dry-run
+bash ./scripts/platforms/linux/build-release.sh --build-cpu-backend --build-vulkan-backend
+bash ./scripts/platforms/linux/build-release.sh --build-openvino-backend --openvino-root /opt/intel/openvino
 ```
 
 ## macOS
 
-### Scripts
+### Available Scripts
 
 - `scripts/platforms/macos/build-llama-mac.sh`
-  Build the macOS Metal backend.
+- `scripts/platforms/macos/build-llama-mac-intel.sh`
 - `scripts/platforms/macos/build-turboquant-mac.sh`
-  Build the macOS TurboQuant backend.
 - `scripts/platforms/macos/build-mlx-mac.sh`
-  Prepare the embedded `mlx-mac` Python runtime.
 
-The macOS build scripts use the same two-layer pattern as the other desktop platforms:
+### Backend Notes
 
-- Platform entry: `scripts/platforms/macos/build-llama-mac.sh`
-- Backend implementation: `scripts/platforms/macos/llama.cpp-mac/build.sh`
-- Platform entry: `scripts/platforms/macos/build-turboquant-mac.sh`
-- Backend implementation: `scripts/platforms/macos/turboquant-mac/build.sh`
-- Embedded MLX runtime: `scripts/platforms/macos/mlx-mac/build.sh`
+`llama.cpp-mac`:
 
-### Prerequisites
+- Target: macOS Apple Silicon
+- Uses Metal acceleration
 
-- `cmake`
-- Xcode Command Line Tools
-- A recent Apple Clang toolchain
-- `ninja` recommended
+`llama.cpp-mac-intel`:
 
-Recommended:
+- Target: macOS Intel x64
+- Aligned with the official llama.cpp macOS x64 release direction
+- Uses a CPU-oriented x64 build and disables Metal by default
 
-- Run on Apple Silicon for the intended Metal backend target.
+`turboquant-mac`:
 
-### Build The macOS Metal Backend
+- Target: macOS Apple Silicon
+- Built from `framework/llama-cpp-turboquant`
+
+`mlx-mac`:
+
+- Target: macOS Apple Silicon
+- Embedded backend
+- Requires Python packages rather than a compiled `llama-server`
+
+### Build Commands
+
+macOS Apple Silicon Metal:
 
 ```bash
 bash ./scripts/platforms/macos/build-llama-mac.sh
 ```
 
-Useful options:
+macOS Intel x64:
 
 ```bash
-bash ./scripts/platforms/macos/build-llama-mac.sh --build-type Release --smoke-test
-bash ./scripts/platforms/macos/build-llama-mac.sh --clean
+bash ./scripts/platforms/macos/build-llama-mac-intel.sh
 ```
 
-Expected output:
-
-- `.local/runtime/macos/llama.cpp-mac/bin/llama-server`
-
-### Build The macOS TurboQuant Backend
+TurboQuant:
 
 ```bash
 bash ./scripts/platforms/macos/build-turboquant-mac.sh
 ```
 
-Useful options:
-
-```bash
-bash ./scripts/platforms/macos/build-turboquant-mac.sh --build-type Release --smoke-test
-bash ./scripts/platforms/macos/build-turboquant-mac.sh --clean
-```
-
-Expected output:
-
-- `.local/runtime/macos/turboquant-mac/bin/llama-server`
-- `.local/runtime/macos/turboquant-mac/bin/llama-cli` when the checkout exposes that target
-- `.local/runtime/macos/turboquant-mac/bin/llama-bench` when the checkout exposes that target
-
-Notes:
-
-- `turboquant-mac` builds from `framework/llama-cpp-turboquant`.
-- OmniInfer launches it through the same `llama-server` HTTP surface as `llama.cpp`, but keeps it as a separate backend id and runtime directory.
-- The default runtime flags are `-fa on --cache-type-k turbo4 --cache-type-v turbo4`.
-
-### Prepare The macOS MLX Runtime
-
-The current `mlx-mac` backend is embedded inside the OmniInfer gateway. It does not build a separate server binary.
-
-Prepare its Python runtime like this:
+MLX:
 
 ```bash
 bash ./scripts/platforms/macos/build-mlx-mac.sh
 ```
 
-Optional:
-
-```bash
-bash ./scripts/platforms/macos/build-mlx-mac.sh --python /absolute/path/to/python3.11
-```
-
-Expected output:
-
-- `.local/runtime/macos/mlx-mac/venv/bin/python3`
-- `.local/runtime/macos/mlx-mac/models/`
-- `.local/runtime/macos/mlx-mac/logs/`
-
-Notes:
-
-- `mlx-mac` requires Python `3.10+`.
-- Its dependencies are installed from `scripts/platforms/macos/mlx-mac/requirements.txt`.
-- The default MLX runtime requirements include `mlx`, `mlx-lm`, `mlx-vlm`, `torch`, and `torchvision` so the same runtime can load both text-only and multimodal MLX models.
-- For source runs, `./omniinfer` automatically prefers `.local/runtime/macos/mlx-mac/venv/bin/python3` when that venv exists.
-
-### Dry-Run Validation
-
-```bash
-bash ./scripts/platforms/macos/build-llama-mac.sh --dry-run
-bash ./scripts/platforms/macos/build-turboquant-mac.sh --dry-run
-bash ./scripts/platforms/macos/build-mlx-mac.sh --dry-run
-```
-
-### Build A macOS Portable Release
-
-The macOS release build packages:
-
-- `OmniInfer` (gateway executable)
-- `omniinfer` (CLI executable)
-- `runtime/llama.cpp-mac/`
-- `runtime/mlx-mac/`
-- `config/omniinfer.json`
-- `release-metadata.json`
-- `OmniInfer-macos-<arch>.tar.gz`
-
-Before packaging, prepare both macOS runtimes first:
-
-```bash
-bash ./scripts/platforms/macos/build-llama-mac.sh --build-type Release
-bash ./scripts/platforms/macos/build-mlx-mac.sh --python /absolute/path/to/python3.11
-```
-
-Then package the portable release:
-
-```bash
-bash ./release/mac/build_portable.sh
-```
-
-Optional package name:
-
-```bash
-bash ./release/mac/build_portable.sh OmniInfer-v0.1.0
-```
-
-Expected output:
-
-- `release/mac/portable/<package-name>`
-- `release/mac/portable/<package-name>-macos-<arch>.tar.gz`
-
-### Validate The macOS Release
-
-Run the release validation script:
-
-```bash
-python3 ./release/mac/test_release.py --package-dir ./release/mac/portable/<package-name>
-```
-
-This validation checks:
-
-- gateway startup and health endpoint
-- backend list/state and `llama.cpp-mac` / `mlx-mac` availability
-- packaged CLI availability
-- control APIs such as thinking toggle, backend stop, and shutdown
-- release metadata consistency (`git_commit`, source fingerprint, and packaged `llama-server` hash)
-
-Optional inference validation:
-
-- pass `--text-model /path/to/mlx-text-model-directory` to verify packaged `mlx-mac` text inference through both the gateway API and CLI
-- pass `--vision-model /path/to/mlx-vlm-model-directory --image /path/to/image.png` to verify packaged multimodal MLX inference through both the gateway API and CLI
-
-For strict "latest build" checks, build from a clean working tree so `release-metadata.json` reflects the current committed source exactly.
-
 ## Android
 
-### Current Repository Model
+### Available Scripts
 
-Android is different from the desktop platforms:
+- `scripts/platforms/android/build-runtime.sh`
+- `scripts/platforms/android/runtime/install.sh`
+- `scripts/platforms/android/runtime/omniinfer-android`
 
-- OmniInfer runs in direct CLI mode on Android instead of starting the local HTTP gateway.
-- The repository currently expects Android runtime assets to be prepared and copied into `.local/runtime/android/`.
-- There is no tracked Android build wrapper script in `scripts/platforms/android/` yet.
+### What The Android Script Does
 
-Expected Android runtime layout:
+Android does not build or launch the desktop HTTP gateway.
+
+Instead, the Android script prepares a direct-mode runtime tree under:
 
 - `.local/runtime/android/bin/omniinfer-android`
 - `.local/runtime/android/lib/arm64-v8a/libllama-cli.so`
 - `.local/runtime/android/lib/arm64-v8a/libmtmd-cli.so`
 
-For runtime behavior details, see `docs/android-cli.md`.
+The installer always writes the launcher. It can also copy prebuilt Android binaries from an artifact directory or explicit paths.
 
-### Recommended Toolchain
+### Prepare The Android Runtime
 
-If you want to rebuild the Android artifacts from source, prepare:
-
-- Android NDK
-- CMake
-- An Android-capable `clang` toolchain from the NDK
-- Target ABI: `arm64-v8a`
-
-Recommended:
-
-- Keep Android-specific native build logic in a dedicated Android project or native packaging pipeline, then copy the final artifacts into this repository's expected `.local/runtime/android/` layout.
-
-### Prepare Android Runtime Assets
-
-After producing the Android-native binaries in your Android build pipeline, copy them into:
-
-```text
-.local/runtime/android/bin/omniinfer-android
-.local/runtime/android/lib/arm64-v8a/libllama-cli.so
-.local/runtime/android/lib/arm64-v8a/libmtmd-cli.so
-```
-
-Make sure the launcher script is executable:
+Launcher only:
 
 ```bash
-chmod +x .local/runtime/android/bin/omniinfer-android
+bash ./scripts/platforms/android/build-runtime.sh --launcher-only
 ```
 
-### Validate The Android CLI Layout
+Install launcher plus prebuilt Android binaries from a directory:
 
-On the Android device:
+```bash
+bash ./scripts/platforms/android/build-runtime.sh --artifact-dir /path/to/android/artifacts
+```
+
+Install with explicit binary paths:
+
+```bash
+bash ./scripts/platforms/android/build-runtime.sh \
+  --llama-cli /path/to/libllama-cli.so \
+  --mtmd-cli /path/to/libmtmd-cli.so
+```
+
+Dry run:
+
+```bash
+bash ./scripts/platforms/android/build-runtime.sh --artifact-dir /path/to/android/artifacts --dry-run
+```
+
+After the runtime is prepared, the repo-root `./omniinfer` script will detect Android automatically and forward commands into `.local/runtime/android/bin/omniinfer-android`.
+
+## After Building
+
+List the local backends:
 
 ```bash
 ./omniinfer backend list
-./omniinfer select llama.cpp-llama
-./omniinfer model load -m /absolute/path/to/model.gguf
-./omniinfer chat --message "Hello"
 ```
 
-## Best Practices
+Select one backend:
 
-- Treat `scripts/platforms/...` as the source of truth for tracked build logic.
-- Treat `.local/runtime/...` as disposable local output that can be rebuilt.
-- Keep packaging steps separate from backend compilation steps.
-- Validate wrapper scripts with dry-run mode before a full rebuild when changing paths or arguments.
-- If gateway or CLI behavior changes, update the usage docs and rebuild the affected platform release package.
+```bash
+./omniinfer select llama.cpp-linux-vulkan
+```
+
+Load a model:
+
+```bash
+./omniinfer model load -m /absolute/path/to/model.gguf
+```
+
+For more runtime usage examples, see [CLI Guide](CLI.md).

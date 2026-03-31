@@ -86,7 +86,11 @@ Example response:
 
 Returns all local backends.
 
-On Windows, the list may include `llama.cpp-cpu`, `llama.cpp-cuda`, and `llama.cpp-vulkan` depending on which runtime folders are present locally.
+Depending on the current host and which runtime folders are present locally, the list may include backends such as:
+
+- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, `llama.cpp-hip`
+- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, `llama.cpp-linux-openvino`
+- macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, `mlx-mac`
 
 Example response:
 

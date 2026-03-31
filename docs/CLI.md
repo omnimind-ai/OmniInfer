@@ -6,9 +6,9 @@ This guide shows how to use the OmniInfer CLI on Linux, macOS, Windows, and Andr
 
 If you are running OmniInfer from a source checkout, prepare at least one local runtime backend before using the CLI.
 
-- Windows: build `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan` first. See [Build Guide: Windows](build.md#windows).
-- Linux: build `llama.cpp-linux` or `llama.cpp-linux-rocm` first. See [Build Guide: Linux](build.md#linux).
-- macOS: build `llama.cpp-mac`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
+- Windows: build one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip` first. See [Build Guide: Windows](build.md#windows).
+- Linux: build one of `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino` first. See [Build Guide: Linux](build.md#linux).
+- macOS: build `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
 - Android: prepare the Android runtime assets first. See [Build Guide: Android](build.md#android).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
@@ -107,9 +107,9 @@ Windows:
 
 Examples:
 
-- Linux: `llama.cpp-linux` or `llama.cpp-linux-rocm`
-- macOS: `llama.cpp-mac`, `turboquant-mac`, or `mlx-mac`
-- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan`
+- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino`
+- macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac`
+- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`
 - Android: `llama.cpp-llama` or `llama.cpp-mtmd`
 
 When you select a desktop backend, OmniInfer also creates a backend-specific JSON config template under:
