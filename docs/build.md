@@ -352,6 +352,7 @@ Notes:
 
 - `mlx-mac` requires Python `3.10+`.
 - Its dependencies are installed from `scripts/platforms/macos/mlx-mac/requirements.txt`.
+- The default MLX runtime requirements include `mlx`, `mlx-lm`, `mlx-vlm`, `torch`, and `torchvision` so the same runtime can load both text-only and multimodal MLX models.
 - For source runs, `./omniinfer` automatically prefers `.local/runtime/macos/mlx-mac/venv/bin/python3` when that venv exists.
 
 ### Dry-Run Validation
@@ -366,17 +367,18 @@ bash ./scripts/platforms/macos/build-mlx-mac.sh --dry-run
 The macOS release build packages:
 
 - `OmniInfer` (gateway executable)
+- `omniinfer` (CLI executable)
 - `runtime/llama.cpp-mac/`
+- `runtime/mlx-mac/`
 - `config/omniinfer.json`
 - `release-metadata.json`
 - `OmniInfer-macos-<arch>.tar.gz`
 
-The current portable macOS package is built around `llama.cpp-mac`. It does not yet bundle the embedded `mlx-mac` runtime.
-
-Before packaging, build or prepare the macOS runtime binary first:
+Before packaging, prepare both macOS runtimes first:
 
 ```bash
 bash ./scripts/platforms/macos/build-llama-mac.sh --build-type Release
+bash ./scripts/platforms/macos/build-mlx-mac.sh --python /absolute/path/to/python3.11
 ```
 
 Then package the portable release:
@@ -407,9 +409,15 @@ python3 ./release/mac/test_release.py --package-dir ./release/mac/portable/<pack
 This validation checks:
 
 - gateway startup and health endpoint
-- backend list/state and `llama.cpp-mac` availability
+- backend list/state and `llama.cpp-mac` / `mlx-mac` availability
+- packaged CLI availability
 - control APIs such as thinking toggle, backend stop, and shutdown
 - release metadata consistency (`git_commit`, source fingerprint, and packaged `llama-server` hash)
+
+Optional inference validation:
+
+- pass `--text-model /path/to/mlx-text-model-directory` to verify packaged `mlx-mac` text inference through both the gateway API and CLI
+- pass `--vision-model /path/to/mlx-vlm-model-directory --image /path/to/image.png` to verify packaged multimodal MLX inference through both the gateway API and CLI
 
 For strict "latest build" checks, build from a clean working tree so `release-metadata.json` reflects the current committed source exactly.
 
