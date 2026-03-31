@@ -22,6 +22,7 @@ BACKEND_PRIORITY: dict[str, int] = {
 class BackendTemplate:
     id: str
     label: str
+    family: str
     runtime_dir_name: str
     launcher_name: str | None
     description: str
@@ -43,6 +44,7 @@ class BackendTemplate:
 class BackendSpec:
     id: str
     label: str
+    family: str
     runtime_dir: str
     launcher_path: str | None
     models_dir: str | None
@@ -80,6 +82,7 @@ class BackendSpec:
         return {
             "id": self.id,
             "label": self.label,
+            "family": self.family,
             "selected": selected,
             "binary_exists": self.binary_exists,
             "models_dir": self.models_dir,

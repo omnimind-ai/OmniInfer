@@ -133,6 +133,7 @@ class HostPlatform(ABC):
             backends[template.id] = BackendSpec(
                 id=template.id,
                 label=template.label,
+                family=template.family,
                 runtime_dir=str(runtime_dir),
                 launcher_path=launcher_path,
                 models_dir=models_dir,

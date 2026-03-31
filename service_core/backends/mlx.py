@@ -7,6 +7,7 @@ MAC_MLX_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="mlx-mac",
         label="MLX LM/VLM",
+        family="mlx-lm",
         runtime_dir_name="mlx-mac",
         launcher_name=None,
         description="Embedded MLX LM/VLM backend managed directly by OmniInfer on macOS",

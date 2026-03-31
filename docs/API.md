@@ -32,6 +32,7 @@ Example response:
     "model": null,
     "mmproj": null,
     "ctx_size": null,
+    "request_defaults": {},
     "backend_ready": false
   },
   "thinking": {
@@ -54,11 +55,18 @@ Example response:
   "model": "models/example.gguf",
   "mmproj": "models/mmproj-F32.gguf",
   "ctx_size": 4096,
+  "request_defaults": {
+    "temperature": 0.2,
+    "max_tokens": 128,
+    "stream": true,
+    "think": false
+  },
   "backend_ready": true,
   "available_backends": [
     {
       "id": "llama.cpp-cpu",
       "label": "llama.cpp cpu",
+      "family": "llama.cpp",
       "selected": true,
       "binary_exists": true,
       "models_dir": "models",
@@ -135,6 +143,12 @@ Request body:
   "model": "<relative-or-absolute-model-path>",
   "mmproj": "<optional-relative-or-absolute-mmproj-path>",
   "backend": "<optional-backend-id>",
+  "launch_args": ["-ngl", "999"],
+  "request_defaults": {
+    "temperature": 0.2,
+    "max_tokens": 128,
+    "stream": true
+  },
   "ctx_size": 4096
 }
 ```
@@ -143,6 +157,8 @@ Notes:
 
 - `backend` is optional.
 - `ctx_size` is optional and maps to the backend context length.
+- `launch_args` is optional and is intended for backend-native launch arguments managed by advanced CLI config files.
+- `request_defaults` is optional and stores default inference fields for later requests after the model is loaded.
 
 Example:
 
@@ -151,6 +167,7 @@ curl -X POST http://127.0.0.1:9000/omni/model/select \
   -H "Content-Type: application/json" \
   -d '{
     "model": "models/Qwen3.5-0.8B-Q4_K_M.gguf",
+    "launch_args": ["-ngl", "999"],
     "ctx_size": 4096
   }'
 ```
@@ -223,6 +240,10 @@ Request body:
   "model": "<optional-model-path>",
   "mmproj": "<optional-mmproj-path>",
   "backend": "<optional-backend-id>",
+  "launch_args": ["-ngl", "999"],
+  "request_defaults": {
+    "temperature": 0.2
+  },
   "ctx_size": 4096,
   "think": false,
   "messages": [
@@ -241,6 +262,7 @@ Notes:
 
 - If a model is already loaded, `model` is optional.
 - `ctx_size` is optional.
+- `launch_args` and `request_defaults` are optional OmniInfer extensions for backend-specific config-driven flows.
 - If `stream=true`, the response uses Server-Sent Events (SSE).
 
 ### Non-stream response shape

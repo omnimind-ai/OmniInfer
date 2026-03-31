@@ -7,6 +7,7 @@ MAC_TURBOQUANT_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="turboquant-mac",
         label="TurboQuant Metal",
+        family="turboquant",
         runtime_dir_name="turboquant-mac",
         launcher_name="llama-server",
         description="TurboQuant llama.cpp-compatible Metal backend managed by OmniInfer on macOS",
