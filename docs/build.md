@@ -27,11 +27,13 @@ For all platforms:
 - Git
 - Python 3
 - `framework/llama.cpp` available in the repository for `llama.cpp-*` backend builds
+- `framework/llama-cpp-turboquant` available in the repository for `turboquant-mac` backend builds
 
 Submodule behavior:
 
 - Linux `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`.
 - macOS `llama.cpp-mac` can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`.
+- macOS `turboquant-mac` can bootstrap `framework/llama-cpp-turboquant` automatically unless you pass `--no-bootstrap`.
 - Windows `llama.cpp-*` scripts do not bootstrap submodules automatically. If `framework/llama.cpp` is missing, initialize it first:
 
 ```bash
@@ -50,6 +52,7 @@ Backend builds emit runtime files into local platform folders:
 - Linux CPU: `.local/runtime/linux/llama.cpp-linux`
 - Linux ROCm: `.local/runtime/linux/llama.cpp-linux-rocm`
 - macOS Metal: `.local/runtime/macos/llama.cpp-mac`
+- macOS TurboQuant: `.local/runtime/macos/turboquant-mac`
 - Android CLI assets: `.local/runtime/android`
 
 Typical runtime subfolders:
@@ -289,6 +292,8 @@ bash ./scripts/platforms/linux/build-release.sh --dry-run
 
 - `scripts/platforms/macos/build-llama-mac.sh`
   Build the macOS Metal backend.
+- `scripts/platforms/macos/build-turboquant-mac.sh`
+  Build the macOS TurboQuant backend.
 - `scripts/platforms/macos/build-mlx-mac.sh`
   Prepare the embedded `mlx-mac` Python runtime.
 
@@ -296,6 +301,8 @@ The macOS build scripts use the same two-layer pattern as the other desktop plat
 
 - Platform entry: `scripts/platforms/macos/build-llama-mac.sh`
 - Backend implementation: `scripts/platforms/macos/llama.cpp-mac/build.sh`
+- Platform entry: `scripts/platforms/macos/build-turboquant-mac.sh`
+- Backend implementation: `scripts/platforms/macos/turboquant-mac/build.sh`
 - Embedded MLX runtime: `scripts/platforms/macos/mlx-mac/build.sh`
 
 ### Prerequisites
@@ -325,6 +332,31 @@ bash ./scripts/platforms/macos/build-llama-mac.sh --clean
 Expected output:
 
 - `.local/runtime/macos/llama.cpp-mac/bin/llama-server`
+
+### Build The macOS TurboQuant Backend
+
+```bash
+bash ./scripts/platforms/macos/build-turboquant-mac.sh
+```
+
+Useful options:
+
+```bash
+bash ./scripts/platforms/macos/build-turboquant-mac.sh --build-type Release --smoke-test
+bash ./scripts/platforms/macos/build-turboquant-mac.sh --clean
+```
+
+Expected output:
+
+- `.local/runtime/macos/turboquant-mac/bin/llama-server`
+- `.local/runtime/macos/turboquant-mac/bin/llama-cli` when the checkout exposes that target
+- `.local/runtime/macos/turboquant-mac/bin/llama-bench` when the checkout exposes that target
+
+Notes:
+
+- `turboquant-mac` builds from `framework/llama-cpp-turboquant`.
+- OmniInfer launches it through the same `llama-server` HTTP surface as `llama.cpp`, but keeps it as a separate backend id and runtime directory.
+- The default runtime flags are `-fa on --cache-type-k turbo4 --cache-type-v turbo4`.
 
 ### Prepare The macOS MLX Runtime
 
@@ -359,6 +391,7 @@ Notes:
 
 ```bash
 bash ./scripts/platforms/macos/build-llama-mac.sh --dry-run
+bash ./scripts/platforms/macos/build-turboquant-mac.sh --dry-run
 bash ./scripts/platforms/macos/build-mlx-mac.sh --dry-run
 ```
 

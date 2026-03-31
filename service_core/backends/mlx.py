@@ -17,5 +17,6 @@ MAC_MLX_TEMPLATES: tuple[BackendTemplate, ...] = (
         supports_mmproj=False,
         supports_ctx_size=False,
         python_modules=("mlx", "mlx_lm", "mlx_vlm", "torch", "torchvision"),
+        external_server_protocol=None,
     ),
 )

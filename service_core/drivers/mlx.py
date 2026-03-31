@@ -22,6 +22,14 @@ class MlxLoadedModel:
     supports_vision: bool
 
 
+@dataclass(frozen=True)
+class MlxGenerationResult:
+    text: str
+    elapsed_s: float
+    first_token_s: float | None = None
+    final_item: Any = None
+
+
 class MlxMacDriver(EmbeddedBackendDriver):
     def load_model(
         self,
@@ -74,14 +82,9 @@ class MlxMacDriver(EmbeddedBackendDriver):
     def _lm_chat_completion(self, state: Any, payload: dict[str, Any]) -> dict[str, Any]:
         prompt = self._build_text_prompt(state.tokenizer, payload)
         prompt_tokens = self._count_tokens(state.tokenizer, prompt)
-        generate = self._import_attr("mlx_lm", "generate")
         kwargs = self._lm_generate_kwargs(prompt, payload)
-        try:
-            text = generate(state.model, state.tokenizer, verbose=False, **kwargs)
-        except TypeError:
-            text = generate(state.model, state.tokenizer, **kwargs)
-
-        completion_text = str(text)
+        completion = self._generate_text_response("mlx_lm", state.model, state.tokenizer, kwargs, prefer_stream=False)
+        completion_text = completion.text
         completion_tokens = self._count_tokens(state.tokenizer, completion_text)
         created = int(time.time())
         request_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -101,20 +104,29 @@ class MlxMacDriver(EmbeddedBackendDriver):
                 }
             ],
             "usage": usage,
+            "timings": self._build_timings(
+                first_token_s=completion.first_token_s,
+                elapsed_s=completion.elapsed_s,
+                completion_tokens=completion_tokens,
+            ),
         }
 
     def _vlm_chat_completion(self, state: Any, payload: dict[str, Any]) -> dict[str, Any]:
         prompt, images = self._build_multimodal_prompt(state, payload)
-        generate = self._import_attr("mlx_vlm", "generate")
         kwargs = self._vlm_generate_kwargs(prompt, images, payload)
-        result = generate(state.model, state.processor, verbose=False, **kwargs)
+        completion = self._generate_text_response("mlx_vlm", state.model, state.processor, kwargs, prefer_stream=False)
 
-        completion_text = str(getattr(result, "text", "") or "")
-        prompt_tokens = self._result_metric(result, "prompt_tokens") or self._count_tokens(state.tokenizer, prompt)
-        completion_tokens = self._result_metric(result, "generation_tokens") or self._count_tokens(
+        completion_text = completion.text
+        prompt_tokens = self._result_metric(completion.final_item, "prompt_tokens") or self._count_tokens(
+            state.tokenizer,
+            prompt,
+        )
+        counted_completion_tokens = self._count_tokens(
             state.tokenizer,
             completion_text,
         )
+        metric_completion_tokens = self._result_metric(completion.final_item, "generation_tokens")
+        completion_tokens = self._prefer_larger_token_count(counted_completion_tokens, metric_completion_tokens)
         created = int(time.time())
         request_id = f"chatcmpl-{uuid.uuid4().hex}"
         model_name = str(payload.get("model") or state.model_ref)
@@ -132,6 +144,11 @@ class MlxMacDriver(EmbeddedBackendDriver):
                 }
             ],
             "usage": self._usage(prompt_tokens, completion_tokens),
+            "timings": self._build_timings(
+                first_token_s=completion.first_token_s,
+                elapsed_s=completion.elapsed_s,
+                completion_tokens=completion_tokens,
+            ),
         }
 
     def stream_chat_completion(self, state: Any, payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
@@ -150,6 +167,8 @@ class MlxMacDriver(EmbeddedBackendDriver):
         request_id = f"chatcmpl-{uuid.uuid4().hex}"
         model_name = str(payload.get("model") or state.model_ref)
         text_parts: list[str] = []
+        started = time.perf_counter()
+        first_token_s: float | None = None
 
         yield {
             "id": request_id,
@@ -163,6 +182,8 @@ class MlxMacDriver(EmbeddedBackendDriver):
             chunk_text = str(getattr(item, "text", "") or "")
             if not chunk_text:
                 continue
+            if first_token_s is None:
+                first_token_s = time.perf_counter() - started
             text_parts.append(chunk_text)
             yield {
                 "id": request_id,
@@ -174,6 +195,7 @@ class MlxMacDriver(EmbeddedBackendDriver):
 
         completion_text = "".join(text_parts)
         completion_tokens = self._count_tokens(state.tokenizer, completion_text)
+        elapsed_s = time.perf_counter() - started
         yield {
             "id": request_id,
             "object": "chat.completion.chunk",
@@ -181,6 +203,11 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "model": model_name,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             "usage": self._usage(prompt_tokens, completion_tokens),
+            "timings": self._build_timings(
+                first_token_s=first_token_s,
+                elapsed_s=elapsed_s,
+                completion_tokens=completion_tokens,
+            ),
         }
 
     def _vlm_stream_chat_completion(self, state: Any, payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
@@ -193,6 +220,8 @@ class MlxMacDriver(EmbeddedBackendDriver):
         model_name = str(payload.get("model") or state.model_ref)
         text_parts: list[str] = []
         final_item: Any = None
+        started = time.perf_counter()
+        first_token_s: float | None = None
 
         yield {
             "id": request_id,
@@ -207,6 +236,8 @@ class MlxMacDriver(EmbeddedBackendDriver):
             chunk_text = str(getattr(item, "text", "") or "")
             if not chunk_text:
                 continue
+            if first_token_s is None:
+                first_token_s = time.perf_counter() - started
             text_parts.append(chunk_text)
             yield {
                 "id": request_id,
@@ -218,10 +249,10 @@ class MlxMacDriver(EmbeddedBackendDriver):
 
         completion_text = "".join(text_parts)
         prompt_tokens = self._result_metric(final_item, "prompt_tokens") or self._count_tokens(state.tokenizer, prompt)
-        completion_tokens = self._result_metric(final_item, "generation_tokens") or self._count_tokens(
-            state.tokenizer,
-            completion_text,
-        )
+        counted_completion_tokens = self._count_tokens(state.tokenizer, completion_text)
+        metric_completion_tokens = self._result_metric(final_item, "generation_tokens")
+        completion_tokens = self._prefer_larger_token_count(counted_completion_tokens, metric_completion_tokens)
+        elapsed_s = time.perf_counter() - started
         yield {
             "id": request_id,
             "object": "chat.completion.chunk",
@@ -229,7 +260,57 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "model": model_name,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             "usage": self._usage(prompt_tokens, completion_tokens),
+            "timings": self._build_timings(
+                first_token_s=first_token_s,
+                elapsed_s=elapsed_s,
+                completion_tokens=completion_tokens,
+            ),
         }
+
+    def _generate_text_response(
+        self,
+        module_name: str,
+        model: Any,
+        processor: Any,
+        kwargs: dict[str, Any],
+        *,
+        prefer_stream: bool,
+    ) -> MlxGenerationResult:
+        stream_generate = self._optional_import_attr(module_name, "stream_generate")
+        if prefer_stream and callable(stream_generate):
+            started = time.perf_counter()
+            first_token_s: float | None = None
+            text_parts: list[str] = []
+            final_item: Any = None
+            for item in stream_generate(model, processor, **kwargs):
+                final_item = item
+                chunk_text = str(getattr(item, "text", "") or "")
+                if not chunk_text:
+                    continue
+                if first_token_s is None:
+                    first_token_s = time.perf_counter() - started
+                text_parts.append(chunk_text)
+            return MlxGenerationResult(
+                text="".join(text_parts),
+                elapsed_s=time.perf_counter() - started,
+                first_token_s=first_token_s,
+                final_item=final_item,
+            )
+
+        generate = self._import_attr(module_name, "generate")
+        started = time.perf_counter()
+        try:
+            text = generate(model, processor, verbose=False, **kwargs)
+        except TypeError:
+            text = generate(model, processor, **kwargs)
+        elapsed_s = time.perf_counter() - started
+        if hasattr(text, "text"):
+            return MlxGenerationResult(
+                text=str(getattr(text, "text", "") or ""),
+                elapsed_s=elapsed_s,
+                final_item=text,
+            )
+        return MlxGenerationResult(text=str(text), elapsed_s=elapsed_s)
 
     def _import_attr(self, module_name: str, attr_name: str) -> Any:
         try:
@@ -241,6 +322,17 @@ class MlxMacDriver(EmbeddedBackendDriver):
                 "Install them in the Python environment that launches OmniInfer."
             ) from exc
         return getattr(module, attr_name)
+
+    def _optional_import_attr(self, module_name: str, attr_name: str) -> Any | None:
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError as exc:
+            raise RuntimeError(
+                "mlx-mac requires the 'mlx', 'mlx-lm', and 'mlx-vlm' Python packages. "
+                "Vision-capable models also require 'torch' and 'torchvision'. "
+                "Install them in the Python environment that launches OmniInfer."
+            ) from exc
+        return getattr(module, attr_name, None)
 
     def _normalize_messages(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         messages = payload.get("messages")
@@ -478,3 +570,27 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "completion_tokens": completion_value,
             "total_tokens": prompt_value + completion_value,
         }
+
+    def _prefer_larger_token_count(self, primary: int | None, fallback: int | None) -> int | None:
+        if primary is None:
+            return fallback
+        if fallback is None:
+            return primary
+        return max(primary, fallback)
+
+    def _build_timings(
+        self,
+        *,
+        first_token_s: float | None,
+        elapsed_s: float,
+        completion_tokens: int | None,
+    ) -> dict[str, Any]:
+        first_token_value = first_token_s if first_token_s is not None else elapsed_s
+        predicted_s = max(elapsed_s - first_token_value, 0.0)
+        timings: dict[str, Any] = {
+            "prompt_ms": round(first_token_value * 1000, 3),
+            "predicted_ms": round(predicted_s * 1000, 3),
+        }
+        if completion_tokens and predicted_s > 0:
+            timings["predicted_per_second"] = round(completion_tokens / predicted_s, 3)
+        return timings

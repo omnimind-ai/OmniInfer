@@ -41,6 +41,14 @@ class LoadedRuntime:
     embedded_state: Any = None
 
 
+@dataclass(frozen=True)
+class ExternalRuntimeLaunch:
+    cmd: list[str]
+    port: int
+    ctx_size: int | None
+    log_file_name: str
+
+
 class RuntimeManager:
     def __init__(
         self,
@@ -262,26 +270,7 @@ class RuntimeManager:
         if not backend.binary_exists or not backend.launcher_path:
             raise FileNotFoundError(f"backend launcher not found: {backend.launcher_path or '(unset)'}")
 
-        target_port = self.backend_port if self.backend_port > 0 else pick_available_port(self.backend_host)
-        server_args = list(backend.default_args)
-        if ctx_size is not None:
-            server_args = self._with_server_arg(server_args, ("-c", "--ctx-size"), ctx_size)
-        effective_ctx_size = parse_optional_int(
-            self._extract_server_arg_value(server_args, ("-c", "--ctx-size"))
-        )
-        cmd = [
-            backend.launcher_path,
-            "-m",
-            model_path,
-            "--host",
-            self.backend_host,
-            "--port",
-            str(target_port),
-            "--no-webui",
-            *server_args,
-        ]
-        if mmproj_path:
-            cmd.extend(["-mm", mmproj_path])
+        launch = self._prepare_external_runtime_launch(backend, model_path, mmproj_path, ctx_size)
 
         env = os.environ.copy()
         env.update(backend.env)
@@ -289,7 +278,7 @@ class RuntimeManager:
 
         logs_dir = backend.runtime_path / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
-        log_path = logs_dir / "llama-server.log"
+        log_path = logs_dir / launch.log_file_name
         log_handle = log_path.open("a", encoding="utf-8", buffering=1)
 
         creationflags = 0
@@ -304,7 +293,7 @@ class RuntimeManager:
             startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
 
         proc = subprocess.Popen(
-            cmd,
+            launch.cmd,
             stdin=subprocess.DEVNULL,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
@@ -317,7 +306,7 @@ class RuntimeManager:
             startupinfo=startupinfo,
         )
 
-        if not wait_http_ready(self.backend_host, target_port, self.startup_timeout_s):
+        if not wait_http_ready(self.backend_host, launch.port, self.startup_timeout_s):
             message = "backend did not become ready in time"
             if proc.poll() is not None:
                 try:
@@ -332,10 +321,10 @@ class RuntimeManager:
                 model_ref=display_path_reference(model_path, backend.models_dir),
                 mmproj_path=mmproj_path,
                 mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
-                ctx_size=effective_ctx_size,
+                ctx_size=launch.ctx_size,
                 runtime_mode="external_server",
                 host=self.backend_host,
-                port=target_port,
+                port=launch.port,
                 process=proc,
                 log_path=str(log_path),
                 log_handle=log_handle,
@@ -349,16 +338,59 @@ class RuntimeManager:
             model_ref=display_path_reference(model_path, backend.models_dir),
             mmproj_path=mmproj_path,
             mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
-            ctx_size=effective_ctx_size,
+            ctx_size=launch.ctx_size,
             runtime_mode="external_server",
             host=self.backend_host,
-            port=target_port,
+            port=launch.port,
             process=proc,
             log_path=str(log_path),
             log_handle=log_handle,
         )
         self.loaded_runtime = runtime
         return runtime
+
+    def _prepare_external_runtime_launch(
+        self,
+        backend: BackendSpec,
+        model_path: str,
+        mmproj_path: str | None,
+        ctx_size: int | None = None,
+    ) -> ExternalRuntimeLaunch:
+        target_port = self.backend_port if self.backend_port > 0 else pick_available_port(self.backend_host)
+        server_args = list(backend.default_args)
+        if ctx_size is not None:
+            server_args = self._with_server_arg(server_args, ("-c", "--ctx-size"), ctx_size)
+        effective_ctx_size = parse_optional_int(
+            self._extract_server_arg_value(server_args, ("-c", "--ctx-size"))
+        )
+
+        protocol = backend.external_server_protocol or "llama.cpp-server"
+        if protocol != "llama.cpp-server":
+            raise RuntimeError(f"unsupported external runtime protocol for {backend.id}: {protocol}")
+
+        if not backend.launcher_path:
+            raise FileNotFoundError(f"backend launcher not found: {backend.id}")
+
+        cmd = [
+            backend.launcher_path,
+            "-m",
+            model_path,
+            "--host",
+            self.backend_host,
+            "--port",
+            str(target_port),
+            "--no-webui",
+            *server_args,
+        ]
+        if mmproj_path:
+            cmd.extend(["-mm", mmproj_path])
+
+        return ExternalRuntimeLaunch(
+            cmd=cmd,
+            port=target_port,
+            ctx_size=effective_ctx_size,
+            log_file_name=backend.log_file_name or "runtime.log",
+        )
 
     def list_backends(self) -> list[dict[str, Any]]:
         with self.lock:

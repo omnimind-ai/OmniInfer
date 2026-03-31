@@ -8,6 +8,7 @@ from typing import Any
 
 BACKEND_PRIORITY: dict[str, int] = {
     "llama.cpp-mac": 0,
+    "turboquant-mac": 0,
     "mlx-mac": 0,
     "llama.cpp-cuda": 0,
     "llama.cpp-vulkan": 0,
@@ -27,12 +28,15 @@ class BackendTemplate:
     capabilities: tuple[str, ...]
     env_prefix: str
     default_ngl: str | None = None
+    default_extra_args: tuple[str, ...] = ()
     fallback_runtime_dir_names: tuple[str, ...] = ()
     runtime_mode: str = "external_server"
     model_artifact: str = "file"
     supports_mmproj: bool = True
     supports_ctx_size: bool = True
     python_modules: tuple[str, ...] = ()
+    external_server_protocol: str | None = "llama.cpp-server"
+    log_file_name: str = "runtime.log"
 
 
 @dataclass
@@ -52,6 +56,8 @@ class BackendSpec:
     supports_mmproj: bool = True
     supports_ctx_size: bool = True
     python_modules: tuple[str, ...] = ()
+    external_server_protocol: str | None = "llama.cpp-server"
+    log_file_name: str = "runtime.log"
 
     @property
     def binary_exists(self) -> bool:
