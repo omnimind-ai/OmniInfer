@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,7 +56,12 @@ class BackendSpec:
     @property
     def binary_exists(self) -> bool:
         if self.runtime_mode == "embedded":
-            return all(importlib.util.find_spec(module_name) is not None for module_name in self.python_modules)
+            for module_name in self.python_modules:
+                try:
+                    importlib.import_module(module_name)
+                except ImportError:
+                    return False
+            return True
         if not self.launcher_path:
             return False
         return Path(self.launcher_path).is_file()

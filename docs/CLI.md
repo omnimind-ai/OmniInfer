@@ -18,7 +18,7 @@ If you are using a packaged release that already includes `runtime/`, you can sk
 If you want to use the embedded `mlx-mac` backend from a source checkout:
 
 - Use Python `3.10+`.
-- Make sure the Python interpreter that launches OmniInfer can import `mlx` and `mlx_lm`.
+- Make sure the Python interpreter that launches OmniInfer can import `mlx`, `mlx_lm`, `mlx_vlm`, `torch`, and `torchvision`.
 - The repository includes [`scripts/platforms/macos/mlx-mac/requirements.txt`](../scripts/platforms/macos/mlx-mac/requirements.txt) for that runtime.
 - The recommended local setup is your `conda` environment named `mlx`.
 
@@ -139,6 +139,16 @@ Vision-language model:
 ./omniinfer model load -m /path/to/model.gguf -mm /path/to/mmproj.gguf
 ```
 
+For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or `mmproj` sidecar:
+
+```sh
+./omniinfer select mlx-mac
+./omniinfer model load -m /path/to/mlx-vlm-model-directory
+./omniinfer chat \
+  --image /path/to/image.jpg \
+  --message "Describe this image in one sentence."
+```
+
 ### 4. Chat
 
 Text chat:
@@ -183,7 +193,8 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - `select` stores your current backend choice for later runs.
 - `model load` stores the current model path, optional `mmproj`, and optional `ctx-size`.
 - `llama.cpp-*` backends expect a model file such as `.gguf`, while `mlx-mac` expects a model directory.
-- `mlx-mac` is text-only in the current phase. Do not pass `-mm/--mmproj` or `--image` when using it.
+- `mlx-mac` supports both text models and vision-language model directories.
+- `mlx-mac` does not use `-mm/--mmproj`; multimodal support is provided by the selected MLX model directory itself.
 - `chat` streams output by default.
 - `status` shows the current backend, model, and thinking state.
 - `shutdown` stops the local desktop service. On Android it just confirms that direct mode has no background gateway.
