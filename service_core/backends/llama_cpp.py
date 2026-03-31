@@ -7,6 +7,7 @@ WINDOWS_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="llama.cpp-cpu",
         label="llama.cpp cpu",
+        family="llama.cpp",
         runtime_dir_name="llama.cpp-cpu",
         launcher_name="llama-server.exe",
         description="llama.cpp CPU backend managed by OmniInfer",
@@ -16,6 +17,7 @@ WINDOWS_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="llama.cpp-cuda",
         label="llama.cpp CUDA",
+        family="llama.cpp",
         runtime_dir_name="llama.cpp-cuda",
         launcher_name="llama-server.exe",
         description="llama.cpp CUDA backend managed by OmniInfer",
@@ -26,6 +28,7 @@ WINDOWS_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="llama.cpp-vulkan",
         label="llama.cpp Vulkan",
+        family="llama.cpp",
         runtime_dir_name="llama.cpp-vulkan",
         launcher_name="llama-server.exe",
         description="llama.cpp Vulkan backend managed by OmniInfer",
@@ -40,6 +43,7 @@ MAC_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="llama.cpp-mac",
         label="llama.cpp Metal",
+        family="llama.cpp",
         runtime_dir_name="llama.cpp-mac",
         launcher_name="llama-server",
         description="llama.cpp Metal backend managed by OmniInfer",
@@ -54,6 +58,7 @@ LINUX_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="llama.cpp-linux",
         label="llama.cpp Linux",
+        family="llama.cpp",
         runtime_dir_name="llama.cpp-linux",
         launcher_name="llama-server",
         description="llama.cpp Linux backend managed by OmniInfer",
@@ -64,6 +69,7 @@ LINUX_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="llama.cpp-linux-rocm",
         label="llama.cpp Linux ROCm",
+        family="llama.cpp",
         runtime_dir_name="llama.cpp-linux-rocm",
         fallback_runtime_dir_names=("llama.cpp-linux-ROCm",),
         launcher_name="llama-server",
@@ -79,6 +85,7 @@ ANDROID_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
     BackendTemplate(
         id="llama.cpp-android",
         label="llama.cpp Android",
+        family="llama.cpp",
         runtime_dir_name="llama.cpp-android",
         launcher_name="llama-server",
         description="llama.cpp Android backend managed by OmniInfer",

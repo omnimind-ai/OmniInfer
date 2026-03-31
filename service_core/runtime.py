@@ -15,6 +15,7 @@ from service_core.model_catalog import SupportedModelCatalog
 from service_core.platforms import (
     HostPlatform,
     current_host_platform,
+    discover_llama_cpp_model_artifacts,
     display_path_reference,
     maybe_auto_mmproj,
     parse_optional_int,
@@ -35,6 +36,8 @@ class LoadedRuntime:
     host: str | None
     port: int | None
     process: subprocess.Popen[Any] | None
+    launch_args: list[str]
+    request_defaults: dict[str, Any]
     log_path: str | None = None
     log_handle: TextIOWrapper | None = None
     embedded_driver: EmbeddedBackendDriver | None = None
@@ -121,6 +124,38 @@ class RuntimeManager:
             updated.extend([flags[0], str(value)])
         return updated
 
+    def _without_server_arg(self, args: list[str], flags: tuple[str, ...]) -> list[str]:
+        updated: list[str] = []
+        i = 0
+        while i < len(args):
+            token = args[i]
+            if token in flags:
+                i += 2 if i + 1 < len(args) else 1
+                continue
+            updated.append(token)
+            i += 1
+        return updated
+
+    def _validate_launch_args(self, args: list[str]) -> None:
+        reserved_flags = {
+            "-m",
+            "--model",
+            "-mm",
+            "--mmproj",
+            "--host",
+            "--port",
+            "--no-webui",
+        }
+        i = 0
+        while i < len(args):
+            token = str(args[i])
+            flag_name = token.split("=", 1)[0]
+            if flag_name in reserved_flags:
+                raise ValueError(
+                    f"launch arg {flag_name!r} is managed by OmniInfer and must not be set in backend config"
+                )
+            i += 1
+
     def _get_backend(self, backend_id: str | None = None) -> BackendSpec:
         target = self._normalize_backend_id(backend_id) or self.selected_backend_id
         if target not in self.backends:
@@ -171,13 +206,16 @@ class RuntimeManager:
             except OSError:
                 pass
 
-    def _resolve_model_path(self, backend: BackendSpec, model: str) -> str:
+    def _resolve_model_path(self, backend: BackendSpec, model: str) -> tuple[str, str | None]:
         path = Path(model).expanduser()
         if not path.is_absolute():
             if not backend.models_dir:
                 raise ValueError("relative model path requires a configured models_dir or an absolute model path")
             path = Path(backend.models_dir) / path
-        return str(path.resolve())
+        resolved = path.resolve()
+        if backend.model_artifact == "file" and resolved.is_dir():
+            return discover_llama_cpp_model_artifacts(resolved)
+        return str(resolved), None
 
     def _ensure_supported_model_artifact(self, backend: BackendSpec, model_path: str) -> None:
         target = Path(model_path)
@@ -192,7 +230,13 @@ class RuntimeManager:
         if not target.exists():
             raise FileNotFoundError(f"model path not found: {model_path}")
 
-    def _resolve_mmproj_path(self, backend: BackendSpec, mmproj: str | None, model_path: str) -> str | None:
+    def _resolve_mmproj_path(
+        self,
+        backend: BackendSpec,
+        mmproj: str | None,
+        model_path: str,
+        auto_mmproj_path: str | None = None,
+    ) -> str | None:
         if not backend.supports_mmproj:
             if mmproj:
                 raise ValueError(f"{backend.id} does not support mmproj files")
@@ -209,6 +253,9 @@ class RuntimeManager:
                 raise FileNotFoundError(f"mmproj file not found: {resolved}")
             return resolved
 
+        if auto_mmproj_path:
+            return auto_mmproj_path
+
         return maybe_auto_mmproj(backend.models_dir, model_path)
 
     def _start_runtime_locked(
@@ -217,10 +264,25 @@ class RuntimeManager:
         model_path: str,
         mmproj_path: str | None,
         ctx_size: int | None = None,
+        launch_args: list[str] | None = None,
+        request_defaults: dict[str, Any] | None = None,
     ) -> LoadedRuntime:
         if backend.runtime_mode == "embedded":
-            return self._start_embedded_runtime_locked(backend, model_path, mmproj_path, ctx_size=ctx_size)
-        return self._start_external_runtime_locked(backend, model_path, mmproj_path, ctx_size=ctx_size)
+            return self._start_embedded_runtime_locked(
+                backend,
+                model_path,
+                mmproj_path,
+                ctx_size=ctx_size,
+                request_defaults=request_defaults,
+            )
+        return self._start_external_runtime_locked(
+            backend,
+            model_path,
+            mmproj_path,
+            ctx_size=ctx_size,
+            launch_args=launch_args,
+            request_defaults=request_defaults,
+        )
 
     def _start_embedded_runtime_locked(
         self,
@@ -228,6 +290,7 @@ class RuntimeManager:
         model_path: str,
         mmproj_path: str | None,
         ctx_size: int | None = None,
+        request_defaults: dict[str, Any] | None = None,
     ) -> LoadedRuntime:
         if not backend.binary_exists:
             raise RuntimeError(
@@ -254,6 +317,8 @@ class RuntimeManager:
             host=None,
             port=None,
             process=None,
+            launch_args=[],
+            request_defaults=dict(request_defaults or {}),
             embedded_driver=driver,
             embedded_state=state,
         )
@@ -266,11 +331,21 @@ class RuntimeManager:
         model_path: str,
         mmproj_path: str | None,
         ctx_size: int | None = None,
+        launch_args: list[str] | None = None,
+        request_defaults: dict[str, Any] | None = None,
     ) -> LoadedRuntime:
         if not backend.binary_exists or not backend.launcher_path:
             raise FileNotFoundError(f"backend launcher not found: {backend.launcher_path or '(unset)'}")
 
-        launch = self._prepare_external_runtime_launch(backend, model_path, mmproj_path, ctx_size)
+        effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
+        self._validate_launch_args(effective_launch_args)
+        launch = self._prepare_external_runtime_launch(
+            backend,
+            model_path,
+            mmproj_path,
+            ctx_size,
+            launch_args=effective_launch_args,
+        )
 
         env = os.environ.copy()
         env.update(backend.env)
@@ -326,6 +401,8 @@ class RuntimeManager:
                 host=self.backend_host,
                 port=launch.port,
                 process=proc,
+                launch_args=list(effective_launch_args),
+                request_defaults=dict(request_defaults or {}),
                 log_path=str(log_path),
                 log_handle=log_handle,
             )
@@ -343,6 +420,8 @@ class RuntimeManager:
             host=self.backend_host,
             port=launch.port,
             process=proc,
+            launch_args=list(effective_launch_args),
+            request_defaults=dict(request_defaults or {}),
             log_path=str(log_path),
             log_handle=log_handle,
         )
@@ -355,9 +434,10 @@ class RuntimeManager:
         model_path: str,
         mmproj_path: str | None,
         ctx_size: int | None = None,
+        launch_args: list[str] | None = None,
     ) -> ExternalRuntimeLaunch:
         target_port = self.backend_port if self.backend_port > 0 else pick_available_port(self.backend_host)
-        server_args = list(backend.default_args)
+        server_args = list(backend.default_args if launch_args is None else launch_args)
         if ctx_size is not None:
             server_args = self._with_server_arg(server_args, ("-c", "--ctx-size"), ctx_size)
         effective_ctx_size = parse_optional_int(
@@ -433,6 +513,8 @@ class RuntimeManager:
         mmproj: str | None = None,
         backend_id: str | None = None,
         ctx_size: int | None = None,
+        launch_args: list[str] | None = None,
+        request_defaults: dict[str, Any] | None = None,
     ) -> LoadedRuntime:
         with self.lock:
             requested_backend_id = self._normalize_backend_id(backend_id)
@@ -440,7 +522,26 @@ class RuntimeManager:
                 if self._is_runtime_running_locked() and self.loaded_runtime:
                     if requested_backend_id and self.loaded_runtime.backend_id != requested_backend_id:
                         raise RuntimeError("a different backend is currently loaded; reload the model to switch")
-                    if ctx_size is None or self.loaded_runtime.ctx_size == ctx_size:
+                    desired_launch_args = list(self.loaded_runtime.launch_args if launch_args is None else launch_args)
+                    desired_request_defaults = dict(
+                        self.loaded_runtime.request_defaults if request_defaults is None else request_defaults
+                    )
+                    compare_current_launch_args = list(self.loaded_runtime.launch_args)
+                    compare_desired_launch_args = list(desired_launch_args)
+                    if ctx_size is None:
+                        compare_current_launch_args = self._without_server_arg(
+                            compare_current_launch_args,
+                            ("-c", "--ctx-size"),
+                        )
+                        compare_desired_launch_args = self._without_server_arg(
+                            compare_desired_launch_args,
+                            ("-c", "--ctx-size"),
+                        )
+                    if (
+                        (ctx_size is None or self.loaded_runtime.ctx_size == ctx_size)
+                        and compare_desired_launch_args == compare_current_launch_args
+                    ):
+                        self.loaded_runtime.request_defaults = desired_request_defaults
                         return self.loaded_runtime
                     current_runtime = self.loaded_runtime
                     backend = self._get_backend(current_runtime.backend_id)
@@ -453,16 +554,23 @@ class RuntimeManager:
                         current_runtime.model_path,
                         current_runtime.mmproj_path,
                         ctx_size=ctx_size,
+                        launch_args=desired_launch_args,
+                        request_defaults=desired_request_defaults,
                     )
                 raise RuntimeError("no backend model loaded; call /omni/model/select first or provide 'model'")
 
             preferred_backend = self._get_backend(requested_backend_id) if requested_backend_id else self._get_backend()
             if ctx_size is not None and not preferred_backend.supports_ctx_size:
                 raise ValueError(f"{preferred_backend.id} does not support ctx_size overrides")
-            model_path = self._resolve_model_path(preferred_backend, model)
+            model_path, auto_mmproj_path = self._resolve_model_path(preferred_backend, model)
             self._ensure_supported_model_artifact(preferred_backend, model_path)
 
-            mmproj_path = self._resolve_mmproj_path(preferred_backend, mmproj, model_path)
+            mmproj_path = self._resolve_mmproj_path(
+                preferred_backend,
+                mmproj,
+                model_path,
+                auto_mmproj_path=auto_mmproj_path,
+            )
             if requested_backend_id:
                 resolved_backend_id = requested_backend_id
             elif preferred_backend.runtime_mode == "embedded":
@@ -473,21 +581,43 @@ class RuntimeManager:
             if ctx_size is not None and not backend.supports_ctx_size:
                 raise ValueError(f"{backend.id} does not support ctx_size overrides")
             self.selected_backend_id = backend.id
+            effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
+            effective_request_defaults = dict(request_defaults or {})
 
             current = self.loaded_runtime if self._is_runtime_running_locked() else None
             if current:
                 current_mmproj = current.mmproj_path or ""
                 wanted_mmproj = mmproj_path or ""
+                compare_current_launch_args = list(current.launch_args)
+                compare_wanted_launch_args = list(effective_launch_args)
+                if ctx_size is None:
+                    compare_current_launch_args = self._without_server_arg(
+                        compare_current_launch_args,
+                        ("-c", "--ctx-size"),
+                    )
+                    compare_wanted_launch_args = self._without_server_arg(
+                        compare_wanted_launch_args,
+                        ("-c", "--ctx-size"),
+                    )
                 if (
                     current.backend_id == backend.id
                     and Path(current.model_path).resolve() == Path(model_path).resolve()
                     and current_mmproj == wanted_mmproj
                     and (ctx_size is None or current.ctx_size == ctx_size)
+                    and compare_current_launch_args == compare_wanted_launch_args
                 ):
+                    current.request_defaults = effective_request_defaults
                     return current
 
             self._stop_runtime_locked()
-            return self._start_runtime_locked(backend, model_path, mmproj_path, ctx_size=ctx_size)
+            return self._start_runtime_locked(
+                backend,
+                model_path,
+                mmproj_path,
+                ctx_size=ctx_size,
+                launch_args=effective_launch_args,
+                request_defaults=effective_request_defaults,
+            )
 
     def select_model(
         self,
@@ -495,8 +625,17 @@ class RuntimeManager:
         mmproj: str | None = None,
         backend_id: str | None = None,
         ctx_size: int | None = None,
+        launch_args: list[str] | None = None,
+        request_defaults: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        runtime = self.ensure_model_loaded(model=model, mmproj=mmproj, backend_id=backend_id, ctx_size=ctx_size)
+        runtime = self.ensure_model_loaded(
+            model=model,
+            mmproj=mmproj,
+            backend_id=backend_id,
+            ctx_size=ctx_size,
+            launch_args=launch_args,
+            request_defaults=request_defaults,
+        )
         return {
             "ok": True,
             "selected_backend": runtime.backend_id,
@@ -545,5 +684,6 @@ class RuntimeManager:
                 "model": runtime.model_ref if runtime else None,
                 "mmproj": runtime.mmproj_ref if runtime else None,
                 "ctx_size": runtime.ctx_size if runtime else None,
+                "request_defaults": dict(runtime.request_defaults) if runtime else {},
                 "backend_ready": bool(runtime),
             }
