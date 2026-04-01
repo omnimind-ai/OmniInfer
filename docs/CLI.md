@@ -157,6 +157,13 @@ For `omniinfer-native` on Android, OmniInfer accepts either:
 - or a compatibility-mode model directory that contains `hybrid_llama_qnn.pte`
 
 In package mode, `omniinfer-native.env` tells OmniInfer which ExecuTorch Qualcomm llama runner to use and which `.pte` artifacts belong to the package.
+The recommended way to generate that manifest is:
+
+```sh
+bash ./scripts/platforms/android/package-omniinfer-native.sh \
+  --artifact-dir /path/to/executorch-artifacts \
+  --decoder-model-version qwen3
+```
 
 OmniInfer also auto-discovers `tokenizer.json` beside the selected `.pte` file when available.
 
