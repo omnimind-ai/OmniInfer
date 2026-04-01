@@ -110,7 +110,7 @@ Examples:
 - Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino`
 - macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac`
 - Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`
-- Android: `llama.cpp-llama` or `llama.cpp-mtmd`
+- Android: `llama.cpp-llama`, `llama.cpp-mtmd`, or `omniinfer-native`
 
 When you select a desktop backend, OmniInfer also creates a backend-specific JSON config template under:
 
@@ -150,6 +150,13 @@ For `llama.cpp-*`, OmniInfer accepts either a model file or a model directory. I
 
 For `mlx-mac`, OmniInfer passes the model directory directly to the embedded backend.
 
+For `omniinfer-native` on Android, OmniInfer accepts either:
+
+- a `.pte` model file
+- or a model directory that contains `hybrid_llama_qnn.pte`
+
+OmniInfer also auto-discovers `tokenizer.json` beside the selected `.pte` file when available.
+
 Explicit file path:
 
 ```sh
@@ -173,6 +180,14 @@ Vision-language model:
 
 ```sh
 ./omniinfer model load -m /path/to/model.gguf -mm /path/to/mmproj.gguf
+```
+
+Android OmniInfer Native QNN:
+
+```sh
+./omniinfer select omniinfer-native
+./omniinfer model load -m /data/local/tmp/syf/executorch/static_llm
+./omniinfer chat --message "你好啊，你是谁？"
 ```
 
 For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or `mmproj` sidecar:
@@ -285,4 +300,5 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - The repo-root [omniinfer](../omniinfer) script detects Android automatically.
 - Android direct mode uses the local launcher at `.local/runtime/android/bin/omniinfer-android`.
 - Android backend binaries live under `.local/runtime/android/lib/arm64-v8a`.
+- Android OmniInfer Native QNN runtime files can also live under `.local/runtime/android/qnn`.
 - For more Android-specific details, see [Android CLI Notes](android-cli.md).
