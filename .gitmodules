@@ -21,3 +21,6 @@
 	path = framework/llama-cpp-turboquant
 	url = https://github.com/TheTom/llama-cpp-turboquant.git
 	branch = feature/turboquant-kv-cache
+[submodule "framework/executorch"]
+	path = framework/executorch
+	url = https://github.com/pytorch/executorch

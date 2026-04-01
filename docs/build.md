@@ -349,6 +349,16 @@ Instead, the Android script prepares a direct-mode runtime tree under:
 
 The installer always writes the launcher. It can also copy prebuilt Android binaries from an artifact directory or explicit paths.
 
+For `omniinfer-native`, the Android runtime can also host the Qualcomm ExecuTorch runners and QNN shared libraries under `.local/runtime/android/qnn/`. If your model package uses the official ExecuTorch Qualcomm llama multimodal flow, include `qnn_multimodal_runner` in that bundle as well.
+
+The recommended model-package format for official ExecuTorch Qualcomm llama artifacts is a model directory that contains:
+
+- `omniinfer-native.env`
+- `tokenizer.json` or another runtime tokenizer file referenced by the manifest
+- one or more `.pte` files such as `hybrid_llama_qnn.pte`, `vision_encoder_qnn.pte`, `tok_embedding_qnn.pte`, or `attention_sink_evictor.pte`
+
+`omniinfer-native.env` is a simple shell-style manifest consumed by the Android launcher. It lets OmniInfer map one model directory to the correct runner and artifact set without hard-coding file-name guesses in the CLI.
+
 ### Prepare The Android Runtime
 
 Launcher only:

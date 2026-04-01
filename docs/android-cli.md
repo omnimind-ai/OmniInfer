@@ -20,6 +20,8 @@ bash ./scripts/platforms/android/build-runtime.sh \
   Local Android multimodal backend binary.
 - `.local/runtime/android/qnn/qnn_llama_runner`
   Local OmniInfer Native text backend launcher for ExecuTorch/QNN.
+- `.local/runtime/android/qnn/qnn_multimodal_runner`
+  Local OmniInfer Native multimodal backend launcher for ExecuTorch/QNN.
 - `.local/runtime/android/qnn/libQnn*.so`
   Local QNN runtime libraries used by `qnn_llama_runner`.
 
@@ -79,10 +81,14 @@ It keeps:
 ## OmniInfer Native QNN Notes
 
 - The Android backend id is `omniinfer-native`.
-- It is currently text-only.
-- If you pass a directory to `model load`, OmniInfer first looks for `hybrid_llama_qnn.pte`.
+- `omniinfer-native` now supports two package styles:
+  - compatibility mode: a single `.pte` text model such as `hybrid_llama_qnn.pte`
+  - package mode: a model directory that contains `omniinfer-native.env`
+- If you pass a directory to `model load` and `omniinfer-native.env` exists, OmniInfer treats that directory as the authoritative ExecuTorch package root.
+- If no package manifest exists, OmniInfer falls back to the old text-only discovery path and first looks for `hybrid_llama_qnn.pte`.
 - `tokenizer.json` is auto-discovered next to the selected `.pte` model.
 - `decoder_model_version` is auto-inferred when possible. The current `hybrid_llama_qnn.pte` convention defaults to `qwen3`.
+- Package mode is the recommended path for official `framework/executorch/examples/qualcomm/oss_scripts/llama` artifacts because those models may include multiple `.pte` files such as decoder, vision encoder, token embedding, and attention sink helpers.
 - You can still override either value explicitly:
 
 ```sh
@@ -91,4 +97,24 @@ It keeps:
   -m /data/local/tmp/syf/executorch/static_llm \
   --tokenizer-path /data/local/tmp/syf/executorch/static_llm/tokenizer.json \
   --decoder-model-version qwen3
+```
+
+Recommended package manifest example:
+
+```sh
+# /path/to/artifact/omniinfer-native.env
+OMNIINFER_NATIVE_FORMAT=1
+OMNIINFER_NATIVE_RUNNER=llama
+OMNIINFER_NATIVE_DECODER_MODEL_VERSION=qwen3
+OMNIINFER_NATIVE_TOKENIZER=tokenizer.json
+OMNIINFER_NATIVE_TEXT_DECODER=hybrid_llama_qnn.pte
+OMNIINFER_NATIVE_EVAL_MODE=1
+```
+
+For multimodal Qualcomm llama artifacts, use `OMNIINFER_NATIVE_RUNNER=multimodal` and add:
+
+```sh
+OMNIINFER_NATIVE_VISION_ENCODER=vision_encoder_qnn.pte
+OMNIINFER_NATIVE_TOK_EMBEDDING=tok_embedding_qnn.pte
+OMNIINFER_NATIVE_TEXT_DECODER=hybrid_llama_qnn.pte
 ```

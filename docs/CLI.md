@@ -153,7 +153,10 @@ For `mlx-mac`, OmniInfer passes the model directory directly to the embedded bac
 For `omniinfer-native` on Android, OmniInfer accepts either:
 
 - a `.pte` model file
-- or a model directory that contains `hybrid_llama_qnn.pte`
+- a model directory that contains `omniinfer-native.env`
+- or a compatibility-mode model directory that contains `hybrid_llama_qnn.pte`
+
+In package mode, `omniinfer-native.env` tells OmniInfer which ExecuTorch Qualcomm llama runner to use and which `.pte` artifacts belong to the package.
 
 OmniInfer also auto-discovers `tokenizer.json` beside the selected `.pte` file when available.
 
