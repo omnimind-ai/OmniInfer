@@ -317,7 +317,7 @@ handle_chat() {
     set -- "$@" -c "${CTX_SIZE}"
   fi
   if [ -n "${MMPROJ_PATH}" ]; then
-    set -- "$@" -mmproj "${MMPROJ_PATH}"
+    set -- "$@" -mm "${MMPROJ_PATH}"
   fi
   if [ -n "${image}" ]; then
     set -- "$@" --image "${image}"
