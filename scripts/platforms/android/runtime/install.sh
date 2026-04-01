@@ -17,7 +17,7 @@ Options:
   --artifact-dir <dir>  Directory that contains Android CLI binaries such as libllama-cli.so and libmtmd-cli.so
   --llama-cli <path>    Explicit path to libllama-cli.so
   --mtmd-cli <path>     Explicit path to libmtmd-cli.so
-  --qnn-bundle-dir <dir>  Optional directory that contains qnn_llama_runner and QNN runtime libraries
+  --qnn-bundle-dir <dir>  Optional directory that contains qnn_llama_runner, qnn_multimodal_runner, and QNN runtime libraries
   --launcher-only       Only install the OmniInfer Android launcher and runtime layout
   --dry-run             Print actions without modifying files
   -h, --help            Show this help message
@@ -135,6 +135,7 @@ copy_qnn_bundle() {
 
   local patterns=(
     "qnn_llama_runner"
+    "qnn_multimodal_runner"
     "libQnn*.so"
     "libqnn_executorch_backend.so"
   )
@@ -178,6 +179,7 @@ Optional Android backend binaries:
 
 Optional OmniInfer Native QNN runtime:
   ${QNN_ROOT}/qnn_llama_runner
+  ${QNN_ROOT}/qnn_multimodal_runner
   ${QNN_ROOT}/libQnn*.so
   ${QNN_ROOT}/libqnn_executorch_backend.so
 
