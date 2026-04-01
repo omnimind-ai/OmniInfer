@@ -10,13 +10,17 @@ esac
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SELF_PATH")" && pwd)"
 RUNTIME_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(CDPATH= cd -- "${RUNTIME_ROOT}/../../.." && pwd)"
 LIB_ROOT="${RUNTIME_ROOT}/lib/arm64-v8a"
+LEGACY_LIB_ROOT="${PROJECT_ROOT}/platform/Android/lib/arm64-v8a"
+QNN_ROOT="${RUNTIME_ROOT}/qnn"
+BACKEND_QNN="omniinfer-native"
 
 DEFAULT_STATE_ROOT="${HOME:-}/.config/omniinfer"
-if [ -n "${HOME:-}" ]; then
+if [ -n "${HOME:-}" ] && [ "${HOME}" != "/" ] && [ -d "${HOME}" ] && [ -w "${HOME}" ]; then
   STATE_ROOT="${DEFAULT_STATE_ROOT}"
 else
-  STATE_ROOT="$(pwd)/.omniinfer/android-cli"
+  STATE_ROOT="${PROJECT_ROOT}/.omniinfer/android-cli"
 fi
 
 STATE_FILE="${STATE_ROOT}/android-state.env"
@@ -34,6 +38,8 @@ MODEL_PATH=
 MMPROJ_PATH=
 CTX_SIZE=
 THINKING=off
+TOKENIZER_PATH=
+DECODER_MODEL_VERSION=
 EOF
   fi
 }
@@ -52,20 +58,121 @@ MODEL_PATH=${MODEL_PATH:-}
 MMPROJ_PATH=${MMPROJ_PATH:-}
 CTX_SIZE=${CTX_SIZE:-}
 THINKING=${THINKING:-off}
+TOKENIZER_PATH=${TOKENIZER_PATH:-}
+DECODER_MODEL_VERSION=${DECODER_MODEL_VERSION:-}
 EOF
+}
+
+resolve_path() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$(pwd)" "$1" ;;
+  esac
+}
+
+qnn_model_dir() {
+  case "$1" in
+    *.pte) dirname "$1" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+discover_qnn_model() {
+  target="$1"
+  if [ -d "$target" ]; then
+    preferred=""
+    if [ -f "${target}/hybrid_llama_qnn.pte" ]; then
+      preferred="${target}/hybrid_llama_qnn.pte"
+    fi
+    if [ -n "${preferred}" ]; then
+      printf '%s\n' "${preferred}"
+      return 0
+    fi
+    candidates="$(find "$target" -maxdepth 1 -type f -name '*.pte' | sort || true)"
+    count="$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
+    if [ "${count}" = "1" ]; then
+      printf '%s\n' "$candidates"
+      return 0
+    fi
+    if [ "${count}" = "0" ]; then
+      echo "No .pte model was found under: $target" >&2
+    else
+      echo "Multiple .pte models were found under: $target" >&2
+      printf '%s\n' "$candidates" >&2
+    fi
+    return 1
+  fi
+  if [ -f "$target" ]; then
+    printf '%s\n' "$target"
+    return 0
+  fi
+  echo "QNN model path was not found: $target" >&2
+  return 1
+}
+
+infer_decoder_model_version() {
+  lower="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$lower" in
+    *hybrid_llama_qnn.pte) printf '%s\n' qwen3 ;;
+    *qwen3*) printf '%s\n' qwen3 ;;
+    *qwen2.5*|*qwen2_5*|*qwen25*) printf '%s\n' qwen2_5 ;;
+    *phi*4*mini*) printf '%s\n' phi_4_mini ;;
+    *llama3*) printf '%s\n' llama3 ;;
+    *llama2*) printf '%s\n' llama2 ;;
+    *gemma3*) printf '%s\n' gemma3 ;;
+    *gemma2*) printf '%s\n' gemma2 ;;
+    *gemma*) printf '%s\n' gemma ;;
+    *granite*) printf '%s\n' granite ;;
+    *smollm3*) printf '%s\n' smollm3 ;;
+    *smollm2*) printf '%s\n' smollm2_135m ;;
+    *codegen*) printf '%s\n' codegen ;;
+    *glm*) printf '%s\n' glm ;;
+    *) return 1 ;;
+  esac
+}
+
+qnn_runner_path() {
+  model_dir="$(qnn_model_dir "${MODEL_PATH:-}")"
+  if [ -x "${QNN_ROOT}/qnn_llama_runner" ]; then
+    printf '%s\n' "${QNN_ROOT}/qnn_llama_runner"
+    return 0
+  fi
+  if [ -n "${model_dir:-}" ] && [ -x "${model_dir}/qnn_llama_runner" ]; then
+    printf '%s\n' "${model_dir}/qnn_llama_runner"
+    return 0
+  fi
+  return 1
+}
+
+qnn_runner_root() {
+  runner_path="$(qnn_runner_path)"
+  dirname "${runner_path}"
 }
 
 backend_binary() {
   case "$1" in
     llama.cpp-llama)
-      printf '%s\n' "${LIB_ROOT}/libllama-cli.so"
+      if [ -x "${LIB_ROOT}/libllama-cli.so" ]; then
+        printf '%s\n' "${LIB_ROOT}/libllama-cli.so"
+      else
+        printf '%s\n' "${LEGACY_LIB_ROOT}/libllama-cli.so"
+      fi
       ;;
     llama.cpp-mtmd)
       if [ -x "${LIB_ROOT}/libmtmd-cli.so" ]; then
         printf '%s\n' "${LIB_ROOT}/libmtmd-cli.so"
+      elif [ -x "${LEGACY_LIB_ROOT}/libmtmd-cli.so" ]; then
+        printf '%s\n' "${LEGACY_LIB_ROOT}/libmtmd-cli.so"
       else
-        printf '%s\n' "${LIB_ROOT}/libllama-cli.so"
+        if [ -x "${LIB_ROOT}/libllama-cli.so" ]; then
+          printf '%s\n' "${LIB_ROOT}/libllama-cli.so"
+        else
+          printf '%s\n' "${LEGACY_LIB_ROOT}/libllama-cli.so"
+        fi
       fi
+      ;;
+    "${BACKEND_QNN}")
+      qnn_runner_path
       ;;
     *)
       return 1
@@ -80,7 +187,7 @@ backend_exists() {
 
 print_backends() {
   load_state
-  for backend in "llama.cpp-llama" "llama.cpp-mtmd"; do
+  for backend in "llama.cpp-llama" "llama.cpp-mtmd" "${BACKEND_QNN}"; do
     binary_path="$(backend_binary "${backend}" 2>/dev/null || true)"
     exists="false"
     if [ -n "${binary_path}" ] && [ -x "${binary_path}" ]; then
@@ -102,6 +209,8 @@ model=${MODEL_PATH}
 mmproj=${MMPROJ_PATH}
 ctx_size=${CTX_SIZE}
 thinking=${THINKING}
+tokenizer=${TOKENIZER_PATH}
+decoder_model_version=${DECODER_MODEL_VERSION}
 state_file=${STATE_FILE}
 EOF
 }
@@ -120,7 +229,7 @@ handle_select() {
     exit 1
   fi
   case "$1" in
-    llama.cpp-llama|llama.cpp-mtmd) ;;
+    llama.cpp-llama|llama.cpp-mtmd|"${BACKEND_QNN}") ;;
     *)
       echo "Unsupported Android backend: $1" >&2
       exit 1
@@ -164,19 +273,29 @@ handle_model_load() {
   MODEL_PATH=""
   MMPROJ_PATH=""
   CTX_SIZE=""
+  TOKENIZER_PATH=""
+  DECODER_MODEL_VERSION=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
       -m|--model)
-        MODEL_PATH="${2:-}"
+        MODEL_PATH="$(resolve_path "${2:-}")"
         shift 2
         ;;
       -mm|--mmproj)
-        MMPROJ_PATH="${2:-}"
+        MMPROJ_PATH="$(resolve_path "${2:-}")"
         shift 2
         ;;
       --ctx-size)
         CTX_SIZE="${2:-}"
+        shift 2
+        ;;
+      --tokenizer-path)
+        TOKENIZER_PATH="$(resolve_path "${2:-}")"
+        shift 2
+        ;;
+      --decoder-model-version)
+        DECODER_MODEL_VERSION="${2:-}"
         shift 2
         ;;
       *)
@@ -191,6 +310,29 @@ handle_model_load() {
     exit 1
   fi
 
+  if [ "${SELECTED_BACKEND}" = "${BACKEND_QNN}" ]; then
+    MODEL_PATH="$(discover_qnn_model "${MODEL_PATH}")"
+    model_dir="$(qnn_model_dir "${MODEL_PATH}")"
+    if [ -z "${TOKENIZER_PATH}" ] && [ -f "${model_dir}/tokenizer.json" ]; then
+      TOKENIZER_PATH="${model_dir}/tokenizer.json"
+    fi
+    if [ -z "${DECODER_MODEL_VERSION}" ]; then
+      DECODER_MODEL_VERSION="$(infer_decoder_model_version "${MODEL_PATH}" || infer_decoder_model_version "${model_dir}" || true)"
+    fi
+    if [ -z "${TOKENIZER_PATH}" ]; then
+      echo "QNN model load requires tokenizer.json. Use --tokenizer-path or place tokenizer.json next to the model." >&2
+      exit 1
+    fi
+    if [ ! -f "${TOKENIZER_PATH}" ]; then
+      echo "Tokenizer was not found: ${TOKENIZER_PATH}" >&2
+      exit 1
+    fi
+    if [ -z "${DECODER_MODEL_VERSION}" ]; then
+      echo "QNN model load requires --decoder-model-version because it could not be inferred from the model path." >&2
+      exit 1
+    fi
+  fi
+
   save_state
   echo "Loaded Android model:"
   echo "  backend=${SELECTED_BACKEND}"
@@ -201,6 +343,173 @@ handle_model_load() {
   if [ -n "${CTX_SIZE}" ]; then
     echo "  ctx_size=${CTX_SIZE}"
   fi
+  if [ -n "${TOKENIZER_PATH}" ]; then
+    echo "  tokenizer=${TOKENIZER_PATH}"
+  fi
+  if [ -n "${DECODER_MODEL_VERSION}" ]; then
+    echo "  decoder_model_version=${DECODER_MODEL_VERSION}"
+  fi
+}
+
+print_qnn_output() {
+  raw_path="$1"
+  think_mode="$2"
+  tmp_path="${STATE_ROOT}/qnn-output.tmp"
+
+  if grep -q '<|im_start|>assistant' "${raw_path}" 2>/dev/null; then
+    awk '
+      BEGIN { capture = 0 }
+      {
+        line = $0
+        if (capture == 0) {
+          marker = "<|im_start|>assistant"
+          idx = index(line, marker)
+          if (idx == 0) {
+            next
+          }
+          capture = 1
+          line = substr(line, idx + length(marker))
+        }
+        sub(/<\|im_end\|>.*/, "", line)
+        print line
+        if ($0 ~ /<\|im_end\|>/) {
+          exit
+        }
+      }
+    ' "${raw_path}" > "${tmp_path}"
+  else
+    cp "${raw_path}" "${tmp_path}"
+  fi
+
+  if [ "${think_mode}" = "off" ]; then
+    awk '
+      BEGIN { skip = 0 }
+      /<think>/ { skip = 1; next }
+      /<\/think>/ { skip = 0; next }
+      skip == 0 { print }
+    ' "${tmp_path}" > "${tmp_path}.stripped"
+    mv "${tmp_path}.stripped" "${tmp_path}"
+  fi
+
+  sed '/./,$!d' "${tmp_path}"
+}
+
+trim_qnn_stdout() {
+  input_path="$1"
+  output_path="$2"
+  awk '
+    BEGIN {
+      skip = 0
+    }
+    {
+      line = $0
+      if (line ~ /^PyTorchObserver /) {
+        next
+      }
+      gsub(/<\|im_end\|>|<\|eot_id\|>|<\|end\|>|<end_of_turn>|<\|end_of_text\|>|<\|endoftext\|>/, "", line)
+      if (skip == 1) {
+        if (line ~ /<\/think>/) {
+          skip = 0
+        }
+        next
+      }
+      if (line ~ /<think>/) {
+        skip = 1
+        next
+      }
+      print line
+    }
+  ' "${input_path}" > "${output_path}"
+}
+
+run_qnn_chat() {
+  if [ -n "${image}" ]; then
+    echo "The current QNN Android integration is text-only. --image is not supported yet." >&2
+    exit 1
+  fi
+  if [ -z "${TOKENIZER_PATH}" ] || [ -z "${DECODER_MODEL_VERSION}" ]; then
+    echo "QNN backend requires tokenizer and decoder model version. Run model load with --tokenizer-path and --decoder-model-version first." >&2
+    exit 1
+  fi
+
+  runner_path="$(qnn_runner_path 2>/dev/null || true)"
+  if [ -z "${runner_path}" ] || [ ! -x "${runner_path}" ]; then
+    echo "QNN runner was not found. Prepare .local/runtime/android/qnn or place qnn_llama_runner next to the .pte model." >&2
+    exit 1
+  fi
+
+  runner_root="$(dirname "${runner_path}")"
+  output_dir="${STATE_ROOT}/qnn-outputs"
+  output_path="${output_dir}/outputs.txt"
+  perf_path="${output_dir}/inference_speed.txt"
+  stdout_path="${output_dir}/stdout.txt"
+  stderr_path="${output_dir}/stderr.txt"
+  effective_ctx="${CTX_SIZE:-2048}"
+  mkdir -p "${output_dir}"
+  rm -f "${output_path}" "${perf_path}" "${stdout_path}" "${stderr_path}"
+
+  if (
+    cd "${runner_root}" &&
+    export LD_LIBRARY_PATH="${runner_root}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" &&
+    "${runner_path}" \
+      --decoder_model_version "${DECODER_MODEL_VERSION}" \
+      --tokenizer_path "${TOKENIZER_PATH}" \
+      --output_path "${output_path}" \
+      --performance_output_path "${perf_path}" \
+      --shared_buffer \
+      --model_path "${MODEL_PATH}" \
+      --eval_mode 1 \
+      --temperature 0.0 \
+      --system_prompt "${system_prompt}" \
+      --seq_len "${effective_ctx}" \
+      --prompt "${message}" \
+      --simple_io \
+      $( [ "${THINKING}" = "off" ] && printf '%s' "--strip_thinking" ) \
+      > "${stdout_path}" 2> "${stderr_path}"
+  ); then
+    if [ -s "${stdout_path}" ]; then
+      trim_qnn_stdout "${stdout_path}" "${stdout_path}.clean"
+      sed '/./,$!d' "${stdout_path}.clean"
+      return 0
+    fi
+  elif grep -q "unknown command line flag 'simple_io'" "${stderr_path}" 2>/dev/null; then
+    :
+  else
+    echo "QNN runner execution failed." >&2
+    cat "${stderr_path}" >&2 || true
+    exit 1
+  fi
+
+  rm -f "${stdout_path}" "${stderr_path}"
+  if ! (
+    cd "${runner_root}" &&
+    export LD_LIBRARY_PATH="${runner_root}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" &&
+    "${runner_path}" \
+      --decoder_model_version "${DECODER_MODEL_VERSION}" \
+      --tokenizer_path "${TOKENIZER_PATH}" \
+      --output_path "${output_path}" \
+      --performance_output_path "${perf_path}" \
+      --shared_buffer \
+      --model_path "${MODEL_PATH}" \
+      --eval_mode 1 \
+      --temperature 0.0 \
+      --system_prompt "${system_prompt}" \
+      --seq_len "${effective_ctx}" \
+      --prompt "${message}" \
+      > /dev/null 2> "${stderr_path}"
+  ); then
+    echo "QNN runner execution failed." >&2
+    cat "${stderr_path}" >&2 || true
+    exit 1
+  fi
+
+  if [ ! -f "${output_path}" ]; then
+    echo "QNN runner completed without producing ${output_path}" >&2
+    cat "${stderr_path}" >&2 || true
+    exit 1
+  fi
+
+  print_qnn_output "${output_path}" "${THINKING}"
 }
 
 handle_chat() {
@@ -209,6 +518,7 @@ handle_chat() {
   message=""
   image=""
   stream=1
+  system_prompt=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -224,6 +534,10 @@ handle_chat() {
         stream=0
         shift
         ;;
+      --system-prompt|-sys)
+        system_prompt="${2:-}"
+        shift 2
+        ;;
       *)
         echo "Unknown chat argument: $1" >&2
         exit 1
@@ -237,6 +551,11 @@ handle_chat() {
   fi
 
   load_state
+  if [ "${SELECTED_BACKEND}" = "${BACKEND_QNN}" ]; then
+    run_qnn_chat
+    exit 0
+  fi
+
   binary_path="$(backend_binary "${SELECTED_BACKEND}")"
   if [ ! -x "${binary_path}" ]; then
     echo "Backend binary is not available: ${binary_path}" >&2
@@ -321,8 +640,10 @@ Common commands:
   ./omniinfer backend list
   ./omniinfer select llama.cpp-llama
   ./omniinfer select llama.cpp-mtmd
+  ./omniinfer select omniinfer-native
   ./omniinfer model load -m /data/local/tmp/model.gguf
   ./omniinfer model load -m /data/local/tmp/model.gguf -mm /data/local/tmp/mmproj.gguf
+  ./omniinfer model load -m /data/local/tmp/qnn-dir --decoder-model-version qwen3
   ./omniinfer chat --message "Hello"
   ./omniinfer chat --image /data/local/tmp/test.jpg --message "Describe this image."
   ./omniinfer status
