@@ -74,6 +74,8 @@ BIN_ROOT="${RUNTIME_ROOT}/bin"
 LIB_ROOT="${RUNTIME_ROOT}/lib/arm64-v8a"
 QNN_ROOT="${RUNTIME_ROOT}/qnn"
 STATE_ROOT="${RUNTIME_ROOT}/state"
+SUPPORT_ROOT="${RUNTIME_ROOT}/support"
+BACKENDS_ROOT="${RUNTIME_ROOT}/backends"
 LAUNCHER_TEMPLATE="${SCRIPT_ROOT}/omniinfer-android"
 LAUNCHER_OUTPUT="${BIN_ROOT}/omniinfer-android"
 
@@ -99,12 +101,31 @@ run_cmd() {
 }
 
 prepare_layout() {
-  run_cmd mkdir -p "${BIN_ROOT}" "${LIB_ROOT}" "${QNN_ROOT}" "${STATE_ROOT}"
+  run_cmd mkdir -p \
+    "${BIN_ROOT}" \
+    "${LIB_ROOT}" \
+    "${QNN_ROOT}" \
+    "${STATE_ROOT}" \
+    "${SUPPORT_ROOT}" \
+    "${BACKENDS_ROOT}/llama_cpp" \
+    "${BACKENDS_ROOT}/omniinfer_native"
 }
 
 install_launcher() {
   run_cmd cp "${LAUNCHER_TEMPLATE}" "${LAUNCHER_OUTPUT}"
   run_cmd chmod +x "${LAUNCHER_OUTPUT}"
+}
+
+install_runtime_support() {
+  run_cmd cp "${SCRIPT_ROOT}/support/common.sh" "${SUPPORT_ROOT}/common.sh"
+  run_cmd chmod +x "${SUPPORT_ROOT}/common.sh"
+}
+
+install_runtime_backends() {
+  run_cmd cp "${SCRIPT_ROOT}/backends/llama_cpp/backend.sh" "${BACKENDS_ROOT}/llama_cpp/backend.sh"
+  run_cmd chmod +x "${BACKENDS_ROOT}/llama_cpp/backend.sh"
+  run_cmd cp "${SCRIPT_ROOT}/backends/omniinfer_native/backend.sh" "${BACKENDS_ROOT}/omniinfer_native/backend.sh"
+  run_cmd chmod +x "${BACKENDS_ROOT}/omniinfer_native/backend.sh"
 }
 
 copy_optional_binary() {
@@ -159,6 +180,8 @@ MTMD_CLI_PATH="$(resolve_candidate "${MTMD_CLI_PATH}" "libmtmd-cli.so")"
 echo "Preparing Android runtime under ${RUNTIME_ROOT}"
 prepare_layout
 install_launcher
+install_runtime_support
+install_runtime_backends
 
 if [[ ${LAUNCHER_ONLY} -eq 0 ]]; then
   copy_optional_binary "${LLAMA_CLI_PATH}" "libllama-cli.so"
@@ -172,6 +195,11 @@ Android runtime preparation complete.
 
 Installed launcher:
   ${LAUNCHER_OUTPUT}
+
+Installed Android runtime modules:
+  ${SUPPORT_ROOT}/common.sh
+  ${BACKENDS_ROOT}/llama_cpp/backend.sh
+  ${BACKENDS_ROOT}/omniinfer_native/backend.sh
 
 Optional Android backend binaries:
   ${LIB_ROOT}/libllama-cli.so

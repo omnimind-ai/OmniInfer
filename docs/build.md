@@ -20,7 +20,20 @@ Portable releases are separate from source builds:
 - `release/portable/`
   Release output area used by platform packaging scripts.
 
-Android uses a direct-mode runtime installer instead of the desktop-style backend-per-runtime build layout.
+Android uses a direct-mode runtime installer, but the runtime now follows the same separation principle:
+
+- `scripts/platforms/android/build-runtime.sh`
+  Stable user-facing entrypoint for installing the local Android runtime.
+- `scripts/platforms/android/runtime/support/`
+  Shared Android CLI helpers.
+- `scripts/platforms/android/runtime/backends/<backend>/`
+  Backend-specific Android adapters.
+- `scripts/platforms/android/package-omniinfer-native.sh`
+  Stable user-facing entrypoint for packaging official ExecuTorch Qualcomm llama artifacts into an OmniInfer-native model package.
+- `.local/runtime/android/`
+  Local Android runtime output tree copied from those source scripts plus optional backend binaries.
+
+This keeps the Android entrypoint thin while still using a direct shell runtime instead of the desktop gateway model.
 
 ## Common Prerequisites
 
