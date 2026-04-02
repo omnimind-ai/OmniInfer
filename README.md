@@ -91,6 +91,7 @@ Recommended docs:
 
 - [CLI Guide](docs/CLI.md): end-to-end CLI usage for Linux, macOS, Windows, and Android
 - [Android CLI Notes](docs/android-cli.md): Android direct-mode details
+- [Android JNI Bridge](docs/android-jni-bridge.md): generate an Android App bridge and packaged runtime assets
 - [Build Guide](docs/build.md): build and platform packaging notes
 - [API Reference](docs/API.md): OpenAI-compatible local API usage
 

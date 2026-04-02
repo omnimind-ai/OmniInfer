@@ -62,7 +62,7 @@ These Android runtime assets stay under the local `.local/runtime/android/` dire
 The Android CLI stores state under one of these directories:
 
 - `$HOME/.config/omniinfer`
-- `./.omniinfer/android-cli`
+- `<active-runtime-root>/state`
 
 It keeps:
 
@@ -148,3 +148,30 @@ OMNIINFER_NATIVE_VISION_ENCODER=vision_encoder_qnn.pte
 OMNIINFER_NATIVE_TOK_EMBEDDING=tok_embedding_qnn.pte
 OMNIINFER_NATIVE_TEXT_DECODER=hybrid_llama_qnn.pte
 ```
+
+## Android App JNI Bridge
+
+If you want to embed the Android runtime into an Android App instead of using shell direct mode,
+generate a dedicated JNI bridge with:
+
+```sh
+bash ./scripts/platforms/android/jni-bridge/generate.sh \
+  --app-dir /path/to/YourAndroidApp \
+  --module app \
+  --package com.example.yourapp.omniinfer \
+  --qnn-bundle-dir /path/to/qnn-bundle
+```
+
+The generator writes these artifacts directly into the target app module:
+
+- `src/main/java/<package>/OmniInferNativeBridge.kt`
+- `src/main/cpp/omniinfer-native-jni/omniinfer_native_jni.cpp`
+- `src/main/jniLibs/arm64-v8a/libomniinfer-native-jni.so`
+- `src/main/assets/omniinfer-native/runtime/...`
+
+The generated bridge installs the packaged OmniInfer Android runtime from app assets into the app's private writable directory on first use, then dispatches requests to:
+
+- `libllama-jni.so` / `libmtmd-jni.so` for existing llama.cpp backends
+- `libomniinfer-native-jni.so` for the OmniInfer Native ExecuTorch/QNN backend
+
+This keeps the App-side API unified while reusing the same Android runtime backend behavior that the CLI already validates.
