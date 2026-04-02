@@ -24,6 +24,7 @@ QWEN.md
 
 # OmniInfer runtime files
 /\.local/runtime
+/\.local/toolchains
 /platform
 
 /tmp

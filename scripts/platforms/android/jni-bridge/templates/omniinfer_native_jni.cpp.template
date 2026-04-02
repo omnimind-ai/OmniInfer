@@ -1,0 +1,865 @@
+#include <jni.h>
+
+#include <android/log.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <cctype>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <regex>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace {
+
+constexpr const char* kTag = "OmniInferNativeJni";
+
+struct Message {
+  std::string role;
+  std::string content;
+};
+
+struct MetricsSummary {
+  double prefill_tps = 0.0;
+  double decode_tps = 0.0;
+  double total_tps = 0.0;
+  double peak_rss_mb = 0.0;
+  std::string formatted;
+};
+
+struct Session {
+  int64_t handle = 0;
+  std::string runtime_script_path;
+  std::string session_root;
+  std::string home_dir;
+  std::string model_path;
+  std::string tokenizer_path;
+  std::string decoder_model_version;
+  int n_threads = 1;
+  int n_ctx = 2048;
+  bool thinking_enabled = false;
+  std::string system_prompt;
+  std::vector<Message> history;
+  std::string prewarmed_image_path;
+  std::string last_image_path;
+  std::string last_stdout_path;
+  std::string last_stderr_path;
+  std::string last_perf_path;
+  std::string last_output_path;
+  std::string last_error;
+  MetricsSummary last_metrics;
+  pid_t active_pid = -1;
+};
+
+std::mutex g_sessions_mutex;
+std::unordered_map<int64_t, Session> g_sessions;
+std::atomic<int64_t> g_next_handle{1};
+
+void LogPrint(int priority, const std::string& message) {
+  __android_log_print(priority, kTag, "%s", message.c_str());
+}
+
+std::string JStringToStdString(JNIEnv* env, jstring value) {
+  if (value == nullptr) {
+    return "";
+  }
+  const char* chars = env->GetStringUTFChars(value, nullptr);
+  if (chars == nullptr) {
+    return "";
+  }
+  std::string result(chars);
+  env->ReleaseStringUTFChars(value, chars);
+  return result;
+}
+
+jstring StdStringToJString(JNIEnv* env, const std::string& value) {
+  return env->NewStringUTF(value.c_str());
+}
+
+std::string Trim(std::string value) {
+  auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
+  while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
+    value.erase(value.begin());
+  }
+  while (!value.empty() && is_space(static_cast<unsigned char>(value.back()))) {
+    value.pop_back();
+  }
+  return value;
+}
+
+std::string StripQuotes(std::string value) {
+  value = Trim(std::move(value));
+  if (value.size() >= 2 &&
+      ((value.front() == '"' && value.back() == '"') ||
+       (value.front() == '\'' && value.back() == '\''))) {
+    value = value.substr(1, value.size() - 2);
+  }
+  return value;
+}
+
+Session CopySessionOrNull(int64_t handle, bool* found) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  auto iterator = g_sessions.find(handle);
+  if (iterator == g_sessions.end()) {
+    *found = false;
+    return {};
+  }
+  *found = true;
+  return iterator->second;
+}
+
+void StoreSession(const Session& session) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  auto iterator = g_sessions.find(session.handle);
+  if (iterator != g_sessions.end()) {
+    iterator->second = session;
+  }
+}
+
+bool EnsureDir(const std::string& path) {
+  if (path.empty()) {
+    return false;
+  }
+  std::string current;
+  for (char ch : path) {
+    current.push_back(ch);
+    if (ch == '/' && current.size() > 1) {
+      if (mkdir(current.c_str(), 0775) != 0 && errno != EEXIST) {
+        return false;
+      }
+    }
+  }
+  return mkdir(path.c_str(), 0775) == 0 || errno == EEXIST;
+}
+
+std::string JoinPath(const std::string& lhs, const std::string& rhs) {
+  if (lhs.empty()) {
+    return rhs;
+  }
+  if (rhs.empty()) {
+    return lhs;
+  }
+  if (lhs.back() == '/') {
+    return lhs + rhs;
+  }
+  return lhs + "/" + rhs;
+}
+
+std::optional<std::string> ExtractJsonString(const std::string& json, const std::string& key) {
+  const std::string token = "\"" + key + "\"";
+  size_t key_pos = json.find(token);
+  if (key_pos == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t colon_pos = json.find(':', key_pos + token.size());
+  if (colon_pos == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t pos = colon_pos + 1;
+  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) {
+    ++pos;
+  }
+  if (pos >= json.size()) {
+    return std::nullopt;
+  }
+  if (json.compare(pos, 4, "null") == 0) {
+    return std::nullopt;
+  }
+  if (json[pos] != '"') {
+    return std::nullopt;
+  }
+  ++pos;
+  std::string out;
+  bool escaping = false;
+  while (pos < json.size()) {
+    char ch = json[pos++];
+    if (escaping) {
+      switch (ch) {
+        case '"': out.push_back('"'); break;
+        case '\\': out.push_back('\\'); break;
+        case '/': out.push_back('/'); break;
+        case 'b': out.push_back('\b'); break;
+        case 'f': out.push_back('\f'); break;
+        case 'n': out.push_back('\n'); break;
+        case 'r': out.push_back('\r'); break;
+        case 't': out.push_back('\t'); break;
+        default: out.push_back(ch); break;
+      }
+      escaping = false;
+      continue;
+    }
+    if (ch == '\\') {
+      escaping = true;
+      continue;
+    }
+    if (ch == '"') {
+      return out;
+    }
+    out.push_back(ch);
+  }
+  return std::nullopt;
+}
+
+std::optional<int> ExtractJsonInt(const std::string& json, const std::string& key) {
+  const std::string token = "\"" + key + "\"";
+  size_t key_pos = json.find(token);
+  if (key_pos == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t colon_pos = json.find(':', key_pos + token.size());
+  if (colon_pos == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t pos = colon_pos + 1;
+  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) {
+    ++pos;
+  }
+  size_t end = pos;
+  while (end < json.size() &&
+         (std::isdigit(static_cast<unsigned char>(json[end])) || json[end] == '-')) {
+    ++end;
+  }
+  if (end == pos) {
+    return std::nullopt;
+  }
+  return std::stoi(json.substr(pos, end - pos));
+}
+
+std::optional<bool> ExtractJsonBool(const std::string& json, const std::string& key) {
+  const std::string token = "\"" + key + "\"";
+  size_t key_pos = json.find(token);
+  if (key_pos == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t colon_pos = json.find(':', key_pos + token.size());
+  if (colon_pos == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t pos = colon_pos + 1;
+  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) {
+    ++pos;
+  }
+  if (json.compare(pos, 4, "true") == 0) {
+    return true;
+  }
+  if (json.compare(pos, 5, "false") == 0) {
+    return false;
+  }
+  return std::nullopt;
+}
+
+std::string JsonEscape(const std::string& value) {
+  std::string out;
+  out.reserve(value.size() + 16);
+  for (char ch : value) {
+    switch (ch) {
+      case '\\': out += "\\\\"; break;
+      case '"': out += "\\\""; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default: out.push_back(ch); break;
+    }
+  }
+  return out;
+}
+
+std::string DetectImageExtension(const jbyteArray image_data, JNIEnv* env) {
+  if (image_data == nullptr) {
+    return ".bin";
+  }
+  const jsize size = env->GetArrayLength(image_data);
+  if (size >= 8) {
+    jbyte header[12] = {0};
+    env->GetByteArrayRegion(image_data, 0, std::min<jsize>(size, 12), header);
+    const unsigned char* bytes = reinterpret_cast<unsigned char*>(header);
+    if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47) {
+      return ".png";
+    }
+    if (bytes[0] == 0xff && bytes[1] == 0xd8) {
+      return ".jpg";
+    }
+    if (bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F') {
+      return ".webp";
+    }
+  }
+  return ".bin";
+}
+
+bool WriteByteArrayToFile(JNIEnv* env, jbyteArray data, const std::string& path) {
+  if (data == nullptr) {
+    return false;
+  }
+  const jsize size = env->GetArrayLength(data);
+  std::vector<jbyte> buffer(static_cast<size_t>(size));
+  env->GetByteArrayRegion(data, 0, size, buffer.data());
+  int fd = open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0664);
+  if (fd < 0) {
+    return false;
+  }
+  ssize_t written = write(fd, buffer.data(), static_cast<size_t>(size));
+  close(fd);
+  return written == size;
+}
+
+struct CommandResult {
+  int exit_code = -1;
+  std::string stdout_text;
+  std::string stderr_text;
+};
+
+std::string ReadAllFromFd(int fd) {
+  std::string out;
+  char buffer[4096];
+  while (true) {
+    ssize_t count = read(fd, buffer, sizeof(buffer));
+    if (count > 0) {
+      out.append(buffer, static_cast<size_t>(count));
+      continue;
+    }
+    break;
+  }
+  close(fd);
+  return out;
+}
+
+CommandResult RunCommand(Session& session, const std::vector<std::string>& argv) {
+  int stdout_pipe[2];
+  int stderr_pipe[2];
+  if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+    return {.exit_code = -1, .stderr_text = "pipe() failed"};
+  }
+
+  pid_t pid = fork();
+  if (pid == 0) {
+    setpgid(0, 0);
+    dup2(stdout_pipe[1], STDOUT_FILENO);
+    dup2(stderr_pipe[1], STDERR_FILENO);
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    close(stderr_pipe[0]);
+    close(stderr_pipe[1]);
+    setenv("HOME", session.home_dir.c_str(), 1);
+    std::vector<char*> args;
+    args.reserve(argv.size() + 1);
+    for (const auto& item : argv) {
+      args.push_back(const_cast<char*>(item.c_str()));
+    }
+    args.push_back(nullptr);
+    execv(argv.front().c_str(), args.data());
+    _exit(127);
+  }
+
+  close(stdout_pipe[1]);
+  close(stderr_pipe[1]);
+
+  if (pid < 0) {
+    close(stdout_pipe[0]);
+    close(stderr_pipe[0]);
+    return {.exit_code = -1, .stderr_text = "fork() failed"};
+  }
+
+  {
+    std::lock_guard<std::mutex> guard(g_sessions_mutex);
+    auto found = g_sessions.find(session.handle);
+    if (found != g_sessions.end()) {
+      found->second.active_pid = pid;
+    }
+  }
+
+  std::string stdout_text;
+  std::string stderr_text;
+  std::thread stdout_reader([&] { stdout_text = ReadAllFromFd(stdout_pipe[0]); });
+  std::thread stderr_reader([&] { stderr_text = ReadAllFromFd(stderr_pipe[0]); });
+
+  int status = 0;
+  waitpid(pid, &status, 0);
+  stdout_reader.join();
+  stderr_reader.join();
+
+  {
+    std::lock_guard<std::mutex> guard(g_sessions_mutex);
+    auto found = g_sessions.find(session.handle);
+    if (found != g_sessions.end() && found->second.active_pid == pid) {
+      found->second.active_pid = -1;
+    }
+  }
+
+  int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+  return {.exit_code = exit_code, .stdout_text = std::move(stdout_text), .stderr_text = std::move(stderr_text)};
+}
+
+bool FileExists(const std::string& path) {
+  struct stat st;
+  return stat(path.c_str(), &st) == 0;
+}
+
+std::string ReadFile(const std::string& path) {
+  int fd = open(path.c_str(), O_RDONLY);
+  if (fd < 0) {
+    return "";
+  }
+  std::string out;
+  char buffer[4096];
+  while (true) {
+    ssize_t count = read(fd, buffer, sizeof(buffer));
+    if (count > 0) {
+      out.append(buffer, static_cast<size_t>(count));
+      continue;
+    }
+    break;
+  }
+  close(fd);
+  return out;
+}
+
+std::string RemoveThinkTags(const std::string& text, bool thinking_enabled) {
+  std::string cleaned = text;
+  const std::string assistant_marker = "<|im_start|>assistant";
+  size_t assistant_pos = cleaned.rfind(assistant_marker);
+  if (assistant_pos != std::string::npos) {
+    cleaned = cleaned.substr(assistant_pos + assistant_marker.size());
+  }
+  cleaned = std::regex_replace(cleaned, std::regex("<\\|im_start\\|>user[\\s\\S]*?<\\|im_end\\|>"), "");
+  if (thinking_enabled) {
+    cleaned = std::regex_replace(cleaned, std::regex("<\\|im_end\\|>|<\\|eot_id\\|>|<\\|end\\|>|<end_of_turn>|<\\|end_of_text\\|>|<\\|endoftext\\|>"), "");
+    return Trim(cleaned);
+  }
+  cleaned = std::regex_replace(cleaned, std::regex("<think>[\\s\\S]*?</think>"), "");
+  cleaned = std::regex_replace(cleaned, std::regex("<\\|im_end\\|>|<\\|eot_id\\|>|<\\|end\\|>|<end_of_turn>|<\\|end_of_text\\|>|<\\|endoftext\\|>"), "");
+  return Trim(cleaned);
+}
+
+std::string NormalizeHistoryContent(const std::string& content, bool keep_image_hint) {
+  if (keep_image_hint) {
+    return Trim(content);
+  }
+  std::string cleaned = std::regex_replace(content, std::regex("^\\[图片\\]\\s*", std::regex_constants::icase), "");
+  cleaned = std::regex_replace(cleaned, std::regex("^\\[image\\]\\s*", std::regex_constants::icase), "");
+  return Trim(cleaned);
+}
+
+std::string BuildEffectivePrompt(const Session& session, const std::string& prompt, bool has_image) {
+  std::vector<Message> dialogue = session.history;
+  dialogue.push_back({"user", has_image ? ("[image]\n" + prompt) : prompt});
+  if (dialogue.size() == 1 && dialogue.front().role == "user") {
+    return prompt;
+  }
+
+  std::ostringstream stream;
+  stream << "Continue the conversation using the prior context and answer the final user message.\n\n";
+  for (size_t index = 0; index < dialogue.size(); ++index) {
+    const auto& message = dialogue[index];
+    if (message.role != "user" && message.role != "assistant") {
+      continue;
+    }
+    const bool keep_image_hint = (index + 1 == dialogue.size() && message.role == "user");
+    const std::string normalized = NormalizeHistoryContent(message.content, keep_image_hint);
+    if (normalized.empty()) {
+      continue;
+    }
+    stream << (message.role == "assistant" ? "Assistant" : "User") << ": " << normalized << "\n\n";
+  }
+  return Trim(stream.str());
+}
+
+void InvokeCallbackStringMethod(JNIEnv* env, jobject callback, const char* method_name, const std::string& payload) {
+  if (callback == nullptr) {
+    return;
+  }
+  jclass callback_class = env->GetObjectClass(callback);
+  if (callback_class == nullptr) {
+    return;
+  }
+  jmethodID method = env->GetMethodID(callback_class, method_name, "(Ljava/lang/String;)V");
+  if (method == nullptr) {
+    env->DeleteLocalRef(callback_class);
+    return;
+  }
+  jstring message = StdStringToJString(env, payload);
+  env->CallVoidMethod(callback, method, message);
+  env->DeleteLocalRef(message);
+  env->DeleteLocalRef(callback_class);
+}
+
+MetricsSummary ParseMetrics(const Session& session) {
+  MetricsSummary metrics;
+  std::string combined = ReadFile(session.last_stdout_path);
+  if (combined.empty()) {
+    combined = ReadFile(session.last_stderr_path);
+  } else {
+    combined.append("\n");
+    combined.append(ReadFile(session.last_stderr_path));
+  }
+  const std::string perf_text = Trim(ReadFile(session.last_perf_path));
+  if (!perf_text.empty()) {
+    metrics.total_tps = std::atof(perf_text.c_str());
+  }
+
+  auto parse_first = [&](const std::regex& pattern) -> double {
+    std::smatch match;
+    if (std::regex_search(combined, match, pattern) && match.size() >= 2) {
+      return std::atof(match[1].str().c_str());
+    }
+    return 0.0;
+  };
+
+  const double prompt_rss = parse_first(std::regex(R"(RSS after prompt prefill:\s+([0-9]+(?:\.[0-9]+)?)\s+MiB)"));
+  const double final_rss = parse_first(std::regex(R"(RSS after finishing text generation:\s+([0-9]+(?:\.[0-9]+)?)\s+MiB)"));
+  metrics.prefill_tps = parse_first(std::regex(R"(Prompt evaluation:.*Rate:\s+([0-9]+(?:\.[0-9]+)?))"));
+  metrics.decode_tps = parse_first(std::regex(R"(Generated\s+[0-9]+\s+tokens:.*Rate:\s+([0-9]+(?:\.[0-9]+)?))"));
+  if (metrics.total_tps <= 0.0) {
+    metrics.total_tps = parse_first(std::regex(R"(Total inference time:.*Rate:\s+([0-9]+(?:\.[0-9]+)?))"));
+  }
+  metrics.peak_rss_mb = std::max(prompt_rss, final_rss);
+
+  std::ostringstream summary;
+  bool first = true;
+  auto append_metric = [&](const std::string& key, double value, const char* suffix) {
+    if (value <= 0.0) {
+      return;
+    }
+    if (!first) {
+      summary << ", ";
+    }
+    summary << key << "=" << value << suffix;
+    first = false;
+  };
+  append_metric("prefill_tps", metrics.prefill_tps, "");
+  append_metric("decode_tps", metrics.decode_tps, "");
+  append_metric("total_tps", metrics.total_tps, "");
+  append_metric("peak_rss", metrics.peak_rss_mb, " MB");
+  metrics.formatted = summary.str();
+  return metrics;
+}
+
+bool ApplyModelLoad(Session& session) {
+  EnsureDir(session.home_dir);
+  EnsureDir(JoinPath(session.home_dir, ".config"));
+
+  const std::vector<std::string> select_args = {
+      session.runtime_script_path,
+      "select",
+      "omniinfer-native",
+  };
+  const CommandResult select_result = RunCommand(session, select_args);
+  if (select_result.exit_code != 0) {
+    session.last_error = select_result.stderr_text.empty() ? select_result.stdout_text : select_result.stderr_text;
+    return false;
+  }
+
+  std::vector<std::string> load_args = {
+      session.runtime_script_path,
+      "model",
+      "load",
+      "-m",
+      session.model_path,
+      "--ctx-size",
+      std::to_string(session.n_ctx),
+  };
+  if (!session.tokenizer_path.empty()) {
+    load_args.push_back("--tokenizer-path");
+    load_args.push_back(session.tokenizer_path);
+  }
+  if (!session.decoder_model_version.empty()) {
+    load_args.push_back("--decoder-model-version");
+    load_args.push_back(session.decoder_model_version);
+  }
+  const CommandResult load_result = RunCommand(session, load_args);
+  if (load_result.exit_code != 0) {
+    session.last_error = load_result.stderr_text.empty() ? load_result.stdout_text : load_result.stderr_text;
+    return false;
+  }
+  session.last_error.clear();
+  return true;
+}
+
+Session* FindSession(int64_t handle) {
+  auto found = g_sessions.find(handle);
+  if (found == g_sessions.end()) {
+    return nullptr;
+  }
+  return &found->second;
+}
+
+jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
+  const std::string config = JStringToStdString(env, config_json);
+  const auto runtime_script_path = ExtractJsonString(config, "runtime_script_path");
+  const auto session_root = ExtractJsonString(config, "session_root");
+  const auto model_path = ExtractJsonString(config, "model_path");
+  const int n_threads = ExtractJsonInt(config, "n_threads").value_or(1);
+  const int n_ctx = ExtractJsonInt(config, "n_ctx").value_or(2048);
+  if (!runtime_script_path.has_value() || !session_root.has_value() || !model_path.has_value()) {
+    LogPrint(ANDROID_LOG_ERROR, "NativeInit missing required fields in config JSON.");
+    return 0;
+  }
+
+  Session session;
+  session.handle = g_next_handle.fetch_add(1);
+  session.runtime_script_path = *runtime_script_path;
+  session.session_root = *session_root;
+  session.model_path = *model_path;
+  session.tokenizer_path = ExtractJsonString(config, "tokenizer_path").value_or("");
+  session.decoder_model_version = ExtractJsonString(config, "decoder_model_version").value_or("");
+  session.n_threads = n_threads;
+  session.n_ctx = n_ctx;
+  session.home_dir = JoinPath(JoinPath(session.session_root, "session-" + std::to_string(session.handle)), "home");
+
+  if (!EnsureDir(session.session_root) || !EnsureDir(session.home_dir)) {
+    LogPrint(ANDROID_LOG_ERROR, "Failed to prepare session directories.");
+    return 0;
+  }
+  if (!ApplyModelLoad(session)) {
+    LogPrint(ANDROID_LOG_ERROR, "Model load failed: " + session.last_error);
+    return 0;
+  }
+
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  g_sessions.emplace(session.handle, session);
+  return static_cast<jlong>(session.handle);
+}
+
+jstring NativeGenerate(
+    JNIEnv* env,
+    jobject,
+    jlong handle,
+    jstring system_prompt,
+    jstring prompt,
+    jstring request_json,
+    jbyteArray image_data,
+    jobject callback) {
+  bool found = false;
+  Session session = CopySessionOrNull(static_cast<int64_t>(handle), &found);
+  if (!found) {
+    return StdStringToJString(env, "");
+  }
+
+  session.thinking_enabled = ExtractJsonBool(JStringToStdString(env, request_json), "thinking_enabled").value_or(false);
+  const std::string prompt_text = JStringToStdString(env, prompt);
+  const std::string system_prompt_text = JStringToStdString(env, system_prompt);
+  const std::string effective_system_prompt = system_prompt_text.empty() ? session.system_prompt : system_prompt_text;
+  if (!system_prompt_text.empty()) {
+    session.system_prompt = system_prompt_text;
+  }
+  const bool has_image = image_data != nullptr && env->GetArrayLength(image_data) > 0;
+
+  const std::vector<std::string> thinking_args = {
+      session.runtime_script_path,
+      "thinking",
+      "set",
+      session.thinking_enabled ? "on" : "off",
+  };
+  const CommandResult thinking_result = RunCommand(session, thinking_args);
+  if (thinking_result.exit_code != 0) {
+    session.last_error = thinking_result.stderr_text.empty() ? thinking_result.stdout_text : thinking_result.stderr_text;
+  }
+
+  std::string image_path;
+  if (has_image) {
+    const std::string images_dir = JoinPath(session.home_dir, "images");
+    EnsureDir(images_dir);
+    image_path = JoinPath(images_dir, "prompt" + DetectImageExtension(image_data, env));
+    if (!WriteByteArrayToFile(env, image_data, image_path)) {
+      session.last_error = "Failed to persist image bytes";
+      StoreSession(session);
+      return StdStringToJString(env, "");
+    }
+    session.last_image_path = image_path;
+  } else if (!session.prewarmed_image_path.empty()) {
+    image_path = session.prewarmed_image_path;
+  }
+
+  const std::string effective_prompt = BuildEffectivePrompt(session, prompt_text, !image_path.empty());
+  std::vector<std::string> chat_args = {
+      session.runtime_script_path,
+      "chat",
+      "--message",
+      effective_prompt,
+      "--system-prompt",
+      effective_system_prompt,
+  };
+  if (!image_path.empty()) {
+    chat_args.push_back("--image");
+    chat_args.push_back(image_path);
+  }
+  const CommandResult chat_result = RunCommand(session, chat_args);
+
+  const std::string state_root = JoinPath(session.home_dir, ".config/omniinfer");
+  session.last_output_path = JoinPath(JoinPath(state_root, "qnn-outputs"), "outputs.txt");
+  session.last_perf_path = JoinPath(JoinPath(state_root, "qnn-outputs"), "inference_speed.txt");
+  session.last_stdout_path = JoinPath(JoinPath(state_root, "qnn-outputs"), "stdout.txt");
+  session.last_stderr_path = JoinPath(JoinPath(state_root, "qnn-outputs"), "stderr.txt");
+
+  if (chat_result.exit_code != 0) {
+    session.last_error = chat_result.stderr_text.empty() ? chat_result.stdout_text : chat_result.stderr_text;
+    StoreSession(session);
+    return StdStringToJString(env, "");
+  }
+
+  std::string response = RemoveThinkTags(chat_result.stdout_text, session.thinking_enabled);
+  if (response.empty() && FileExists(session.last_output_path)) {
+    response = RemoveThinkTags(ReadFile(session.last_output_path), session.thinking_enabled);
+  }
+
+  session.last_metrics = ParseMetrics(session);
+  if (!session.last_metrics.formatted.empty()) {
+    InvokeCallbackStringMethod(env, callback, "onMetrics", session.last_metrics.formatted);
+  }
+  if (!response.empty()) {
+    session.history.push_back({"user", prompt_text});
+    session.history.push_back({"assistant", response});
+    InvokeCallbackStringMethod(env, callback, "onToken", response);
+  }
+  session.last_error.clear();
+  StoreSession(session);
+  return StdStringToJString(env, response);
+}
+
+jboolean NativeLoadHistory(JNIEnv* env, jobject, jlong handle, jobjectArray roles, jobjectArray contents) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  Session* session = FindSession(static_cast<int64_t>(handle));
+  if (session == nullptr) {
+    return JNI_FALSE;
+  }
+  const jsize role_count = roles == nullptr ? 0 : env->GetArrayLength(roles);
+  const jsize content_count = contents == nullptr ? 0 : env->GetArrayLength(contents);
+  if (role_count != content_count) {
+    return JNI_FALSE;
+  }
+  session->history.clear();
+  for (jsize index = 0; index < role_count; ++index) {
+    auto* role = static_cast<jstring>(env->GetObjectArrayElement(roles, index));
+    auto* content = static_cast<jstring>(env->GetObjectArrayElement(contents, index));
+    const std::string role_text = JStringToStdString(env, role);
+    const std::string content_text = JStringToStdString(env, content);
+    if (role_text == "system") {
+      session->system_prompt = content_text;
+    } else {
+      session->history.push_back({role_text, content_text});
+    }
+    env->DeleteLocalRef(role);
+    env->DeleteLocalRef(content);
+  }
+  return JNI_TRUE;
+}
+
+jboolean NativePrewarmImage(JNIEnv* env, jobject, jlong handle, jbyteArray image_data, jint) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  Session* session = FindSession(static_cast<int64_t>(handle));
+  if (session == nullptr || image_data == nullptr || env->GetArrayLength(image_data) <= 0) {
+    return JNI_FALSE;
+  }
+  const std::string images_dir = JoinPath(session->home_dir, "images");
+  EnsureDir(images_dir);
+  session->prewarmed_image_path = JoinPath(images_dir, "prewarm" + DetectImageExtension(image_data, env));
+  return WriteByteArrayToFile(env, image_data, session->prewarmed_image_path) ? JNI_TRUE : JNI_FALSE;
+}
+
+void NativeSetThinkMode(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  Session* session = FindSession(static_cast<int64_t>(handle));
+  if (session == nullptr) {
+    return;
+  }
+  session->thinking_enabled = enabled == JNI_TRUE;
+}
+
+void NativeReset(JNIEnv*, jobject, jlong handle) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  Session* session = FindSession(static_cast<int64_t>(handle));
+  if (session == nullptr) {
+    return;
+  }
+  session->history.clear();
+  session->system_prompt.clear();
+  session->prewarmed_image_path.clear();
+}
+
+void NativeCancel(JNIEnv*, jobject, jlong handle) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  Session* session = FindSession(static_cast<int64_t>(handle));
+  if (session == nullptr || session->active_pid <= 0) {
+    return;
+  }
+  kill(-session->active_pid, SIGTERM);
+}
+
+void NativeFree(JNIEnv*, jobject, jlong handle) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  g_sessions.erase(static_cast<int64_t>(handle));
+}
+
+jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  Session* session = FindSession(static_cast<int64_t>(handle));
+  if (session == nullptr) {
+    return StdStringToJString(env, "{}");
+  }
+  std::ostringstream json;
+  json << "{"
+       << "\"modelPath\":\"" << JsonEscape(session->model_path) << "\","
+       << "\"runtimeScriptPath\":\"" << JsonEscape(session->runtime_script_path) << "\","
+       << "\"sessionRoot\":\"" << JsonEscape(session->session_root) << "\","
+       << "\"homeDir\":\"" << JsonEscape(session->home_dir) << "\","
+       << "\"tokenizerPath\":\"" << JsonEscape(session->tokenizer_path) << "\","
+       << "\"decoderModelVersion\":\"" << JsonEscape(session->decoder_model_version) << "\","
+       << "\"lastOutputPath\":\"" << JsonEscape(session->last_output_path) << "\","
+       << "\"lastPerfPath\":\"" << JsonEscape(session->last_perf_path) << "\","
+       << "\"lastStdoutPath\":\"" << JsonEscape(session->last_stdout_path) << "\","
+       << "\"lastStderrPath\":\"" << JsonEscape(session->last_stderr_path) << "\","
+       << "\"lastError\":\"" << JsonEscape(session->last_error) << "\","
+       << "\"lastMetrics\":\"" << JsonEscape(session->last_metrics.formatted) << "\""
+       << "}";
+  return StdStringToJString(env, json.str());
+}
+
+JNINativeMethod kMethods[] = {
+    {"nativeInit", "(Ljava/lang/String;)J", reinterpret_cast<void*>(NativeInit)},
+    {"nativeGenerate", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BLjava/lang/Object;)Ljava/lang/String;", reinterpret_cast<void*>(NativeGenerate)},
+    {"nativeLoadHistory", "(J[Ljava/lang/String;[Ljava/lang/String;)Z", reinterpret_cast<void*>(NativeLoadHistory)},
+    {"nativePrewarmImage", "(J[BI)Z", reinterpret_cast<void*>(NativePrewarmImage)},
+    {"nativeSetThinkMode", "(JZ)V", reinterpret_cast<void*>(NativeSetThinkMode)},
+    {"nativeReset", "(J)V", reinterpret_cast<void*>(NativeReset)},
+    {"nativeCancel", "(J)V", reinterpret_cast<void*>(NativeCancel)},
+    {"nativeFree", "(J)V", reinterpret_cast<void*>(NativeFree)},
+    {"nativeCollectDiagnosticsJson", "(J)Ljava/lang/String;", reinterpret_cast<void*>(NativeCollectDiagnosticsJson)},
+};
+
+}  // namespace
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
+  JNIEnv* env = nullptr;
+  if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK || env == nullptr) {
+    return JNI_ERR;
+  }
+
+  jclass bridge_class = env->FindClass("__BRIDGE_CLASS_SLASH__");
+  if (bridge_class == nullptr) {
+    LogPrint(ANDROID_LOG_ERROR, "Failed to resolve JNI bridge class.");
+    return JNI_ERR;
+  }
+  if (env->RegisterNatives(
+          bridge_class,
+          kMethods,
+          sizeof(kMethods) / sizeof(kMethods[0])) != JNI_OK) {
+    env->DeleteLocalRef(bridge_class);
+    LogPrint(ANDROID_LOG_ERROR, "RegisterNatives failed.");
+    return JNI_ERR;
+  }
+  env->DeleteLocalRef(bridge_class);
+  return JNI_VERSION_1_6;
+}

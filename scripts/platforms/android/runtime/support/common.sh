@@ -8,11 +8,25 @@ BACKEND_MTMD="llama.cpp-mtmd"
 BACKEND_QNN="omniinfer-native"
 
 DEFAULT_STATE_ROOT="${HOME:-}/.config/omniinfer"
-if [ -n "${HOME:-}" ] && [ "${HOME}" != "/" ] && [ -d "${HOME}" ] && [ -w "${HOME}" ]; then
-  STATE_ROOT="${DEFAULT_STATE_ROOT}"
-else
-  STATE_ROOT="${PROJECT_ROOT}/.omniinfer/android-cli"
-fi
+FALLBACK_STATE_ROOT="${RUNTIME_ROOT}/state"
+
+resolve_state_root() {
+  if [ -n "${HOME:-}" ] && [ "${HOME}" != "/" ] && [ -d "${HOME}" ]; then
+    probe_root="${HOME}/.config"
+    probe_dir="${probe_root}/omniinfer/.state-probe.$$"
+    if mkdir -p "${probe_dir}" 2>/dev/null; then
+      rmdir "${probe_dir}" 2>/dev/null || true
+      rmdir "${probe_root}/omniinfer" 2>/dev/null || true
+      STATE_ROOT="${DEFAULT_STATE_ROOT}"
+      return 0
+    fi
+  fi
+
+  STATE_ROOT="${FALLBACK_STATE_ROOT}"
+  return 0
+}
+
+resolve_state_root
 
 STATE_FILE="${STATE_ROOT}/android-state.env"
 
