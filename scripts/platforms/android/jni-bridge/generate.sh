@@ -209,43 +209,133 @@ copy_qnn_bundle() {
   fi
 }
 
+detect_host_tag() {
+  local kernel
+  kernel="$(uname -s)"
+  case "${kernel}" in
+    Linux)   printf 'linux-x86_64\n' ;;
+    Darwin)  printf 'darwin-x86_64\n' ;;
+    MINGW*|MSYS*|CYGWIN*) printf 'windows-x86_64\n' ;;
+    *)
+      echo "Unsupported host platform: ${kernel}" >&2
+      return 1
+      ;;
+  esac
+}
+
+detect_ndk_download_suffix() {
+  local kernel
+  kernel="$(uname -s)"
+  case "${kernel}" in
+    Linux)   printf 'linux\n' ;;
+    Darwin)  printf 'darwin\n' ;;
+    MINGW*|MSYS*|CYGWIN*) printf 'windows\n' ;;
+    *)
+      echo "Unsupported host platform for NDK download: ${kernel}" >&2
+      return 1
+      ;;
+  esac
+}
+
+ndk_has_toolchain() {
+  local ndk_dir="$1"
+  local host_tag="$2"
+  [[ -n "${ndk_dir}" && -x "${ndk_dir}/toolchains/llvm/prebuilt/${host_tag}/bin/aarch64-linux-android${MIN_SDK}-clang++" ]]
+}
+
+scan_ndk_dirs() {
+  local host_tag="$1"
+  shift
+  local search_root
+  for search_root in "$@"; do
+    [[ -d "${search_root}" ]] || continue
+    local version_dir
+    for version_dir in "${search_root}"/*/; do
+      [[ -d "${version_dir}" ]] || continue
+      if ndk_has_toolchain "${version_dir%/}" "${host_tag}"; then
+        printf '%s\n' "${version_dir%/}"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
 resolve_ndk_dir() {
+  local host_tag
+  host_tag="$(detect_host_tag)" || return 1
+
+  # 1. Check explicitly provided or environment-specified NDK directories.
   local candidate
-  for candidate in \
-    "${NDK_DIR}" \
-    "${ANDROID_NDK_ROOT:-}" \
-    "${HOME:-}/Android/Sdk/ndk/26.2.11394342" \
-    "${HOME:-}/Android/Sdk/ndk/26.1.10909125" \
-    "/usr/lib/android-sdk/ndk/26.2.11394342" \
-    "/usr/lib/android-sdk/ndk/26.1.10909125"; do
-    if [[ -n "${candidate}" && -x "${candidate}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${MIN_SDK}-clang++" ]]; then
+  for candidate in "${NDK_DIR}" "${ANDROID_NDK_ROOT:-}"; do
+    if ndk_has_toolchain "${candidate}" "${host_tag}"; then
       printf '%s\n' "${candidate}"
       return 0
     fi
   done
 
+  # 2. Scan well-known SDK locations for any installed NDK version.
+  local found
+  found="$(scan_ndk_dirs "${host_tag}" \
+    "${HOME:-}/Android/Sdk/ndk" \
+    "${HOME:-}/Library/Android/sdk/ndk" \
+    "/usr/lib/android-sdk/ndk" \
+    "${LOCALAPPDATA:-}/Android/Sdk/ndk")" && {
+    printf '%s\n' "${found}"
+    return 0
+  }
+
+  # 3. Check previously cached NDK download.
   local cached_ndk="${REPO_ROOT}/.local/toolchains/android-ndk-r26c"
-  local ndk_zip="${REPO_ROOT}/.local/toolchains/android-ndk-r26c-linux.zip"
-  mkdir -p "$(dirname "${cached_ndk}")"
-  if [[ ! -x "${cached_ndk}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${MIN_SDK}-clang++" ]]; then
-    echo "Downloading Android NDK r26c to ${cached_ndk}" >&2
-    rm -rf "${cached_ndk}"
-    curl -L "https://dl.google.com/android/repository/android-ndk-r26c-linux.zip" -o "${ndk_zip}"
-    unzip -q -o "${ndk_zip}" -d "$(dirname "${cached_ndk}")"
-  fi
-  if [[ -x "${cached_ndk}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${MIN_SDK}-clang++" ]]; then
+  if ndk_has_toolchain "${cached_ndk}" "${host_tag}"; then
     printf '%s\n' "${cached_ndk}"
     return 0
   fi
 
-  echo "Unable to locate a usable Android NDK." >&2
+  # 4. Offer to download NDK automatically.
+  local dl_suffix
+  dl_suffix="$(detect_ndk_download_suffix)" || return 1
+  local ndk_zip="${REPO_ROOT}/.local/toolchains/android-ndk-r26c-${dl_suffix}.zip"
+
+  echo "" >&2
+  echo "No usable Android NDK was found on this system." >&2
+  echo "The script can download Android NDK r26c (~1.5 GB) automatically." >&2
+  echo "  Download URL: https://dl.google.com/android/repository/android-ndk-r26c-${dl_suffix}.zip" >&2
+  echo "  Install path: ${cached_ndk}" >&2
+  echo "" >&2
+  printf 'Download and install the NDK now? [y/N] ' >&2
+  local answer
+  read -r answer
+  case "${answer}" in
+    [yY]|[yY][eE][sS]) ;;
+    *)
+      echo "Aborted. You can provide an NDK manually with --ndk-dir or ANDROID_NDK_HOME." >&2
+      return 1
+      ;;
+  esac
+
+  mkdir -p "$(dirname "${cached_ndk}")"
+  rm -rf "${cached_ndk}"
+  echo "Downloading Android NDK r26c ..." >&2
+  curl -L "https://dl.google.com/android/repository/android-ndk-r26c-${dl_suffix}.zip" -o "${ndk_zip}"
+  unzip -q -o "${ndk_zip}" -d "$(dirname "${cached_ndk}")"
+  rm -f "${ndk_zip}"
+
+  if ndk_has_toolchain "${cached_ndk}" "${host_tag}"; then
+    printf '%s\n' "${cached_ndk}"
+    return 0
+  fi
+
+  echo "Unable to locate a usable Android NDK after download." >&2
   return 1
 }
 
 build_native_library() {
   local ndk_root
   ndk_root="$(resolve_ndk_dir)"
-  local toolchain_root="${ndk_root}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+  local host_tag
+  host_tag="$(detect_host_tag)"
+  local toolchain_root="${ndk_root}/toolchains/llvm/prebuilt/${host_tag}/bin"
   local cxx="${toolchain_root}/aarch64-linux-android${MIN_SDK}-clang++"
   local output_path="${JNICALL_OUT_DIR}/lib${LIB_NAME}.so"
 

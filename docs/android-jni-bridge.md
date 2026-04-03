@@ -51,6 +51,115 @@ On first use, the generated Kotlin bridge:
 
 This means the App path and the CLI path share the same backend semantics.
 
+## Kotlin usage
+
+The generated `OmniInferNativeBridge` is a Kotlin `object` (singleton). A typical lifecycle:
+
+### 1. Check availability
+
+```kotlin
+if (!OmniInferNativeBridge.isRuntimeAvailable()) {
+    // libomniinfer-native-jni.so failed to load
+    return
+}
+```
+
+### 2. Initialize a session
+
+`init` extracts the bundled runtime assets on first call, selects the `omniinfer-native` backend, and loads the model. It returns a `Long` handle (0 on failure).
+
+```kotlin
+val handle = OmniInferNativeBridge.init(
+    modelPath = "/data/local/tmp/my-model",   // model directory on device
+    tokenizerPath = null,                       // optional, if model dir contains tokenizer.json
+    decoderModelVersion = null,                 // optional, for multi-version ExecuTorch models
+    nThreads = 4,
+    nCtx = 2048
+)
+if (handle == 0L) {
+    // initialization failed
+}
+```
+
+### 3. Run inference
+
+`generate` sends a prompt and returns the model response. The optional `callback` object receives streaming events via reflection — implement `onToken(String)` and `onMetrics(String)` methods:
+
+```kotlin
+class InferenceCallback {
+    fun onToken(token: String) {
+        // called with the full response text when generation completes
+    }
+    fun onMetrics(metrics: String) {
+        // called with a summary like "prefill_tps=42.5, decode_tps=18.3"
+    }
+}
+
+val response = OmniInferNativeBridge.generate(
+    handle = handle,
+    systemPrompt = "You are a helpful assistant.",
+    prompt = "What is 2 + 2?",
+    imageData = null,           // pass a ByteArray for multimodal models
+    nThreads = 4,
+    thinkEnabled = false,
+    callback = InferenceCallback()
+)
+```
+
+### 4. Multimodal (image + text)
+
+```kotlin
+val imageBytes: ByteArray = loadImageBytes()  // PNG, JPEG, or WebP
+
+val response = OmniInferNativeBridge.generate(
+    handle = handle,
+    systemPrompt = null,
+    prompt = "Describe this image.",
+    imageData = imageBytes,
+    nThreads = 4,
+    thinkEnabled = false,
+    callback = null
+)
+```
+
+You can also pre-warm the image encoder before the first prompt:
+
+```kotlin
+OmniInferNativeBridge.prewarmImage(handle, imageBytes, nThreads = 4)
+```
+
+### 5. Multi-turn conversation
+
+The bridge tracks conversation history automatically. To restore a prior conversation:
+
+```kotlin
+OmniInferNativeBridge.loadHistory(
+    handle = handle,
+    roles = arrayOf("system", "user", "assistant", "user"),
+    contents = arrayOf(
+        "You are a helpful assistant.",
+        "Hi!",
+        "Hello! How can I help?",
+        "Tell me a joke."
+    )
+)
+```
+
+### 6. Other controls
+
+```kotlin
+OmniInferNativeBridge.setThinkMode(handle, enabled = true)   // toggle extended thinking
+OmniInferNativeBridge.cancel(handle)                          // cancel in-progress generation
+OmniInferNativeBridge.reset(handle)                           // clear history and system prompt
+val diagnostics = OmniInferNativeBridge.collectDiagnostics(handle)  // debug info as Map<String, String>
+```
+
+### 7. Release resources
+
+```kotlin
+OmniInferNativeBridge.free(handle)
+```
+
 ## Recommended App integration
 
 For an app with existing backend abstractions:
