@@ -220,4 +220,3 @@ object __BRIDGE_CLASS__ {
 
     private external fun nativeCollectDiagnosticsJson(handle: Long): String
 }
-    private val thinkModes = ConcurrentHashMap<Long, Boolean>()
