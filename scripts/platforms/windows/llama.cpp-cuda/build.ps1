@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = Resolve-Path (Join-Path $ScriptRoot "..\..\..\..")
-$PackageRoot = Join-Path $RepoRoot "platform\Windows\llama.cpp-cuda"
+$PackageRoot = Join-Path $RepoRoot ".local\runtime\windows\llama.cpp-cuda"
 $LlamaRoot = Resolve-Path (Join-Path $RepoRoot "framework\llama.cpp")
 $BuildRoot = Join-Path $PackageRoot "build\llama.cpp-cuda"
 $BinRoot = Join-Path $PackageRoot "bin"

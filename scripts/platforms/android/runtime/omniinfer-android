@@ -1,0 +1,36 @@
+#!/system/bin/sh
+
+set -eu
+
+SELF_PATH="$0"
+case "$SELF_PATH" in
+  /*) ;;
+  *) SELF_PATH="$(pwd)/$SELF_PATH" ;;
+esac
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SELF_PATH")" && pwd)"
+RUNTIME_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
+SUPPORT_ROOT="${RUNTIME_ROOT}/support"
+BACKENDS_ROOT="${RUNTIME_ROOT}/backends"
+
+if [ ! -f "${SUPPORT_ROOT}/common.sh" ]; then
+  echo "Android runtime support file was not found: ${SUPPORT_ROOT}/common.sh" >&2
+  exit 1
+fi
+if [ ! -f "${BACKENDS_ROOT}/llama_cpp/backend.sh" ]; then
+  echo "Android llama.cpp backend file was not found: ${BACKENDS_ROOT}/llama_cpp/backend.sh" >&2
+  exit 1
+fi
+if [ ! -f "${BACKENDS_ROOT}/omniinfer_native/backend.sh" ]; then
+  echo "Android omniinfer-native backend file was not found: ${BACKENDS_ROOT}/omniinfer_native/backend.sh" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC1091
+. "${SUPPORT_ROOT}/common.sh"
+# shellcheck disable=SC1091
+. "${BACKENDS_ROOT}/llama_cpp/backend.sh"
+# shellcheck disable=SC1091
+. "${BACKENDS_ROOT}/omniinfer_native/backend.sh"
+
+main "$@"

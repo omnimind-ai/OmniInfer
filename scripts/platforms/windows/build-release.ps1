@@ -2,8 +2,13 @@ param(
     [string]$PackageName = "OmniInfer",
     [switch]$BuildCpuBackend,
     [switch]$BuildCudaBackend,
+    [switch]$BuildVulkanBackend,
+    [switch]$BuildArm64Backend,
+    [switch]$BuildSyclBackend,
+    [switch]$BuildHipBackend,
     [string]$BuildType = "Release",
     [string]$CudaArchitectures = "",
+    [string]$GpuTargets = "",
     [switch]$DryRun
 )
 
@@ -13,6 +18,10 @@ $PlatformRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Resolve-Path (Join-Path $PlatformRoot "..\..\..")
 $CpuScript = Join-Path $PlatformRoot "build-llama-cpu.ps1"
 $CudaScript = Join-Path $PlatformRoot "build-llama-cuda.ps1"
+$VulkanScript = Join-Path $PlatformRoot "build-llama-vulkan.ps1"
+$Arm64Script = Join-Path $PlatformRoot "build-llama-arm64.ps1"
+$SyclScript = Join-Path $PlatformRoot "build-llama-sycl.ps1"
+$HipScript = Join-Path $PlatformRoot "build-llama-hip.ps1"
 $ReleaseScript = Join-Path $RepoRoot "release\build_portable.ps1"
 $PortableRoot = Join-Path $RepoRoot "release\portable\OmniInfer"
 
@@ -72,6 +81,77 @@ if ($BuildCudaBackend) {
     }
     Write-Host "Preparing CUDA backend before packaging..."
     powershell @cudaArgs
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
+
+if ($BuildVulkanBackend) {
+    $vulkanArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $VulkanScript,
+        "-BuildType", $BuildType
+    )
+    if ($DryRun) {
+        $vulkanArgs += "-DryRun"
+    }
+    Write-Host "Preparing Vulkan backend before packaging..."
+    powershell @vulkanArgs
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
+
+if ($BuildArm64Backend) {
+    $arm64Args = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $Arm64Script,
+        "-BuildType", $BuildType
+    )
+    if ($DryRun) {
+        $arm64Args += "-DryRun"
+    }
+    Write-Host "Preparing arm64 backend before packaging..."
+    powershell @arm64Args
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
+
+if ($BuildSyclBackend) {
+    $syclArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $SyclScript,
+        "-BuildType", $BuildType
+    )
+    if ($DryRun) {
+        $syclArgs += "-DryRun"
+    }
+    Write-Host "Preparing SYCL backend before packaging..."
+    powershell @syclArgs
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
+
+if ($BuildHipBackend) {
+    $hipArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $HipScript,
+        "-BuildType", $BuildType
+    )
+    if ($GpuTargets) {
+        $hipArgs += @("-GpuTargets", $GpuTargets)
+    }
+    if ($DryRun) {
+        $hipArgs += "-DryRun"
+    }
+    Write-Host "Preparing HIP backend before packaging..."
+    powershell @hipArgs
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }

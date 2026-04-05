@@ -46,7 +46,7 @@ def detect_system_name() -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Test the OmniInfer end-to-end inference flow")
-    parser.add_argument("--model", required=True, help="GGUF model path used for model-select and direct inference tests")
+    parser.add_argument("--model", required=True, help="Model path used for model-select and direct inference tests")
     parser.add_argument("--mmproj", help="Optional mmproj path; when provided the script also runs multimodal inference")
     parser.add_argument("--backend", help="Explicit backend to select before loading the model")
     parser.add_argument("--host", default="127.0.0.1", help="Gateway host, default: 127.0.0.1")
@@ -132,8 +132,8 @@ class FlowRunner:
             log(f"Artifacts kept at {self.work_dir}")
 
     def ensure_inputs(self) -> None:
-        if not self.model.is_file():
-            fail(f"model file not found: {self.model}")
+        if not self.model.exists():
+            fail(f"model path not found: {self.model}")
         if self.mmproj and not self.mmproj.is_file():
             fail(f"mmproj file not found: {self.mmproj}")
         if self.mmproj and not self.image.is_file():
