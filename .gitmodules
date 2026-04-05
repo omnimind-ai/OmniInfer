@@ -17,3 +17,10 @@
 [submodule "framework/OmniOp-NPU"]
 	path = framework/OmniOp-NPU
 	url = https://github.com/omnimind-ai/OmniOp-NPU
+[submodule "framework/llama-cpp-turboquant"]
+	path = framework/llama-cpp-turboquant
+	url = https://github.com/TheTom/llama-cpp-turboquant.git
+	branch = feature/turboquant-kv-cache
+[submodule "framework/executorch"]
+	path = framework/executorch
+	url = https://github.com/pytorch/executorch

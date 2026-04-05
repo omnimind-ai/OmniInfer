@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from service_core.platforms import current_host_platform, default_backend_for_current_host
+from service_core.platforms import current_host_platform, default_backend_for_current_host, parse_extra_args
 from service_core.runtime import RuntimeManager
 
 
@@ -219,6 +219,30 @@ def stream_http_request(
         handler.wfile.write(body)
         handler.wfile.flush()
     except (BrokenPipeError, ConnectionResetError):
+        return
+
+
+def stream_embedded_events(
+    handler: BaseHTTPRequestHandler,
+    events: list[dict[str, Any]],
+) -> None:
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("Connection", "close")
+    handler.send_header("X-Accel-Buffering", "no")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    handler.end_headers()
+    try:
+        for event in events:
+            body = json.dumps(event, ensure_ascii=False).encode("utf-8")
+            handler.wfile.write(b"data: " + body + b"\n\n")
+            handler.wfile.flush()
+        handler.wfile.write(b"data: [DONE]\n\n")
+        handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
         return
 
 
@@ -432,6 +456,9 @@ class OmniHandler(BaseHTTPRequestHandler):
             model = str(payload.get("model", "")).strip()
             mmproj = str(payload.get("mmproj", "")).strip() or None
             backend = self.forced_backend or (str(payload.get("backend", "")).strip() or None)
+            launch_args = parse_extra_args(payload.get("launch_args")) if "launch_args" in payload else None
+            raw_request_defaults = payload.get("request_defaults")
+            request_defaults = dict(raw_request_defaults) if isinstance(raw_request_defaults, dict) else None
             try:
                 ctx_size = parse_optional_positive_int_field(payload, "ctx_size", "ctx-size")
             except ValueError as e:
@@ -446,6 +473,8 @@ class OmniHandler(BaseHTTPRequestHandler):
                     mmproj=mmproj,
                     backend_id=backend,
                     ctx_size=ctx_size,
+                    launch_args=launch_args,
+                    request_defaults=request_defaults,
                 )
             except (ValueError, FileNotFoundError, RuntimeError) as e:
                 status = 400 if isinstance(e, (ValueError, FileNotFoundError)) else 409
@@ -459,6 +488,9 @@ class OmniHandler(BaseHTTPRequestHandler):
             requested_backend = self.forced_backend or (str(payload.pop("backend", "")).strip() or None)
             requested_model = str(payload.get("model", "")).strip() or None
             requested_mmproj = str(payload.pop("mmproj", "")).strip() or None
+            requested_launch_args = parse_extra_args(payload.pop("launch_args", None)) if "launch_args" in payload else None
+            raw_request_defaults = payload.pop("request_defaults", None) if "request_defaults" in payload else None
+            requested_request_defaults = dict(raw_request_defaults) if isinstance(raw_request_defaults, dict) else None
             try:
                 requested_ctx_size = parse_optional_positive_int_field(
                     payload,
@@ -481,6 +513,8 @@ class OmniHandler(BaseHTTPRequestHandler):
                     mmproj=requested_mmproj,
                     backend_id=requested_backend,
                     ctx_size=requested_ctx_size,
+                    launch_args=requested_launch_args,
+                    request_defaults=requested_request_defaults,
                 )
             except (ValueError, FileNotFoundError) as e:
                 self._send_json(400, {"error": {"message": str(e)}})
@@ -489,8 +523,29 @@ class OmniHandler(BaseHTTPRequestHandler):
                 self._send_json(409, {"error": {"message": str(e)}})
                 return
 
+            effective_payload = dict(runtime.request_defaults)
+            effective_payload.update(payload)
+            payload = effective_payload
+
             if not payload.get("model"):
                 payload["model"] = runtime.model_ref
+
+            runtime_mode = self.manager.current_runtime_mode()
+            if runtime_mode == "embedded":
+                try:
+                    if payload.get("stream") is True:
+                        events = self.manager.stream_chat_completion(payload)
+                        stream_embedded_events(self, events)
+                        return
+                    response = self.manager.chat_completion(payload)
+                except ValueError as e:
+                    self._send_json(400, {"error": {"message": str(e)}})
+                    return
+                except RuntimeError as e:
+                    self._send_json(409, {"error": {"message": str(e)}})
+                    return
+                self._send_json(200, response)
+                return
 
             target = self.manager.current_proxy_target()
             if not target:

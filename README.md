@@ -1,8 +1,15 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/omniinfer-logo-dark.svg">
+    <img src="docs/assets/omniinfer-logo-light.svg" alt="OmniInfer logo" width="520">
+  </picture>
+</p>
+
 # OmniInfer
 
 Easy, fast, and private LLM & VLM inference for every device
 
-| [Documentation](#getting-started) | [Architecture](#architecture) | [Supported Models](#supported-models) |
+| [Getting Started](#getting-started) | [Documentation](#documentation) | [Architecture](#architecture) |
 
 ## About
 
@@ -29,9 +36,20 @@ OmniInfer runs everywhere:
 - Android, iOS — mobile & edge devices
 - One codebase, all platforms
 
-<!-- ## Getting Started -->
+## Getting Started
 
-Start with the OmniInfer CLI from the repository root:
+Choose the setup path that matches how you want to run OmniInfer:
+
+### Source Checkout
+
+If you cloned this repository, build or prepare at least one local runtime backend first.
+
+- Windows: see [Build Guide: Windows](docs/build.md#windows)
+- Linux: see [Build Guide: Linux](docs/build.md#linux)
+- macOS: see [Build Guide: macOS](docs/build.md#macos)
+- Android: see [Build Guide: Android](docs/build.md#android)
+
+After the runtime is ready, start with the OmniInfer CLI from the repository root.
 
 Linux and macOS:
 
@@ -51,10 +69,29 @@ Android:
 ./omniinfer --help
 ```
 
+### Packaged Release
+
+If you are using a packaged release that already includes `runtime/`, you can run the CLI immediately from the release directory:
+
+Windows:
+
+```powershell
+.\omniinfer.cmd --help
+```
+
+Linux and macOS:
+
+```sh
+./omniinfer --help
+```
+
+## Documentation
+
 Recommended docs:
 
 - [CLI Guide](docs/CLI.md): end-to-end CLI usage for Linux, macOS, Windows, and Android
 - [Android CLI Notes](docs/android-cli.md): Android direct-mode details
+- [Android JNI Bridge](docs/android-jni-bridge.md): generate an Android App bridge and packaged runtime assets
 - [Build Guide](docs/build.md): build and platform packaging notes
 - [API Reference](docs/API.md): OpenAI-compatible local API usage
 
@@ -62,6 +99,18 @@ Recommended docs:
 
 ![omni_studio_architecture](./docs/architecture_used_v2_en.png)
 
+## Citation
+
+If you use OmniInfer in research, please cite this repository.
+GitHub can automatically generate citation formats from [CITATION.cff](CITATION.cff).
+
+```bibtex
+@software{omniinfer,
+  author = {{Omnimind AI}},
+  title = {OmniInfer},
+  url = {https://github.com/omnimind-ai/OmniInfer}
+}
+```
 
 
 ## Contributing

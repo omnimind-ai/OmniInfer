@@ -66,7 +66,11 @@ class HostPlatform(ABC):
         if portable_root.is_dir():
             return portable_root.resolve()
 
-        return (repo_root / "platform" / self.runtime_folder_name).resolve()
+        canonical_local_root = (repo_root / ".local" / "runtime" / self.runtime_folder_name).resolve()
+        if canonical_local_root.is_dir():
+            return canonical_local_root
+
+        return canonical_local_root
 
     def resolve_catalog_backend_id(self, backend_id: str) -> str:
         return self.catalog_backend_aliases.get(backend_id, backend_id)
@@ -90,8 +94,8 @@ class HostPlatform(ABC):
         return 1.0
 
     def prepare_runtime_env(self, env: dict[str, str], backend: BackendSpec) -> dict[str, str]:
-        if self.system_name != "windows":
-            prepend_env_path(env, "LD_LIBRARY_PATH", str(Path(backend.llama_server_path).resolve().parent))
+        if self.system_name != "windows" and backend.launcher_path:
+            prepend_env_path(env, "LD_LIBRARY_PATH", str(Path(backend.launcher_path).resolve().parent))
         return env
 
     def build_backends(
@@ -113,19 +117,25 @@ class HostPlatform(ABC):
                 env_var=f"{template.env_prefix}_MODELS_DIR",
                 default_root=runtime_dir / "models",
             )
-            server_default = runtime_dir / "bin" / template.server_binary_name
-            server_path = resolve_input_path(
-                os.environ.get(
-                    f"{template.env_prefix}_SERVER_PATH",
-                    str(override.get("server_path") or server_default),
-                ),
-                app_root,
-            )
+            launcher_path: str | None = None
+            if template.launcher_name:
+                launcher_default = runtime_dir / "bin" / template.launcher_name
+                launcher_path = resolve_input_path(
+                    os.environ.get(
+                        f"{template.env_prefix}_LAUNCHER_PATH",
+                        os.environ.get(
+                            f"{template.env_prefix}_SERVER_PATH",
+                            str(override.get("launcher_path") or override.get("server_path") or launcher_default),
+                        ),
+                    ),
+                    app_root,
+                )
             backends[template.id] = BackendSpec(
                 id=template.id,
                 label=template.label,
+                family=template.family,
                 runtime_dir=str(runtime_dir),
-                llama_server_path=server_path,
+                launcher_path=launcher_path,
                 models_dir=models_dir,
                 catalog_url=str(override.get("catalog_url")) if override.get("catalog_url") else None,
                 description=template.description,
@@ -134,7 +144,15 @@ class HostPlatform(ABC):
                     override=override,
                     env_prefix=template.env_prefix,
                     default_ngl=template.default_ngl,
+                    default_extra_args=template.default_extra_args,
                 ),
+                runtime_mode=template.runtime_mode,
+                model_artifact=template.model_artifact,
+                supports_mmproj=template.supports_mmproj,
+                supports_ctx_size=template.supports_ctx_size,
+                python_modules=template.python_modules,
+                external_server_protocol=template.external_server_protocol,
+                log_file_name=template.log_file_name,
             )
         return backends
 
@@ -178,8 +196,9 @@ class HostPlatform(ABC):
         override: dict[str, Any],
         env_prefix: str,
         default_ngl: str | None,
+        default_extra_args: tuple[str, ...],
     ) -> list[str]:
-        args: list[str] = []
+        args: list[str] = list(default_extra_args)
         ngl_value = (
             os.environ.get(f"{env_prefix}_NGL", str(override.get("ngl", default_ngl)))
             if default_ngl is not None

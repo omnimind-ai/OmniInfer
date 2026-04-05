@@ -268,6 +268,38 @@ def current_system_name() -> str:
     raise ValueError(f"unsupported host system: {platform.system()}")
 
 
+def discover_llama_cpp_model_artifacts(model_dir: str | Path) -> tuple[str, str | None]:
+    root = Path(model_dir).expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"model directory not found: {root}")
+
+    gguf_files = sorted(path.resolve() for path in root.rglob("*.gguf") if path.is_file())
+    if not gguf_files:
+        raise FileNotFoundError(f"no GGUF files were found under model directory: {root}")
+
+    mmproj_candidates = [path for path in gguf_files if "mmproj" in path.name.lower()]
+    model_candidates = [path for path in gguf_files if path not in mmproj_candidates]
+
+    if not model_candidates:
+        raise FileNotFoundError(
+            f"no text model GGUF file was found under model directory: {root}"
+        )
+    if len(model_candidates) > 1:
+        raise ValueError(
+            "multiple text model GGUF files were found under "
+            f"{root}; please keep a single model GGUF in that directory or set load.model explicitly"
+        )
+    if len(mmproj_candidates) > 1:
+        raise ValueError(
+            "multiple mmproj GGUF files were found under "
+            f"{root}; please keep a single mmproj GGUF in that directory or set load.mmproj explicitly"
+        )
+
+    model_path = str(model_candidates[0])
+    mmproj_path = str(mmproj_candidates[0]) if mmproj_candidates else None
+    return model_path, mmproj_path
+
+
 def maybe_auto_mmproj(models_dir: str | None, model_path: str) -> str | None:
     model_file = Path(model_path)
     sibling_candidates = [

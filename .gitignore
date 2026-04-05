@@ -23,9 +23,12 @@ QWEN.md
 .env.*
 
 # OmniInfer runtime files
+/\.local/runtime
+/\.local/toolchains
 /platform
 
 /tmp
+CLAUDE.md
 CODEX.md
 QWEN.md
 tmp_gateway_*.log

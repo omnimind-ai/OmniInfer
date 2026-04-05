@@ -19,7 +19,7 @@ class AndroidPlatform(HostPlatform):
 
     @property
     def runtime_folder_name(self) -> str:
-        return "Android"
+        return "android"
 
     @property
     def default_backend_id(self) -> str:

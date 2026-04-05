@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use OmniInfer in research, please cite this repository."
+title: "OmniInfer"
+type: software
+authors:
+  - name: "Omnimind AI"
+repository-code: "https://github.com/omnimind-ai/OmniInfer"
+url: "https://github.com/omnimind-ai/OmniInfer"
+license: "Apache-2.0"
+abstract: "OmniInfer is a cross-platform local inference engine and gateway for running LLM and VLM workloads across desktop and mobile devices."
+keywords:
+  - "llm"
+  - "vlm"
+  - "local inference"
+  - "openai-compatible api"
