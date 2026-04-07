@@ -1,0 +1,112 @@
+#pragma once
+
+#include "inference_backend.h"
+
+#include <llm/llm.hpp>
+
+#include <sstream>
+
+namespace omniinfer {
+
+class MnnBackend : public InferenceBackend {
+public:
+  ~MnnBackend() override { release(); }
+
+  bool load(const std::string& model_path, const std::string& config_json,
+            const std::string& /*native_lib_dir*/, int n_threads, int n_ctx) override {
+    llm_ = MNN::Transformer::Llm::createLLM(model_path);
+    if (!llm_) return false;
+
+    // Apply config overrides.
+    std::ostringstream cfg;
+    cfg << "{";
+    if (n_threads > 0) cfg << "\"thread_num\":" << n_threads;
+    if (n_ctx > 0) {
+      if (n_threads > 0) cfg << ",";
+      cfg << "\"max_new_tokens\":" << n_ctx;
+    }
+    cfg << "}";
+    llm_->set_config(cfg.str());
+
+    if (!config_json.empty()) {
+      llm_->set_config(config_json);
+    }
+
+    if (!llm_->load()) {
+      MNN::Transformer::Llm::destroy(llm_);
+      llm_ = nullptr;
+      return false;
+    }
+    return true;
+  }
+
+  std::string generate(
+      const std::string& system_prompt,
+      const std::string& user_prompt,
+      bool /*thinking_enabled*/,
+      std::atomic<bool>& cancelled,
+      std::function<bool(const std::string& token)> on_token) override {
+
+    using ChatMessages = MNN::Transformer::ChatMessages;
+    ChatMessages msgs;
+    if (!system_prompt.empty()) {
+      msgs.push_back({"system", system_prompt});
+    }
+    for (auto& m : history_) {
+      msgs.push_back({m.first, m.second});
+    }
+    msgs.push_back({"user", user_prompt});
+
+    // Use generate_init + generate(1) loop for streaming.
+    std::ostringstream output_stream;
+    llm_->response(msgs, &output_stream, "\n", -1);
+
+    // MNN's response() is blocking — extract result and call callback once.
+    // For true streaming, we'd use generate_init + generate(1) loop,
+    // but that requires the prompt to already be tokenized.
+    // For now, use the simpler blocking approach.
+    std::string full = output_stream.str();
+
+    if (on_token && !full.empty() && !cancelled.load()) {
+      on_token(full);
+    }
+
+    // Update history.
+    history_.push_back({"user", user_prompt});
+    history_.push_back({"assistant", full});
+
+    // Collect metrics.
+    auto* ctx = llm_->getContext();
+    if (ctx) {
+      last_metrics_ = {ctx->prompt_len, ctx->gen_seq_len, ctx->prefill_us, ctx->decode_us};
+    }
+
+    return full;
+  }
+
+  bool load_history(
+      const std::vector<std::pair<std::string, std::string>>& messages) override {
+    history_ = messages;
+    llm_->reset();
+    return true;
+  }
+
+  void reset() override {
+    history_.clear();
+    if (llm_) llm_->reset();
+  }
+
+  InferenceMetrics get_metrics() override { return last_metrics_; }
+  const char* name() const override { return "mnn"; }
+
+private:
+  void release() {
+    if (llm_) { MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr; }
+  }
+
+  MNN::Transformer::Llm* llm_ = nullptr;
+  std::vector<std::pair<std::string, std::string>> history_;
+  InferenceMetrics last_metrics_;
+};
+
+}  // namespace omniinfer
