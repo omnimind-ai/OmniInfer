@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import base64
+import http.client
 import json
 import os
 import platform
@@ -167,6 +168,12 @@ class FlowRunner:
                 self._write_artifact(output_name, raw)
                 fail(f"HTTP {method} {endpoint} failed with status {status}: {raw.decode('utf-8', errors='replace')}")
         except urllib.error.URLError as exc:
+            if allow_error:
+                return 0, None, b""
+            fail(f"HTTP {method} {endpoint} failed: {exc}")
+        except (ConnectionResetError, ConnectionRefusedError, TimeoutError, http.client.RemoteDisconnected) as exc:
+            if allow_error:
+                return 0, None, b""
             fail(f"HTTP {method} {endpoint} failed: {exc}")
 
         parsed: Any
@@ -198,6 +205,8 @@ class FlowRunner:
             self._write_artifact(output_name, raw.encode("utf-8"))
             fail(f"Stream request failed with status {exc.code}: {raw}")
         except urllib.error.URLError as exc:
+            fail(f"Stream request failed: {exc}")
+        except (ConnectionResetError, ConnectionRefusedError, TimeoutError, http.client.RemoteDisconnected) as exc:
             fail(f"Stream request failed: {exc}")
 
         self._write_artifact(output_name, content.encode("utf-8"))

@@ -15,12 +15,21 @@ class FakeEmbeddedDriver:
     def __init__(self) -> None:
         self.unloaded = False
 
-    def load_model(self, *, model_path: str, model_ref: str, mmproj_path: str | None, ctx_size: int | None):
+    def load_model(
+        self,
+        *,
+        model_path: str,
+        model_ref: str,
+        mmproj_path: str | None,
+        ctx_size: int | None,
+        load_options=None,
+    ):
         return {
             "model_path": model_path,
             "model_ref": model_ref,
             "mmproj_path": mmproj_path,
             "ctx_size": ctx_size,
+            "load_options": dict(load_options or {}),
         }
 
     def unload_model(self, state):
