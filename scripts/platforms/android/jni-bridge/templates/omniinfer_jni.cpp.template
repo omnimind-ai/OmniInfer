@@ -145,6 +145,7 @@ std::optional<bool> ExtractJsonBool(const std::string& json, const std::string& 
 
 void InvokeCallbackStringMethod(JNIEnv* env, jobject callback, const char* method_name, const std::string& payload) {
   if (!callback) return;
+  if (env->ExceptionCheck()) { env->ExceptionClear(); return; }
   jclass cls = env->GetObjectClass(callback);
   if (!cls) return;
   jmethodID method = env->GetMethodID(cls, method_name, "(Ljava/lang/String;)V");

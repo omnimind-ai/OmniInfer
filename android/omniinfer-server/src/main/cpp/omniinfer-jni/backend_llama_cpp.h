@@ -167,7 +167,7 @@ private:
 
   std::string chat_add_and_format(const std::string& role, const std::string& content) {
     common_chat_msg msg; msg.role = role; msg.content = content;
-    auto fmt = common_chat_format_single(chat_templates_.get(), chat_msgs_, msg, role == "user", false);
+    auto fmt = common_chat_format_single(chat_templates_.get(), chat_msgs_, msg, role == "user", true);
     chat_msgs_.push_back(msg);
     return fmt;
   }
