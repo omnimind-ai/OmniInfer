@@ -1,24 +1,13 @@
 package __BRIDGE_PACKAGE__
 
-import android.app.Application
-import android.content.Context
 import android.util.Log
 import org.json.JSONObject
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 object __BRIDGE_CLASS__ {
     private const val TAG = "__BRIDGE_CLASS__"
     private const val LIB_NAME = "__LIB_NAME__"
-    private const val ASSET_ROOT = "__ASSET_ROOT__"
     private val thinkModes = ConcurrentHashMap<Long, Boolean>()
-
-    private data class RuntimeLayout(
-        val installRoot: File,
-        val runtimeRoot: File,
-        val runtimeScript: File,
-        val sessionRoot: File
-    )
 
     private val isNativeLibraryLoaded: Boolean by lazy {
         runCatching {
@@ -34,27 +23,18 @@ object __BRIDGE_CLASS__ {
 
     fun init(
         modelPath: String,
-        tokenizerPath: String? = null,
-        decoderModelVersion: String? = null,
-        nThreads: Int,
-        nCtx: Int
+        backend: String = "llama.cpp",
+        nThreads: Int = 4,
+        nCtx: Int = 4096
     ): Long {
         if (!isNativeLibraryLoaded) return 0L
-        val layout = ensureRuntimeInstalled()
+        val nativeLibDir = resolveNativeLibDir()
         val configJson = JSONObject()
-            .put("runtime_script_path", layout.runtimeScript.absolutePath)
-            .put("session_root", layout.sessionRoot.absolutePath)
+            .put("backend", backend)
             .put("model_path", modelPath)
+            .put("native_lib_dir", nativeLibDir)
             .put("n_threads", nThreads)
             .put("n_ctx", nCtx)
-            .apply {
-                if (!tokenizerPath.isNullOrBlank()) {
-                    put("tokenizer_path", tokenizerPath)
-                }
-                if (!decoderModelVersion.isNullOrBlank()) {
-                    put("decoder_model_version", decoderModelVersion)
-                }
-            }
         val handle = nativeInit(configJson.toString())
         if (handle != 0L) {
             thinkModes[handle] = false
@@ -66,10 +46,10 @@ object __BRIDGE_CLASS__ {
         handle: Long,
         systemPrompt: String?,
         prompt: String,
-        imageData: ByteArray?,
-        nThreads: Int,
-        thinkEnabled: Boolean,
-        callback: Any?
+        imageData: ByteArray? = null,
+        nThreads: Int = 4,
+        thinkEnabled: Boolean = false,
+        callback: Any? = null
     ): String {
         if (!isNativeLibraryLoaded) return ""
         val requestJson = JSONObject()
@@ -91,7 +71,7 @@ object __BRIDGE_CLASS__ {
         return nativeLoadHistory(handle, roles, contents)
     }
 
-    fun prewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int): Boolean {
+    fun prewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int = 4): Boolean {
         if (!isNativeLibraryLoaded) return false
         return nativePrewarmImage(handle, imageData, nThreads)
     }
@@ -128,71 +108,20 @@ object __BRIDGE_CLASS__ {
         }
     }
 
-    private fun ensureRuntimeInstalled(): RuntimeLayout {
+    private fun resolveNativeLibDir(): String {
         val context = resolveApplicationContext()
-        val installRoot = File(context.noBackupFilesDir, ASSET_ROOT)
-        val versionFile = File(installRoot, "version.txt")
-        val assetVersion = context.assets.open("$ASSET_ROOT/version.txt").bufferedReader().use { it.readText().trim() }
-        val installedVersion = versionFile.takeIf { it.isFile }?.readText()?.trim()
-        if (assetVersion != installedVersion) {
-            installRoot.deleteRecursively()
-            copyAssetTree(context, ASSET_ROOT, installRoot)
-            markExecutables(installRoot)
-        }
-        val runtimeRoot = File(installRoot, "runtime")
-        val runtimeScript = File(runtimeRoot, "bin/omniinfer-android")
-        val sessionRoot = File(installRoot, "sessions").apply { mkdirs() }
-        return RuntimeLayout(
-            installRoot = installRoot,
-            runtimeRoot = runtimeRoot,
-            runtimeScript = runtimeScript,
-            sessionRoot = sessionRoot
-        )
+        return context.applicationInfo.nativeLibraryDir
     }
 
-    private fun copyAssetTree(context: Context, assetPath: String, targetPath: File) {
-        val children = context.assets.list(assetPath).orEmpty()
-        if (children.isEmpty()) {
-            targetPath.parentFile?.mkdirs()
-            context.assets.open(assetPath).use { input ->
-                targetPath.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-            return
-        }
-        targetPath.mkdirs()
-        children.forEach { child ->
-            val nestedAssetPath = if (assetPath.isBlank()) child else "$assetPath/$child"
-            copyAssetTree(context, nestedAssetPath, File(targetPath, child))
-        }
-    }
-
-    private fun markExecutables(root: File) {
-        root.walkTopDown()
-            .filter(File::isFile)
-            .forEach { file ->
-                val name = file.name
-                if (
-                    name == "omniinfer-android" ||
-                    name.endsWith(".sh") ||
-                    name.endsWith(".so") ||
-                    name.endsWith("_runner")
-                ) {
-                    file.setExecutable(true, false)
-                }
-            }
-    }
-
-    private fun resolveApplicationContext(): Context {
+    private fun resolveApplicationContext(): android.content.Context {
         val application = runCatching {
             val clazz = Class.forName("android.app.ActivityThread")
             val method = clazz.getDeclaredMethod("currentApplication")
             method.isAccessible = true
-            method.invoke(null) as? Application
+            method.invoke(null) as? android.app.Application
         }.getOrNull()
         return requireNotNull(application?.applicationContext) {
-            "Unable to resolve Android application context for OmniInfer bridge installation."
+            "Unable to resolve Android application context."
         }
     }
 

@@ -1,0 +1,97 @@
+cmake_minimum_required(VERSION 3.22.1)
+
+project("__LIB_NAME__" VERSION 1.0.0 LANGUAGES C CXX)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED true)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED true)
+
+# --------------------------------------------------------------------------
+# Options
+# --------------------------------------------------------------------------
+
+option(OMNIINFER_BACKEND_LLAMA_CPP "Enable llama.cpp backend" ON)
+option(OMNIINFER_BACKEND_MNN "Enable MNN backend" OFF)
+
+# --------------------------------------------------------------------------
+# ABI-specific settings
+# --------------------------------------------------------------------------
+
+if(DEFINED ANDROID_ABI)
+    if(ANDROID_ABI STREQUAL "arm64-v8a")
+        set(GGML_SYSTEM_ARCH "ARM")
+    elseif(ANDROID_ABI STREQUAL "x86_64")
+        set(GGML_SYSTEM_ARCH "x86")
+    else()
+        message(FATAL_ERROR "Unsupported ABI: ${ANDROID_ABI}")
+    endif()
+endif()
+
+# --------------------------------------------------------------------------
+# llama.cpp backend (compiled from source, statically linked)
+# --------------------------------------------------------------------------
+
+if(OMNIINFER_BACKEND_LLAMA_CPP)
+    set(LLAMA_CPP_DIR "__LLAMA_CPP_DIR__" CACHE PATH "Path to llama.cpp source tree")
+    if(NOT EXISTS "${LLAMA_CPP_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "llama.cpp not found at ${LLAMA_CPP_DIR}. Set LLAMA_CPP_DIR.")
+    endif()
+    # Build llama.cpp as static libraries.
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${LLAMA_CPP_DIR} build-llama)
+endif()
+
+# --------------------------------------------------------------------------
+# MNN backend (compiled from source, statically linked)
+# --------------------------------------------------------------------------
+
+if(OMNIINFER_BACKEND_MNN)
+    set(MNN_DIR "__MNN_DIR__" CACHE PATH "Path to MNN source tree")
+    if(NOT EXISTS "${MNN_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "MNN not found at ${MNN_DIR}. Set MNN_DIR.")
+    endif()
+    set(MNN_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_FOR_ANDROID_COMMAND ON CACHE BOOL "" FORCE)
+    set(MNN_BUILD_LLM ON CACHE BOOL "" FORCE)
+    set(MNN_LOW_MEMORY ON CACHE BOOL "" FORCE)
+    set(MNN_CPU_WEIGHT_DEQUANT_GEMM ON CACHE BOOL "" FORCE)
+    set(MNN_SUPPORT_TRANSFORMER_FUSE ON CACHE BOOL "" FORCE)
+    set(MNN_ARM82 ON CACHE BOOL "" FORCE)
+    set(MNN_BUILD_CONVERTER OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_TEST OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_QUANTOOLS OFF CACHE BOOL "" FORCE)
+    set(MNN_BUILD_DEMO OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${MNN_DIR} build-mnn)
+endif()
+
+# --------------------------------------------------------------------------
+# OmniInfer JNI bridge (single .so, multiple backends)
+# --------------------------------------------------------------------------
+
+add_library(${CMAKE_PROJECT_NAME} SHARED
+        omniinfer_jni.cpp)
+
+# Compile definitions to conditionally include backends.
+if(OMNIINFER_BACKEND_LLAMA_CPP)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE OMNIINFER_BACKEND_LLAMA_CPP=1)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+            ${LLAMA_CPP_DIR}
+            ${LLAMA_CPP_DIR}/common
+            ${LLAMA_CPP_DIR}/include
+            ${LLAMA_CPP_DIR}/ggml/include
+            ${LLAMA_CPP_DIR}/ggml/src)
+    target_link_libraries(${CMAKE_PROJECT_NAME} llama common)
+endif()
+
+if(OMNIINFER_BACKEND_MNN)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE OMNIINFER_BACKEND_MNN=1)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+            ${MNN_DIR}/include
+            ${MNN_DIR}/transformers/llm/engine/include
+            ${MNN_DIR}/3rd_party)
+    target_link_libraries(${CMAKE_PROJECT_NAME} MNN)
+endif()
+
+target_link_libraries(${CMAKE_PROJECT_NAME} android log)
