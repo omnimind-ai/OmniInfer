@@ -176,6 +176,7 @@ object __BRIDGE_CLASS__ {
                 if (
                     name == "omniinfer-android" ||
                     name.endsWith(".sh") ||
+                    name.endsWith(".so") ||
                     name.endsWith("_runner")
                 ) {
                     file.setExecutable(true, false)

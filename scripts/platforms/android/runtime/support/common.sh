@@ -1,5 +1,5 @@
 PROJECT_ROOT="$(CDPATH= cd -- "${RUNTIME_ROOT}/../../.." && pwd)"
-LIB_ROOT="${RUNTIME_ROOT}/lib/arm64-v8a"
+LIB_ROOT="${OMNIINFER_LIB_ROOT:-${RUNTIME_ROOT}/lib/arm64-v8a}"
 LEGACY_LIB_ROOT="${PROJECT_ROOT}/platform/Android/lib/arm64-v8a"
 QNN_ROOT="${RUNTIME_ROOT}/qnn"
 
