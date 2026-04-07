@@ -488,6 +488,7 @@ void InvokeCallbackStringMethod(JNIEnv* env, jobject callback, const char* metho
   }
   jmethodID method = env->GetMethodID(callback_class, method_name, "(Ljava/lang/String;)V");
   if (method == nullptr) {
+    env->ExceptionClear();
     env->DeleteLocalRef(callback_class);
     return;
   }
