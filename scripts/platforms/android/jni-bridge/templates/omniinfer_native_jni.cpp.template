@@ -354,13 +354,14 @@ CommandResult RunCommand(Session& session, const std::vector<std::string>& argv)
     close(stderr_pipe[0]);
     close(stderr_pipe[1]);
     setenv("HOME", session.home_dir.c_str(), 1);
-    std::vector<char*> args;
-    args.reserve(argv.size() + 1);
+    setenv("TMPDIR", session.session_root.c_str(), 1);
+    std::vector<const char*> args;
+    args.push_back("/system/bin/sh");
     for (const auto& item : argv) {
-      args.push_back(const_cast<char*>(item.c_str()));
+      args.push_back(item.c_str());
     }
     args.push_back(nullptr);
-    execv(argv.front().c_str(), args.data());
+    execv("/system/bin/sh", const_cast<char* const*>(args.data()));
     _exit(127);
   }
 
@@ -487,6 +488,7 @@ void InvokeCallbackStringMethod(JNIEnv* env, jobject callback, const char* metho
   }
   jmethodID method = env->GetMethodID(callback_class, method_name, "(Ljava/lang/String;)V");
   if (method == nullptr) {
+    env->ExceptionClear();
     env->DeleteLocalRef(callback_class);
     return;
   }
