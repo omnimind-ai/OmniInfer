@@ -16,6 +16,7 @@ __pycache__/
 .venv/
 
 # AI assistant context
+AGENTS.md
 QWEN.md
 
 # Local environment files

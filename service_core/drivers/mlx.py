@@ -38,7 +38,9 @@ class MlxMacDriver(EmbeddedBackendDriver):
         model_ref: str,
         mmproj_path: str | None,
         ctx_size: int | None,
+        load_options: dict[str, Any] | None = None,
     ) -> MlxLoadedModel:
+        del load_options
         if mmproj_path:
             raise ValueError("mlx-mac does not support mmproj files")
         if ctx_size is not None:

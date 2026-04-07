@@ -13,6 +13,7 @@ class EmbeddedBackendDriver(ABC):
         model_ref: str,
         mmproj_path: str | None,
         ctx_size: int | None,
+        load_options: dict[str, Any] | None = None,
     ) -> Any:
         raise NotImplementedError
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import platform
 import json
 import subprocess
 import time
@@ -13,6 +14,15 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def default_backends_for_host() -> list[str]:
+    system_name = platform.system()
+    if system_name == "Linux":
+        return ["llama.cpp-linux", "llama.cpp-linux-vulkan", "mnn-linux"]
+    if system_name == "Darwin":
+        return ["llama.cpp-mac", "turboquant-mac", "mlx-mac"]
+    return ["llama.cpp-linux", "llama.cpp-linux-vulkan"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--gguf-model", help="Model path used for external server backends such as llama.cpp-mac and turboquant-mac")
     parser.add_argument("--mlx-model", help="Model directory used for mlx-mac")
+    parser.add_argument("--mnn-model", help="Model directory or config.json used for mnn-linux")
     parser.add_argument("--mmproj", help="Optional mmproj file used for GGUF multimodal backends")
     parser.add_argument("--image", help="Optional image path used for multimodal benchmark requests")
     parser.add_argument(
@@ -126,8 +137,14 @@ def pid_for_listening_gateway(port: int) -> int | None:
 
 
 def pid_for_backend_process(backend_id: str) -> int | None:
-    runtime_bin = REPO_ROOT / ".local" / "runtime" / "macos" / backend_id / "bin" / "llama-server"
-    if not runtime_bin.is_file():
+    runtime_roots = [REPO_ROOT / ".local" / "runtime" / system_name for system_name in ("linux", "macos", "windows", "android")]
+    runtime_bin: Path | None = None
+    for runtime_root in runtime_roots:
+        candidate = runtime_root / backend_id / "bin" / "llama-server"
+        if candidate.is_file():
+            runtime_bin = candidate
+            break
+    if runtime_bin is None:
         return None
     result = subprocess.run(
         ["pgrep", "-f", str(runtime_bin)],
@@ -178,6 +195,10 @@ def pick_model_for_backend(args: argparse.Namespace, backend_id: str) -> str:
         if not args.mlx_model:
             fail("mlx-mac requires --mlx-model")
         return str(Path(args.mlx_model).expanduser().resolve())
+    if backend_id == "mnn-linux":
+        if not args.mnn_model:
+            fail("mnn-linux requires --mnn-model")
+        return str(Path(args.mnn_model).expanduser().resolve())
     if not args.gguf_model:
         fail(f"{backend_id} requires --gguf-model")
     return str(Path(args.gguf_model).expanduser().resolve())
@@ -186,7 +207,11 @@ def pick_model_for_backend(args: argparse.Namespace, backend_id: str) -> str:
 def benchmark_backend(args: argparse.Namespace, backend_id: str, base_url: str) -> dict[str, Any]:
     model_path = pick_model_for_backend(args, backend_id)
 
-    mmproj_path = str(Path(args.mmproj).expanduser().resolve()) if args.mmproj and backend_id != "mlx-mac" else None
+    mmproj_path = (
+        str(Path(args.mmproj).expanduser().resolve())
+        if args.mmproj and backend_id not in {"mlx-mac", "mnn-linux"}
+        else None
+    )
 
     def load_backend_model() -> None:
         require_cli_success(run_cli(args.cli_command, "select", backend_id), f"select {backend_id}")
@@ -199,7 +224,7 @@ def benchmark_backend(args: argparse.Namespace, backend_id: str, base_url: str) 
 
     time.sleep(1.0)
     gateway_pid = pid_for_listening_gateway(args.port)
-    backend_pid = None if backend_id == "mlx-mac" else pid_for_backend_process(backend_id)
+    backend_pid = None if backend_id in {"mlx-mac", "mnn-linux"} else pid_for_backend_process(backend_id)
 
     memory_loaded = {
         "gateway_rss_mb": rss_mb(gateway_pid),
@@ -292,13 +317,16 @@ def print_summary(results: list[dict[str, Any]]) -> None:
                     prompt_tps = round((float(prompt_tokens) * 1000.0) / float(prompt_ms), 3)
             except (TypeError, ValueError, ZeroDivisionError):
                 prompt_tps = "-"
+        decode_tps = timings.get("predicted_per_second")
+        if decode_tps in (None, "-"):
+            decode_tps = timings.get("decode_tps", "-")
         print(
             "\t".join(
                 [
                     result["backend"],
                     str(prompt_tps if prompt_tps is not None else "-"),
                     str(timings.get("prompt_ms", "-")),
-                    str(timings.get("predicted_per_second", "-")),
+                    str(decode_tps if decode_tps is not None else "-"),
                     str(usage.get("prompt_tokens", "-")),
                     str(usage.get("completion_tokens", "-")),
                     str(result["memory_loaded"].get("total_rss_mb", "-")),
@@ -311,7 +339,7 @@ def print_summary(results: list[dict[str, Any]]) -> None:
 def main() -> int:
     args = parse_args()
     base_url = f"http://{args.host}:{args.port}"
-    backends = args.backends or ["llama.cpp-mac", "turboquant-mac", "mlx-mac"]
+    backends = args.backends or default_backends_for_host()
 
     require_cli_success(run_cli(args.cli_command, "shutdown"), "shutdown existing service")
 

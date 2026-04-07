@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import platform
 
-from service_core.backends import LINUX_LLAMA_CPP_TEMPLATES
+from service_core.backends import LINUX_LLAMA_CPP_TEMPLATES, LINUX_MNN_TEMPLATES
 from service_core.platforms.base import HostPlatform
 
 
@@ -23,7 +23,7 @@ class LinuxPlatform(HostPlatform):
 
     @property
     def backend_templates(self):
-        return LINUX_LLAMA_CPP_TEMPLATES
+        return LINUX_LLAMA_CPP_TEMPLATES + LINUX_MNN_TEMPLATES
 
     @property
     def catalog_backend_aliases(self) -> dict[str, str]:
