@@ -1,183 +1,291 @@
-# Android JNI Bridge
+# OmniInfer Android JNI Bridge Integration Guide
 
-OmniInfer can generate a decoupled Android JNI bridge for Android Apps that want to embed the Android runtime directly.
+Integrate OmniInfer's local LLM inference into your Android project.
 
-The entry script is:
+OmniInfer JNI Bridge compiles llama.cpp and MNN into a **single** native library (`.so`), allowing you to switch backends at runtime via a Kotlin API. No precompiled binaries needed — Gradle builds everything automatically.
 
-```sh
-bash ./scripts/platforms/android/jni-bridge/generate.sh \
-  --app-dir /path/to/YourAndroidApp \
-  --module app \
-  --package com.example.yourapp.omniinfer \
-  --qnn-bundle-dir /path/to/qnn-bundle
+## Supported Backends
+
+| Backend | Model Format | Notes |
+|---------|-------------|-------|
+| `llama.cpp` | GGUF (`.gguf`) | Wide community model support |
+| `mnn` | MNN (`.mnn` + `config.json`) | Better mobile performance, Alibaba MNN engine |
+
+## Prerequisites
+
+- Android Studio (with Android SDK and NDK)
+- Git
+- Bash (built-in on macOS/Linux; use Git Bash or WSL on Windows)
+
+## Integration Steps
+
+### 1. Clone OmniInfer and initialize submodules
+
+```bash
+git clone https://github.com/omnimind-ai/OmniInfer.git
+cd OmniInfer
+git checkout main_dev
+
+# Both backends
+git submodule update --init framework/llama.cpp framework/mnn
+
+# llama.cpp only
+git submodule update --init framework/llama.cpp
 ```
 
-## What it generates
+### 2. Generate JNI Bridge code
 
-The generator writes into the target Android module:
+Run the generator script to inject JNI Bridge code into your Android project:
 
-- `src/main/java/<package>/OmniInferNativeBridge.kt`
-- `src/main/cpp/omniinfer-native-jni/omniinfer_native_jni.cpp`
-- `src/main/jniLibs/arm64-v8a/libomniinfer-native-jni.so`
-- `src/main/assets/omniinfer-native/runtime/bin/omniinfer-android`
-- `src/main/assets/omniinfer-native/runtime/support/common.sh`
-- `src/main/assets/omniinfer-native/runtime/backends/llama_cpp/backend.sh`
-- `src/main/assets/omniinfer-native/runtime/backends/omniinfer_native/backend.sh`
-- `src/main/assets/omniinfer-native/runtime/qnn/*`
+```bash
+bash scripts/platforms/android/jni-bridge/generate-v2.sh \
+  --app-dir /path/to/YourAndroidApp \
+  --package com.yourcompany.yourapp.omniinfer
+```
 
-`qnn_llama_runner`, `qnn_multimodal_runner`, and the QNN shared libraries are copied only when `--qnn-bundle-dir` is provided.
+`--package` specifies the Kotlin package for the generated bridge class. Use any package within your project.
 
-## Why this shape
+The script generates the following files in your project:
 
-The generated bridge is intentionally split into:
+```
+app/src/main/
+  ├── java/com/yourcompany/yourapp/omniinfer/
+  │   └── OmniInferBridge.kt           # Kotlin API
+  └── cpp/omniinfer-jni/
+      ├── CMakeLists.txt                # CMake build config
+      ├── omniinfer_jni.cpp             # JNI entry point
+      ├── inference_backend.h           # Backend abstraction
+      ├── backend_llama_cpp.h           # llama.cpp implementation
+      └── backend_mnn.h                # MNN implementation
+```
 
-- Kotlin bridge layer
-- small native JNI layer
-- packaged Android runtime assets
+Optional parameters:
 
-This avoids hard-coding app-specific JNI symbol names in upstream source files while keeping the App-side integration stable and easy to regenerate.
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--module <name>` | `app` | Android module name |
+| `--class <name>` | `OmniInferBridge` | Generated Kotlin class name |
+| `--lib-name <name>` | `omniinfer-jni` | Native library name |
+| `--llama-cpp-dir <dir>` | auto-detect | Path to llama.cpp source tree |
+| `--mnn-dir <dir>` | auto-detect | Path to MNN source tree (omit to disable MNN) |
 
-The native JNI layer uses `RegisterNatives`, so the app can choose its own package name and bridge class at generation time.
+### 3. Configure build.gradle.kts
 
-## Runtime behavior
-
-On first use, the generated Kotlin bridge:
-
-1. loads `libomniinfer-native-jni.so`
-2. extracts `assets/omniinfer-native/runtime/` into the app private writable directory
-3. marks runtime shell files and QNN runners executable
-4. creates a per-session writable state root under the extracted runtime
-5. dispatches inference requests through the same Android runtime shell entrypoint used by the Android CLI
-
-This means the App path and the CLI path share the same backend semantics.
-
-## Kotlin usage
-
-The generated `OmniInferNativeBridge` is a Kotlin `object` (singleton). A typical lifecycle:
-
-### 1. Check availability
+Add the following to the `android {}` block in `app/build.gradle.kts`:
 
 ```kotlin
-if (!OmniInferNativeBridge.isRuntimeAvailable()) {
-    // libomniinfer-native-jni.so failed to load
+android {
+    defaultConfig {
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments += "-DGGML_NATIVE=OFF"
+                arguments += "-DGGML_LLAMAFILE=OFF"
+                arguments += "-DLLAMA_BUILD_COMMON=ON"
+
+                // Recommended: enable ARM instruction set optimizations
+                arguments += "-DGGML_CPU_ARM_ARCH=armv8.2-a+fp16+dotprod+i8mm"
+
+                // Optional: enable MNN backend (requires framework/mnn submodule)
+                // arguments += "-DOMNIINFER_BACKEND_MNN=ON"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/omniinfer-jni/CMakeLists.txt")
+        }
+    }
+}
+```
+
+### 4. Build
+
+```bash
+./gradlew assembleDebug
+```
+
+First build compiles the inference engine sources (~1-2 minutes). Subsequent incremental builds take only a few seconds.
+
+## Kotlin API Reference
+
+### Check availability
+
+```kotlin
+if (!OmniInferBridge.isRuntimeAvailable()) {
+    // Native library failed to load
     return
 }
 ```
 
-### 2. Initialize a session
-
-`init` extracts the bundled runtime assets on first call, selects the `omniinfer-native` backend, and loads the model. It returns a `Long` handle (0 on failure).
+### Initialize a session
 
 ```kotlin
-val handle = OmniInferNativeBridge.init(
-    modelPath = "/data/local/tmp/my-model",   // model directory on device
-    tokenizerPath = null,                       // optional, if model dir contains tokenizer.json
-    decoderModelVersion = null,                 // optional, for multi-version ExecuTorch models
-    nThreads = 4,
-    nCtx = 2048
+// llama.cpp backend with GGUF model
+val handle = OmniInferBridge.init(
+    modelPath = "/sdcard/models/qwen3.5-0.8b-q4km.gguf",
+    backend = "llama.cpp",
+    nThreads = 0,       // 0 = auto-detect thread count
+    nCtx = 2048         // context window size
 )
-if (handle == 0L) {
-    // initialization failed
-}
+
+// MNN backend with MNN model
+val handle = OmniInferBridge.init(
+    modelPath = "/sdcard/models/Qwen3.5-0.8B-MNN/config.json",
+    backend = "mnn"
+)
+
+// handle == 0L indicates failure
 ```
 
-### 3. Run inference
-
-`generate` sends a prompt and returns the model response. The optional `callback` object receives streaming events via reflection — implement `onToken(String)` and `onMetrics(String)` methods:
+### Generate text
 
 ```kotlin
-class InferenceCallback {
-    fun onToken(token: String) {
-        // called with the full response text when generation completes
-    }
-    fun onMetrics(metrics: String) {
-        // called with a summary like "prefill_tps=42.5, decode_tps=18.3"
-    }
-}
-
-val response = OmniInferNativeBridge.generate(
+val response = OmniInferBridge.generate(
     handle = handle,
     systemPrompt = "You are a helpful assistant.",
-    prompt = "What is 2 + 2?",
-    imageData = null,           // pass a ByteArray for multimodal models
-    nThreads = 4,
-    thinkEnabled = false,
-    callback = InferenceCallback()
+    prompt = "What is the capital of France?"
 )
 ```
 
-### 4. Multimodal (image + text)
+### Streaming generation
 
 ```kotlin
-val imageBytes: ByteArray = loadImageBytes()  // PNG, JPEG, or WebP
-
-val response = OmniInferNativeBridge.generate(
+val response = OmniInferBridge.generate(
     handle = handle,
-    systemPrompt = null,
-    prompt = "Describe this image.",
-    imageData = imageBytes,
-    nThreads = 4,
-    thinkEnabled = false,
-    callback = null
+    systemPrompt = "You are a helpful assistant.",
+    prompt = "Write a short poem.",
+    callback = object {
+        fun onToken(token: String) {
+            // Called for each generated token fragment
+            runOnUiThread { textView.append(token) }
+        }
+        fun onMetrics(metrics: String) {
+            // Called after generation completes
+            // Format: "prefill_tps=73.0, decode_tps=17.0"
+        }
+    }
 )
 ```
 
-You can also pre-warm the image encoder before the first prompt:
+### Multi-turn conversation
+
+The backend automatically maintains conversation history across `generate()` calls:
 
 ```kotlin
-OmniInferNativeBridge.prewarmImage(handle, imageBytes, nThreads = 4)
+OmniInferBridge.generate(handle, "You are a translator.", "Hello")
+OmniInferBridge.generate(handle, null, "Translate that to French")
 ```
 
-### 5. Multi-turn conversation
-
-The bridge tracks conversation history automatically. To restore a prior conversation:
+To manually load conversation history:
 
 ```kotlin
-OmniInferNativeBridge.loadHistory(
+OmniInferBridge.loadHistory(
     handle = handle,
     roles = arrayOf("system", "user", "assistant", "user"),
-    contents = arrayOf(
-        "You are a helpful assistant.",
-        "Hi!",
-        "Hello! How can I help?",
-        "Tell me a joke."
-    )
+    contents = arrayOf("You are a translator.", "Hello", "Bonjour!", "Now translate to Japanese")
 )
 ```
 
-### 6. Other controls
+### Session control
 
 ```kotlin
-OmniInferNativeBridge.setThinkMode(handle, enabled = true)   // toggle extended thinking
-OmniInferNativeBridge.cancel(handle)                          // cancel in-progress generation
-OmniInferNativeBridge.reset(handle)                           // clear history and system prompt
-val diagnostics = OmniInferNativeBridge.collectDiagnostics(handle)  // debug info as Map<String, String>
+OmniInferBridge.reset(handle)                        // Clear conversation history
+OmniInferBridge.cancel(handle)                       // Cancel in-progress generation
+OmniInferBridge.setThinkMode(handle, enabled = true) // Enable thinking mode
+val diag = OmniInferBridge.collectDiagnostics(handle) // Performance diagnostics
+OmniInferBridge.free(handle)                          // Release resources (must call)
 ```
 
-### 7. Release resources
+## Model Preparation
 
-```kotlin
-OmniInferNativeBridge.free(handle)
+### GGUF models (llama.cpp backend)
+
+```bash
+# HuggingFace
+curl -L -o model.gguf \
+  https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf
+
+# ModelScope (recommended in China)
+pip install modelscope
+modelscope download --model unsloth/Qwen3.5-0.8B-GGUF Qwen3.5-0.8B-Q4_K_M.gguf
 ```
 
-## Recommended App integration
+### MNN models (MNN backend)
 
-For an app with existing backend abstractions:
+```bash
+pip install modelscope
+modelscope download --model MNN/Qwen3.5-0.8B-MNN --local_dir ./Qwen3.5-0.8B-MNN
+```
 
-- keep llama.cpp JNI backends as-is
-- add one unified bridge facade that can dispatch to:
-  - `llama-jni`
-  - `mtmd-jni`
-  - `omniinfer-native-jni`
-- keep `libomniinfer-native-jni.so` and QNN runtime files out of Git if they are regenerated locally
+MNN models are directories. Pass the absolute path to `config.json` when calling `init()`.
 
-## Validation notes
+### Push to device
 
-The generated runtime bundle has been validated on-device by:
+For development and testing:
 
-1. pushing the generated `runtime/` tree to Android
-2. selecting `omniinfer-native`
-3. loading a `hybrid_llama_qnn.pte` package
-4. running text inference successfully through the generated runtime assets
+```bash
+adb push model.gguf /data/local/tmp/
+adb push Qwen3.5-0.8B-MNN/ /data/local/tmp/Qwen3.5-0.8B-MNN/
+```
 
-Multimodal ExecuTorch/QNN packaging is supported by the generator and runtime layout, but validation still depends on having an actual `qnn_multimodal_runner` bundle and matching multimodal `.pte` artifacts available.
+In production, download models to `context.filesDir` or `context.getExternalFilesDir()`.
+
+## Performance Reference
+
+Tested on Qualcomm Snapdragon 8 Gen 3, Qwen3.5-0.8B:
+
+| Backend | Model Format | Prefill | Decode |
+|---------|-------------|---------|--------|
+| llama.cpp | Q4_K_M GGUF | - | ~1.3 tps |
+| mnn | MNN | ~73 tps | ~17 tps |
+
+MNN significantly outperforms llama.cpp on mobile devices. Use MNN for best inference speed.
+
+## Thread Safety
+
+- Different handles can be used concurrently from different threads.
+- Do not call `generate()` concurrently on the same handle.
+- `cancel()` is safe to call from any thread.
+- Run inference methods on `Dispatchers.IO` to avoid blocking the UI thread.
+
+## Architecture
+
+The JNI Bridge uses `RegisterNatives` for dynamic JNI method registration, decoupling C++ code from Java package names. You can regenerate with a different `--package` and `--class` without modifying app code.
+
+```
+Kotlin (OmniInferBridge)
+    ↓ RegisterNatives
+JNI C++ (omniinfer_jni.cpp)
+    ↓ InferenceBackend interface
+    ├── LlamaCppBackend  →  llama.cpp C API (statically linked)
+    └── MnnBackend       →  MNN Llm C++ API (statically linked)
+```
+
+Both backends are **statically linked** into a single `libomniinfer-jni.so`. The final APK contains only this one native library with zero external dependencies.
+
+## Troubleshooting
+
+**`isRuntimeAvailable()` returns false**
+
+Missing `externalNativeBuild` config in `build.gradle.kts`, or NDK not installed.
+
+**`init()` returns 0**
+
+Check model path (must be absolute) and file permissions. Inspect logcat:
+
+```bash
+adb logcat -s OmniInferJni
+```
+
+**MNN build fails**
+
+Ensure submodule is initialized (`git submodule update --init framework/mnn`) and `-DOMNIINFER_BACKEND_MNN=ON` is set in `build.gradle.kts`.
+
+**Slow first build**
+
+Normal. Compiling llama.cpp and MNN C++ sources takes ~1-2 minutes. Subsequent Kotlin-only changes do not trigger native recompilation.
