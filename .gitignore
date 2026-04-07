@@ -35,3 +35,8 @@ tmp_gateway_*.log
 release.zip
 
 /release
+# Android build artifacts
+android/omniinfer-server/.cxx/
+android/omniinfer-server/build/
+*.aar
+local.properties

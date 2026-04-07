@@ -67,7 +67,7 @@ jstring StdStringToJString(JNIEnv* env, const std::string& value) {
   size_t i = 0;
   while (i < value.size()) {
     unsigned char c = static_cast<unsigned char>(value[i]);
-    if (c == 0) { break; }
+    if (c == 0) { break; } // Null byte terminates — JNI Modified UTF-8 encodes null differently.
     if (c < 0x80) { safe.push_back(value[i]); i++; }
     else if ((c & 0xE0) == 0xC0) {
       if (i + 1 < value.size() && (static_cast<unsigned char>(value[i+1]) & 0xC0) == 0x80) {
@@ -81,6 +81,8 @@ jstring StdStringToJString(JNIEnv* env, const std::string& value) {
       } else { safe.push_back('?'); i++; }
     }
     else if ((c & 0xF8) == 0xF0) {
+      // 4-byte UTF-8: JNI Modified UTF-8 doesn't support 4-byte sequences directly,
+      // but NewStringUTF on most Android VMs handles them. Pass through.
       if (i + 3 < value.size() && (static_cast<unsigned char>(value[i+1]) & 0xC0) == 0x80
           && (static_cast<unsigned char>(value[i+2]) & 0xC0) == 0x80
           && (static_cast<unsigned char>(value[i+3]) & 0xC0) == 0x80) {
@@ -337,7 +339,7 @@ JNINativeMethod kMethods[] = {
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
   JNIEnv* env = nullptr;
   if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK || !env) return JNI_ERR;
-  jclass bridge_class = env->FindClass("__BRIDGE_CLASS_SLASH__");
+  jclass bridge_class = env->FindClass("com/omniinfer/server/OmniInferBridge");
   if (!bridge_class) { LogPrint(ANDROID_LOG_ERROR, "Failed to resolve JNI bridge class."); return JNI_ERR; }
   if (env->RegisterNatives(bridge_class, kMethods, sizeof(kMethods) / sizeof(kMethods[0])) != JNI_OK) {
     env->DeleteLocalRef(bridge_class);
