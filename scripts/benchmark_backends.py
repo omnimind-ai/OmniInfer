@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mlx-model", help="Model directory used for mlx-mac")
     parser.add_argument("--mnn-model", help="Model directory or config.json used for mnn-linux")
     parser.add_argument("--mmproj", help="Optional mmproj file used for GGUF multimodal backends")
+    parser.add_argument("--ctx-size", type=int, help="Optional llama.cpp context override used when loading GGUF backends")
     parser.add_argument("--image", help="Optional image path used for multimodal benchmark requests")
     parser.add_argument(
         "--prompt",
@@ -218,6 +219,8 @@ def benchmark_backend(args: argparse.Namespace, backend_id: str, base_url: str) 
         load_args = ["model", "load", "-m", model_path]
         if mmproj_path:
             load_args.extend(["-mm", mmproj_path])
+        if args.ctx_size and backend_id not in {"mlx-mac", "mnn-linux"}:
+            load_args.extend(["--ctx-size", str(args.ctx_size)])
         require_cli_success(run_cli(args.cli_command, *load_args), f"load model for {backend_id}")
 
     load_backend_model()
