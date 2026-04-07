@@ -1,0 +1,152 @@
+package __BRIDGE_PACKAGE__
+
+import android.util.Log
+import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
+
+object __BRIDGE_CLASS__ {
+    private const val TAG = "__BRIDGE_CLASS__"
+    private const val LIB_NAME = "__LIB_NAME__"
+    private val thinkModes = ConcurrentHashMap<Long, Boolean>()
+
+    private val isNativeLibraryLoaded: Boolean by lazy {
+        runCatching {
+            System.loadLibrary(LIB_NAME)
+            true
+        }.getOrElse { error ->
+            Log.w(TAG, "Failed to load $LIB_NAME: ${error.message}")
+            false
+        }
+    }
+
+    fun isRuntimeAvailable(): Boolean = isNativeLibraryLoaded
+
+    fun init(
+        modelPath: String,
+        backend: String = "llama.cpp",
+        nThreads: Int = 4,
+        nCtx: Int = 4096
+    ): Long {
+        if (!isNativeLibraryLoaded) return 0L
+        val nativeLibDir = resolveNativeLibDir()
+        val configJson = JSONObject()
+            .put("backend", backend)
+            .put("model_path", modelPath)
+            .put("native_lib_dir", nativeLibDir)
+            .put("n_threads", nThreads)
+            .put("n_ctx", nCtx)
+        val handle = nativeInit(configJson.toString())
+        if (handle != 0L) {
+            thinkModes[handle] = false
+        }
+        return handle
+    }
+
+    fun generate(
+        handle: Long,
+        systemPrompt: String?,
+        prompt: String,
+        imageData: ByteArray? = null,
+        nThreads: Int = 4,
+        thinkEnabled: Boolean = false,
+        callback: Any? = null
+    ): String {
+        if (!isNativeLibraryLoaded) return ""
+        val requestJson = JSONObject()
+            .put("n_threads", nThreads)
+            .put("thinking_enabled", thinkModes[handle] ?: thinkEnabled)
+            .toString()
+        return nativeGenerate(
+            handle = handle,
+            systemPrompt = systemPrompt,
+            prompt = prompt,
+            requestJson = requestJson,
+            imageData = imageData,
+            callback = callback
+        )
+    }
+
+    fun loadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean {
+        if (!isNativeLibraryLoaded) return false
+        return nativeLoadHistory(handle, roles, contents)
+    }
+
+    fun prewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int = 4): Boolean {
+        if (!isNativeLibraryLoaded) return false
+        return nativePrewarmImage(handle, imageData, nThreads)
+    }
+
+    fun setThinkMode(handle: Long, enabled: Boolean) {
+        if (!isNativeLibraryLoaded) return
+        thinkModes[handle] = enabled
+        nativeSetThinkMode(handle, enabled)
+    }
+
+    fun reset(handle: Long) {
+        if (!isNativeLibraryLoaded) return
+        nativeReset(handle)
+    }
+
+    fun cancel(handle: Long) {
+        if (!isNativeLibraryLoaded) return
+        nativeCancel(handle)
+    }
+
+    fun free(handle: Long) {
+        if (!isNativeLibraryLoaded) return
+        thinkModes.remove(handle)
+        nativeFree(handle)
+    }
+
+    fun collectDiagnostics(handle: Long): Map<String, String> {
+        if (!isNativeLibraryLoaded) return emptyMap()
+        val json = runCatching { JSONObject(nativeCollectDiagnosticsJson(handle)) }.getOrNull() ?: return emptyMap()
+        return buildMap {
+            json.keys().forEach { key ->
+                put(key, json.optString(key))
+            }
+        }
+    }
+
+    private fun resolveNativeLibDir(): String {
+        val context = resolveApplicationContext()
+        return context.applicationInfo.nativeLibraryDir
+    }
+
+    private fun resolveApplicationContext(): android.content.Context {
+        val application = runCatching {
+            val clazz = Class.forName("android.app.ActivityThread")
+            val method = clazz.getDeclaredMethod("currentApplication")
+            method.isAccessible = true
+            method.invoke(null) as? android.app.Application
+        }.getOrNull()
+        return requireNotNull(application?.applicationContext) {
+            "Unable to resolve Android application context."
+        }
+    }
+
+    private external fun nativeInit(configJson: String): Long
+
+    private external fun nativeGenerate(
+        handle: Long,
+        systemPrompt: String?,
+        prompt: String,
+        requestJson: String,
+        imageData: ByteArray?,
+        callback: Any?
+    ): String
+
+    private external fun nativeLoadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean
+
+    private external fun nativePrewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int): Boolean
+
+    private external fun nativeSetThinkMode(handle: Long, enabled: Boolean)
+
+    private external fun nativeReset(handle: Long)
+
+    private external fun nativeCancel(handle: Long)
+
+    private external fun nativeFree(handle: Long)
+
+    private external fun nativeCollectDiagnosticsJson(handle: Long): String
+}
