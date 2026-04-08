@@ -114,6 +114,10 @@ class OmniInferService : Service() {
         }
         val stream = req["stream"]?.jsonPrimitive?.booleanOrNull ?: false
 
+        // reasoning_effort: "none" disables thinking, anything else enables it.
+        val reasoningEffort = req["reasoning_effort"]?.jsonPrimitive?.contentOrNull
+        val thinkEnabled = reasoningEffort == null || reasoningEffort != "none"
+
         // Extract system prompt and last user message.
         var systemPrompt: String? = null
         var userPrompt = ""
@@ -146,6 +150,7 @@ class OmniInferService : Service() {
                     handle = handle,
                     systemPrompt = systemPrompt,
                     prompt = userPrompt,
+                    thinkEnabled = thinkEnabled,
                     callback = object {
                         @Suppress("unused")
                         fun onToken(token: String) {
@@ -180,6 +185,7 @@ class OmniInferService : Service() {
                 handle = handle,
                 systemPrompt = systemPrompt,
                 prompt = userPrompt,
+                thinkEnabled = thinkEnabled,
                 callback = object {
                     @Suppress("unused")
                     fun onMetrics(metrics: String) {

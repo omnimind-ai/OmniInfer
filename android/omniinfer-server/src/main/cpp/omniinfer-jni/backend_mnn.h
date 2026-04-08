@@ -35,13 +35,18 @@ public:
   std::string generate(
       const std::string& system_prompt,
       const std::string& user_prompt,
-      bool /*thinking_enabled*/,
+      bool thinking_enabled,
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token) override {
 
     using ChatMessages = MNN::Transformer::ChatMessages;
     ChatMessages msgs;
-    if (!system_prompt.empty()) msgs.push_back({"system", system_prompt});
+    // For MNN models (e.g. Qwen3.5), thinking mode is controlled via system prompt.
+    std::string sys = system_prompt;
+    if (!thinking_enabled) {
+      sys = (sys.empty() ? "/no_think" : sys + "\n/no_think");
+    }
+    if (!sys.empty()) msgs.push_back({"system", sys});
     for (auto& m : history_) msgs.push_back({m.first, m.second});
     msgs.push_back({"user", user_prompt});
 
@@ -61,14 +66,21 @@ public:
     int max_tokens = 2048;
     size_t prev_len = 0;
 
-    // If the chat template ends with a thinking start tag (e.g. Qwen3.5 "<think>\n"),
-    // it is part of the input prompt, not the output. Prepend it for a complete block.
-    {
-      const std::string think_tag = "<think>";
-      auto pos = formatted.rfind(think_tag);
-      if (pos != std::string::npos && pos >= formatted.size() - think_tag.size() - 2) {
-        full_response += think_tag + "\n";
-        if (on_token) on_token(think_tag + "\n");
+    // The chat template's generation prompt may end with a thinking start tag
+    // (e.g. "<think>\n") that is consumed during prefill. Detect it dynamically
+    // and prepend it to the output so the client sees a complete block.
+    // Only match simple XML-style tags (no '|' inside) to avoid chat control tokens.
+    if (thinking_enabled) {
+      auto end = formatted.find_last_not_of(" \t\n\r");
+      if (end != std::string::npos && formatted[end] == '>') {
+        auto lt = formatted.rfind('<', end);
+        if (lt != std::string::npos && end - lt >= 3) {
+          std::string tag = formatted.substr(lt, end - lt + 1);
+          if (tag[1] != '/' && tag.find('|') == std::string::npos) {
+            full_response += tag + "\n";
+            if (on_token) on_token(tag + "\n");
+          }
+        }
       }
     }
 
