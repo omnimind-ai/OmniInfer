@@ -89,7 +89,11 @@ object OmniInferServer {
             val intent = Intent(ctx, OmniInferService::class.java).apply {
                 putExtra("port", port)
             }
-            ctx.startService(intent)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
             serverRunning = true
         }
 
