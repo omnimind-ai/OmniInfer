@@ -232,7 +232,7 @@
         <mxCell id="plat_linux_title" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=14;fontColor=#503572;" value="&lt;b&gt;Linux&lt;/b&gt;" vertex="1">
           <mxGeometry height="20" width="80" x="112" y="618" as="geometry" />
         </mxCell>
-        <mxCell id="plat_linux_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="llama.cpp-cpu / llama.cpp-cuda / llama.cpp-rocm&lt;br&gt;llama.cpp-vulkan / llama.cpp-sycl / llama.cpp-omni" vertex="1">
+        <mxCell id="plat_linux_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="llama.cpp-cpu / llama.cpp-cuda / llama.cpp-rocm&lt;br&gt;llama.cpp-vulkan / llama.cpp-sycl / OmniInfer-Native" vertex="1">
           <mxGeometry height="30" width="275" x="112" y="646" as="geometry" />
         </mxCell>
         <mxCell id="plat_win_card" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D9D0EB;strokeWidth=1;shadow=1;arcSize=14;" value="" vertex="1">
@@ -244,7 +244,7 @@
         <mxCell id="plat_win_title" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=14;fontColor=#503572;" value="&lt;b&gt;Windows&lt;/b&gt;" vertex="1">
           <mxGeometry height="20" width="90" x="445" y="618" as="geometry" />
         </mxCell>
-        <mxCell id="plat_win_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="llama.cpp-cpu / llama.cpp-cuda&lt;br&gt;llama.cpp-vulkan" vertex="1">
+        <mxCell id="plat_win_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="llama.cpp-cpu / llama.cpp-cuda&lt;br&gt;llama.cpp-vulkan / OmniInfer-Native" vertex="1">
           <mxGeometry height="30" width="250" x="445" y="646" as="geometry" />
         </mxCell>
         <mxCell id="plat_mac_card" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D9D0EB;strokeWidth=1;shadow=1;arcSize=14;" value="" vertex="1">
@@ -256,7 +256,7 @@
         <mxCell id="plat_mac_title" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=14;fontColor=#503572;" value="&lt;b&gt;macOS&lt;/b&gt;" vertex="1">
           <mxGeometry height="20" width="80" x="778" y="618" as="geometry" />
         </mxCell>
-        <mxCell id="plat_mac_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="llama.cpp-metal / mlx-mac&lt;br&gt;turboquant-mac" vertex="1">
+        <mxCell id="plat_mac_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="llama.cpp-metal / mlx-mac&lt;br&gt;turboquant-mac / OmniInfer-Native" vertex="1">
           <mxGeometry height="30" width="250" x="778" y="646" as="geometry" />
         </mxCell>
         <mxCell id="plat_android_card" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D9D0EB;strokeWidth=1;shadow=1;arcSize=14;" value="" vertex="1">
@@ -293,43 +293,55 @@
           <mxGeometry height="22" width="515" x="295" y="755" as="geometry" />
         </mxCell>
         <mxCell id="eng_llama_card" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D9D0EB;strokeWidth=1;shadow=1;arcSize=14;" value="" vertex="1">
-          <mxGeometry height="110" width="760" x="90" y="805" as="geometry" />
+          <mxGeometry height="110" width="620" x="90" y="805" as="geometry" />
         </mxCell>
         <mxCell id="eng_llama_strip" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#8B5CF6;strokeColor=none;arcSize=20;" value="" vertex="1">
           <mxGeometry height="110" width="8" x="90" y="805" as="geometry" />
         </mxCell>
-        <mxCell id="eng_llama_title" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=14;fontColor=#503572;" value="&lt;b&gt;llama.cpp-omni&lt;/b&gt;" vertex="1">
-          <mxGeometry height="20" width="180" x="112" y="818" as="geometry" />
+        <mxCell id="eng_llama_title" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=14;fontColor=#503572;" value="&lt;b&gt;OmniInfer-Native&lt;/b&gt;" vertex="1">
+          <mxGeometry height="20" width="220" x="112" y="818" as="geometry" />
         </mxCell>
         <mxCell id="eng_llama_tag" parent="1" style="label;fontStyle=1;fontSize=8;fontColor=#FFFFFF;fillColor=#8B5CF6;rounded=1;arcSize=40;strokeColor=none;spacingLeft=6;spacingRight=6;" value="SELF-DEV" vertex="1">
-          <mxGeometry height="20" width="74" x="262" y="820" as="geometry" />
+          <mxGeometry height="20" width="74" x="288" y="820" as="geometry" />
         </mxCell>
-        <mxCell id="eng_llama_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="llama.cpp-omni is OmniInfer&#39;s self-developed framework built on llama.cpp.&lt;br&gt;Optimized for &lt;b&gt;lower latency&lt;/b&gt;, &lt;b&gt;higher throughput&lt;/b&gt;, and stable long-running local service workloads.&lt;br&gt;Includes &lt;b&gt;TurboQuant-style optimization&lt;/b&gt; work alongside CPU, CUDA, Vulkan, ROCm, Metal, SYCL, and multimodal GGUF support." vertex="1">
-          <mxGeometry height="50" width="700" x="112" y="846" as="geometry" />
+        <mxCell id="eng_llama_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="Unified self-developed framework based on llama.cpp.&lt;br&gt;Cross-platform with Eagle3 and TurboQuant optimization.&lt;br&gt;On Qualcomm Android, ViT stays in llama.cpp NPU path and LLM decoding runs in ExecuTorch." vertex="1">
+          <mxGeometry height="50" width="560" x="112" y="846" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_llamacpp_card" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D9D0EB;strokeWidth=1;shadow=1;arcSize=14;" value="" vertex="1">
+          <mxGeometry height="90" width="190" x="730" y="805" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_llamacpp_strip" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#8B5CF6;strokeColor=none;arcSize=20;" value="" vertex="1">
+          <mxGeometry height="90" width="8" x="730" y="805" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_llamacpp_title" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=14;fontColor=#503572;" value="&lt;b&gt;llama.cpp&lt;/b&gt;" vertex="1">
+          <mxGeometry height="20" width="100" x="752" y="818" as="geometry" />
+        </mxCell>
+        <mxCell id="eng_llamacpp_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="Open-source baseline backend&lt;br&gt;CPU / CUDA / Vulkan / Metal" vertex="1">
+          <mxGeometry height="30" width="150" x="752" y="846" as="geometry" />
         </mxCell>
         <mxCell id="eng_mnn_card" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D9D0EB;strokeWidth=1;shadow=1;arcSize=14;" value="" vertex="1">
-          <mxGeometry height="90" width="220" x="880" y="805" as="geometry" />
+          <mxGeometry height="90" width="200" x="940" y="805" as="geometry" />
         </mxCell>
         <mxCell id="eng_mnn_strip" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#8B5CF6;strokeColor=none;arcSize=20;" value="" vertex="1">
-          <mxGeometry height="90" width="8" x="880" y="805" as="geometry" />
+          <mxGeometry height="90" width="8" x="940" y="805" as="geometry" />
         </mxCell>
         <mxCell id="eng_mnn_title" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=14;fontColor=#503572;" value="&lt;b&gt;MNN&lt;/b&gt;" vertex="1">
-          <mxGeometry height="20" width="60" x="902" y="818" as="geometry" />
+          <mxGeometry height="20" width="60" x="962" y="818" as="geometry" />
         </mxCell>
         <mxCell id="eng_mnn_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="Android-focused backend&lt;br&gt;efficient local streaming" vertex="1">
-          <mxGeometry height="30" width="170" x="902" y="846" as="geometry" />
+          <mxGeometry height="30" width="150" x="962" y="846" as="geometry" />
         </mxCell>
         <mxCell id="eng_mlx_card" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D9D0EB;strokeWidth=1;shadow=1;arcSize=14;" value="" vertex="1">
-          <mxGeometry height="90" width="280" x="1130" y="805" as="geometry" />
+          <mxGeometry height="90" width="250" x="1160" y="805" as="geometry" />
         </mxCell>
         <mxCell id="eng_mlx_strip" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#8B5CF6;strokeColor=none;arcSize=20;" value="" vertex="1">
-          <mxGeometry height="90" width="8" x="1130" y="805" as="geometry" />
+          <mxGeometry height="90" width="8" x="1160" y="805" as="geometry" />
         </mxCell>
         <mxCell id="eng_mlx_title" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=14;fontColor=#503572;" value="&lt;b&gt;MLX&lt;/b&gt;" vertex="1">
-          <mxGeometry height="20" width="60" x="1152" y="818" as="geometry" />
+          <mxGeometry height="20" width="60" x="1182" y="818" as="geometry" />
         </mxCell>
         <mxCell id="eng_mlx_body" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" value="Apple Silicon backend&lt;br&gt;mlx_lm driver path" vertex="1">
-          <mxGeometry height="30" width="180" x="1152" y="846" as="geometry" />
+          <mxGeometry height="30" width="170" x="1182" y="846" as="geometry" />
         </mxCell>
         <mxCell id="flow_4" edge="1" parent="1" style="endArrow=classicThin;html=1;strokeColor=#9483B5;strokeWidth=2;rounded=1;">
           <mxGeometry relative="1" as="geometry">
