@@ -24,6 +24,7 @@ class MnnLoadedModel:
     config_path: str
     model_ref: str
     supports_vision: bool
+    config: dict[str, Any]
     temp_files: list[str] = field(default_factory=list)
 
 
@@ -45,8 +46,9 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         llm_module = self._import_module("MNN.llm")
         cv_module = self._import_module("MNN.cv")
         config_path = self._resolve_config_path(model_path)
+        config = self._load_config(load_options)
         model = llm_module.create(config_path)
-        model.set_config(self._load_config(load_options))
+        model.set_config(config)
         model.load()
         supports_vision = self._config_supports_vision(config_path)
         return MnnLoadedModel(
@@ -55,6 +57,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
             config_path=config_path,
             model_ref=model_ref,
             supports_vision=supports_vision,
+            config=config,
         )
 
     def unload_model(self, state: Any) -> None:
@@ -68,8 +71,9 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
     def chat_completion(self, state: Any, payload: dict[str, Any]) -> dict[str, Any]:
         prompt, prompt_tokens = self._build_prompt(state, payload)
         max_tokens = self._max_tokens(payload)
+        self._configure_generation(state, max_tokens)
         started = time.perf_counter()
-        text = str(state.model.response(prompt, False, max_tokens) or "")
+        text = str(state.model.response(prompt, False) or "")
         elapsed_s = time.perf_counter() - started
         context = state.model.context
         completion_tokens = self._completion_tokens(context, text)
@@ -92,6 +96,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
     def stream_chat_completion(self, state: Any, payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
         prompt, prompt_tokens = self._build_prompt(state, payload)
         max_tokens = self._max_tokens(payload)
+        self._configure_generation(state, max_tokens)
         created = int(time.time())
         request_id = f"chatcmpl-{uuid.uuid4().hex}"
         model_name = str(payload.get("model") or state.model_ref)
@@ -105,7 +110,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
             "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
         }
 
-        text = str(state.model.response(prompt, False, max_tokens) or "")
+        text = str(state.model.response(prompt, False) or "")
         first_token_s: float | None = None
         if text:
             first_token_s = time.perf_counter() - started
@@ -277,6 +282,12 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         except (TypeError, ValueError):
             return 128
         return value if value > 0 else 128
+
+    def _configure_generation(self, state: MnnLoadedModel, max_tokens: int) -> None:
+        next_config = dict(state.config)
+        next_config["max_new_tokens"] = max_tokens
+        state.model.set_config(next_config)
+        state.config = next_config
 
     def _completion_tokens(self, context: Any, text: str) -> int:
         gen_seq_len = int(getattr(context, "gen_seq_len", 0) or 0)

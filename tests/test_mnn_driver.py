@@ -116,6 +116,7 @@ class MnnDriverTests(unittest.TestCase):
 
         self.assertTrue(state.model.loaded)
         self.assertEqual(state.model.config["thread_num"], 12)
+        self.assertEqual(state.model.config["max_new_tokens"], 16)
         self.assertEqual(response["choices"][0]["message"]["content"], "hello world again")
         self.assertEqual(response["usage"]["prompt_tokens"], 6)
         self.assertEqual(response["usage"]["completion_tokens"], 3)
@@ -157,6 +158,7 @@ class MnnDriverTests(unittest.TestCase):
             self.driver.unload_model(state)
 
         self.assertEqual(response["choices"][0]["message"]["content"], "vision answer")
+        self.assertEqual(state.model.config["max_new_tokens"], 24)
         self.assertEqual(response["usage"]["prompt_tokens"], 8)
         self.assertEqual(response["usage"]["completion_tokens"], 2)
         self.assertIn("predicted_per_second", response["timings"])
