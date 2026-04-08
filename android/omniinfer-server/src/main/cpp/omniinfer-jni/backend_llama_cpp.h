@@ -59,33 +59,45 @@ public:
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token) override {
 
-    const bool has_tmpl = common_chat_templates_was_explicit(chat_templates_.get());
+    // Stateless: reset all state at start of each request.
+    cur_pos_ = 0;
+    llama_memory_clear(llama_get_memory(ctx_), false);
+    common_sampler_reset(sampler_);
 
-    // System prompt on first message.
-    if (chat_msgs_.empty() && !system_prompt.empty()) {
-      sys_pos_ = 0; cur_pos_ = 0;
-      llama_memory_clear(llama_get_memory(ctx_), false);
-      std::string formatted = system_prompt;
-      if (has_tmpl) formatted = chat_add_and_format("system", system_prompt);
-      auto toks = common_tokenize(ctx_, formatted, has_tmpl, has_tmpl);
-      if (decode_batched(toks, 0) != 0) return "";
-      sys_pos_ = cur_pos_ = (int)toks.size();
+    // Build full messages vector.
+    std::vector<common_chat_msg> messages;
+    if (!system_prompt.empty()) {
+      common_chat_msg sys_msg;
+      sys_msg.role = "system";
+      sys_msg.content = system_prompt;
+      messages.push_back(std::move(sys_msg));
+    }
+    {
+      common_chat_msg user_msg;
+      user_msg.role = "user";
+      user_msg.content = user_prompt;
+      messages.push_back(std::move(user_msg));
     }
 
-    // User prompt.
-    std::string formatted_user = user_prompt;
-    if (has_tmpl) formatted_user = chat_add_and_format("user", user_prompt);
-    auto user_toks = common_tokenize(ctx_, formatted_user, has_tmpl, has_tmpl);
-    if (decode_batched(user_toks, cur_pos_, true) != 0) return "";
-    cur_pos_ += (int)user_toks.size();
+    // Apply chat template with all messages at once (avoids Qwen3.5 Jinja crash).
+    common_chat_templates_inputs inputs;
+    inputs.messages = messages;
+    inputs.add_generation_prompt = true;
+    inputs.use_jinja = true;
 
-    // Generate.
+    common_chat_params params = common_chat_templates_apply(chat_templates_.get(), inputs);
+
+    // Tokenize the full formatted prompt.
+    auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
+    if (decode_batched(prompt_toks, 0, true) != 0) return "";
+    cur_pos_ = (int)prompt_toks.size();
+
+    // Generate tokens.
     common_sampler_reset(sampler_);
     llama_perf_context_reset(ctx_);
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     std::string full_response;
     std::string utf8_buf;
-    std::ostringstream assistant_ss;
 
     while (!cancelled.load()) {
       if (cur_pos_ >= n_ctx_ - 4) shift_context();
@@ -112,14 +124,17 @@ public:
 
       if (is_valid_utf8(utf8_buf.c_str())) {
         full_response += utf8_buf;
-        assistant_ss << utf8_buf;
         if (on_token && !on_token(utf8_buf)) { cancelled.store(true); break; }
         utf8_buf.clear();
       }
     }
 
-    if (has_tmpl && !full_response.empty()) {
-      chat_add_and_format("assistant", assistant_ss.str());
+    // Strip template-specific stop sequences from output.
+    for (const auto& stop : params.additional_stops) {
+      auto pos = full_response.find(stop);
+      if (pos != std::string::npos) {
+        full_response = full_response.substr(0, pos);
+      }
     }
 
     auto perf = llama_perf_context(ctx_);
@@ -131,24 +146,31 @@ public:
 
   bool load_history(
       const std::vector<std::pair<std::string, std::string>>& messages) override {
-    chat_msgs_.clear();
-    sys_pos_ = 0; cur_pos_ = 0;
+    cur_pos_ = 0;
     llama_memory_clear(llama_get_memory(ctx_), false);
-    const bool has_tmpl = common_chat_templates_was_explicit(chat_templates_.get());
-    for (size_t i = 0; i < messages.size(); i++) {
-      std::string formatted = messages[i].second;
-      if (has_tmpl) formatted = chat_add_and_format(messages[i].first, messages[i].second);
-      auto toks = common_tokenize(ctx_, formatted, has_tmpl, has_tmpl);
-      if (decode_batched(toks, cur_pos_, i == messages.size() - 1) != 0) return false;
-      cur_pos_ += (int)toks.size();
-      if (messages[i].first == "system") sys_pos_ = cur_pos_;
+
+    std::vector<common_chat_msg> msgs;
+    for (const auto& m : messages) {
+      common_chat_msg msg;
+      msg.role = m.first;
+      msg.content = m.second;
+      msgs.push_back(std::move(msg));
     }
+
+    common_chat_templates_inputs inputs;
+    inputs.messages = msgs;
+    inputs.add_generation_prompt = false;
+    inputs.use_jinja = true;
+
+    common_chat_params params = common_chat_templates_apply(chat_templates_.get(), inputs);
+    auto toks = common_tokenize(ctx_, params.prompt, true, true);
+    if (decode_batched(toks, 0) != 0) return false;
+    cur_pos_ = (int)toks.size();
     return true;
   }
 
   void reset() override {
-    chat_msgs_.clear();
-    sys_pos_ = 0; cur_pos_ = 0;
+    cur_pos_ = 0;
     llama_memory_clear(llama_get_memory(ctx_), false);
     common_sampler_reset(sampler_);
   }
@@ -165,18 +187,11 @@ private:
     if (model_) { llama_model_free(model_); model_ = nullptr; }
   }
 
-  std::string chat_add_and_format(const std::string& role, const std::string& content) {
-    common_chat_msg msg; msg.role = role; msg.content = content;
-    auto fmt = common_chat_format_single(chat_templates_.get(), chat_msgs_, msg, role == "user", false);
-    chat_msgs_.push_back(msg);
-    return fmt;
-  }
-
   void shift_context() {
-    int n_discard = (cur_pos_ - sys_pos_) / 2;
+    int n_discard = cur_pos_ / 2;
     if (n_discard <= 0) return;
-    llama_memory_seq_rm(llama_get_memory(ctx_), 0, sys_pos_, sys_pos_ + n_discard);
-    llama_memory_seq_add(llama_get_memory(ctx_), 0, sys_pos_ + n_discard, cur_pos_, -n_discard);
+    llama_memory_seq_rm(llama_get_memory(ctx_), 0, 0, n_discard);
+    llama_memory_seq_add(llama_get_memory(ctx_), 0, n_discard, cur_pos_, -n_discard);
     cur_pos_ -= n_discard;
   }
 
@@ -212,8 +227,6 @@ private:
   common_sampler* sampler_ = nullptr;
   common_chat_templates_ptr chat_templates_;
   llama_batch batch_ = {};
-  std::vector<common_chat_msg> chat_msgs_;
-  llama_pos sys_pos_ = 0;
   llama_pos cur_pos_ = 0;
   int n_ctx_ = 4096;
   InferenceMetrics last_metrics_;

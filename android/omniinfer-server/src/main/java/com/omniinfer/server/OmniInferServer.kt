@@ -48,7 +48,7 @@ object OmniInferServer {
         backend: String = "llama.cpp",
         port: Int = 9099,
         nThreads: Int = 0,
-        nCtx: Int = 4096
+        nCtx: Int = 2048
     ): Boolean {
         val ctx = appContext ?: run {
             Log.e(TAG, "Not initialized. Call init(context) first.")
@@ -89,7 +89,11 @@ object OmniInferServer {
             val intent = Intent(ctx, OmniInferService::class.java).apply {
                 putExtra("port", port)
             }
-            ctx.startService(intent)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
             serverRunning = true
         }
 
