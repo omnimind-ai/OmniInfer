@@ -37,6 +37,13 @@ if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ]; then
     fi
 fi
 
+if [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]; then
+    local_venv_python="$SCRIPT_DIR/.local/runtime/linux/mnn-linux/venv/bin/python3"
+    if [ -x "$local_venv_python" ]; then
+        exec "$local_venv_python" "$SCRIPT_DIR/omniinfer.py" "$@"
+    fi
+fi
+
 if command -v python3 >/dev/null 2>&1; then
     exec python3 "$SCRIPT_DIR/omniinfer.py" "$@"
 fi

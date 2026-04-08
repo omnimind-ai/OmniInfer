@@ -8,6 +8,8 @@ JOBS=""
 CLEAN_BUILD=0
 BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
+USE_NATIVE=0
+ENABLE_LTO=0
 
 usage() {
   cat <<'EOF'
@@ -16,6 +18,9 @@ Usage: build-llama-linux.sh [options]
 Options:
   --build-type <type>  CMake build type, default: Release
   --jobs <n>           Parallel build jobs, default: nproc
+  --native             Optimize for the current host CPU
+  --portable           Disable host-specific CPU tuning (default)
+  --lto                Enable link-time optimization
   --clean              Remove the previous build directory before configuring
   --no-bootstrap       Do not auto-initialize the llama.cpp git submodule
   --smoke-test         Run `llama-server --version` after the build completes
@@ -33,6 +38,18 @@ while (($# > 0)); do
     --jobs)
       JOBS="${2:?missing value for --jobs}"
       shift 2
+      ;;
+    --native)
+      USE_NATIVE=1
+      shift
+      ;;
+    --portable)
+      USE_NATIVE=0
+      shift
+      ;;
+    --lto)
+      ENABLE_LTO=1
+      shift
       ;;
     --clean)
       CLEAN_BUILD=1
@@ -142,7 +159,8 @@ CONFIGURE_ARGS=(
   -DLLAMA_BUILD_EXAMPLES=OFF
   -DLLAMA_BUILD_SERVER=ON
   -DLLAMA_OPENSSL=OFF
-  -DGGML_NATIVE=OFF
+  -DGGML_NATIVE=$( [[ ${USE_NATIVE} -eq 1 ]] && printf 'ON' || printf 'OFF' )
+  -DGGML_LTO=$( [[ ${ENABLE_LTO} -eq 1 ]] && printf 'ON' || printf 'OFF' )
 )
 
 if command -v ninja >/dev/null 2>&1; then
@@ -153,6 +171,8 @@ echo "Configuring llama.cpp Linux CPU build..."
 echo "  cmake ${CONFIGURE_ARGS[*]}"
 echo "Building llama-server..."
 echo "  cmake --build ${BUILD_ROOT} --target llama-server --config ${BUILD_TYPE} -j ${JOBS}"
+echo "CPU tuning mode: $( [[ ${USE_NATIVE} -eq 1 ]] && printf 'native' || printf 'portable' )"
+echo "Link-time optimization: $( [[ ${ENABLE_LTO} -eq 1 ]] && printf 'enabled' || printf 'disabled' )"
 if [[ ${CLEAN_BUILD} -eq 1 ]]; then
   echo "Cleaning previous build directory: ${BUILD_ROOT}"
 fi

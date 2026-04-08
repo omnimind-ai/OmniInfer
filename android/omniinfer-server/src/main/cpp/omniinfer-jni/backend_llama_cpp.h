@@ -7,8 +7,8 @@
 #include "chat.h"
 #include "sampling.h"
 
+#include <chrono>
 #include <unistd.h>
-#include <sstream>
 
 namespace omniinfer {
 
@@ -89,15 +89,19 @@ public:
 
     // Tokenize the full formatted prompt.
     auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
+
+    auto t_prefill_start = std::chrono::steady_clock::now();
     if (decode_batched(prompt_toks, 0, true) != 0) return "";
+    auto t_prefill_end = std::chrono::steady_clock::now();
+    int64_t prefill_us = std::chrono::duration_cast<std::chrono::microseconds>(t_prefill_end - t_prefill_start).count();
     cur_pos_ = (int)prompt_toks.size();
 
     // Generate tokens.
     common_sampler_reset(sampler_);
-    llama_perf_context_reset(ctx_);
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     std::string full_response;
     std::string utf8_buf;
+    auto t_decode_start = std::chrono::steady_clock::now();
 
     while (!cancelled.load()) {
       if (cur_pos_ >= n_ctx_ - 4) shift_context();
@@ -137,10 +141,11 @@ public:
       }
     }
 
-    auto perf = llama_perf_context(ctx_);
-    last_metrics_ = {perf.n_p_eval, perf.n_eval,
-                     (int64_t)(perf.t_p_eval_ms * 1000),
-                     (int64_t)(perf.t_eval_ms * 1000)};
+    auto t_decode_end = std::chrono::steady_clock::now();
+    int64_t decode_us = std::chrono::duration_cast<std::chrono::microseconds>(t_decode_end - t_decode_start).count();
+    int n_prompt = (int)prompt_toks.size();
+    int n_generated = cur_pos_ - n_prompt;
+    last_metrics_ = {n_prompt, n_generated, prefill_us, decode_us};
     return full_response;
   }
 

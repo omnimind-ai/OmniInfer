@@ -35,8 +35,10 @@ android {
     }
 
     // Shorten .cxx build path on Windows to avoid MAX_PATH (260 char) limit.
-    // Host projects on Windows should set android.externalNativeBuild.buildStagingDirectory
-    // to a short path (e.g. C:/tmp/.cxx) if they encounter path-length build failures.
+    if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
+        externalNativeBuild.cmake.buildStagingDirectory =
+            file("${System.getenv("TEMP") ?: "C:/tmp"}/.cxx/omniinfer")
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
