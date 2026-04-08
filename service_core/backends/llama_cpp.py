@@ -142,6 +142,17 @@ LINUX_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
         env_prefix="OMNIINFER_LLAMA_CPP_LINUX_S390X",
     ),
     BackendTemplate(
+        id="llama.cpp-linux-omni",
+        label="llama.cpp Linux EAGLE3",
+        family="llama.cpp",
+        runtime_dir_name="llama.cpp-linux-omni",
+        launcher_name="llama-server",
+        description="llama.cpp Linux EAGLE3 (omni) backend managed by OmniInfer",
+        capabilities=("chat", "vision", "stream", "gpu", "vulkan", "linux", "eagle3"),
+        env_prefix="OMNIINFER_LLAMA_CPP_LINUX_OMNI",
+        default_ngl="999",
+    ),
+    BackendTemplate(
         id="llama.cpp-linux-openvino",
         label="llama.cpp Linux OpenVINO",
         family="llama.cpp",
