@@ -55,7 +55,7 @@ public:
   std::string generate(
       const std::string& system_prompt,
       const std::string& user_prompt,
-      bool /*thinking_enabled*/,
+      bool thinking_enabled,
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token) override {
 
@@ -84,6 +84,7 @@ public:
     inputs.messages = messages;
     inputs.add_generation_prompt = true;
     inputs.use_jinja = true;
+    inputs.enable_thinking = thinking_enabled;
 
     common_chat_params params = common_chat_templates_apply(chat_templates_.get(), inputs);
 
