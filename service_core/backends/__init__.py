@@ -6,6 +6,7 @@ from service_core.backends.llama_cpp import (
     WINDOWS_LLAMA_CPP_TEMPLATES,
 )
 from service_core.backends.mlx import MAC_MLX_TEMPLATES
+from service_core.backends.mnn import LINUX_MNN_TEMPLATES
 from service_core.backends.turboquant import MAC_TURBOQUANT_TEMPLATES
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "MAC_TURBOQUANT_TEMPLATES",
     "MAC_MLX_TEMPLATES",
     "LINUX_LLAMA_CPP_TEMPLATES",
+    "LINUX_MNN_TEMPLATES",
 ]

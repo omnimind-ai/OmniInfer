@@ -305,6 +305,7 @@ class RuntimeManager:
             model_ref=model_ref,
             mmproj_path=mmproj_path,
             ctx_size=ctx_size,
+            load_options=dict(request_defaults or {}),
         )
         runtime = LoadedRuntime(
             backend_id=backend.id,
