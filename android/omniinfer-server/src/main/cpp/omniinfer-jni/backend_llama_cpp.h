@@ -101,6 +101,15 @@ public:
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     std::string full_response;
     std::string utf8_buf;
+
+    // If template supports thinking, the generation prompt includes <think> but it
+    // is part of the input (prefill), not the output. Prepend it so the client sees
+    // a complete <think>...</think> block.
+    if (params.supports_thinking && !params.thinking_start_tag.empty()) {
+      full_response += params.thinking_start_tag;
+      if (on_token) on_token(params.thinking_start_tag);
+    }
+
     auto t_decode_start = std::chrono::steady_clock::now();
 
     while (!cancelled.load()) {
