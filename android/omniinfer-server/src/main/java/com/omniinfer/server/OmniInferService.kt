@@ -137,6 +137,9 @@ class OmniInferService : Service() {
             return
         }
 
+        // Shared metrics holder — filled by onMetrics callback from JNI.
+        var metricsStr: String? = null
+
         if (stream) {
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 OmniInferBridge.generate(
@@ -160,8 +163,15 @@ class OmniInferService : Service() {
                                 flush()
                             }
                         }
+                        @Suppress("unused")
+                        fun onMetrics(metrics: String) {
+                            metricsStr = metrics
+                        }
                     }
                 )
+                // Final chunk with usage and performance data.
+                val finalChunk = buildUsageChunk(handle, metricsStr)
+                write("data: $finalChunk\n\n")
                 write("data: [DONE]\n\n")
                 flush()
             }
@@ -169,7 +179,13 @@ class OmniInferService : Service() {
             val result = OmniInferBridge.generate(
                 handle = handle,
                 systemPrompt = systemPrompt,
-                prompt = userPrompt
+                prompt = userPrompt,
+                callback = object {
+                    @Suppress("unused")
+                    fun onMetrics(metrics: String) {
+                        metricsStr = metrics
+                    }
+                }
             )
             val resp = buildJsonObject {
                 put("object", "chat.completion")
@@ -183,8 +199,55 @@ class OmniInferService : Service() {
                         put("finish_reason", "stop")
                     }
                 }
+                buildUsageObject(handle, metricsStr)?.let { put("usage", it) }
             }
             call.respondText(resp.toString(), ContentType.Application.Json)
+        }
+    }
+
+    /**
+     * Parse "prefill_tps=123.4, decode_tps=22.7" into a map.
+     */
+    private fun parseMetrics(raw: String?): Map<String, Double> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return raw.split(",").mapNotNull { part ->
+            val kv = part.trim().split("=", limit = 2)
+            if (kv.size == 2) kv[0].trim() to (kv[1].trim().toDoubleOrNull() ?: 0.0) else null
+        }.toMap()
+    }
+
+    /**
+     * Build a usage JsonObject from diagnostics + metrics.
+     */
+    private fun buildUsageObject(handle: Long, metricsStr: String?): JsonObject? {
+        val diag = OmniInferBridge.collectDiagnostics(handle)
+        val metrics = parseMetrics(metricsStr)
+        val promptTokens = diag["prompt_tokens"]?.toIntOrNull() ?: 0
+        val completionTokens = diag["generated_tokens"]?.toIntOrNull() ?: 0
+        if (promptTokens == 0 && completionTokens == 0) return null
+        return buildJsonObject {
+            put("prompt_tokens", promptTokens)
+            put("completion_tokens", completionTokens)
+            put("total_tokens", promptTokens + completionTokens)
+            metrics["prefill_tps"]?.let { put("prefill_tokens_per_second", "%.1f".format(it).toDouble()) }
+            metrics["decode_tps"]?.let { put("decode_tokens_per_second", "%.1f".format(it).toDouble()) }
+        }
+    }
+
+    /**
+     * Build a final SSE chunk with finish_reason=stop and usage data (OpenAI streaming convention).
+     */
+    private fun buildUsageChunk(handle: Long, metricsStr: String?): JsonObject {
+        return buildJsonObject {
+            put("object", "chat.completion.chunk")
+            putJsonArray("choices") {
+                addJsonObject {
+                    putJsonObject("delta") {}
+                    put("index", 0)
+                    put("finish_reason", "stop")
+                }
+            }
+            buildUsageObject(handle, metricsStr)?.let { put("usage", it) }
         }
     }
 
