@@ -248,8 +248,13 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         try:
             payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return False
-        return bool(payload.get("is_visual"))
+            payload = {}
+        if payload.get("is_visual"):
+            return True
+        config_file = Path(config_path)
+        if (config_file.parent / "visual.mnn").is_file():
+            return True
+        return isinstance(payload.get("mllm"), dict)
 
     def _resolve_config_path(self, model_path: str) -> str:
         path = Path(model_path).expanduser().resolve()

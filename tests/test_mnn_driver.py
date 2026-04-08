@@ -87,11 +87,13 @@ class MnnDriverTests(unittest.TestCase):
             "MNN.cv": fake_cv,
         }
 
-    def _write_model_dir(self, *, vision: bool) -> str:
+    def _write_model_dir(self, *, vision: bool, visual_asset: bool = False) -> str:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         config = {"is_visual": vision}
         Path(tmpdir.name, "config.json").write_text(json.dumps(config), encoding="utf-8")
+        if visual_asset:
+            Path(tmpdir.name, "visual.mnn").write_text("", encoding="utf-8")
         return tmpdir.name
 
     def test_text_chat_completion_and_streaming(self) -> None:
@@ -198,3 +200,34 @@ class MnnDriverTests(unittest.TestCase):
                         ]
                     },
                 )
+
+    def test_visual_asset_enables_image_inputs(self) -> None:
+        model_dir = self._write_model_dir(vision=False, visual_asset=True)
+        fake_cv = FakeCvModule()
+        image_url = "data:image/png;base64," + base64.b64encode(b"fake-png-bytes").decode("ascii")
+
+        with patch.dict(sys.modules, self._fake_modules(fake_cv), clear=False):
+            state = self.driver.load_model(
+                model_path=model_dir,
+                model_ref="asset-demo",
+                mmproj_path=None,
+                ctx_size=None,
+            )
+            response = self.driver.chat_completion(
+                state,
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "describe"},
+                                {"type": "image_url", "image_url": {"url": image_url}},
+                            ],
+                        }
+                    ],
+                    "max_tokens": 12,
+                },
+            )
+
+        self.assertEqual(response["choices"][0]["message"]["content"], "vision answer")
+        self.assertEqual(len(fake_cv.loaded_paths), 1)
