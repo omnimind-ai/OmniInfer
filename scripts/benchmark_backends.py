@@ -306,7 +306,7 @@ def benchmark_backend(args: argparse.Namespace, backend_id: str, base_url: str) 
 
 
 def print_summary(results: list[dict[str, Any]]) -> None:
-    print("Backend\tPrefill tok/s\tPrompt ms\tDecode tok/s\tPrompt tokens\tCompletion tokens\tRSS loaded MB\tRSS after MB")
+    print("Backend\tPrefill tok/s\tPrompt ms\tDecode tok/s\tPeak GB\tPrompt tokens\tCompletion tokens\tRSS loaded MB\tRSS after MB")
     for result in results:
         last_run = result["runs"][-1] if result["runs"] else {}
         usage = last_run.get("usage") if isinstance(last_run.get("usage"), dict) else {}
@@ -330,6 +330,7 @@ def print_summary(results: list[dict[str, Any]]) -> None:
                     str(prompt_tps if prompt_tps is not None else "-"),
                     str(timings.get("prompt_ms", "-")),
                     str(decode_tps if decode_tps is not None else "-"),
+                    str(timings.get("peak_memory_gb", "-")),
                     str(usage.get("prompt_tokens", "-")),
                     str(usage.get("completion_tokens", "-")),
                     str(result["memory_loaded"].get("total_rss_mb", "-")),

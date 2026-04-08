@@ -109,6 +109,9 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "timings": self._build_timings(
                 first_token_s=completion.first_token_s,
                 elapsed_s=completion.elapsed_s,
+                prompt_tps=self._result_float_metric(completion.final_item, "prompt_tps"),
+                generation_tps=self._result_float_metric(completion.final_item, "generation_tps"),
+                peak_memory_gb=self._result_float_metric(completion.final_item, "peak_memory"),
                 completion_tokens=completion_tokens,
             ),
         }
@@ -149,6 +152,9 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "timings": self._build_timings(
                 first_token_s=completion.first_token_s,
                 elapsed_s=completion.elapsed_s,
+                prompt_tps=self._result_float_metric(completion.final_item, "prompt_tps"),
+                generation_tps=self._result_float_metric(completion.final_item, "generation_tps"),
+                peak_memory_gb=self._result_float_metric(completion.final_item, "peak_memory"),
                 completion_tokens=completion_tokens,
             ),
         }
@@ -171,6 +177,7 @@ class MlxMacDriver(EmbeddedBackendDriver):
         text_parts: list[str] = []
         started = time.perf_counter()
         first_token_s: float | None = None
+        final_item: Any = None
 
         yield {
             "id": request_id,
@@ -181,6 +188,7 @@ class MlxMacDriver(EmbeddedBackendDriver):
         }
 
         for item in stream_generate(state.model, state.tokenizer, **kwargs):
+            final_item = item
             chunk_text = str(getattr(item, "text", "") or "")
             if not chunk_text:
                 continue
@@ -208,6 +216,9 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "timings": self._build_timings(
                 first_token_s=first_token_s,
                 elapsed_s=elapsed_s,
+                prompt_tps=self._result_float_metric(final_item, "prompt_tps"),
+                generation_tps=self._result_float_metric(final_item, "generation_tps"),
+                peak_memory_gb=self._result_float_metric(final_item, "peak_memory"),
                 completion_tokens=completion_tokens,
             ),
         }
@@ -265,6 +276,9 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "timings": self._build_timings(
                 first_token_s=first_token_s,
                 elapsed_s=elapsed_s,
+                prompt_tps=self._result_float_metric(final_item, "prompt_tps"),
+                generation_tps=self._result_float_metric(final_item, "generation_tps"),
+                peak_memory_gb=self._result_float_metric(final_item, "peak_memory"),
                 completion_tokens=completion_tokens,
             ),
         }
@@ -476,6 +490,7 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "prompt": prompt,
             "max_tokens": self._max_tokens(payload),
         }
+        kwargs.update(self._mlx_generation_overrides(payload))
         sampler = self._build_sampler(payload)
         if sampler is not None:
             kwargs["sampler"] = sampler
@@ -486,6 +501,7 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "prompt": prompt,
             "max_tokens": self._max_tokens(payload),
         }
+        kwargs.update(self._mlx_generation_overrides(payload))
         image_value: str | list[str] | None = None
         if len(images) == 1:
             image_value = images[0]
@@ -500,6 +516,30 @@ class MlxMacDriver(EmbeddedBackendDriver):
         top_p = self._float_payload(payload.get("top_p"))
         if top_p is not None:
             kwargs["top_p"] = top_p
+        return kwargs
+
+    def _mlx_generation_overrides(self, payload: dict[str, Any]) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {}
+        max_kv_size = self._positive_int_payload(payload.get("max_kv_size"))
+        if max_kv_size is not None:
+            kwargs["max_kv_size"] = max_kv_size
+
+        prefill_step_size = self._positive_int_payload(payload.get("prefill_step_size"))
+        if prefill_step_size is not None:
+            kwargs["prefill_step_size"] = prefill_step_size
+
+        kv_bits = self._positive_int_payload(payload.get("kv_bits"))
+        if kv_bits is not None:
+            kwargs["kv_bits"] = kv_bits
+
+        kv_group_size = self._positive_int_payload(payload.get("kv_group_size"))
+        if kv_group_size is not None:
+            kwargs["kv_group_size"] = kv_group_size
+
+        quantized_kv_start = self._non_negative_int_payload(payload.get("quantized_kv_start"))
+        if quantized_kv_start is not None:
+            kwargs["quantized_kv_start"] = quantized_kv_start
+
         return kwargs
 
     def _count_tokens(self, tokenizer: Any, text: str) -> int | None:
@@ -530,6 +570,20 @@ class MlxMacDriver(EmbeddedBackendDriver):
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _positive_int_payload(self, value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    def _non_negative_int_payload(self, value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
 
     def _resolve_tokenizer(self, processor: Any) -> Any:
         tokenizer = getattr(processor, "tokenizer", None)
@@ -564,6 +618,15 @@ class MlxMacDriver(EmbeddedBackendDriver):
         except (TypeError, ValueError):
             return None
 
+    def _result_float_metric(self, result: Any, field_name: str) -> float | None:
+        value = getattr(result, field_name, None)
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     def _usage(self, prompt_tokens: int | None, completion_tokens: int | None) -> dict[str, Any]:
         prompt_value = prompt_tokens or 0
         completion_value = completion_tokens or 0
@@ -585,6 +648,9 @@ class MlxMacDriver(EmbeddedBackendDriver):
         *,
         first_token_s: float | None,
         elapsed_s: float,
+        prompt_tps: float | None,
+        generation_tps: float | None,
+        peak_memory_gb: float | None,
         completion_tokens: int | None,
     ) -> dict[str, Any]:
         first_token_value = first_token_s if first_token_s is not None else elapsed_s
@@ -593,6 +659,12 @@ class MlxMacDriver(EmbeddedBackendDriver):
             "prompt_ms": round(first_token_value * 1000, 3),
             "predicted_ms": round(predicted_s * 1000, 3),
         }
-        if completion_tokens and predicted_s > 0:
+        if prompt_tps is not None and prompt_tps > 0:
+            timings["prompt_per_second"] = round(prompt_tps, 3)
+        if generation_tps is not None and generation_tps > 0:
+            timings["predicted_per_second"] = round(generation_tps, 3)
+        elif completion_tokens and predicted_s > 0:
             timings["predicted_per_second"] = round(completion_tokens / predicted_s, 3)
+        if peak_memory_gb is not None and peak_memory_gb > 0:
+            timings["peak_memory_gb"] = round(peak_memory_gb, 3)
         return timings
