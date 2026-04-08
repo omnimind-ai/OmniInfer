@@ -1,37 +1,67 @@
 package com.omniinfer.server
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
-import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import io.ktor.http.*
-import io.ktor.server.application.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.server.application.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 class OmniInferService : Service() {
     companion object {
         private const val TAG = "OmniInferService"
+        private const val NOTIFICATION_ID = 9099
+        private const val CHANNEL_ID = "omniinfer_server"
     }
 
-    private var server: ApplicationEngine? = null
+    private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val port = intent?.getIntExtra("port", 0) ?: 0
         if (port > 0 && server == null) {
+            promoteToForeground(port)
             startServer(port)
         }
         return START_NOT_STICKY
+    }
+
+    private fun promoteToForeground(port: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID, "OmniInfer Server", NotificationManager.IMPORTANCE_LOW
+            ).apply { description = "Local inference server" }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION") Notification.Builder(this)
+        }
+            .setContentTitle("OmniInfer Server")
+            .setContentText("Running on port $port")
+            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setOngoing(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun startServer(port: Int) {
@@ -58,86 +88,15 @@ class OmniInferService : Service() {
                 }
 
                 post("/v1/chat/completions") {
-                    val body = call.receiveText()
-                    val req = Json.parseToJsonElement(body).jsonObject
-
-                    val messages = req["messages"]?.jsonArray ?: run {
-                        call.respondText("{\"error\":\"missing messages\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-                        return@post
-                    }
-                    val stream = req["stream"]?.jsonPrimitive?.booleanOrNull ?: false
-
-                    // Extract system prompt and last user message.
-                    var systemPrompt: String? = null
-                    var userPrompt = ""
-                    for (msg in messages) {
-                        val role = msg.jsonObject["role"]?.jsonPrimitive?.contentOrNull ?: continue
-                        val content = msg.jsonObject["content"]?.jsonPrimitive?.contentOrNull ?: continue
-                        when (role) {
-                            "system" -> systemPrompt = content
-                            "user" -> userPrompt = content
-                        }
-                    }
-
-                    if (userPrompt.isEmpty()) {
-                        call.respondText("{\"error\":\"no user message\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
-                        return@post
-                    }
-
-                    val handle = OmniInferServer.currentHandle
-                    if (handle == 0L) {
-                        call.respondText("{\"error\":\"no model loaded\"}", ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
-                        return@post
-                    }
-
-                    if (stream) {
-                        call.respondTextWriter(contentType = ContentType.Text.EventStream) {
-                            val result = OmniInferBridge.generate(
-                                handle = handle,
-                                systemPrompt = systemPrompt,
-                                prompt = userPrompt,
-                                callback = object {
-                                    @Suppress("unused")
-                                    fun onToken(token: String) {
-                                        val chunk = buildJsonObject {
-                                            put("object", "chat.completion.chunk")
-                                            putJsonArray("choices") {
-                                                addJsonObject {
-                                                    putJsonObject("delta") { put("content", token) }
-                                                    put("index", 0)
-                                                }
-                                            }
-                                        }
-                                        runBlocking {
-                                            write("data: $chunk\n\n")
-                                            flush()
-                                        }
-                                    }
-                                }
-                            )
-                            write("data: [DONE]\n\n")
-                            flush()
-                        }
-                    } else {
-                        val result = OmniInferBridge.generate(
-                            handle = handle,
-                            systemPrompt = systemPrompt,
-                            prompt = userPrompt
+                    try {
+                        handleChatCompletion(call)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "chat/completions error", e)
+                        call.respondText(
+                            buildJsonObject { put("error", e.message ?: "internal error") }.toString(),
+                            ContentType.Application.Json,
+                            HttpStatusCode.InternalServerError
                         )
-                        val resp = buildJsonObject {
-                            put("object", "chat.completion")
-                            putJsonArray("choices") {
-                                addJsonObject {
-                                    putJsonObject("message") {
-                                        put("role", "assistant")
-                                        put("content", result)
-                                    }
-                                    put("index", 0)
-                                    put("finish_reason", "stop")
-                                }
-                            }
-                        }
-                        call.respondText(resp.toString(), ContentType.Application.Json)
                     }
                 }
             }
@@ -145,8 +104,110 @@ class OmniInferService : Service() {
         Log.i(TAG, "Server started on port $port")
     }
 
+    private suspend fun handleChatCompletion(call: ApplicationCall) {
+        val body = call.receiveText()
+        val req = Json.parseToJsonElement(body).jsonObject
+
+        val messages = req["messages"]?.jsonArray ?: run {
+            call.respondText("{\"error\":\"missing messages\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
+            return
+        }
+        val stream = req["stream"]?.jsonPrimitive?.booleanOrNull ?: false
+
+        // Extract system prompt and last user message.
+        var systemPrompt: String? = null
+        var userPrompt = ""
+        for (msg in messages) {
+            val role = msg.jsonObject["role"]?.jsonPrimitive?.contentOrNull ?: continue
+            val content = extractTextContent(msg.jsonObject["content"]) ?: continue
+            when (role) {
+                "system" -> systemPrompt = content
+                "user" -> userPrompt = content
+            }
+        }
+
+        if (userPrompt.isEmpty()) {
+            call.respondText("{\"error\":\"no user message\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
+            return
+        }
+
+        val handle = OmniInferServer.currentHandle
+        if (handle == 0L) {
+            call.respondText("{\"error\":\"no model loaded\"}", ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
+            return
+        }
+
+        if (stream) {
+            call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                OmniInferBridge.generate(
+                    handle = handle,
+                    systemPrompt = systemPrompt,
+                    prompt = userPrompt,
+                    callback = object {
+                        @Suppress("unused")
+                        fun onToken(token: String) {
+                            val chunk = buildJsonObject {
+                                put("object", "chat.completion.chunk")
+                                putJsonArray("choices") {
+                                    addJsonObject {
+                                        putJsonObject("delta") { put("content", token) }
+                                        put("index", 0)
+                                    }
+                                }
+                            }
+                            runBlocking {
+                                write("data: $chunk\n\n")
+                                flush()
+                            }
+                        }
+                    }
+                )
+                write("data: [DONE]\n\n")
+                flush()
+            }
+        } else {
+            val result = OmniInferBridge.generate(
+                handle = handle,
+                systemPrompt = systemPrompt,
+                prompt = userPrompt
+            )
+            val resp = buildJsonObject {
+                put("object", "chat.completion")
+                putJsonArray("choices") {
+                    addJsonObject {
+                        putJsonObject("message") {
+                            put("role", "assistant")
+                            put("content", result)
+                        }
+                        put("index", 0)
+                        put("finish_reason", "stop")
+                    }
+                }
+            }
+            call.respondText(resp.toString(), ContentType.Application.Json)
+        }
+    }
+
+    /**
+     * Extract text from OpenAI message content which can be either:
+     * - A plain string: "content": "hello"
+     * - An array of parts: "content": [{"type":"text","text":"hello"}, ...]
+     */
+    private fun extractTextContent(content: JsonElement?): String? {
+        if (content == null || content is JsonNull) return null
+        if (content is JsonPrimitive) return content.contentOrNull
+        if (content is JsonArray) {
+            return content
+                .filter { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "text" }
+                .mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
+                .joinToString("")
+                .ifEmpty { null }
+        }
+        return null
+    }
+
     override fun onDestroy() {
-        server?.stop(500, 1000, TimeUnit.MILLISECONDS)
+        server?.stop(gracePeriodMillis = 500, timeoutMillis = 1000)
         server = null
         Log.i(TAG, "Server stopped")
         super.onDestroy()

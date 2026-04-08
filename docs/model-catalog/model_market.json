@@ -1,0 +1,984 @@
+{
+    "version": "1",
+    "format": "gguf",
+    "tagTranslations": {
+        "Vision": "Image Understanding",
+        "Audio": "Audio Understanding",
+        "Code": "Code",
+        "Math": "Math",
+        "Think": "Reasoning/Thinking",
+        "Chat": "Chat",
+        "MoE": "Mixture of Experts"
+    },
+    "quickFilterTags": [
+        "Think",
+        "Vision",
+        "Audio",
+        "Code",
+        "MoE"
+    ],
+    "defaultQuant": "Q4_K_M",
+    "availableQuants": [
+        "Q2_K",
+        "Q3_K_M",
+        "Q4_K_M",
+        "Q5_K_M",
+        "Q6_K",
+        "Q8_0",
+        "F16"
+    ],
+    "vendorOrder": [
+        "Qwen",
+        "Google",
+        "DeepSeek",
+        "Meta",
+        "Microsoft",
+        "Mistral",
+        "Cohere",
+        "01.AI",
+        "THUDM",
+        "InternLM",
+        "BigCode",
+        "HuggingFace",
+        "SmolLM"
+    ],
+    "models": [
+        {
+            "modelName": "Qwen3.5-0.8B",
+            "params": "0.8B",
+            "tags": ["Think", "Vision", "Chat"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 262144,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 533000000 },
+                "Q8_0":   { "size_bytes": 812000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3.5-0.8B-GGUF",
+                "ModelScope": "unsloth/Qwen3.5-0.8B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3.5-2B",
+            "params": "2B",
+            "tags": ["Think", "Vision", "Chat"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 262144,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 1280000000 },
+                "Q8_0":   { "size_bytes": 2010000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3.5-2B-GGUF",
+                "ModelScope": "unsloth/Qwen3.5-2B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3.5-4B",
+            "params": "4B",
+            "tags": ["Think", "Vision", "Chat"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 262144,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 2740000000 },
+                "Q8_0":   { "size_bytes": 4480000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3.5-4B-GGUF",
+                "ModelScope": "unsloth/Qwen3.5-4B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3.5-9B",
+            "params": "9B",
+            "tags": ["Think", "Vision", "Chat"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 262144,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 5680000000 },
+                "Q8_0":   { "size_bytes": 9530000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3.5-9B-GGUF",
+                "ModelScope": "unsloth/Qwen3.5-9B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3.5-27B",
+            "params": "27B",
+            "tags": ["Think", "Vision", "Chat"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 262144,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 16700000000 },
+                "Q8_0":   { "size_bytes": 28600000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3.5-27B-GGUF",
+                "ModelScope": "unsloth/Qwen3.5-27B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3.5-35B-A3B",
+            "params": "35B (3B active)",
+            "tags": ["Think", "Vision", "Chat", "MoE"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 262144,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 20000000000 },
+                "Q8_0":   { "size_bytes": 35000000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3.5-35B-A3B-GGUF",
+                "ModelScope": "unsloth/Qwen3.5-35B-A3B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3-0.6B",
+            "params": "0.6B",
+            "tags": ["Think", "Chat"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 397000000 },
+                "Q8_0":   { "size_bytes": 639000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3-0.6B-GGUF",
+                "ModelScope": "unsloth/Qwen3-0.6B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3-1.7B",
+            "params": "1.7B",
+            "tags": ["Think", "Chat"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 1100000000 },
+                "Q8_0":   { "size_bytes": 1800000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3-1.7B-GGUF",
+                "ModelScope": "unsloth/Qwen3-1.7B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3-4B",
+            "params": "4B",
+            "tags": ["Think", "Chat"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 2500000000 },
+                "Q8_0":   { "size_bytes": 4280000000 }
+            },
+            "sources": {
+                "HuggingFace": "Qwen/Qwen3-4B-GGUF",
+                "ModelScope": "unsloth/Qwen3-4B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3-8B",
+            "params": "8B",
+            "tags": ["Think", "Chat", "Code", "Math"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 5030000000 },
+                "Q8_0":   { "size_bytes": 8710000000 }
+            },
+            "sources": {
+                "HuggingFace": "Qwen/Qwen3-8B-GGUF",
+                "ModelScope": "unsloth/Qwen3-8B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3-14B",
+            "params": "14B",
+            "tags": ["Think", "Chat", "Code", "Math"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 9000000000 },
+                "Q8_0":   { "size_bytes": 15700000000 }
+            },
+            "sources": {
+                "HuggingFace": "Qwen/Qwen3-14B-GGUF",
+                "ModelScope": "unsloth/Qwen3-14B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3-32B",
+            "params": "32B",
+            "tags": ["Think", "Chat", "Code", "Math"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 19000000000 },
+                "Q8_0":   { "size_bytes": 34000000000 }
+            },
+            "sources": {
+                "HuggingFace": "Qwen/Qwen3-32B-GGUF",
+                "ModelScope": "unsloth/Qwen3-32B-GGUF"
+            }
+        },
+        {
+            "modelName": "Qwen3-30B-A3B",
+            "params": "30B (3B active)",
+            "tags": ["Think", "Chat", "MoE"],
+            "vendor": "Qwen",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 17000000000 },
+                "Q8_0":   { "size_bytes": 30000000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Qwen3-30B-A3B-GGUF",
+                "ModelScope": "unsloth/Qwen3-30B-A3B-GGUF"
+            }
+        },
+        {
+            "modelName": "Gemma-4-E2B",
+            "params": "2B",
+            "tags": ["Vision", "Chat", "Think"],
+            "vendor": "Google",
+            "license": "Apache-2.0",
+            "context_length": 128000,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 2900000000 },
+                "Q8_0":   { "size_bytes": 5000000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/gemma-4-E2B-it-GGUF",
+                "ModelScope": "unsloth/gemma-4-E2B-it-GGUF"
+            }
+        },
+        {
+            "modelName": "Gemma-4-E4B",
+            "params": "4B",
+            "tags": ["Vision", "Audio", "Chat", "Think"],
+            "vendor": "Google",
+            "license": "Apache-2.0",
+            "context_length": 128000,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 4980000000 },
+                "Q8_0":   { "size_bytes": 8500000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/gemma-4-E4B-it-GGUF",
+                "ModelScope": "unsloth/gemma-4-E4B-it-GGUF"
+            }
+        },
+        {
+            "modelName": "Gemma-4-26B-A4B",
+            "params": "26B (4B active)",
+            "tags": ["Vision", "Chat", "Think", "MoE"],
+            "vendor": "Google",
+            "license": "Apache-2.0",
+            "context_length": 128000,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 16500000000 },
+                "Q8_0":   { "size_bytes": 28000000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/gemma-4-26B-A4B-it-GGUF",
+                "ModelScope": "unsloth/gemma-4-26B-A4B-it-GGUF"
+            }
+        },
+        {
+            "modelName": "Gemma-4-31B",
+            "params": "31B",
+            "tags": ["Vision", "Chat", "Think"],
+            "vendor": "Google",
+            "license": "Apache-2.0",
+            "context_length": 128000,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 18300000000 },
+                "Q8_0":   { "size_bytes": 32600000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/gemma-4-31B-it-GGUF"
+            }
+        },
+        {
+            "modelName": "Gemma-3-1B",
+            "params": "1B",
+            "tags": ["Chat"],
+            "vendor": "Google",
+            "license": "Gemma",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 600000000 },
+                "Q8_0":   { "size_bytes": 1000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/google_gemma-3-1b-it-GGUF"
+            }
+        },
+        {
+            "modelName": "Gemma-3-4B",
+            "params": "4B",
+            "tags": ["Vision", "Chat"],
+            "vendor": "Google",
+            "license": "Gemma",
+            "context_length": 128000,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 2400000000 },
+                "Q8_0":   { "size_bytes": 4000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/google_gemma-3-4b-it-GGUF"
+            }
+        },
+        {
+            "modelName": "Gemma-3-12B",
+            "params": "12B",
+            "tags": ["Vision", "Chat"],
+            "vendor": "Google",
+            "license": "Gemma",
+            "context_length": 128000,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 7000000000 },
+                "Q8_0":   { "size_bytes": 12000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/google_gemma-3-12b-it-GGUF"
+            }
+        },
+        {
+            "modelName": "Gemma-3-27B",
+            "params": "27B",
+            "tags": ["Vision", "Chat"],
+            "vendor": "Google",
+            "license": "Gemma",
+            "context_length": 128000,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 16000000000 },
+                "Q8_0":   { "size_bytes": 27000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/google_gemma-3-27b-it-GGUF"
+            }
+        },
+        {
+            "modelName": "DeepSeek-R1-Distill-Qwen-1.5B",
+            "params": "1.5B",
+            "tags": ["Think", "Math", "Code"],
+            "vendor": "DeepSeek",
+            "license": "MIT",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 1000000000 },
+                "Q8_0":   { "size_bytes": 1600000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
+                "ModelScope": "unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF"
+            }
+        },
+        {
+            "modelName": "DeepSeek-R1-Distill-Qwen-7B",
+            "params": "7B",
+            "tags": ["Think", "Math", "Code"],
+            "vendor": "DeepSeek",
+            "license": "MIT",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 4220000000 },
+                "Q8_0":   { "size_bytes": 7360000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+                "ModelScope": "unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF"
+            }
+        },
+        {
+            "modelName": "DeepSeek-R1-Distill-Llama-8B",
+            "params": "8B",
+            "tags": ["Think", "Math", "Code"],
+            "vendor": "DeepSeek",
+            "license": "Llama",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 4900000000 },
+                "Q8_0":   { "size_bytes": 8500000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF",
+                "ModelScope": "unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF"
+            }
+        },
+        {
+            "modelName": "DeepSeek-R1-Distill-Qwen-14B",
+            "params": "14B",
+            "tags": ["Think", "Math", "Code"],
+            "vendor": "DeepSeek",
+            "license": "MIT",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 9100000000 },
+                "Q8_0":   { "size_bytes": 15800000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF",
+                "ModelScope": "unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF"
+            }
+        },
+        {
+            "modelName": "DeepSeek-R1-Distill-Qwen-32B",
+            "params": "32B",
+            "tags": ["Think", "Math", "Code"],
+            "vendor": "DeepSeek",
+            "license": "MIT",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 20100000000 },
+                "Q8_0":   { "size_bytes": 36300000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF",
+                "ModelScope": "unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF"
+            }
+        },
+        {
+            "modelName": "DeepSeek-R1-Distill-Llama-70B",
+            "params": "70B",
+            "tags": ["Think", "Math", "Code"],
+            "vendor": "DeepSeek",
+            "license": "Llama",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 42500000000 },
+                "Q8_0":   { "size_bytes": 75000000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/DeepSeek-R1-Distill-Llama-70B-GGUF",
+                "ModelScope": "unsloth/DeepSeek-R1-Distill-Llama-70B-GGUF"
+            }
+        },
+        {
+            "modelName": "Llama-4-Scout-17B-16E",
+            "params": "109B (17B active)",
+            "tags": ["Vision", "Chat", "Code", "MoE"],
+            "vendor": "Meta",
+            "license": "Llama-4",
+            "context_length": 524288,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 58000000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Llama-3.3-70B",
+            "params": "70B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "Meta",
+            "license": "Llama-3.3",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 42500000000 },
+                "Q8_0":   { "size_bytes": 75000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Llama-3.3-70B-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Llama-3.2-1B",
+            "params": "1B",
+            "tags": ["Chat"],
+            "vendor": "Meta",
+            "license": "Llama-3.2",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 750000000 },
+                "Q8_0":   { "size_bytes": 1320000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Llama-3.2-1B-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Llama-3.2-3B",
+            "params": "3B",
+            "tags": ["Chat"],
+            "vendor": "Meta",
+            "license": "Llama-3.2",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 1800000000 },
+                "Q8_0":   { "size_bytes": 3200000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Llama-3.2-3B-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Llama-3.2-11B-Vision",
+            "params": "11B",
+            "tags": ["Vision", "Chat"],
+            "vendor": "Meta",
+            "license": "Llama-3.2",
+            "context_length": 131072,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 6500000000 },
+                "Q8_0":   { "size_bytes": 11000000000 }
+            },
+            "sources": {
+                "HuggingFace": "leafspark/Llama-3.2-11B-Vision-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Llama-3.1-8B",
+            "params": "8B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "Meta",
+            "license": "Llama-3.1",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 4920000000 },
+                "Q8_0":   { "size_bytes": 8540000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
+                "ModelScope": "second-state/Meta-Llama-3.1-8B-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Llama-3.1-70B",
+            "params": "70B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "Meta",
+            "license": "Llama-3.1",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 40000000000 },
+                "Q8_0":   { "size_bytes": 74000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Meta-Llama-3.1-70B-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Phi-4",
+            "params": "14B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "Microsoft",
+            "license": "MIT",
+            "context_length": 16384,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 8890000000 },
+                "Q8_0":   { "size_bytes": 15000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/phi-4-GGUF",
+                "ModelScope": "AI-ModelScope/phi-4-gguf"
+            }
+        },
+        {
+            "modelName": "Phi-4-mini",
+            "params": "3.8B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "Microsoft",
+            "license": "MIT",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 2490000000 },
+                "Q8_0":   { "size_bytes": 4080000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Phi-4-mini-instruct-GGUF",
+                "ModelScope": "unsloth/Phi-4-mini-instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Phi-4-reasoning",
+            "params": "14B",
+            "tags": ["Think", "Math", "Code"],
+            "vendor": "Microsoft",
+            "license": "MIT",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 8900000000 },
+                "Q8_0":   { "size_bytes": 15000000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Phi-4-reasoning-GGUF",
+                "ModelScope": "unsloth/Phi-4-reasoning-plus-GGUF"
+            }
+        },
+        {
+            "modelName": "Phi-4-mini-reasoning",
+            "params": "3.8B",
+            "tags": ["Think", "Math", "Code"],
+            "vendor": "Microsoft",
+            "license": "MIT",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 2500000000 },
+                "Q8_0":   { "size_bytes": 4100000000 }
+            },
+            "sources": {
+                "HuggingFace": "unsloth/Phi-4-mini-reasoning-GGUF"
+            }
+        },
+        {
+            "modelName": "Phi-3.5-mini",
+            "params": "3.8B",
+            "tags": ["Chat", "Code"],
+            "vendor": "Microsoft",
+            "license": "MIT",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 2400000000 },
+                "Q8_0":   { "size_bytes": 4000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Phi-3.5-mini-instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "Mistral-7B-v0.3",
+            "params": "7B",
+            "tags": ["Chat"],
+            "vendor": "Mistral",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 4100000000 },
+                "Q8_0":   { "size_bytes": 7200000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Mistral-7B-Instruct-v0.3-GGUF"
+            }
+        },
+        {
+            "modelName": "Mistral-Nemo-12B",
+            "params": "12B",
+            "tags": ["Chat", "Code"],
+            "vendor": "Mistral",
+            "license": "Apache-2.0",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 7200000000 },
+                "Q8_0":   { "size_bytes": 12800000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Mistral-Nemo-Instruct-2407-GGUF"
+            }
+        },
+        {
+            "modelName": "Mistral-Small-3.1-24B",
+            "params": "24B",
+            "tags": ["Vision", "Chat", "Code"],
+            "vendor": "Mistral",
+            "license": "Apache-2.0",
+            "context_length": 131072,
+            "mmproj": true,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 14000000000 },
+                "Q8_0":   { "size_bytes": 25000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/mistralai_Mistral-Small-3.1-24B-Instruct-2503-GGUF"
+            }
+        },
+        {
+            "modelName": "Mistral-Large-123B",
+            "params": "123B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "Mistral",
+            "license": "Apache-2.0",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 72000000000 },
+                "Q8_0":   { "size_bytes": 130000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Mistral-Large-Instruct-2411-GGUF"
+            }
+        },
+        {
+            "modelName": "Mixtral-8x7B",
+            "params": "47B (13B active)",
+            "tags": ["Chat", "Code", "MoE"],
+            "vendor": "Mistral",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 26400000000 },
+                "Q8_0":   { "size_bytes": 49600000000 }
+            },
+            "sources": {
+                "HuggingFace": "mradermacher/Mixtral-8x7B-Instruct-v0.1-GGUF"
+            }
+        },
+        {
+            "modelName": "Mixtral-8x22B",
+            "params": "141B (39B active)",
+            "tags": ["Chat", "Code", "Math", "MoE"],
+            "vendor": "Mistral",
+            "license": "Apache-2.0",
+            "context_length": 65536,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 85600000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Mixtral-8x22B-v0.1-GGUF"
+            }
+        },
+        {
+            "modelName": "Yi-1.5-6B",
+            "params": "6B",
+            "tags": ["Chat"],
+            "vendor": "01.AI",
+            "license": "Apache-2.0",
+            "context_length": 4096,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 3600000000 },
+                "Q8_0":   { "size_bytes": 6300000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Yi-1.5-6B-Chat-GGUF",
+                "ModelScope": "bartowski/Yi-1.5-6B-Chat-GGUF"
+            }
+        },
+        {
+            "modelName": "Yi-1.5-9B",
+            "params": "9B",
+            "tags": ["Chat"],
+            "vendor": "01.AI",
+            "license": "Apache-2.0",
+            "context_length": 4096,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 5400000000 },
+                "Q8_0":   { "size_bytes": 9500000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Yi-1.5-9B-Chat-GGUF"
+            }
+        },
+        {
+            "modelName": "Yi-1.5-34B",
+            "params": "34B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "01.AI",
+            "license": "Apache-2.0",
+            "context_length": 4096,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 20000000000 },
+                "Q8_0":   { "size_bytes": 36000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/Yi-1.5-34B-Chat-GGUF"
+            }
+        },
+        {
+            "modelName": "InternLM2.5-7B",
+            "params": "7B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "InternLM",
+            "license": "Apache-2.0",
+            "context_length": 1048576,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 4200000000 },
+                "Q8_0":   { "size_bytes": 7400000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/internlm2_5-7b-chat-1m-GGUF",
+                "ModelScope": "Shanghai_AI_Laboratory/internlm2_5-7b-chat-gguf"
+            }
+        },
+        {
+            "modelName": "InternLM2.5-20B",
+            "params": "20B",
+            "tags": ["Chat", "Code", "Math"],
+            "vendor": "InternLM",
+            "license": "Apache-2.0",
+            "context_length": 32768,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 12000000000 },
+                "Q8_0":   { "size_bytes": 21000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/internlm2_5-20b-chat-GGUF",
+                "ModelScope": "bartowski/internlm2_5-20b-chat-GGUF"
+            }
+        },
+        {
+            "modelName": "GLM-4-9B",
+            "params": "9B",
+            "tags": ["Chat", "Code"],
+            "vendor": "THUDM",
+            "license": "GLM-4",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 5400000000 },
+                "Q8_0":   { "size_bytes": 9500000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/glm-4-9b-chat-GGUF",
+                "ModelScope": "LLM-Research/glm-4-9b-chat-GGUF"
+            }
+        },
+        {
+            "modelName": "Command-R-35B",
+            "params": "35B",
+            "tags": ["Chat"],
+            "vendor": "Cohere",
+            "license": "CC-BY-NC-4.0",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 21500000000 },
+                "Q8_0":   { "size_bytes": 37000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/c4ai-command-r-08-2024-GGUF"
+            }
+        },
+        {
+            "modelName": "Command-R-Plus-104B",
+            "params": "104B",
+            "tags": ["Chat"],
+            "vendor": "Cohere",
+            "license": "CC-BY-NC-4.0",
+            "context_length": 131072,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 62000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/c4ai-command-r-plus-GGUF"
+            }
+        },
+        {
+            "modelName": "StarCoder2-15B-Instruct",
+            "params": "15B",
+            "tags": ["Code"],
+            "vendor": "BigCode",
+            "license": "BigCode-OpenRAIL-M",
+            "context_length": 16384,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 9860000000 },
+                "Q8_0":   { "size_bytes": 17000000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/starcoder2-15b-instruct-v0.1-GGUF"
+            }
+        },
+        {
+            "modelName": "CodeLlama-7B",
+            "params": "7B",
+            "tags": ["Code"],
+            "vendor": "Meta",
+            "license": "Llama-2",
+            "context_length": 16384,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 4000000000 },
+                "Q8_0":   { "size_bytes": 7000000000 }
+            },
+            "sources": {
+                "HuggingFace": "TheBloke/CodeLlama-7B-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "CodeLlama-13B",
+            "params": "13B",
+            "tags": ["Code"],
+            "vendor": "Meta",
+            "license": "Llama-2",
+            "context_length": 16384,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 7400000000 },
+                "Q8_0":   { "size_bytes": 13000000000 }
+            },
+            "sources": {
+                "HuggingFace": "TheBloke/CodeLlama-13B-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "CodeLlama-34B",
+            "params": "34B",
+            "tags": ["Code"],
+            "vendor": "Meta",
+            "license": "Llama-2",
+            "context_length": 16384,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 20000000000 },
+                "Q8_0":   { "size_bytes": 36000000000 }
+            },
+            "sources": {
+                "HuggingFace": "TheBloke/CodeLlama-34B-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "SmolLM2-135M",
+            "params": "135M",
+            "tags": ["Chat"],
+            "vendor": "HuggingFace",
+            "license": "Apache-2.0",
+            "context_length": 8192,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 100000000 },
+                "Q8_0":   { "size_bytes": 150000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/SmolLM2-135M-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "SmolLM2-360M",
+            "params": "360M",
+            "tags": ["Chat"],
+            "vendor": "HuggingFace",
+            "license": "Apache-2.0",
+            "context_length": 8192,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 271000000 },
+                "Q8_0":   { "size_bytes": 386000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/SmolLM2-360M-Instruct-GGUF"
+            }
+        },
+        {
+            "modelName": "SmolLM2-1.7B",
+            "params": "1.7B",
+            "tags": ["Chat"],
+            "vendor": "HuggingFace",
+            "license": "Apache-2.0",
+            "context_length": 8192,
+            "quants": {
+                "Q4_K_M": { "size_bytes": 1060000000 },
+                "Q8_0":   { "size_bytes": 1820000000 }
+            },
+            "sources": {
+                "HuggingFace": "bartowski/SmolLM2-1.7B-Instruct-GGUF"
+            }
+        }
+    ]
+}
