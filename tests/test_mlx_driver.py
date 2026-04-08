@@ -40,10 +40,16 @@ class FakeStreamItem:
         *,
         prompt_tokens: int | None = None,
         generation_tokens: int | None = None,
+        prompt_tps: float | None = None,
+        generation_tps: float | None = None,
+        peak_memory: float | None = None,
     ) -> None:
         self.text = text
         self.prompt_tokens = prompt_tokens
         self.generation_tokens = generation_tokens
+        self.prompt_tps = prompt_tps
+        self.generation_tps = generation_tps
+        self.peak_memory = peak_memory
 
 
 class MlxDriverTests(unittest.TestCase):
@@ -61,23 +67,31 @@ class MlxDriverTests(unittest.TestCase):
         def lm_load(model_path):
             return FakeModel("llama"), tokenizer
 
-        def lm_generate(model, tokenizer_obj, prompt, max_tokens, sampler=None, verbose=False):
+        def lm_generate(model, tokenizer_obj, prompt, max_tokens, sampler=None, verbose=False, **kwargs):
             self.assertEqual(model.config.model_type, "llama")
             self.assertIs(tokenizer_obj, tokenizer)
             self.assertIn("user: hello", prompt)
             self.assertEqual(max_tokens, 32)
             self.assertEqual(sampler, {"temp": 0.5, "top_p": 0.9})
+            self.assertEqual(kwargs.get("prefill_step_size"), 512)
+            self.assertEqual(kwargs.get("kv_bits"), 4)
+            self.assertEqual(kwargs.get("kv_group_size"), 32)
+            self.assertEqual(kwargs.get("quantized_kv_start"), 256)
             self.assertFalse(verbose)
             return "hello world"
 
-        def lm_stream_generate(model, tokenizer_obj, prompt, max_tokens, sampler=None):
+        def lm_stream_generate(model, tokenizer_obj, prompt, max_tokens, sampler=None, **kwargs):
             self.assertEqual(model.config.model_type, "llama")
             self.assertIs(tokenizer_obj, tokenizer)
             self.assertIn("user: hello", prompt)
             self.assertEqual(max_tokens, 32)
             self.assertEqual(sampler, {"temp": 0.5, "top_p": 0.9})
-            yield FakeStreamItem("hello ")
-            yield FakeStreamItem("world")
+            self.assertEqual(kwargs.get("prefill_step_size"), 512)
+            self.assertEqual(kwargs.get("kv_bits"), 4)
+            self.assertEqual(kwargs.get("kv_group_size"), 32)
+            self.assertEqual(kwargs.get("quantized_kv_start"), 256)
+            yield FakeStreamItem("hello ", prompt_tps=123.4, generation_tps=45.6, peak_memory=3.21)
+            yield FakeStreamItem("world", prompt_tps=123.4, generation_tps=45.6, peak_memory=3.21)
 
         mlx_lm_module.load = lm_load
         mlx_lm_module.generate = lm_generate
@@ -111,8 +125,12 @@ class MlxDriverTests(unittest.TestCase):
             self.assertEqual(max_tokens, 24)
             self.assertEqual(kwargs.get("temperature"), 0.3)
             self.assertEqual(kwargs.get("top_p"), 0.8)
+            self.assertEqual(kwargs.get("prefill_step_size"), 1024)
+            self.assertEqual(kwargs.get("kv_bits"), 8)
+            self.assertEqual(kwargs.get("kv_group_size"), 64)
+            self.assertEqual(kwargs.get("quantized_kv_start"), 0)
             self.assertFalse(verbose)
-            return types.SimpleNamespace(text="vision response", prompt_tokens=11, generation_tokens=4)
+            return types.SimpleNamespace(text="vision response", prompt_tokens=11, generation_tokens=4, peak_memory=4.56)
 
         def vlm_stream_generate(model, processor_obj, prompt, image=None, max_tokens=128, **kwargs):
             self.assertEqual(model.config.model_type, "qwen2_vl")
@@ -122,8 +140,12 @@ class MlxDriverTests(unittest.TestCase):
             self.assertEqual(max_tokens, 24)
             self.assertEqual(kwargs.get("temperature"), 0.3)
             self.assertEqual(kwargs.get("top_p"), 0.8)
-            yield FakeStreamItem("vision ", prompt_tokens=11, generation_tokens=1)
-            yield FakeStreamItem("response", prompt_tokens=11, generation_tokens=2)
+            self.assertEqual(kwargs.get("prefill_step_size"), 1024)
+            self.assertEqual(kwargs.get("kv_bits"), 8)
+            self.assertEqual(kwargs.get("kv_group_size"), 64)
+            self.assertEqual(kwargs.get("quantized_kv_start"), 0)
+            yield FakeStreamItem("vision ", prompt_tokens=11, generation_tokens=1, prompt_tps=222.2, generation_tps=33.3, peak_memory=4.56)
+            yield FakeStreamItem("response", prompt_tokens=11, generation_tokens=2, prompt_tps=222.2, generation_tps=33.3, peak_memory=4.56)
 
         mlx_vlm_module.load = vlm_load
         mlx_vlm_module.generate = vlm_generate
@@ -155,6 +177,10 @@ class MlxDriverTests(unittest.TestCase):
             "temperature": 0.5,
             "top_p": 0.9,
             "max_tokens": 32,
+            "prefill_step_size": 512,
+            "kv_bits": 4,
+            "kv_group_size": 32,
+            "quantized_kv_start": 256,
         }
         model_dir = self._write_model_dir(vision=False)
 
@@ -171,6 +197,9 @@ class MlxDriverTests(unittest.TestCase):
         self.assertEqual(response["usage"]["completion_tokens"], 2)
         self.assertIn("timings", response)
         self.assertIn("prompt_ms", response["timings"])
+        self.assertEqual(events[-1]["timings"]["peak_memory_gb"], 3.21)
+        self.assertEqual(events[-1]["timings"]["prompt_per_second"], 123.4)
+        self.assertEqual(events[-1]["timings"]["predicted_per_second"], 45.6)
         self.assertEqual(events[0]["choices"][0]["delta"]["role"], "assistant")
         self.assertEqual(events[1]["choices"][0]["delta"]["content"], "hello ")
         self.assertEqual(events[2]["choices"][0]["delta"]["content"], "world")
@@ -192,6 +221,10 @@ class MlxDriverTests(unittest.TestCase):
             "temperature": 0.3,
             "top_p": 0.8,
             "max_tokens": 24,
+            "prefill_step_size": 1024,
+            "kv_bits": 8,
+            "kv_group_size": 64,
+            "quantized_kv_start": 0,
         }
         model_dir = self._write_model_dir(vision=True)
 
@@ -206,12 +239,16 @@ class MlxDriverTests(unittest.TestCase):
         self.assertEqual(response["usage"]["prompt_tokens"], 11)
         self.assertEqual(response["usage"]["completion_tokens"], 4)
         self.assertIn("timings", response)
+        self.assertEqual(response["timings"]["peak_memory_gb"], 4.56)
         self.assertEqual(events[0]["choices"][0]["delta"]["role"], "assistant")
         self.assertEqual(events[1]["choices"][0]["delta"]["content"], "vision ")
         self.assertEqual(events[2]["choices"][0]["delta"]["content"], "response")
         self.assertEqual(events[-1]["usage"]["prompt_tokens"], 11)
         self.assertEqual(events[-1]["choices"][0]["finish_reason"], "stop")
         self.assertIn("timings", events[-1])
+        self.assertEqual(events[-1]["timings"]["peak_memory_gb"], 4.56)
+        self.assertEqual(events[-1]["timings"]["prompt_per_second"], 222.2)
+        self.assertEqual(events[-1]["timings"]["predicted_per_second"], 33.3)
 
     def test_text_model_rejects_image_inputs(self) -> None:
         payload = {
