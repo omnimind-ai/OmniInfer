@@ -61,6 +61,17 @@ public:
     int max_tokens = 2048;
     size_t prev_len = 0;
 
+    // If the chat template ends with a thinking start tag (e.g. Qwen3.5 "<think>\n"),
+    // it is part of the input prompt, not the output. Prepend it for a complete block.
+    {
+      const std::string think_tag = "<think>";
+      auto pos = formatted.rfind(think_tag);
+      if (pos != std::string::npos && pos >= formatted.size() - think_tag.size() - 2) {
+        full_response += think_tag + "\n";
+        if (on_token) on_token(think_tag + "\n");
+      }
+    }
+
     while (!cancelled.load() && !llm_->stoped() && ctx->gen_seq_len < max_tokens) {
       llm_->generate(1);
       if (llm_->stoped()) break;

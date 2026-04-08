@@ -97,7 +97,7 @@ Recommended docs:
 
 ## Architecture
 
-![omni_studio_architecture](./docs/architecture_used_v2_en.png)
+![omni_studio_architecture](./docs/architecture.drawio.svg)
 
 ## Citation
 
