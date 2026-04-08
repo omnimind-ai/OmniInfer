@@ -49,6 +49,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Test the OmniInfer end-to-end inference flow")
     parser.add_argument("--model", required=True, help="Model path used for model-select and direct inference tests")
     parser.add_argument("--mmproj", help="Optional mmproj path; when provided the script also runs multimodal inference")
+    parser.add_argument(
+        "--multimodal",
+        action="store_true",
+        help="Run multimodal inference using --image even when the backend does not require an mmproj file",
+    )
     parser.add_argument("--backend", help="Explicit backend to select before loading the model")
     parser.add_argument("--host", default="127.0.0.1", help="Gateway host, default: 127.0.0.1")
     parser.add_argument("--port", type=int, default=9000, help="Gateway port, default: 9000")
@@ -137,7 +142,7 @@ class FlowRunner:
             fail(f"model path not found: {self.model}")
         if self.mmproj and not self.mmproj.is_file():
             fail(f"mmproj file not found: {self.mmproj}")
-        if self.mmproj and not self.image.is_file():
+        if (self.mmproj or self.args.multimodal) and not self.image.is_file():
             fail(f"image file not found: {self.image}")
 
     def request_json(
@@ -384,7 +389,7 @@ class FlowRunner:
         )
         self.assert_chat_response(payload, "preloaded text completion")
 
-        if self.mmproj:
+        if self.mmproj or self.args.multimodal:
             image_b64 = base64.b64encode(self.image.read_bytes()).decode("ascii")
             multimodal_payload = {
                 "think": False,
