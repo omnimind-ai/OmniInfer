@@ -24,3 +24,7 @@
 [submodule "framework/executorch"]
 	path = framework/executorch
 	url = https://github.com/pytorch/executorch
+[submodule "framework/llama.cpp-omni"]
+	path = framework/llama.cpp-omni
+	url = git@github.com:36330/llama.git
+	branch = eagle3-sync-upstream
