@@ -133,12 +133,6 @@ public:
     std::string full_response;
     std::string utf8_buf;
 
-    // If template supports thinking, prepend the start tag consumed during prefill.
-    if (params.supports_thinking && !params.thinking_start_tag.empty()) {
-      full_response += params.thinking_start_tag;
-      if (on_token) on_token(params.thinking_start_tag);
-    }
-
     auto t_decode_start = std::chrono::steady_clock::now();
 
     while (!cancelled.load()) {
