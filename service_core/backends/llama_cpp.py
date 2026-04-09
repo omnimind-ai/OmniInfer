@@ -178,3 +178,20 @@ ANDROID_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
         default_ngl="999",
     ),
 )
+
+
+IOS_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
+    BackendTemplate(
+        id="llama.cpp-ios",
+        label="llama.cpp iOS",
+        family="llama.cpp",
+        runtime_dir_name="llama.cpp-ios",
+        launcher_name=None,
+        description="llama.cpp iOS Metal backend managed by OmniInfer",
+        capabilities=("chat", "vision", "stream", "metal", "apple", "mobile", "ios"),
+        env_prefix="OMNIINFER_LLAMA_CPP_IOS",
+        default_ngl="999",
+        runtime_mode="embedded",
+        external_server_protocol=None,
+    ),
+)
