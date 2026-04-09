@@ -179,6 +179,8 @@ class OmniInferService : Service() {
                 val thinkEndBuf = StringBuilder()
                 val hasTools = toolsJson != null
                 var connectionAlive = true
+                var inToolCall = false  // true once tool call marker detected in stream
+                val contentBuf = StringBuilder()  // small lookback buffer for marker detection
 
                 val result = try {
                     OmniInferBridge.generate(
@@ -242,12 +244,34 @@ class OmniInferService : Service() {
                                             thinkEndBuf.append(buf.substring(buf.length - 10))
                                         }
                                     }
-                                } else {
-                                    val chunk = buildChunk(completionId, requestModel, created) {
-                                        put("content", token)
+                                } else if (!inToolCall) {
+                                    // Detect tool call start markers in content stream.
+                                    if (hasTools) {
+                                        contentBuf.append(token)
+                                        // Check for known tool call markers.
+                                        if (contentBuf.contains("<|tool_call") || contentBuf.contains("<tool_call")) {
+                                            inToolCall = true
+                                            return@runBlocking
+                                        }
+                                        // Flush content up to a safe point (keep tail for marker detection).
+                                        val buf = contentBuf.toString()
+                                        val safe = if (buf.length > 15) buf.substring(0, buf.length - 15) else ""
+                                        if (safe.isNotEmpty()) {
+                                            val chunk = buildChunk(completionId, requestModel, created) {
+                                                put("content", safe)
+                                            }
+                                            write("data: $chunk\n\n")
+                                            contentBuf.clear()
+                                            contentBuf.append(buf.substring(buf.length - 15))
+                                        }
+                                    } else {
+                                        val chunk = buildChunk(completionId, requestModel, created) {
+                                            put("content", token)
+                                        }
+                                        write("data: $chunk\n\n")
                                     }
-                                    write("data: $chunk\n\n")
                                 }
+                                // inToolCall == true: suppress content, C++ will parse tool calls after generate()
                                 flush()
                             } } catch (_: Exception) {
                                 // Client disconnected — cancel backend generation.
@@ -281,6 +305,16 @@ class OmniInferService : Service() {
                     thinkEndBuf.clear()
                 }
 
+                // Flush remaining content buffer (when tools present but no tool call detected).
+                if (!inToolCall && contentBuf.isNotEmpty()) {
+                    val chunk = buildChunk(completionId, requestModel, created) {
+                        put("content", contentBuf.toString())
+                    }
+                    write("data: $chunk\n\n")
+                    flush()
+                    contentBuf.clear()
+                }
+
                 // After generate: check if result contains tool calls.
                 val streamToolCalls = if (hasTools) {
                     runCatching {
@@ -301,10 +335,10 @@ class OmniInferService : Service() {
                         // First chunk: id + name + empty arguments.
                         write("data: ${buildToolCallChunk(completionId, requestModel, created, idx, tcId, tcName, "")}\n\n")
 
-                        // Incremental argument chunks (split into ~20 char pieces).
+                        // Incremental argument chunks (split into small pieces).
                         var i = 0
                         while (i < tcArgs.length) {
-                            val end = minOf(i + 20, tcArgs.length)
+                            val end = minOf(i + 8, tcArgs.length)
                             val fragment = tcArgs.substring(i, end)
                             write("data: ${buildToolCallChunk(completionId, requestModel, created, idx, "", null, fragment)}\n\n")
                             i = end
