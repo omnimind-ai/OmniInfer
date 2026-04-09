@@ -127,7 +127,7 @@ class OmniInferService : Service() {
         val thinkEnabled = when {
             enableThinking != null -> enableThinking
             reasoningEffort != null -> reasoningEffort != "none"
-            else -> true // model default
+            else -> false // default off on mobile for speed
         }
 
         // Tools support.
