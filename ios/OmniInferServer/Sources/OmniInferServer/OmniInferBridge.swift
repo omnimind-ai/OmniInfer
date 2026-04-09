@@ -19,7 +19,8 @@ public final class OmniInferBridge: @unchecked Sendable {
         modelPath: String,
         backend: String = "llama.cpp",
         nThreads: Int = 0,
-        nCtx: Int = 4096
+        nCtx: Int = 4096,
+        nGpuLayers: Int = 99
     ) -> Int64 {
         let config: [String: Any] = [
             "backend": backend,
@@ -27,6 +28,7 @@ public final class OmniInferBridge: @unchecked Sendable {
             "native_lib_dir": "",
             "n_threads": nThreads,
             "n_ctx": nCtx,
+            "n_gpu_layers": nGpuLayers,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: config),
               let json = String(data: data, encoding: .utf8) else { return 0 }
@@ -42,15 +44,21 @@ public final class OmniInferBridge: @unchecked Sendable {
 
     /// Run inference, streaming tokens via `onToken`.
     /// - Returns: The complete response string.
+    /// Run inference. If `messagesJSON` is provided, it overrides systemPrompt/prompt
+    /// and is passed to the C++ backend to build the full conversation.
     public func generate(
         handle: Int64,
         systemPrompt: String?,
         prompt: String,
         thinkingEnabled: Bool = false,
+        messagesJSON: String? = nil,
         onToken: @escaping (String) -> Void,
         onMetrics: @escaping (String) -> Void
     ) -> String {
-        let requestJSON = "{\"thinking_enabled\":\(thinkingEnabled)}"
+        var reqObj: [String: Any] = ["thinking_enabled": thinkingEnabled]
+        if let mj = messagesJSON { reqObj["messages_json"] = mj }
+        let requestJSON = (try? JSONSerialization.data(withJSONObject: reqObj))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
 
         let ctx = CallbackContext(onToken: onToken, onMetrics: onMetrics)
         let ctxPtr = Unmanaged.passRetained(ctx).toOpaque()

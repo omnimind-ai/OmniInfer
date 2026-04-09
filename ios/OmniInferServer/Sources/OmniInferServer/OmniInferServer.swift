@@ -56,7 +56,8 @@ public final class OmniInferServer: @unchecked Sendable {
         backend: String = "llama.cpp",
         port: Int = 9099,
         nThreads: Int = 0,
-        nCtx: Int = 2048
+        nCtx: Int = 2048,
+        nGpuLayers: Int = 99
     ) async -> Bool {
         lock.lock()
 
@@ -77,7 +78,8 @@ public final class OmniInferServer: @unchecked Sendable {
             modelPath: modelPath,
             backend: backend,
             nThreads: nThreads,
-            nCtx: nCtx
+            nCtx: nCtx,
+            nGpuLayers: nGpuLayers
         )
 
         guard handle != 0 else { return false }
