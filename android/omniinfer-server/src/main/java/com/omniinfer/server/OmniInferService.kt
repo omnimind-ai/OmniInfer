@@ -117,13 +117,17 @@ class OmniInferService : Service() {
         val requestModel = req["model"]?.jsonPrimitive?.contentOrNull ?: "omniinfer"
         val includeUsage = req["stream_options"]?.jsonObject?.get("include_usage")?.jsonPrimitive?.booleanOrNull ?: true
 
-        // Thinking mode: support both reasoning_effort and enable_thinking.
+        // Thinking mode: support both reasoning_effort and enable_thinking (mutually exclusive).
         val reasoningEffort = req["reasoning_effort"]?.jsonPrimitive?.contentOrNull
         val enableThinking = req["enable_thinking"]?.jsonPrimitive?.booleanOrNull
+        if (reasoningEffort != null && enableThinking != null) {
+            call.respondText("{\"error\":\"reasoning_effort and enable_thinking are mutually exclusive\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
+            return
+        }
         val thinkEnabled = when {
             enableThinking != null -> enableThinking
             reasoningEffort != null -> reasoningEffort != "none"
-            else -> true
+            else -> false // default off on mobile for speed
         }
 
         // Tools support.
@@ -131,6 +135,7 @@ class OmniInferService : Service() {
         val toolChoice = req["tool_choice"]?.jsonPrimitive?.contentOrNull
 
         // Build normalized messages array for the backend.
+        // Preserve tool_calls on assistant messages and tool role messages for multi-turn tool use.
         val normalizedMessages = buildJsonArray {
             for (msg in messages) {
                 val role = msg.jsonObject["role"]?.jsonPrimitive?.contentOrNull ?: continue
@@ -138,8 +143,36 @@ class OmniInferService : Service() {
                 addJsonObject {
                     put("role", role)
                     put("content", content)
+                    // Preserve tool_calls array on assistant messages.
+                    msg.jsonObject["tool_calls"]?.jsonArray?.let { put("tool_calls", it) }
+                    // Preserve tool_call_id and name on tool-result messages.
+                    msg.jsonObject["tool_call_id"]?.jsonPrimitive?.let { put("tool_call_id", it) }
+                    if (role == "tool") {
+                        msg.jsonObject["name"]?.jsonPrimitive?.let { put("name", it) }
+                    }
                 }
             }
+        }
+
+        // Extract first image from messages (base64 data URI).
+        val imageData: ByteArray? = run {
+            for (msg in messages) {
+                val contentEl = msg.jsonObject["content"]
+                if (contentEl is JsonArray) {
+                    for (part in contentEl) {
+                        if (part.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "image_url") {
+                            val url = part.jsonObject["image_url"]?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull ?: continue
+                            if (url.startsWith("data:")) {
+                                val base64Part = url.substringAfter("base64,", "")
+                                if (base64Part.isNotEmpty()) {
+                                    return@run android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            null
         }
 
         val hasUser = messages.any { it.jsonObject["role"]?.jsonPrimitive?.contentOrNull == "user" }
@@ -163,22 +196,28 @@ class OmniInferService : Service() {
         if (stream) {
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 var isFirst = true
-                // Track thinking phase: tokens before </think> go to reasoning_content.
-                var inThinking = thinkEnabled
-                var thinkBuf = StringBuilder()
+                var inReasoning = false
+                val thinkEndBuf = StringBuilder()
+                val hasTools = toolsJson != null
+                var connectionAlive = true
+                var inToolCall = false  // true once tool call marker detected in stream
+                val contentBuf = StringBuilder()  // small lookback buffer for marker detection
 
-                OmniInferBridge.generate(
+                val result = try {
+                    OmniInferBridge.generate(
                     handle = handle,
                     messagesJson = normalizedMessages.toString(),
+                    imageData = imageData,
                     thinkEnabled = thinkEnabled,
                     toolsJson = toolsJson,
                     toolChoice = toolChoice,
                     callback = object {
                         @Suppress("unused")
                         fun onToken(token: String) {
-                            runBlocking {
+                            if (!connectionAlive) return
+
+                            try { runBlocking {
                                 if (isFirst) {
-                                    // Phase 1: INIT chunk with role.
                                     val initChunk = buildChunk(completionId, requestModel, created) {
                                         put("role", "assistant")
                                         put("content", "")
@@ -188,52 +227,78 @@ class OmniInferService : Service() {
                                     isFirst = false
                                 }
 
-                                if (inThinking) {
-                                    // Check if this token contains the end-of-thinking marker.
-                                    thinkBuf.append(token)
-                                    val buf = thinkBuf.toString()
+                                if (token.trim() == "<think>") {
+                                    inReasoning = true
+                                    return@runBlocking
+                                }
+
+                                if (inReasoning) {
+                                    thinkEndBuf.append(token)
+                                    val buf = thinkEndBuf.toString()
                                     val endIdx = buf.indexOf("</think>")
                                     if (endIdx >= 0) {
-                                        // Send remaining thinking content before </think>.
-                                        val thinkPart = buf.substring(0, endIdx)
-                                        if (thinkPart.isNotEmpty()) {
+                                        val reasonPart = buf.substring(0, endIdx)
+                                        if (reasonPart.isNotEmpty()) {
                                             val chunk = buildChunk(completionId, requestModel, created) {
-                                                put("reasoning_content", thinkPart)
+                                                put("reasoning_content", reasonPart)
                                                 put("content", JsonNull)
                                             }
                                             write("data: $chunk\n\n")
                                         }
-                                        // Switch to content phase.
-                                        inThinking = false
+                                        inReasoning = false
                                         val contentPart = buf.substring(endIdx + "</think>".length)
                                         if (contentPart.isNotBlank()) {
                                             val chunk = buildChunk(completionId, requestModel, created) {
                                                 put("content", contentPart)
-                                                put("reasoning_content", JsonNull)
                                             }
                                             write("data: $chunk\n\n")
                                         }
-                                        thinkBuf.clear()
+                                        thinkEndBuf.clear()
                                     } else {
-                                        // Still in thinking, send as reasoning_content.
+                                        val safe = if (buf.length > 10) buf.substring(0, buf.length - 10) else ""
+                                        if (safe.isNotEmpty()) {
+                                            val chunk = buildChunk(completionId, requestModel, created) {
+                                                put("reasoning_content", safe)
+                                                put("content", JsonNull)
+                                            }
+                                            write("data: $chunk\n\n")
+                                            thinkEndBuf.clear()
+                                            thinkEndBuf.append(buf.substring(buf.length - 10))
+                                        }
+                                    }
+                                } else if (!inToolCall) {
+                                    // Detect tool call start markers in content stream.
+                                    if (hasTools) {
+                                        contentBuf.append(token)
+                                        // Check for known tool call markers.
+                                        if (contentBuf.contains("<|tool_call") || contentBuf.contains("<tool_call")) {
+                                            inToolCall = true
+                                            return@runBlocking
+                                        }
+                                        // Flush content up to a safe point (keep tail for marker detection).
+                                        val buf = contentBuf.toString()
+                                        val safe = if (buf.length > 15) buf.substring(0, buf.length - 15) else ""
+                                        if (safe.isNotEmpty()) {
+                                            val chunk = buildChunk(completionId, requestModel, created) {
+                                                put("content", safe)
+                                            }
+                                            write("data: $chunk\n\n")
+                                            contentBuf.clear()
+                                            contentBuf.append(buf.substring(buf.length - 15))
+                                        }
+                                    } else {
                                         val chunk = buildChunk(completionId, requestModel, created) {
-                                            put("reasoning_content", token)
-                                            put("content", JsonNull)
+                                            put("content", token)
                                         }
                                         write("data: $chunk\n\n")
-                                        // Keep only last few chars in buffer for </think> detection.
-                                        if (thinkBuf.length > 20) {
-                                            thinkBuf = StringBuilder(thinkBuf.substring(thinkBuf.length - 10))
-                                        }
                                     }
-                                } else {
-                                    // Content phase.
-                                    val chunk = buildChunk(completionId, requestModel, created) {
-                                        put("content", token)
-                                    }
-                                    write("data: $chunk\n\n")
                                 }
+                                // inToolCall == true: suppress content, C++ will parse tool calls after generate()
                                 flush()
+                            } } catch (_: Exception) {
+                                // Client disconnected — cancel backend generation.
+                                connectionAlive = false
+                                OmniInferBridge.cancel(handle)
                             }
                         }
                         @Suppress("unused")
@@ -242,8 +307,72 @@ class OmniInferService : Service() {
                         }
                     }
                 )
+                } catch (e: Exception) {
+                    // Client disconnected or write failed — cancel the running generate.
+                    Log.w(TAG, "Stream interrupted: ${e.message}")
+                    OmniInferBridge.cancel(handle)
+                    connectionAlive = false
+                    ""
+                }
+
+                if (!connectionAlive) return@respondTextWriter
+
+                // Flush remaining reasoning buffer as content if model ended without </think>.
+                if (inReasoning && thinkEndBuf.isNotEmpty()) {
+                    val chunk = buildChunk(completionId, requestModel, created) {
+                        put("content", thinkEndBuf.toString())
+                    }
+                    write("data: $chunk\n\n")
+                    flush()
+                    thinkEndBuf.clear()
+                }
+
+                // Flush remaining content buffer (when tools present but no tool call detected).
+                if (!inToolCall && contentBuf.isNotEmpty()) {
+                    val chunk = buildChunk(completionId, requestModel, created) {
+                        put("content", contentBuf.toString())
+                    }
+                    write("data: $chunk\n\n")
+                    flush()
+                    contentBuf.clear()
+                }
+
+                // After generate: check if result contains tool calls.
+                val streamToolCalls = if (hasTools) {
+                    runCatching {
+                        val parsed = Json.parseToJsonElement(result).jsonObject
+                        parsed["tool_calls"]?.jsonArray
+                    }.getOrNull()
+                } else null
+
+                // If tool calls detected, emit incremental tool_calls delta chunks.
+                if (streamToolCalls != null) {
+                    for ((idx, tc) in streamToolCalls.withIndex()) {
+                        val tcObj = tc.jsonObject
+                        val fn = tcObj["function"]?.jsonObject
+                        val tcId = tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "call_$idx"
+                        val tcName = fn?.get("name")?.jsonPrimitive?.contentOrNull ?: ""
+                        val tcArgs = fn?.get("arguments")?.toString() ?: "{}"
+
+                        // First chunk: id + name + empty arguments.
+                        write("data: ${buildToolCallChunk(completionId, requestModel, created, idx, tcId, tcName, "")}\n\n")
+
+                        // Incremental argument chunks (split into small pieces).
+                        var i = 0
+                        while (i < tcArgs.length) {
+                            val end = minOf(i + 8, tcArgs.length)
+                            val fragment = tcArgs.substring(i, end)
+                            write("data: ${buildToolCallChunk(completionId, requestModel, created, idx, "", null, fragment)}\n\n")
+                            i = end
+                        }
+
+                        // Final empty chunk for this tool call.
+                        write("data: ${buildToolCallChunk(completionId, requestModel, created, idx, "", null, "")}\n\n")
+                    }
+                }
 
                 // Phase 4: FINISH chunk.
+                val finishReason = if (streamToolCalls != null) "tool_calls" else "stop"
                 val finishChunk = buildJsonObject {
                     put("id", completionId)
                     put("object", "chat.completion.chunk")
@@ -253,7 +382,7 @@ class OmniInferService : Service() {
                         addJsonObject {
                             putJsonObject("delta") {}
                             put("index", 0)
-                            put("finish_reason", "stop")
+                            put("finish_reason", finishReason)
                         }
                     }
                 }
@@ -279,6 +408,7 @@ class OmniInferService : Service() {
             val result = OmniInferBridge.generate(
                 handle = handle,
                 messagesJson = normalizedMessages.toString(),
+                imageData = imageData,
                 thinkEnabled = thinkEnabled,
                 toolsJson = toolsJson,
                 toolChoice = toolChoice,
@@ -332,6 +462,39 @@ class OmniInferService : Service() {
             putJsonArray("choices") {
                 addJsonObject {
                     putJsonObject("delta", deltaBuilder)
+                    put("index", 0)
+                    put("finish_reason", JsonNull)
+                }
+            }
+        }
+    }
+
+    private fun buildToolCallChunk(
+        id: String, model: String, created: Long,
+        index: Int, tcId: String, name: String?, arguments: String
+    ): JsonObject {
+        return buildJsonObject {
+            put("id", id)
+            put("object", "chat.completion.chunk")
+            put("model", model)
+            put("created", created)
+            putJsonArray("choices") {
+                addJsonObject {
+                    putJsonObject("delta") {
+                        put("content", JsonNull)
+                        put("reasoning_content", JsonNull)
+                        putJsonArray("tool_calls") {
+                            addJsonObject {
+                                put("index", index)
+                                put("id", tcId)
+                                put("type", "function")
+                                putJsonObject("function") {
+                                    if (name != null) put("name", name)
+                                    put("arguments", arguments)
+                                }
+                            }
+                        }
+                    }
                     put("index", 0)
                     put("finish_reason", JsonNull)
                 }
