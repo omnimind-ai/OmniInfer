@@ -39,7 +39,8 @@ public:
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token,
       const std::string& /*tools_json*/ = "",
-      const std::string& /*tool_choice*/ = "") override {
+      const std::string& /*tool_choice*/ = "",
+      const std::string& /*messages_json*/ = "") override {
 
     using ChatMessages = MNN::Transformer::ChatMessages;
     ChatMessages msgs;

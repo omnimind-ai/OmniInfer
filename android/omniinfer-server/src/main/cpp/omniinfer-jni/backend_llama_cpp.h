@@ -61,7 +61,8 @@ public:
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token,
       const std::string& tools_json = "",
-      const std::string& tool_choice = "") override {
+      const std::string& tool_choice = "",
+      const std::string& messages_json = "") override {
 
     // Stateless: reset all state at start of each request.
     cur_pos_ = 0;
@@ -70,17 +71,23 @@ public:
 
     // Build full messages vector.
     std::vector<common_chat_msg> messages;
-    if (!system_prompt.empty()) {
-      common_chat_msg sys_msg;
-      sys_msg.role = "system";
-      sys_msg.content = system_prompt;
-      messages.push_back(std::move(sys_msg));
-    }
-    {
-      common_chat_msg user_msg;
-      user_msg.role = "user";
-      user_msg.content = user_prompt;
-      messages.push_back(std::move(user_msg));
+    if (!messages_json.empty()) {
+      // Parse messages from JSON array: [{"role":"...","content":"..."},...]
+      messages = parse_messages(messages_json);
+    } else {
+      // Legacy single-turn path.
+      if (!system_prompt.empty()) {
+        common_chat_msg sys_msg;
+        sys_msg.role = "system";
+        sys_msg.content = system_prompt;
+        messages.push_back(std::move(sys_msg));
+      }
+      {
+        common_chat_msg user_msg;
+        user_msg.role = "user";
+        user_msg.content = user_prompt;
+        messages.push_back(std::move(user_msg));
+      }
     }
 
     // Apply chat template with all messages at once.
@@ -230,6 +237,30 @@ private:
     llama_batch_free(batch_); batch_ = {};
     if (ctx_) { llama_free(ctx_); ctx_ = nullptr; }
     if (model_) { llama_model_free(model_); model_ = nullptr; }
+  }
+
+  // Parse messages JSON array into common_chat_msg vector.
+  // Input: [{"role":"system","content":"..."},{"role":"user","content":"..."},...]
+  static std::vector<common_chat_msg> parse_messages(const std::string& json) {
+    std::vector<common_chat_msg> msgs;
+    size_t pos = 0;
+    while (pos < json.size()) {
+      // Find next object.
+      size_t obj_start = json.find('{', pos);
+      if (obj_start == std::string::npos) break;
+      std::string obj = extract_json_object(json, obj_start);
+      if (obj == "{}") { pos = obj_start + 1; continue; }
+
+      common_chat_msg msg;
+      size_t role_key = obj.find("\"role\"");
+      if (role_key != std::string::npos) msg.role = extract_json_string_value(obj, role_key);
+      size_t content_key = obj.find("\"content\"");
+      if (content_key != std::string::npos) msg.content = extract_json_string_value(obj, content_key);
+
+      if (!msg.role.empty()) msgs.push_back(std::move(msg));
+      pos = obj_start + obj.size();
+    }
+    return msgs;
   }
 
   // Parse OpenAI tools JSON array into common_chat_tool vector.

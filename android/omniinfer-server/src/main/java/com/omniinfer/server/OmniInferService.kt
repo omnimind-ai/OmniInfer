@@ -122,19 +122,23 @@ class OmniInferService : Service() {
         val toolsJson = req["tools"]?.jsonArray?.toString()
         val toolChoice = req["tool_choice"]?.jsonPrimitive?.contentOrNull
 
-        // Extract system prompt and last user message.
-        var systemPrompt: String? = null
-        var userPrompt = ""
-        for (msg in messages) {
-            val role = msg.jsonObject["role"]?.jsonPrimitive?.contentOrNull ?: continue
-            val content = extractTextContent(msg.jsonObject["content"]) ?: continue
-            when (role) {
-                "system" -> systemPrompt = content
-                "user" -> userPrompt = content
+        // Build normalized messages array for the backend.
+        val normalizedMessages = buildJsonArray {
+            for (msg in messages) {
+                val role = msg.jsonObject["role"]?.jsonPrimitive?.contentOrNull ?: continue
+                val content = extractTextContent(msg.jsonObject["content"]) ?: ""
+                addJsonObject {
+                    put("role", role)
+                    put("content", content)
+                }
             }
         }
 
-        if (userPrompt.isEmpty()) {
+        // Still need a user prompt check.
+        val hasUser = messages.any {
+            it.jsonObject["role"]?.jsonPrimitive?.contentOrNull == "user"
+        }
+        if (!hasUser) {
             call.respondText("{\"error\":\"no user message\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
             return
         }
@@ -152,8 +156,7 @@ class OmniInferService : Service() {
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 OmniInferBridge.generate(
                     handle = handle,
-                    systemPrompt = systemPrompt,
-                    prompt = userPrompt,
+                    messagesJson = normalizedMessages.toString(),
                     thinkEnabled = thinkEnabled,
                     toolsJson = toolsJson,
                     toolChoice = toolChoice,
@@ -189,8 +192,7 @@ class OmniInferService : Service() {
         } else {
             val result = OmniInferBridge.generate(
                 handle = handle,
-                systemPrompt = systemPrompt,
-                prompt = userPrompt,
+                messagesJson = normalizedMessages.toString(),
                 thinkEnabled = thinkEnabled,
                 toolsJson = toolsJson,
                 toolChoice = toolChoice,
