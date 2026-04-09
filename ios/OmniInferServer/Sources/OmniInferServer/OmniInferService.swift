@@ -69,20 +69,19 @@ public final class OmniInferService: Sendable {
         }
 
         let stream = json["stream"] as? Bool ?? false
+        let enableThinking = json["enable_thinking"] as? Bool ?? false
 
-        var systemPrompt: String?
-        var userPrompt = ""
+        // Flatten messages to simple role/content pairs for the C++ backend.
+        var flatMessages: [[String: String]] = []
+        var lastUserPrompt = ""
         for msg in messages {
             guard let role = msg["role"] as? String else { continue }
             guard let content = extractTextContent(msg["content"]) else { continue }
-            switch role {
-            case "system": systemPrompt = content
-            case "user": userPrompt = content
-            default: break
-            }
+            flatMessages.append(["role": role, "content": content])
+            if role == "user" { lastUserPrompt = content }
         }
 
-        guard !userPrompt.isEmpty else {
+        guard !lastUserPrompt.isEmpty else {
             return errorResponse(message: "no user message", status: .badRequest)
         }
 
@@ -91,19 +90,24 @@ public final class OmniInferService: Sendable {
             return errorResponse(message: "no model loaded", status: .serviceUnavailable)
         }
 
+        // Serialize messages array for the C++ backend.
+        let messagesJSON = (try? JSONSerialization.data(withJSONObject: flatMessages))
+            .flatMap { String(data: $0, encoding: .utf8) }
+
         if stream {
-            return streamingResponse(handle: handle, systemPrompt: systemPrompt, userPrompt: userPrompt)
+            return streamingResponse(handle: handle, messagesJSON: messagesJSON, userPrompt: lastUserPrompt, enableThinking: enableThinking)
         } else {
-            return nonStreamingResponse(handle: handle, systemPrompt: systemPrompt, userPrompt: userPrompt)
+            return nonStreamingResponse(handle: handle, messagesJSON: messagesJSON, userPrompt: lastUserPrompt, enableThinking: enableThinking)
         }
     }
 
     // MARK: - Non-streaming response
 
-    private func nonStreamingResponse(handle: Int64, systemPrompt: String?, userPrompt: String) -> Response {
+    private func nonStreamingResponse(handle: Int64, messagesJSON: String?, userPrompt: String, enableThinking: Bool) -> Response {
         var metricsStr: String?
         let result = OmniInferBridge.shared.generate(
-            handle: handle, systemPrompt: systemPrompt, prompt: userPrompt,
+            handle: handle, systemPrompt: nil, prompt: userPrompt,
+            thinkingEnabled: enableThinking, messagesJSON: messagesJSON,
             onToken: { _ in }, onMetrics: { metricsStr = $0 }
         )
 
@@ -128,13 +132,14 @@ public final class OmniInferService: Sendable {
 
     // MARK: - Streaming response (SSE)
 
-    private func streamingResponse(handle: Int64, systemPrompt: String?, userPrompt: String) -> Response {
+    private func streamingResponse(handle: Int64, messagesJSON: String?, userPrompt: String, enableThinking: Bool) -> Response {
         let (stream, continuation) = AsyncStream<String>.makeStream()
 
         Task.detached { [self] in
             var metricsStr: String?
             _ = OmniInferBridge.shared.generate(
-                handle: handle, systemPrompt: systemPrompt, prompt: userPrompt,
+                handle: handle, systemPrompt: nil, prompt: userPrompt,
+                thinkingEnabled: enableThinking, messagesJSON: messagesJSON,
                 onToken: { token in
                     let chunk: [String: Any] = [
                         "object": "chat.completion.chunk",

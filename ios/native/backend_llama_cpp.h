@@ -7,16 +7,35 @@
 #include "chat.h"
 #include "sampling.h"
 
+#include <cctype>
 #include <chrono>
+#include <optional>
+#include <string>
 #include <unistd.h>
 
 namespace omniinfer {
+
+namespace {
+inline std::optional<int> ParseJsonInt(const std::string &json, const std::string &key) {
+  const std::string token = "\"" + key + "\"";
+  size_t key_pos = json.find(token);
+  if (key_pos == std::string::npos) return std::nullopt;
+  size_t colon_pos = json.find(':', key_pos + token.size());
+  if (colon_pos == std::string::npos) return std::nullopt;
+  size_t pos = colon_pos + 1;
+  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+  size_t end = pos;
+  while (end < json.size() && (std::isdigit(static_cast<unsigned char>(json[end])) || json[end] == '-')) ++end;
+  if (end == pos) return std::nullopt;
+  return std::stoi(json.substr(pos, end - pos));
+}
+}  // namespace
 
 class LlamaCppBackend : public InferenceBackend {
 public:
   ~LlamaCppBackend() override { release(); }
 
-  bool load(const std::string& model_path, const std::string& /*config_json*/,
+  bool load(const std::string& model_path, const std::string& config_json,
             const std::string& native_lib_dir, int n_threads, int n_ctx) override {
     std::call_once(s_backend_init, [&]() {
       if (!native_lib_dir.empty()) {
@@ -28,6 +47,11 @@ public:
     });
 
     llama_model_params mp = llama_model_default_params();
+    // n_gpu_layers: -1 = auto (default), 0 = CPU only, 99 = all layers on GPU.
+    auto ngl_opt = ParseJsonInt(config_json, "n_gpu_layers");
+    if (ngl_opt.has_value()) {
+      mp.n_gpu_layers = ngl_opt.value();
+    }
     model_ = llama_model_load_from_file(model_path.c_str(), mp);
     if (!model_) return false;
 
@@ -52,6 +76,9 @@ public:
     return true;
   }
 
+  /// Set the full messages JSON for the next generate call.
+  void set_messages_json(const std::string& json) { pending_messages_json_ = json; }
+
   std::string generate(
       const std::string& system_prompt,
       const std::string& user_prompt,
@@ -64,22 +91,26 @@ public:
     llama_memory_clear(llama_get_memory(ctx_), false);
     common_sampler_reset(sampler_);
 
-    // Build full messages vector.
+    // Build messages vector — prefer full history from pending_messages_json_.
     std::vector<common_chat_msg> messages;
-    if (!system_prompt.empty()) {
-      common_chat_msg sys_msg;
-      sys_msg.role = "system";
-      sys_msg.content = system_prompt;
-      messages.push_back(std::move(sys_msg));
+    if (!pending_messages_json_.empty()) {
+      parse_messages_json(pending_messages_json_, messages);
+      pending_messages_json_.clear();
     }
-    {
+    if (messages.empty()) {
+      // Fallback: system + user only.
+      if (!system_prompt.empty()) {
+        common_chat_msg sys_msg;
+        sys_msg.role = "system";
+        sys_msg.content = system_prompt;
+        messages.push_back(std::move(sys_msg));
+      }
       common_chat_msg user_msg;
       user_msg.role = "user";
       user_msg.content = user_prompt;
       messages.push_back(std::move(user_msg));
     }
 
-    // Apply chat template with all messages at once (avoids Qwen3.5 Jinja crash).
     common_chat_templates_inputs inputs;
     inputs.messages = messages;
     inputs.add_generation_prompt = true;
@@ -236,6 +267,53 @@ private:
     return true;
   }
 
+  /// Minimal JSON array parser for [{"role":"...","content":"..."},...]
+  static void parse_messages_json(const std::string& json,
+                                   std::vector<common_chat_msg>& out) {
+    // Find each {"role":"...","content":"..."} pair.
+    size_t pos = 0;
+    while (pos < json.size()) {
+      size_t obj_start = json.find('{', pos);
+      if (obj_start == std::string::npos) break;
+      size_t obj_end = json.find('}', obj_start);
+      if (obj_end == std::string::npos) break;
+      std::string obj = json.substr(obj_start, obj_end - obj_start + 1);
+      auto role = ParseJsonString(obj, "role");
+      auto content = ParseJsonString(obj, "content");
+      if (role.has_value() && content.has_value()) {
+        common_chat_msg msg;
+        msg.role = *role;
+        msg.content = *content;
+        out.push_back(std::move(msg));
+      }
+      pos = obj_end + 1;
+    }
+  }
+
+  /// Simple JSON string extractor (local to this class).
+  static std::optional<std::string> ParseJsonString(const std::string& json,
+                                                     const std::string& key) {
+    const std::string token = "\"" + key + "\"";
+    size_t key_pos = json.find(token);
+    if (key_pos == std::string::npos) return std::nullopt;
+    size_t colon_pos = json.find(':', key_pos + token.size());
+    if (colon_pos == std::string::npos) return std::nullopt;
+    size_t p = colon_pos + 1;
+    while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p]))) ++p;
+    if (p >= json.size() || json[p] != '"') return std::nullopt;
+    ++p;
+    std::string out;
+    bool esc = false;
+    while (p < json.size()) {
+      char ch = json[p++];
+      if (esc) { out.push_back(ch == 'n' ? '\n' : ch == 't' ? '\t' : ch); esc = false; continue; }
+      if (ch == '\\') { esc = true; continue; }
+      if (ch == '"') return out;
+      out.push_back(ch);
+    }
+    return std::nullopt;
+  }
+
   static std::once_flag s_backend_init;
   llama_model* model_ = nullptr;
   llama_context* ctx_ = nullptr;
@@ -245,6 +323,7 @@ private:
   llama_pos cur_pos_ = 0;
   int n_ctx_ = 4096;
   InferenceMetrics last_metrics_;
+  std::string pending_messages_json_;
 };
 
 std::once_flag LlamaCppBackend::s_backend_init;

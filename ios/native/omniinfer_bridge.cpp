@@ -130,6 +130,16 @@ const char *omniinfer_generate(OmniInferHandle handle, const char *system_prompt
   const bool thinking = ExtractJsonBool(req, "thinking_enabled").value_or(session->thinking_enabled);
   const std::string sys(system_prompt ? system_prompt : "");
   const std::string user(user_prompt ? user_prompt : "");
+
+  // Pass full messages JSON to backend if present.
+  auto messages_json = ExtractJsonString(req, "messages_json");
+  if (messages_json.has_value()) {
+#if defined(OMNIINFER_BACKEND_LLAMA_CPP)
+    auto* llama_backend = dynamic_cast<omniinfer::LlamaCppBackend*>(session->backend.get());
+    if (llama_backend) llama_backend->set_messages_json(*messages_json);
+#endif
+  }
+
   auto token_cb = [&](const std::string &token) -> bool {
     if (on_token) return on_token(token.c_str(), userdata);
     return !session->cancelled.load();
