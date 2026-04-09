@@ -175,9 +175,12 @@ class OmniInferService : Service() {
         if (stream) {
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 var isFirst = true
-                var inThinking = false
-                var thinkDetected = false
-                var thinkBuf = StringBuilder()
+                // Thinking detection: buffer tokens until we see </think> or exceed threshold.
+                // If </think> found: everything before it = reasoning_content, after = content.
+                // If threshold exceeded without </think>: flush all as content.
+                var phase = if (thinkEnabled) "buffering" else "content"  // "buffering" | "reasoning" | "content"
+                val thinkBuf = StringBuilder()
+                val THINK_DETECT_THRESHOLD = 500  // chars before we give up waiting for </think>
                 val hasTools = toolsJson != null
 
                 val result = OmniInferBridge.generate(
@@ -189,9 +192,7 @@ class OmniInferService : Service() {
                     callback = object {
                         @Suppress("unused")
                         fun onToken(token: String) {
-                            // When tools are provided, suppress streaming tokens —
-                            // we'll send the result (content or tool_calls) after generate() completes.
-                            if (hasTools) return
+                            if (hasTools) return  // Suppress during tool calling.
 
                             runBlocking {
                                 if (isFirst) {
@@ -204,69 +205,49 @@ class OmniInferService : Service() {
                                     isFirst = false
                                 }
 
-                                // Auto-detect thinking mode from first tokens.
-                                if (!thinkDetected && thinkEnabled) {
-                                    thinkBuf.append(token)
-                                    val accumulated = thinkBuf.toString().trimStart()
-                                    if (accumulated.startsWith("<think>")) {
-                                        inThinking = true
-                                        thinkDetected = true
-                                        val after = accumulated.substringAfter("<think>")
-                                        thinkBuf = StringBuilder(after)
-                                        if (after.isNotEmpty()) {
+                                when (phase) {
+                                    "buffering" -> {
+                                        // Buffer tokens looking for </think>.
+                                        thinkBuf.append(token)
+                                        val buf = thinkBuf.toString()
+                                        val endIdx = buf.indexOf("</think>")
+                                        if (endIdx >= 0) {
+                                            // Found </think> — everything before is reasoning, after is content.
+                                            val reasoningPart = buf.substring(0, endIdx)
+                                            if (reasoningPart.isNotEmpty()) {
+                                                val chunk = buildChunk(completionId, requestModel, created) {
+                                                    put("reasoning_content", reasoningPart)
+                                                    put("content", JsonNull)
+                                                }
+                                                write("data: $chunk\n\n")
+                                            }
+                                            phase = "content"
+                                            val contentPart = buf.substring(endIdx + "</think>".length)
+                                            if (contentPart.isNotBlank()) {
+                                                val chunk = buildChunk(completionId, requestModel, created) {
+                                                    put("content", contentPart)
+                                                }
+                                                write("data: $chunk\n\n")
+                                            }
+                                            thinkBuf.clear()
+                                        } else if (buf.length > THINK_DETECT_THRESHOLD) {
+                                            // No </think> found within threshold — model is not thinking.
+                                            // Flush buffer as content.
+                                            phase = "content"
                                             val chunk = buildChunk(completionId, requestModel, created) {
-                                                put("reasoning_content", after)
-                                                put("content", JsonNull)
+                                                put("content", buf)
                                             }
                                             write("data: $chunk\n\n")
+                                            thinkBuf.clear()
                                         }
-                                    } else if (accumulated.length > 10 || !accumulated.startsWith("<")) {
-                                        thinkDetected = true
-                                        inThinking = false
+                                        // else: keep buffering.
+                                    }
+                                    "content" -> {
                                         val chunk = buildChunk(completionId, requestModel, created) {
-                                            put("content", accumulated)
+                                            put("content", token)
                                         }
                                         write("data: $chunk\n\n")
-                                        thinkBuf.clear()
                                     }
-                                } else if (inThinking) {
-                                    thinkBuf.append(token)
-                                    val buf = thinkBuf.toString()
-                                    val endIdx = buf.indexOf("</think>")
-                                    if (endIdx >= 0) {
-                                        val thinkPart = buf.substring(0, endIdx)
-                                        if (thinkPart.isNotEmpty()) {
-                                            val chunk = buildChunk(completionId, requestModel, created) {
-                                                put("reasoning_content", thinkPart)
-                                                put("content", JsonNull)
-                                            }
-                                            write("data: $chunk\n\n")
-                                        }
-                                        inThinking = false
-                                        val contentPart = buf.substring(endIdx + "</think>".length)
-                                        if (contentPart.isNotBlank()) {
-                                            val chunk = buildChunk(completionId, requestModel, created) {
-                                                put("content", contentPart)
-                                                put("reasoning_content", JsonNull)
-                                            }
-                                            write("data: $chunk\n\n")
-                                        }
-                                        thinkBuf.clear()
-                                    } else {
-                                        val chunk = buildChunk(completionId, requestModel, created) {
-                                            put("reasoning_content", token)
-                                            put("content", JsonNull)
-                                        }
-                                        write("data: $chunk\n\n")
-                                        if (thinkBuf.length > 20) {
-                                            thinkBuf = StringBuilder(thinkBuf.substring(thinkBuf.length - 10))
-                                        }
-                                    }
-                                } else {
-                                    val chunk = buildChunk(completionId, requestModel, created) {
-                                        put("content", token)
-                                    }
-                                    write("data: $chunk\n\n")
                                 }
                                 flush()
                             }
@@ -277,6 +258,24 @@ class OmniInferService : Service() {
                         }
                     }
                 )
+
+                // Flush remaining buffer if still in buffering phase (model didn't think).
+                if (phase == "buffering" && thinkBuf.isNotEmpty()) {
+                    if (isFirst) {
+                        val initChunk = buildChunk(completionId, requestModel, created) {
+                            put("role", "assistant")
+                            put("content", "")
+                        }
+                        write("data: $initChunk\n\n")
+                        isFirst = false
+                    }
+                    val chunk = buildChunk(completionId, requestModel, created) {
+                        put("content", thinkBuf.toString())
+                    }
+                    write("data: $chunk\n\n")
+                    flush()
+                    thinkBuf.clear()
+                }
 
                 // When tools were provided, tokens were suppressed. Emit result now.
                 val streamToolCalls = if (hasTools) {
