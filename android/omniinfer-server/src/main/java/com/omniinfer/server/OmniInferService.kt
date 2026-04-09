@@ -190,7 +190,7 @@ class OmniInferService : Service() {
                     callback = object {
                         @Suppress("unused")
                         fun onToken(token: String) {
-                            if (hasTools || !connectionAlive) return
+                            if (!connectionAlive) return
 
                             try { runBlocking {
                                 if (isFirst) {
@@ -281,7 +281,7 @@ class OmniInferService : Service() {
                     thinkEndBuf.clear()
                 }
 
-                // When tools were provided, tokens were suppressed. Emit result now.
+                // After generate: check if result contains tool calls.
                 val streamToolCalls = if (hasTools) {
                     runCatching {
                         val parsed = Json.parseToJsonElement(result).jsonObject
@@ -289,53 +289,38 @@ class OmniInferService : Service() {
                     }.getOrNull()
                 } else null
 
-                if (hasTools) {
-                    // INIT chunk (was skipped during suppressed streaming).
-                    val initChunk = buildChunk(completionId, requestModel, created) {
-                        put("role", "assistant")
-                        put("content", "")
-                    }
-                    write("data: $initChunk\n\n")
-
-                    if (streamToolCalls != null) {
-                        // Emit tool_calls delta chunks.
-                        for ((idx, tc) in streamToolCalls.withIndex()) {
-                            val tcObj = tc.jsonObject
-                            val fn = tcObj["function"]?.jsonObject
-                            val toolChunk = buildJsonObject {
-                                put("id", completionId)
-                                put("object", "chat.completion.chunk")
-                                put("model", requestModel)
-                                put("created", created)
-                                putJsonArray("choices") {
-                                    addJsonObject {
-                                        putJsonObject("delta") {
-                                            put("content", JsonNull)
-                                            putJsonArray("tool_calls") {
-                                                addJsonObject {
-                                                    put("index", idx)
-                                                    put("id", tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "call_$idx")
-                                                    put("type", "function")
-                                                    putJsonObject("function") {
-                                                        put("name", fn?.get("name")?.jsonPrimitive?.contentOrNull ?: "")
-                                                        put("arguments", fn?.get("arguments")?.toString() ?: "{}")
-                                                    }
+                // If tool calls detected, emit tool_calls delta chunks.
+                if (streamToolCalls != null) {
+                    for ((idx, tc) in streamToolCalls.withIndex()) {
+                        val tcObj = tc.jsonObject
+                        val fn = tcObj["function"]?.jsonObject
+                        val toolChunk = buildJsonObject {
+                            put("id", completionId)
+                            put("object", "chat.completion.chunk")
+                            put("model", requestModel)
+                            put("created", created)
+                            putJsonArray("choices") {
+                                addJsonObject {
+                                    putJsonObject("delta") {
+                                        put("content", JsonNull)
+                                        putJsonArray("tool_calls") {
+                                            addJsonObject {
+                                                put("index", idx)
+                                                put("id", tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "call_$idx")
+                                                put("type", "function")
+                                                putJsonObject("function") {
+                                                    put("name", fn?.get("name")?.jsonPrimitive?.contentOrNull ?: "")
+                                                    put("arguments", fn?.get("arguments")?.toString() ?: "{}")
                                                 }
                                             }
                                         }
-                                        put("index", 0)
-                                        put("finish_reason", JsonNull)
                                     }
+                                    put("index", 0)
+                                    put("finish_reason", JsonNull)
                                 }
                             }
-                            write("data: $toolChunk\n\n")
                         }
-                    } else {
-                        // Model responded with text instead of tool calls — emit as content.
-                        val contentChunk = buildChunk(completionId, requestModel, created) {
-                            put("content", result)
-                        }
-                        write("data: $contentChunk\n\n")
+                        write("data: $toolChunk\n\n")
                     }
                 }
 
