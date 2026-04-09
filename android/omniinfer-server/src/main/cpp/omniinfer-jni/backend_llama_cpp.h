@@ -200,9 +200,8 @@ public:
     std::string full_response;
     std::string utf8_buf;
 
-    // Always prepend thinking start tag when template supports it.
-    // If thinking is off, the model emits </think> immediately (empty block).
-    if (params.supports_thinking && !params.thinking_start_tag.empty()) {
+    // Prepend thinking start tag only when thinking is enabled.
+    if (thinking_enabled && params.supports_thinking && !params.thinking_start_tag.empty()) {
       if (on_token) on_token(params.thinking_start_tag);
     }
 
