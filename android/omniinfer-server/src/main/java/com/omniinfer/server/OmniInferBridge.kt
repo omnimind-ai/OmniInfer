@@ -34,7 +34,7 @@ object OmniInferBridge {
             .put("n_threads", nThreads)
             .put("n_ctx", nCtx)
         val handle = nativeInit(configJson.toString())
-        if (handle != 0L) thinkModes[handle] = false
+        // Don't set default think mode — let each request's thinkEnabled param decide.
         return handle
     }
 
@@ -49,7 +49,7 @@ object OmniInferBridge {
     ): String {
         if (!isNativeLibraryLoaded) return ""
         val req = JSONObject()
-            .put("thinking_enabled", thinkModes[handle] ?: thinkEnabled)
+            .put("thinking_enabled", if (thinkModes.containsKey(handle)) thinkModes[handle] else thinkEnabled)
             .put("messages", org.json.JSONArray(messagesJson))
         if (toolsJson != null) {
             req.put("tools", org.json.JSONArray(toolsJson))
