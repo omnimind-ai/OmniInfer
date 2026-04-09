@@ -1,8 +1,8 @@
-// OmniInferServer.swift — mirrors OmniInferServer.kt (131 lines).
+// OmniInferServer.swift — unified facade for iOS developers.
 //
-// Public facade for iOS developers.  Usage:
-//
-//   await OmniInferServer.shared.loadModel(modelPath: "/path/to/model.gguf")
+// Usage:
+//   await OmniInferServer.shared.loadModel(modelPath: "/path/to/model.gguf", backend: "llama.cpp")
+//   await OmniInferServer.shared.loadModel(modelPath: "/path/to/mlx-model/", backend: "mlx")
 //   // Server is now ready at http://127.0.0.1:9099/v1/chat/completions
 //   OmniInferServer.shared.unloadModel()
 //   await OmniInferServer.shared.stop()
@@ -15,7 +15,7 @@ import llama
 public final class OmniInferServer: @unchecked Sendable {
     public static let shared = OmniInferServer()
 
-    private var _currentHandle: Int64 = 0
+    private var currentEngine: (any InferenceEngine)?
     private var currentBackend: String = ""
     private var currentModelPath: String = ""
     private var _serverPort: Int = 9099
@@ -32,23 +32,26 @@ public final class OmniInferServer: @unchecked Sendable {
         return _serverPort
     }
 
-    /// The current session handle (0 if no model loaded).
-    public var currentHandle: Int64 {
+    /// The current inference engine (nil if no model loaded).
+    public var engine: (any InferenceEngine)? {
         lock.lock()
         defer { lock.unlock() }
-        return _currentHandle
+        return currentEngine
     }
 
     /// Whether a model is loaded and the server is running.
     public var isReady: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return _currentHandle != 0 && serverRunning
+        return currentEngine != nil && serverRunning
     }
 
     // MARK: - Model lifecycle
 
     /// Load a model and start the HTTP server.
+    /// - Parameters:
+    ///   - modelPath: Path to model file (.gguf) or directory (MLX).
+    ///   - backend: `"llama.cpp"` or `"mlx"`.
     /// - Returns: `true` if the model was loaded and the server started.
     @discardableResult
     public func loadModel(
@@ -62,30 +65,39 @@ public final class OmniInferServer: @unchecked Sendable {
         lock.lock()
 
         // Unload if switching model or backend.
-        if _currentHandle != 0 && (currentModelPath != modelPath || currentBackend != backend) {
+        if currentEngine != nil && (currentModelPath != modelPath || currentBackend != backend) {
             lock.unlock()
             unloadModel()
             lock.lock()
         }
 
-        if _currentHandle != 0 {
+        if currentEngine != nil {
             lock.unlock()
             return true
         }
         lock.unlock()
 
-        let handle = OmniInferBridge.shared.initialize(
-            modelPath: modelPath,
-            backend: backend,
-            nThreads: nThreads,
-            nCtx: nCtx,
-            nGpuLayers: nGpuLayers
-        )
+        // Create the appropriate engine.
+        let engine: (any InferenceEngine)?
+        switch backend {
+        case "mlx":
+            let mlx = MLXEngine(modelPath: modelPath)
+            if let mlx, await mlx.loadModel() {
+                engine = mlx
+            } else {
+                engine = nil
+            }
+        default: // "llama.cpp"
+            engine = LlamaCppEngine(
+                modelPath: modelPath, backend: backend,
+                nThreads: nThreads, nCtx: nCtx, nGpuLayers: nGpuLayers
+            )
+        }
 
-        guard handle != 0 else { return false }
+        guard let engine else { return false }
 
         lock.lock()
-        _currentHandle = handle
+        currentEngine = engine
         currentBackend = backend
         currentModelPath = modelPath
         _serverPort = port
@@ -95,7 +107,7 @@ public final class OmniInferServer: @unchecked Sendable {
         if !serverRunning {
             let service = OmniInferService(
                 port: port,
-                getHandle: { [weak self] in self?.currentHandle ?? 0 },
+                getEngine: { [weak self] in self?.engine },
                 getLoadedModels: { [weak self] in self?.getLoadedModels() ?? [] }
             )
             serverTask = Task {
@@ -112,15 +124,13 @@ public final class OmniInferServer: @unchecked Sendable {
     /// Unload the current model (server keeps running for the next load).
     public func unloadModel() {
         lock.lock()
-        let handle = _currentHandle
-        _currentHandle = 0
+        let eng = currentEngine
+        currentEngine = nil
         currentBackend = ""
         currentModelPath = ""
         lock.unlock()
 
-        if handle != 0 {
-            OmniInferBridge.shared.free(handle: handle)
-        }
+        eng?.free()
     }
 
     /// Unload model and stop the HTTP server.
@@ -138,16 +148,8 @@ public final class OmniInferServer: @unchecked Sendable {
     public func getLoadedModels() -> [String] {
         lock.lock()
         defer { lock.unlock() }
-        guard _currentHandle != 0 else { return [] }
+        guard currentEngine != nil else { return [] }
         let name = (currentModelPath as NSString).lastPathComponent
         return [name]
-    }
-
-    public func getDiagnostics() -> [String: String] {
-        lock.lock()
-        let handle = _currentHandle
-        lock.unlock()
-        guard handle != 0 else { return [:] }
-        return OmniInferBridge.shared.collectDiagnostics(handle: handle)
     }
 }

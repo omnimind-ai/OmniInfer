@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from service_core.backends import IOS_LLAMA_CPP_TEMPLATES
+from service_core.backends import IOS_LLAMA_CPP_TEMPLATES, IOS_MLX_TEMPLATES
 from service_core.platforms.base import HostPlatform
 
 
@@ -27,7 +27,7 @@ class IOSPlatform(HostPlatform):
 
     @property
     def backend_templates(self):
-        return IOS_LLAMA_CPP_TEMPLATES
+        return IOS_LLAMA_CPP_TEMPLATES + IOS_MLX_TEMPLATES
 
     @property
     def catalog_backend_aliases(self) -> dict[str, str]:
