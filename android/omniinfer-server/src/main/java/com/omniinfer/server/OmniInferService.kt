@@ -117,13 +117,17 @@ class OmniInferService : Service() {
         val requestModel = req["model"]?.jsonPrimitive?.contentOrNull ?: "omniinfer"
         val includeUsage = req["stream_options"]?.jsonObject?.get("include_usage")?.jsonPrimitive?.booleanOrNull ?: true
 
-        // Thinking mode: support both reasoning_effort and enable_thinking.
+        // Thinking mode: support both reasoning_effort and enable_thinking (mutually exclusive).
         val reasoningEffort = req["reasoning_effort"]?.jsonPrimitive?.contentOrNull
         val enableThinking = req["enable_thinking"]?.jsonPrimitive?.booleanOrNull
+        if (reasoningEffort != null && enableThinking != null) {
+            call.respondText("{\"error\":\"reasoning_effort and enable_thinking are mutually exclusive\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
+            return
+        }
         val thinkEnabled = when {
             enableThinking != null -> enableThinking
             reasoningEffort != null -> reasoningEffort != "none"
-            else -> true
+            else -> true // model default
         }
 
         // Tools support.
@@ -164,7 +168,9 @@ class OmniInferService : Service() {
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 var isFirst = true
                 // Track thinking phase: tokens before </think> go to reasoning_content.
-                var inThinking = thinkEnabled
+                // We only enter thinking mode if the first token starts with "<think>".
+                var inThinking = false
+                var thinkDetected = false  // set after first token inspection
                 var thinkBuf = StringBuilder()
 
                 OmniInferBridge.generate(
@@ -188,7 +194,35 @@ class OmniInferService : Service() {
                                     isFirst = false
                                 }
 
-                                if (inThinking) {
+                                // Auto-detect thinking mode from first tokens.
+                                if (!thinkDetected && thinkEnabled) {
+                                    thinkBuf.append(token)
+                                    val accumulated = thinkBuf.toString().trimStart()
+                                    if (accumulated.startsWith("<think>")) {
+                                        inThinking = true
+                                        thinkDetected = true
+                                        // Strip the <think> tag and process remainder.
+                                        val after = accumulated.substringAfter("<think>")
+                                        thinkBuf = StringBuilder(after)
+                                        if (after.isNotEmpty()) {
+                                            val chunk = buildChunk(completionId, requestModel, created) {
+                                                put("reasoning_content", after)
+                                                put("content", JsonNull)
+                                            }
+                                            write("data: $chunk\n\n")
+                                        }
+                                    } else if (accumulated.length > 10 || !accumulated.startsWith("<")) {
+                                        // Not a thinking tag, switch to content mode.
+                                        thinkDetected = true
+                                        inThinking = false
+                                        val chunk = buildChunk(completionId, requestModel, created) {
+                                            put("content", accumulated)
+                                        }
+                                        write("data: $chunk\n\n")
+                                        thinkBuf.clear()
+                                    }
+                                    // else: still accumulating first few chars, wait for more tokens.
+                                } else if (inThinking) {
                                     // Check if this token contains the end-of-thinking marker.
                                     thinkBuf.append(token)
                                     val buf = thinkBuf.toString()
