@@ -118,6 +118,10 @@ class OmniInferService : Service() {
         val reasoningEffort = req["reasoning_effort"]?.jsonPrimitive?.contentOrNull
         val thinkEnabled = reasoningEffort == null || reasoningEffort != "none"
 
+        // Tools support.
+        val toolsJson = req["tools"]?.jsonArray?.toString()
+        val toolChoice = req["tool_choice"]?.jsonPrimitive?.contentOrNull
+
         // Extract system prompt and last user message.
         var systemPrompt: String? = null
         var userPrompt = ""
@@ -151,6 +155,8 @@ class OmniInferService : Service() {
                     systemPrompt = systemPrompt,
                     prompt = userPrompt,
                     thinkEnabled = thinkEnabled,
+                    toolsJson = toolsJson,
+                    toolChoice = toolChoice,
                     callback = object {
                         @Suppress("unused")
                         fun onToken(token: String) {
@@ -186,6 +192,8 @@ class OmniInferService : Service() {
                 systemPrompt = systemPrompt,
                 prompt = userPrompt,
                 thinkEnabled = thinkEnabled,
+                toolsJson = toolsJson,
+                toolChoice = toolChoice,
                 callback = object {
                     @Suppress("unused")
                     fun onMetrics(metrics: String) {
@@ -193,16 +201,27 @@ class OmniInferService : Service() {
                     }
                 }
             )
+            // Check if the result contains tool calls (returned as JSON by C++ backend).
+            val toolCallResult = runCatching {
+                val parsed = Json.parseToJsonElement(result).jsonObject
+                parsed["tool_calls"]?.jsonArray
+            }.getOrNull()
+
             val resp = buildJsonObject {
                 put("object", "chat.completion")
                 putJsonArray("choices") {
                     addJsonObject {
                         putJsonObject("message") {
                             put("role", "assistant")
-                            put("content", result)
+                            if (toolCallResult != null) {
+                                put("content", JsonNull)
+                                put("tool_calls", toolCallResult)
+                            } else {
+                                put("content", result)
+                            }
                         }
                         put("index", 0)
-                        put("finish_reason", "stop")
+                        put("finish_reason", if (toolCallResult != null) "tool_calls" else "stop")
                     }
                 }
                 buildUsageObject(handle, metricsStr)?.let { put("usage", it) }

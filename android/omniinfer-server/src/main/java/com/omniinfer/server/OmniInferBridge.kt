@@ -44,13 +44,18 @@ object OmniInferBridge {
         prompt: String,
         imageData: ByteArray? = null,
         thinkEnabled: Boolean = false,
+        toolsJson: String? = null,
+        toolChoice: String? = null,
         callback: Any? = null
     ): String {
         if (!isNativeLibraryLoaded) return ""
-        val requestJson = JSONObject()
+        val req = JSONObject()
             .put("thinking_enabled", thinkModes[handle] ?: thinkEnabled)
-            .toString()
-        return nativeGenerate(handle, systemPrompt, prompt, requestJson, imageData, callback)
+        if (toolsJson != null) {
+            req.put("tools", org.json.JSONArray(toolsJson))
+            if (toolChoice != null) req.put("tool_choice", toolChoice)
+        }
+        return nativeGenerate(handle, systemPrompt, prompt, req.toString(), imageData, callback)
     }
 
     fun loadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean {
