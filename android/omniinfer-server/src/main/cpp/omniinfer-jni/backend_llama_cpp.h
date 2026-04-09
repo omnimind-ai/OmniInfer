@@ -112,6 +112,17 @@ public:
       }
     }
 
+    // If image provided, prepend media marker to the last user message content
+    // so mtmd_tokenize will replace it with image tokens at the right position.
+    if (image_data && image_size > 0 && mtmd_ctx_) {
+      for (int i = (int)messages.size() - 1; i >= 0; i--) {
+        if (messages[i].role == "user") {
+          messages[i].content = media_marker_ + "\n" + messages[i].content;
+          break;
+        }
+      }
+    }
+
     // Apply chat template with all messages at once.
     common_chat_templates_inputs inputs;
     inputs.messages = messages;
@@ -146,24 +157,11 @@ public:
 
     if (image_data && image_size > 0 && mtmd_ctx_) {
       // Multimodal path: use mtmd to process text + image.
+      // Media marker was already inserted into user message before template apply.
       mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, image_data, image_size);
       if (!bmp) return "";
 
-      // Insert media marker into prompt for image placement.
-      std::string media_prompt = params.prompt;
-      // If prompt doesn't contain the marker, prepend it.
-      const char* marker = media_marker_.c_str();
-      if (media_prompt.find(marker) == std::string::npos) {
-        // Insert marker before the last user message content.
-        auto last_nl = media_prompt.rfind('\n');
-        if (last_nl != std::string::npos) {
-          media_prompt.insert(last_nl + 1, std::string(marker) + "\n");
-        } else {
-          media_prompt = std::string(marker) + "\n" + media_prompt;
-        }
-      }
-
-      mtmd_input_text text{media_prompt.c_str(), true, true};
+      mtmd_input_text text{params.prompt.c_str(), true, true};
       mtmd_input_chunks* chunks = mtmd_input_chunks_init();
       const mtmd_bitmap* bitmaps[] = {bmp};
       if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bitmaps, 1) != 0) {

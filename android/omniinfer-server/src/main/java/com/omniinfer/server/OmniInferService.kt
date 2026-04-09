@@ -408,6 +408,7 @@ class OmniInferService : Service() {
             val result = OmniInferBridge.generate(
                 handle = handle,
                 messagesJson = normalizedMessages.toString(),
+                imageData = imageData,
                 thinkEnabled = thinkEnabled,
                 toolsJson = toolsJson,
                 toolChoice = toolChoice,
