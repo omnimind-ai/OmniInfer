@@ -289,38 +289,29 @@ class OmniInferService : Service() {
                     }.getOrNull()
                 } else null
 
-                // If tool calls detected, emit tool_calls delta chunks.
+                // If tool calls detected, emit incremental tool_calls delta chunks.
                 if (streamToolCalls != null) {
                     for ((idx, tc) in streamToolCalls.withIndex()) {
                         val tcObj = tc.jsonObject
                         val fn = tcObj["function"]?.jsonObject
-                        val toolChunk = buildJsonObject {
-                            put("id", completionId)
-                            put("object", "chat.completion.chunk")
-                            put("model", requestModel)
-                            put("created", created)
-                            putJsonArray("choices") {
-                                addJsonObject {
-                                    putJsonObject("delta") {
-                                        put("content", JsonNull)
-                                        putJsonArray("tool_calls") {
-                                            addJsonObject {
-                                                put("index", idx)
-                                                put("id", tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "call_$idx")
-                                                put("type", "function")
-                                                putJsonObject("function") {
-                                                    put("name", fn?.get("name")?.jsonPrimitive?.contentOrNull ?: "")
-                                                    put("arguments", fn?.get("arguments")?.toString() ?: "{}")
-                                                }
-                                            }
-                                        }
-                                    }
-                                    put("index", 0)
-                                    put("finish_reason", JsonNull)
-                                }
-                            }
+                        val tcId = tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "call_$idx"
+                        val tcName = fn?.get("name")?.jsonPrimitive?.contentOrNull ?: ""
+                        val tcArgs = fn?.get("arguments")?.toString() ?: "{}"
+
+                        // First chunk: id + name + empty arguments.
+                        write("data: ${buildToolCallChunk(completionId, requestModel, created, idx, tcId, tcName, "")}\n\n")
+
+                        // Incremental argument chunks (split into ~20 char pieces).
+                        var i = 0
+                        while (i < tcArgs.length) {
+                            val end = minOf(i + 20, tcArgs.length)
+                            val fragment = tcArgs.substring(i, end)
+                            write("data: ${buildToolCallChunk(completionId, requestModel, created, idx, "", null, fragment)}\n\n")
+                            i = end
                         }
-                        write("data: $toolChunk\n\n")
+
+                        // Final empty chunk for this tool call.
+                        write("data: ${buildToolCallChunk(completionId, requestModel, created, idx, "", null, "")}\n\n")
                     }
                 }
 
@@ -414,6 +405,39 @@ class OmniInferService : Service() {
             putJsonArray("choices") {
                 addJsonObject {
                     putJsonObject("delta", deltaBuilder)
+                    put("index", 0)
+                    put("finish_reason", JsonNull)
+                }
+            }
+        }
+    }
+
+    private fun buildToolCallChunk(
+        id: String, model: String, created: Long,
+        index: Int, tcId: String, name: String?, arguments: String
+    ): JsonObject {
+        return buildJsonObject {
+            put("id", id)
+            put("object", "chat.completion.chunk")
+            put("model", model)
+            put("created", created)
+            putJsonArray("choices") {
+                addJsonObject {
+                    putJsonObject("delta") {
+                        put("content", JsonNull)
+                        put("reasoning_content", JsonNull)
+                        putJsonArray("tool_calls") {
+                            addJsonObject {
+                                put("index", index)
+                                put("id", tcId)
+                                put("type", "function")
+                                putJsonObject("function") {
+                                    if (name != null) put("name", name)
+                                    put("arguments", arguments)
+                                }
+                            }
+                        }
+                    }
                     put("index", 0)
                     put("finish_reason", JsonNull)
                 }
