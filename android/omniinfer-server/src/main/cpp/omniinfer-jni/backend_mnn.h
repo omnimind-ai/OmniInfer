@@ -40,7 +40,9 @@ public:
       std::function<bool(const std::string& token)> on_token,
       const std::string& /*tools_json*/ = "",
       const std::string& /*tool_choice*/ = "",
-      const std::string& /*messages_json*/ = "") override {
+      const std::string& /*messages_json*/ = "",
+      const uint8_t* /*image_data*/ = nullptr,
+      size_t /*image_size*/ = 0) override {
 
     using ChatMessages = MNN::Transformer::ChatMessages;
     ChatMessages msgs;

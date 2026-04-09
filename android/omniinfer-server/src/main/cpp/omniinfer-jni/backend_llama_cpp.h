@@ -7,10 +7,14 @@
 #include "chat.h"
 #include "sampling.h"
 #include "peg-parser.h"
+#include "mtmd.h"
+#include "mtmd-helper.h"
 
+#include <android/log.h>
 #include <chrono>
 #include <unistd.h>
 #include <sstream>
+#include <dirent.h>
 
 namespace omniinfer {
 
@@ -51,6 +55,22 @@ public:
     chat_templates_ = common_chat_templates_init(model_, "");
     batch_ = llama_batch_init(512, 0, 1);
     n_ctx_ = n_ctx;
+    n_threads_ = eff_threads;
+
+    // Auto-discover mmproj in same directory for multimodal models.
+    std::string mmproj_path = find_mmproj(model_path);
+    if (!mmproj_path.empty()) {
+      mtmd_context_params mparams = mtmd_context_params_default();
+      mparams.use_gpu = false;
+      mparams.n_threads = eff_threads;
+      media_marker_ = mparams.media_marker ? mparams.media_marker : "<__media__>";
+      mtmd_ctx_ = mtmd_init_from_file(mmproj_path.c_str(), model_, mparams);
+      if (mtmd_ctx_) {
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "Loaded mmproj: %s", mmproj_path.c_str());
+      }
+    }
+
     return true;
   }
 
@@ -62,7 +82,9 @@ public:
       std::function<bool(const std::string& token)> on_token,
       const std::string& tools_json = "",
       const std::string& tool_choice = "",
-      const std::string& messages_json = "") override {
+      const std::string& messages_json = "",
+      const uint8_t* image_data = nullptr,
+      size_t image_size = 0) override {
 
     // Stateless: reset all state at start of each request.
     cur_pos_ = 0;
@@ -118,14 +140,59 @@ public:
       parser_params.parser.load(params.parser);
     }
 
-    // Tokenize the full formatted prompt.
-    auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
-
+    // Prefill: text-only or multimodal path.
     auto t_prefill_start = std::chrono::steady_clock::now();
-    if (decode_batched(prompt_toks, 0, true) != 0) return "";
+    int n_prompt_tokens = 0;
+
+    if (image_data && image_size > 0 && mtmd_ctx_) {
+      // Multimodal path: use mtmd to process text + image.
+      mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, image_data, image_size);
+      if (!bmp) return "";
+
+      // Insert media marker into prompt for image placement.
+      std::string media_prompt = params.prompt;
+      // If prompt doesn't contain the marker, prepend it.
+      const char* marker = media_marker_.c_str();
+      if (media_prompt.find(marker) == std::string::npos) {
+        // Insert marker before the last user message content.
+        auto last_nl = media_prompt.rfind('\n');
+        if (last_nl != std::string::npos) {
+          media_prompt.insert(last_nl + 1, std::string(marker) + "\n");
+        } else {
+          media_prompt = std::string(marker) + "\n" + media_prompt;
+        }
+      }
+
+      mtmd_input_text text{media_prompt.c_str(), true, true};
+      mtmd_input_chunks* chunks = mtmd_input_chunks_init();
+      const mtmd_bitmap* bitmaps[] = {bmp};
+      if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bitmaps, 1) != 0) {
+        mtmd_bitmap_free(bmp);
+        mtmd_input_chunks_free(chunks);
+        return "";
+      }
+
+      llama_pos n_past = 0;
+      if (mtmd_helper_eval_chunks(mtmd_ctx_, ctx_, chunks, 0, 0, 512, true, &n_past) != 0) {
+        mtmd_bitmap_free(bmp);
+        mtmd_input_chunks_free(chunks);
+        return "";
+      }
+
+      cur_pos_ = n_past;
+      n_prompt_tokens = (int)mtmd_helper_get_n_tokens(chunks);
+      mtmd_bitmap_free(bmp);
+      mtmd_input_chunks_free(chunks);
+    } else {
+      // Text-only path.
+      auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
+      if (decode_batched(prompt_toks, 0, true) != 0) return "";
+      cur_pos_ = (int)prompt_toks.size();
+      n_prompt_tokens = (int)prompt_toks.size();
+    }
+
     auto t_prefill_end = std::chrono::steady_clock::now();
     int64_t prefill_us = std::chrono::duration_cast<std::chrono::microseconds>(t_prefill_end - t_prefill_start).count();
-    cur_pos_ = (int)prompt_toks.size();
 
     // Generate tokens.
     common_sampler_reset(sampler_);
@@ -190,7 +257,7 @@ public:
 
     auto t_decode_end = std::chrono::steady_clock::now();
     int64_t decode_us = std::chrono::duration_cast<std::chrono::microseconds>(t_decode_end - t_decode_start).count();
-    int n_prompt = (int)prompt_toks.size();
+    int n_prompt = n_prompt_tokens;
     int n_generated = cur_pos_ - n_prompt;
     last_metrics_ = {n_prompt, n_generated, prefill_us, decode_us};
     return full_response;
@@ -232,11 +299,32 @@ public:
 
 private:
   void release() {
+    if (mtmd_ctx_) { mtmd_free(mtmd_ctx_); mtmd_ctx_ = nullptr; }
     if (sampler_) { common_sampler_free(sampler_); sampler_ = nullptr; }
     chat_templates_.reset();
     llama_batch_free(batch_); batch_ = {};
     if (ctx_) { llama_free(ctx_); ctx_ = nullptr; }
     if (model_) { llama_model_free(model_); model_ = nullptr; }
+  }
+
+  // Scan model directory for mmproj*.gguf file.
+  static std::string find_mmproj(const std::string& model_path) {
+    auto slash = model_path.find_last_of("/\\");
+    if (slash == std::string::npos) return "";
+    std::string dir = model_path.substr(0, slash);
+    DIR* dp = opendir(dir.c_str());
+    if (!dp) return "";
+    std::string result;
+    while (auto* entry = readdir(dp)) {
+      std::string name = entry->d_name;
+      if (name.find("mmproj") != std::string::npos &&
+          name.size() > 5 && name.substr(name.size() - 5) == ".gguf") {
+        result = dir + "/" + name;
+        break;
+      }
+    }
+    closedir(dp);
+    return result;
   }
 
   // Parse messages JSON array into common_chat_msg vector.
@@ -418,6 +506,9 @@ private:
   llama_batch batch_ = {};
   llama_pos cur_pos_ = 0;
   int n_ctx_ = 4096;
+  int n_threads_ = 4;
+  mtmd_context* mtmd_ctx_ = nullptr;
+  std::string media_marker_;
   InferenceMetrics last_metrics_;
 };
 

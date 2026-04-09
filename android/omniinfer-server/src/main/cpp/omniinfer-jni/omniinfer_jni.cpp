@@ -239,7 +239,7 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
 }
 
 jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt,
-                       jstring prompt, jstring request_json, jbyteArray, jobject callback) {
+                       jstring prompt, jstring request_json, jbyteArray image_data_arr, jobject callback) {
   Session* session = nullptr;
   {
     std::lock_guard<std::mutex> guard(g_sessions_mutex);
@@ -264,8 +264,23 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
     return !session->cancelled.load();
   };
 
+  // Extract image bytes if provided.
+  const uint8_t* img_ptr = nullptr;
+  jsize img_len = 0;
+  jbyte* img_bytes = nullptr;
+  if (image_data_arr) {
+    img_len = env->GetArrayLength(image_data_arr);
+    if (img_len > 0) {
+      img_bytes = env->GetByteArrayElements(image_data_arr, nullptr);
+      img_ptr = reinterpret_cast<const uint8_t*>(img_bytes);
+    }
+  }
+
   std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token,
-      tools_json.value_or(""), tool_choice.value_or(""), messages_json.value_or(""));
+      tools_json.value_or(""), tool_choice.value_or(""), messages_json.value_or(""),
+      img_ptr, static_cast<size_t>(img_len));
+
+  if (img_bytes) env->ReleaseByteArrayElements(image_data_arr, img_bytes, JNI_ABORT);
 
   // Report metrics.
   auto m = session->backend->get_metrics();
