@@ -253,8 +253,11 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
   const bool thinking = ExtractJsonBool(req, "thinking_enabled").value_or(session->thinking_enabled);
   const auto tools_json = ExtractJsonRaw(req, "tools");
   const auto tool_choice = ExtractJsonString(req, "tool_choice");
-  const std::string sys = JStringToStdString(env, system_prompt);
-  const std::string user = JStringToStdString(env, prompt);
+  const auto messages_json = ExtractJsonRaw(req, "messages");
+
+  // Legacy path: use system_prompt/prompt if messages not in requestJson.
+  const std::string sys = messages_json.has_value() ? "" : JStringToStdString(env, system_prompt);
+  const std::string user = messages_json.has_value() ? "" : JStringToStdString(env, prompt);
 
   auto on_token = [&](const std::string& token) -> bool {
     InvokeCallbackStringMethod(env, callback, "onToken", token);
@@ -262,7 +265,7 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
   };
 
   std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token,
-      tools_json.value_or(""), tool_choice.value_or(""));
+      tools_json.value_or(""), tool_choice.value_or(""), messages_json.value_or(""));
 
   // Report metrics.
   auto m = session->backend->get_metrics();

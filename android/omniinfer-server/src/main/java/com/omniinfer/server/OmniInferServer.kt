@@ -48,7 +48,7 @@ object OmniInferServer {
         backend: String = "llama.cpp",
         port: Int = 9099,
         nThreads: Int = 0,
-        nCtx: Int = 2048
+        nCtx: Int = 16384
     ): Boolean {
         val ctx = appContext ?: run {
             Log.e(TAG, "Not initialized. Call init(context) first.")
