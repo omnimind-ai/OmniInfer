@@ -118,6 +118,31 @@ std::optional<std::string> ExtractJsonString(const std::string& json, const std:
   return std::nullopt;
 }
 
+// Extract a raw JSON value (array or object) for a given key.
+std::optional<std::string> ExtractJsonRaw(const std::string& json, const std::string& key) {
+  const std::string token = "\"" + key + "\"";
+  size_t key_pos = json.find(token);
+  if (key_pos == std::string::npos) return std::nullopt;
+  size_t colon_pos = json.find(':', key_pos + token.size());
+  if (colon_pos == std::string::npos) return std::nullopt;
+  size_t pos = colon_pos + 1;
+  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+  if (pos >= json.size()) return std::nullopt;
+  char open = json[pos];
+  if (open != '[' && open != '{') return std::nullopt;
+  char close = (open == '[') ? ']' : '}';
+  int depth = 0;
+  bool in_str = false;
+  for (size_t i = pos; i < json.size(); i++) {
+    char c = json[i];
+    if (in_str) { if (c == '"' && json[i-1] != '\\') in_str = false; continue; }
+    if (c == '"') { in_str = true; continue; }
+    if (c == open) depth++;
+    else if (c == close) { depth--; if (depth == 0) return json.substr(pos, i - pos + 1); }
+  }
+  return std::nullopt;
+}
+
 std::optional<int> ExtractJsonInt(const std::string& json, const std::string& key) {
   const std::string token = "\"" + key + "\"";
   size_t key_pos = json.find(token);
@@ -226,6 +251,8 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
   session->cancelled.store(false);
   const std::string req = JStringToStdString(env, request_json);
   const bool thinking = ExtractJsonBool(req, "thinking_enabled").value_or(session->thinking_enabled);
+  const auto tools_json = ExtractJsonRaw(req, "tools");
+  const auto tool_choice = ExtractJsonString(req, "tool_choice");
   const std::string sys = JStringToStdString(env, system_prompt);
   const std::string user = JStringToStdString(env, prompt);
 
@@ -234,7 +261,8 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
     return !session->cancelled.load();
   };
 
-  std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token);
+  std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token,
+      tools_json.value_or(""), tool_choice.value_or(""));
 
   // Report metrics.
   auto m = session->backend->get_metrics();
