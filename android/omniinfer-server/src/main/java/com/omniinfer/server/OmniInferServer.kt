@@ -71,7 +71,8 @@ object OmniInferServer {
             backend = backend,
             nThreads = nThreads,
             nCtx = nCtx,
-            nativeLibDir = nativeLibDir
+            nativeLibDir = nativeLibDir,
+            cacheDir = ctx.cacheDir.absolutePath
         )
 
         if (handle == 0L) {
