@@ -154,6 +154,27 @@ class OmniInferService : Service() {
             }
         }
 
+        // Extract first image from messages (base64 data URI).
+        val imageData: ByteArray? = run {
+            for (msg in messages) {
+                val contentEl = msg.jsonObject["content"]
+                if (contentEl is JsonArray) {
+                    for (part in contentEl) {
+                        if (part.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "image_url") {
+                            val url = part.jsonObject["image_url"]?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull ?: continue
+                            if (url.startsWith("data:")) {
+                                val base64Part = url.substringAfter("base64,", "")
+                                if (base64Part.isNotEmpty()) {
+                                    return@run android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            null
+        }
+
         val hasUser = messages.any { it.jsonObject["role"]?.jsonPrimitive?.contentOrNull == "user" }
         if (!hasUser) {
             call.respondText("{\"error\":\"no user message\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
@@ -186,6 +207,7 @@ class OmniInferService : Service() {
                     OmniInferBridge.generate(
                     handle = handle,
                     messagesJson = normalizedMessages.toString(),
+                    imageData = imageData,
                     thinkEnabled = thinkEnabled,
                     toolsJson = toolsJson,
                     toolChoice = toolChoice,
