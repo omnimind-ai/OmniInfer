@@ -13,7 +13,7 @@ ENABLE_LTO=0
 
 usage() {
   cat <<'EOF'
-Usage: build-llama-linux-omni.sh [options]
+Usage: build-omniinfer-native.sh [options]
 
 Options:
   --build-type <type>  CMake build type, default: Release
@@ -22,7 +22,7 @@ Options:
   --portable           Disable host-specific CPU tuning (default)
   --lto                Enable link-time optimization
   --clean              Remove the previous build directory before configuring
-  --no-bootstrap       Do not auto-initialize the llama.cpp-omni git submodule
+  --no-bootstrap       Do not auto-initialize the omniinfer-native git submodule
   --smoke-test         Run `llama-server --version` after the build completes
   --dry-run            Print actions without executing them
   -h, --help           Show this help message
@@ -81,9 +81,9 @@ done
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_ROOT}/../../../.." && pwd)"
-PACKAGE_ROOT="${REPO_ROOT}/.local/runtime/linux/llama.cpp-linux-omni"
-LLAMA_ROOT="${REPO_ROOT}/framework/llama.cpp-omni"
-BUILD_ROOT="${PACKAGE_ROOT}/build/llama.cpp-linux-omni"
+PACKAGE_ROOT="${REPO_ROOT}/.local/runtime/linux/omniinfer-native-linux"
+LLAMA_ROOT="${REPO_ROOT}/framework/omniinfer-native"
+BUILD_ROOT="${PACKAGE_ROOT}/build/omniinfer-native-linux"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
 MODELS_ROOT="${PACKAGE_ROOT}/models"
@@ -113,26 +113,26 @@ ensure_llama_root() {
   fi
 
   if [[ ${BOOTSTRAP_SUBMODULE} -eq 0 ]]; then
-    echo "llama.cpp-omni source tree was not found at ${LLAMA_ROOT}" >&2
-    echo "Run: git submodule update --init --recursive framework/llama.cpp-omni" >&2
+    echo "omniinfer-native source tree was not found at ${LLAMA_ROOT}" >&2
+    echo "Run: git submodule update --init --recursive framework/omniinfer-native" >&2
     exit 1
   fi
 
   if [[ ! -d "${REPO_ROOT}/.git" && ! -f "${REPO_ROOT}/.git" ]]; then
-    echo "llama.cpp-omni source tree was not found at ${LLAMA_ROOT}" >&2
+    echo "omniinfer-native source tree was not found at ${LLAMA_ROOT}" >&2
     exit 1
   fi
 
   require_command git
-  echo "llama.cpp-omni source tree is missing. Bootstrapping the submodule..."
+  echo "omniinfer-native source tree is missing. Bootstrapping the submodule..."
   if [[ ${DRY_RUN} -eq 1 ]]; then
-    echo "  git -C ${REPO_ROOT} submodule update --init --recursive framework/llama.cpp-omni"
+    echo "  git -C ${REPO_ROOT} submodule update --init --recursive framework/omniinfer-native"
     return
   fi
-  git -C "${REPO_ROOT}" submodule update --init --recursive framework/llama.cpp-omni
+  git -C "${REPO_ROOT}" submodule update --init --recursive framework/omniinfer-native
 
   if [[ ! -f "${LLAMA_ROOT}/CMakeLists.txt" ]]; then
-    echo "Failed to prepare llama.cpp-omni at ${LLAMA_ROOT}" >&2
+    echo "Failed to prepare omniinfer-native at ${LLAMA_ROOT}" >&2
     exit 1
   fi
 }
@@ -167,7 +167,7 @@ if command -v ninja >/dev/null 2>&1; then
   CONFIGURE_ARGS+=(-G Ninja)
 fi
 
-echo "Configuring llama.cpp-omni Linux EAGLE3 build..."
+echo "Configuring OmniInfer Native Linux (EAGLE3) build..."
 echo "  cmake ${CONFIGURE_ARGS[*]}"
 echo "Building llama-server + llama-speculative-simple..."
 echo "  cmake --build ${BUILD_ROOT} --target llama-server llama-speculative-simple --config ${BUILD_TYPE} -j ${JOBS}"
@@ -207,9 +207,9 @@ if [[ ${SMOKE_TEST} -eq 1 ]]; then
 fi
 
 echo
-echo "Linux EAGLE3 (omni) build complete."
+echo "OmniInfer Native Linux (EAGLE3) build complete."
 echo "Binary package location: ${BIN_ROOT}"
 echo "Models directory: ${MODELS_ROOT}"
 echo "Next step:"
-echo "  ./omniinfer select llama.cpp-linux-omni"
+echo "  ./omniinfer select omniinfer-native-linux"
 echo "  ./omniinfer model load -m /absolute/path/to/model.gguf"
