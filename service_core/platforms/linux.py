@@ -37,4 +37,4 @@ class LinuxPlatform(HostPlatform):
 
     @property
     def gpu_backend_ids(self) -> frozenset[str]:
-        return frozenset({"llama.cpp-linux-rocm", "llama.cpp-linux-vulkan", "llama.cpp-linux-omni"})
+        return frozenset({"llama.cpp-linux-rocm", "llama.cpp-linux-vulkan", "omniinfer-native-linux"})
