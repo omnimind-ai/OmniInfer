@@ -1,26 +1,26 @@
 import Foundation
-import MLXLLMCommon
+import MLXLMCommon
 import MLXLLM
-import Tokenizers
 
 /// InferenceEngine backed by MLX via mlx-swift-lm.
 @available(macOS 14, iOS 17, *)
 public final class MLXEngine: InferenceEngine, @unchecked Sendable {
     private var modelContainer: ModelContainer?
+    private var session: ChatSession?
     private let modelPath: String
 
     public init?(modelPath: String) {
         self.modelPath = modelPath
-        // Model loading is deferred to first generate or explicit load.
     }
 
-    /// Load the model synchronously (blocking).
+    /// Load the model. Must be called before generate().
     public func loadModel() async -> Bool {
         do {
             let url = URL(fileURLWithPath: modelPath)
-            let configuration = ModelConfiguration(directory: url)
-            let container = try await ModelContainer.load(configuration: configuration)
+            let container = try await loadModelContainer(directory: url)
             self.modelContainer = container
+            self.session = ChatSession(container)
+            NSLog("[OmniInfer/MLX] model loaded from \(modelPath)")
             return true
         } catch {
             NSLog("[OmniInfer/MLX] loadModel failed: \(error)")
@@ -34,46 +34,46 @@ public final class MLXEngine: InferenceEngine, @unchecked Sendable {
         onToken: @escaping @Sendable (String) -> Void,
         onMetrics: @escaping @Sendable (String) -> Void
     ) -> String {
-        guard let container = modelContainer else {
+        guard let session else {
             NSLog("[OmniInfer/MLX] generate called without loaded model")
             return ""
         }
 
-        // Build chat messages.
-        let chatMessages: [[String: String]] = messages
+        // Reset session and set system instructions from messages.
+        session.instructions = nil
+        var userMessages: [(role: String, content: String)] = []
+        for msg in messages {
+            let role = msg["role"] ?? ""
+            let content = msg["content"] ?? ""
+            if role == "system" {
+                session.instructions = content
+            } else {
+                userMessages.append((role: role, content: content))
+            }
+        }
 
-        // Use a semaphore to bridge async → sync for the protocol.
+        // Feed history turns (all but the last user message).
+        // ChatSession manages history internally, so we reset and replay.
+        // For simplicity, concatenate history into a single prompt context.
+        guard let lastUser = userMessages.last(where: { $0.role == "user" }) else {
+            return ""
+        }
+
         let semaphore = DispatchSemaphore(value: 0)
         var result = ""
+        let startTime = CFAbsoluteTimeGetCurrent()
 
         Task {
             do {
-                let output = try await container.perform { (model, tokenizer) in
-                    // Apply chat template.
-                    let prompt = tokenizer.applyChatTemplate(
-                        messages: chatMessages
-                    )
-
-                    // Tokenize.
-                    let tokens = tokenizer.encode(text: prompt)
-
-                    // Generate with streaming.
-                    var fullText = ""
-                    let generateParameters = GenerateParameters(temperature: 0.7)
-
-                    for try await generation in try MLXLLMCommon.generate(
-                        input: .init(text: LMInput.Text(tokens: .init(tokens))),
-                        parameters: generateParameters,
-                        model: model
-                    ) {
-                        let token = generation.token
-                        let piece = tokenizer.decode(tokens: [token])
-                        fullText += piece
-                        onToken(piece)
-                    }
-                    return fullText
+                var tokenCount = 0
+                for try await chunk in session.streamResponse(to: lastUser.content) {
+                    result += chunk
+                    tokenCount += 1
+                    onToken(chunk)
                 }
-                result = output
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                let tps = elapsed > 0 ? Double(tokenCount) / elapsed : 0
+                onMetrics("decode_tps=\(tps)")
             } catch {
                 NSLog("[OmniInfer/MLX] generate error: \(error)")
             }
@@ -85,10 +85,14 @@ public final class MLXEngine: InferenceEngine, @unchecked Sendable {
     }
 
     public func reset() {
-        // MLX is stateless per generate call — no KV cache to clear.
+        // Recreate session to clear history.
+        if let container = modelContainer {
+            session = ChatSession(container)
+        }
     }
 
     public func free() {
+        session = nil
         modelContainer = nil
     }
 }
