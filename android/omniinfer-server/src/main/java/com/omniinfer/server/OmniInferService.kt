@@ -175,13 +175,13 @@ class OmniInferService : Service() {
         if (stream) {
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 var isFirst = true
-                // C++ prepends <think> as the first token when template supports thinking.
-                // inReasoning: true after seeing <think>, false after seeing </think>.
                 var inReasoning = false
-                val thinkEndBuf = StringBuilder()  // small buffer for </think> boundary detection
+                val thinkEndBuf = StringBuilder()
                 val hasTools = toolsJson != null
+                var connectionAlive = true
 
-                val result = OmniInferBridge.generate(
+                val result = try {
+                    OmniInferBridge.generate(
                     handle = handle,
                     messagesJson = normalizedMessages.toString(),
                     thinkEnabled = thinkEnabled,
@@ -190,9 +190,9 @@ class OmniInferService : Service() {
                     callback = object {
                         @Suppress("unused")
                         fun onToken(token: String) {
-                            if (hasTools) return
+                            if (hasTools || !connectionAlive) return
 
-                            runBlocking {
+                            try { runBlocking {
                                 if (isFirst) {
                                     val initChunk = buildChunk(completionId, requestModel, created) {
                                         put("role", "assistant")
@@ -203,14 +203,12 @@ class OmniInferService : Service() {
                                     isFirst = false
                                 }
 
-                                // First token from C++ is "<think>" if template supports thinking.
                                 if (token.trim() == "<think>") {
                                     inReasoning = true
                                     return@runBlocking
                                 }
 
                                 if (inReasoning) {
-                                    // Check for </think> boundary.
                                     thinkEndBuf.append(token)
                                     val buf = thinkEndBuf.toString()
                                     val endIdx = buf.indexOf("</think>")
@@ -233,7 +231,6 @@ class OmniInferService : Service() {
                                         }
                                         thinkEndBuf.clear()
                                     } else {
-                                        // Stream reasoning token, keep tail for boundary detection.
                                         val safe = if (buf.length > 10) buf.substring(0, buf.length - 10) else ""
                                         if (safe.isNotEmpty()) {
                                             val chunk = buildChunk(completionId, requestModel, created) {
@@ -252,6 +249,10 @@ class OmniInferService : Service() {
                                     write("data: $chunk\n\n")
                                 }
                                 flush()
+                            } } catch (_: Exception) {
+                                // Client disconnected — cancel backend generation.
+                                connectionAlive = false
+                                OmniInferBridge.cancel(handle)
                             }
                         }
                         @Suppress("unused")
@@ -260,6 +261,15 @@ class OmniInferService : Service() {
                         }
                     }
                 )
+                } catch (e: Exception) {
+                    // Client disconnected or write failed — cancel the running generate.
+                    Log.w(TAG, "Stream interrupted: ${e.message}")
+                    OmniInferBridge.cancel(handle)
+                    connectionAlive = false
+                    ""
+                }
+
+                if (!connectionAlive) return@respondTextWriter
 
                 // Flush remaining reasoning buffer as content if model ended without </think>.
                 if (inReasoning && thinkEndBuf.isNotEmpty()) {
