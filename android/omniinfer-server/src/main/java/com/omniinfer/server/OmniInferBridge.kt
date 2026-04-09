@@ -24,13 +24,15 @@ object OmniInferBridge {
         backend: String = "llama.cpp",
         nThreads: Int = 0,
         nCtx: Int = 4096,
-        nativeLibDir: String? = null
+        nativeLibDir: String? = null,
+        cacheDir: String? = null
     ): Long {
         if (!isNativeLibraryLoaded) return 0L
         val configJson = JSONObject()
             .put("backend", backend)
             .put("model_path", modelPath)
             .put("native_lib_dir", nativeLibDir ?: "")
+            .put("cache_dir", cacheDir ?: "")
             .put("n_threads", nThreads)
             .put("n_ctx", nCtx)
         val handle = nativeInit(configJson.toString())
