@@ -18,6 +18,7 @@ import io.ktor.server.routing.*
 import io.ktor.server.application.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
+import java.util.UUID
 
 class OmniInferService : Service() {
     companion object {
@@ -113,24 +114,36 @@ class OmniInferService : Service() {
             return
         }
         val stream = req["stream"]?.jsonPrimitive?.booleanOrNull ?: false
+        val requestModel = req["model"]?.jsonPrimitive?.contentOrNull ?: "omniinfer"
+        val includeUsage = req["stream_options"]?.jsonObject?.get("include_usage")?.jsonPrimitive?.booleanOrNull ?: true
 
-        // reasoning_effort: "none" disables thinking, anything else enables it.
+        // Thinking mode: support both reasoning_effort and enable_thinking.
         val reasoningEffort = req["reasoning_effort"]?.jsonPrimitive?.contentOrNull
-        val thinkEnabled = reasoningEffort == null || reasoningEffort != "none"
+        val enableThinking = req["enable_thinking"]?.jsonPrimitive?.booleanOrNull
+        val thinkEnabled = when {
+            enableThinking != null -> enableThinking
+            reasoningEffort != null -> reasoningEffort != "none"
+            else -> true
+        }
 
-        // Extract system prompt and last user message.
-        var systemPrompt: String? = null
-        var userPrompt = ""
-        for (msg in messages) {
-            val role = msg.jsonObject["role"]?.jsonPrimitive?.contentOrNull ?: continue
-            val content = extractTextContent(msg.jsonObject["content"]) ?: continue
-            when (role) {
-                "system" -> systemPrompt = content
-                "user" -> userPrompt = content
+        // Tools support.
+        val toolsJson = req["tools"]?.jsonArray?.toString()
+        val toolChoice = req["tool_choice"]?.jsonPrimitive?.contentOrNull
+
+        // Build normalized messages array for the backend.
+        val normalizedMessages = buildJsonArray {
+            for (msg in messages) {
+                val role = msg.jsonObject["role"]?.jsonPrimitive?.contentOrNull ?: continue
+                val content = extractTextContent(msg.jsonObject["content"]) ?: ""
+                addJsonObject {
+                    put("role", role)
+                    put("content", content)
+                }
             }
         }
 
-        if (userPrompt.isEmpty()) {
+        val hasUser = messages.any { it.jsonObject["role"]?.jsonPrimitive?.contentOrNull == "user" }
+        if (!hasUser) {
             call.respondText("{\"error\":\"no user message\"}", ContentType.Application.Json, HttpStatusCode.BadRequest)
             return
         }
@@ -141,30 +154,85 @@ class OmniInferService : Service() {
             return
         }
 
-        // Shared metrics holder — filled by onMetrics callback from JNI.
+        val completionId = "chatcmpl-${UUID.randomUUID()}"
+        val created = System.currentTimeMillis() / 1000
+
+        // Shared state across callbacks.
         var metricsStr: String? = null
 
         if (stream) {
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                var isFirst = true
+                // Track thinking phase: tokens before </think> go to reasoning_content.
+                var inThinking = thinkEnabled
+                var thinkBuf = StringBuilder()
+
                 OmniInferBridge.generate(
                     handle = handle,
-                    systemPrompt = systemPrompt,
-                    prompt = userPrompt,
+                    messagesJson = normalizedMessages.toString(),
                     thinkEnabled = thinkEnabled,
+                    toolsJson = toolsJson,
+                    toolChoice = toolChoice,
                     callback = object {
                         @Suppress("unused")
                         fun onToken(token: String) {
-                            val chunk = buildJsonObject {
-                                put("object", "chat.completion.chunk")
-                                putJsonArray("choices") {
-                                    addJsonObject {
-                                        putJsonObject("delta") { put("content", token) }
-                                        put("index", 0)
-                                    }
-                                }
-                            }
                             runBlocking {
-                                write("data: $chunk\n\n")
+                                if (isFirst) {
+                                    // Phase 1: INIT chunk with role.
+                                    val initChunk = buildChunk(completionId, requestModel, created) {
+                                        put("role", "assistant")
+                                        put("content", "")
+                                    }
+                                    write("data: $initChunk\n\n")
+                                    flush()
+                                    isFirst = false
+                                }
+
+                                if (inThinking) {
+                                    // Check if this token contains the end-of-thinking marker.
+                                    thinkBuf.append(token)
+                                    val buf = thinkBuf.toString()
+                                    val endIdx = buf.indexOf("</think>")
+                                    if (endIdx >= 0) {
+                                        // Send remaining thinking content before </think>.
+                                        val thinkPart = buf.substring(0, endIdx)
+                                        if (thinkPart.isNotEmpty()) {
+                                            val chunk = buildChunk(completionId, requestModel, created) {
+                                                put("reasoning_content", thinkPart)
+                                                put("content", JsonNull)
+                                            }
+                                            write("data: $chunk\n\n")
+                                        }
+                                        // Switch to content phase.
+                                        inThinking = false
+                                        val contentPart = buf.substring(endIdx + "</think>".length)
+                                        if (contentPart.isNotBlank()) {
+                                            val chunk = buildChunk(completionId, requestModel, created) {
+                                                put("content", contentPart)
+                                                put("reasoning_content", JsonNull)
+                                            }
+                                            write("data: $chunk\n\n")
+                                        }
+                                        thinkBuf.clear()
+                                    } else {
+                                        // Still in thinking, send as reasoning_content.
+                                        val chunk = buildChunk(completionId, requestModel, created) {
+                                            put("reasoning_content", token)
+                                            put("content", JsonNull)
+                                        }
+                                        write("data: $chunk\n\n")
+                                        // Keep only last few chars in buffer for </think> detection.
+                                        if (thinkBuf.length > 20) {
+                                            thinkBuf = StringBuilder(thinkBuf.substring(thinkBuf.length - 10))
+                                        }
+                                    }
+                                } else {
+                                    // Content phase.
+                                    val chunk = buildChunk(completionId, requestModel, created) {
+                                        put("content", token)
+                                    }
+                                    write("data: $chunk\n\n")
+                                }
                                 flush()
                             }
                         }
@@ -174,18 +242,46 @@ class OmniInferService : Service() {
                         }
                     }
                 )
-                // Final chunk with usage and performance data.
-                val finalChunk = buildUsageChunk(handle, metricsStr)
-                write("data: $finalChunk\n\n")
+
+                // Phase 4: FINISH chunk.
+                val finishChunk = buildJsonObject {
+                    put("id", completionId)
+                    put("object", "chat.completion.chunk")
+                    put("model", requestModel)
+                    put("created", created)
+                    putJsonArray("choices") {
+                        addJsonObject {
+                            putJsonObject("delta") {}
+                            put("index", 0)
+                            put("finish_reason", "stop")
+                        }
+                    }
+                }
+                write("data: $finishChunk\n\n")
+
+                // Phase 5: USAGE chunk (choices=[]).
+                if (includeUsage) {
+                    val usageChunk = buildJsonObject {
+                        put("id", completionId)
+                        put("object", "chat.completion.chunk")
+                        put("model", requestModel)
+                        put("created", created)
+                        putJsonArray("choices") {} // empty
+                        buildUsageObject(handle, metricsStr)?.let { put("usage", it) }
+                    }
+                    write("data: $usageChunk\n\n")
+                }
+
                 write("data: [DONE]\n\n")
                 flush()
             }
         } else {
             val result = OmniInferBridge.generate(
                 handle = handle,
-                systemPrompt = systemPrompt,
-                prompt = userPrompt,
+                messagesJson = normalizedMessages.toString(),
                 thinkEnabled = thinkEnabled,
+                toolsJson = toolsJson,
+                toolChoice = toolChoice,
                 callback = object {
                     @Suppress("unused")
                     fun onMetrics(metrics: String) {
@@ -193,16 +289,29 @@ class OmniInferService : Service() {
                     }
                 }
             )
+            val toolCallResult = runCatching {
+                val parsed = Json.parseToJsonElement(result).jsonObject
+                parsed["tool_calls"]?.jsonArray
+            }.getOrNull()
+
             val resp = buildJsonObject {
+                put("id", completionId)
                 put("object", "chat.completion")
+                put("model", requestModel)
+                put("created", created)
                 putJsonArray("choices") {
                     addJsonObject {
                         putJsonObject("message") {
                             put("role", "assistant")
-                            put("content", result)
+                            if (toolCallResult != null) {
+                                put("content", JsonNull)
+                                put("tool_calls", toolCallResult)
+                            } else {
+                                put("content", result)
+                            }
                         }
                         put("index", 0)
-                        put("finish_reason", "stop")
+                        put("finish_reason", if (toolCallResult != null) "tool_calls" else "stop")
                     }
                 }
                 buildUsageObject(handle, metricsStr)?.let { put("usage", it) }
@@ -211,9 +320,25 @@ class OmniInferService : Service() {
         }
     }
 
-    /**
-     * Parse "prefill_tps=123.4, decode_tps=22.7" into a map.
-     */
+    private fun buildChunk(
+        id: String, model: String, created: Long,
+        deltaBuilder: JsonObjectBuilder.() -> Unit
+    ): JsonObject {
+        return buildJsonObject {
+            put("id", id)
+            put("object", "chat.completion.chunk")
+            put("model", model)
+            put("created", created)
+            putJsonArray("choices") {
+                addJsonObject {
+                    putJsonObject("delta", deltaBuilder)
+                    put("index", 0)
+                    put("finish_reason", JsonNull)
+                }
+            }
+        }
+    }
+
     private fun parseMetrics(raw: String?): Map<String, Double> {
         if (raw.isNullOrBlank()) return emptyMap()
         return raw.split(",").mapNotNull { part ->
@@ -222,9 +347,6 @@ class OmniInferService : Service() {
         }.toMap()
     }
 
-    /**
-     * Build a usage JsonObject from diagnostics + metrics.
-     */
     private fun buildUsageObject(handle: Long, metricsStr: String?): JsonObject? {
         val diag = OmniInferBridge.collectDiagnostics(handle)
         val metrics = parseMetrics(metricsStr)
@@ -240,28 +362,6 @@ class OmniInferService : Service() {
         }
     }
 
-    /**
-     * Build a final SSE chunk with finish_reason=stop and usage data (OpenAI streaming convention).
-     */
-    private fun buildUsageChunk(handle: Long, metricsStr: String?): JsonObject {
-        return buildJsonObject {
-            put("object", "chat.completion.chunk")
-            putJsonArray("choices") {
-                addJsonObject {
-                    putJsonObject("delta") {}
-                    put("index", 0)
-                    put("finish_reason", "stop")
-                }
-            }
-            buildUsageObject(handle, metricsStr)?.let { put("usage", it) }
-        }
-    }
-
-    /**
-     * Extract text from OpenAI message content which can be either:
-     * - A plain string: "content": "hello"
-     * - An array of parts: "content": [{"type":"text","text":"hello"}, ...]
-     */
     private fun extractTextContent(content: JsonElement?): String? {
         if (content == null || content is JsonNull) return null
         if (content is JsonPrimitive) return content.contentOrNull

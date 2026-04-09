@@ -17,7 +17,7 @@ BACKEND_PRIORITY: dict[str, int] = {
     "llama.cpp-hip": 0,
     "llama.cpp-linux-rocm": 0,
     "llama.cpp-linux-vulkan": 0,
-    "llama.cpp-linux-omni": 0,
+    "omniinfer-native-linux": 0,
     "llama.cpp-linux-openvino": 0,
     "llama.cpp-linux": 1,
     "llama.cpp-linux-s390x": 1,
