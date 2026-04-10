@@ -153,39 +153,71 @@ public:
     int n_image_tokens = 0;
 
     if (is_multimodal) {
-      // Multimodal: always full prefill, invalidate cache.
-      cur_pos_ = 0;
-      llama_memory_clear(llama_get_memory(ctx_), false);
+      // Compare conversation history (without generation prompt) for KV cache reuse.
+      std::string conv_history = strip_generation_prompt(params.prompt);
+      bool reuse_mm = has_cache_ && !prev_eval_prompt_.empty() &&
+                      conv_history.size() > prev_eval_prompt_.size() &&
+                      conv_history.compare(0, prev_eval_prompt_.size(), prev_eval_prompt_) == 0;
+      std::string suffix;
+      if (reuse_mm) {
+        suffix = params.prompt.substr(prev_eval_prompt_.size());
+        if (suffix.find(media_marker_) != std::string::npos) reuse_mm = false;
+      }
+
+      if (reuse_mm) {
+        // Reuse multimodal KV cache: trim old gen prompt + generated tokens, prefill suffix.
+        n_cached_tokens = prev_eval_n_tokens_;
+        llama_memory_seq_rm(llama_get_memory(ctx_), 0, prev_eval_n_tokens_, -1);
+        auto suffix_toks = common_tokenize(ctx_, suffix, false, false);
+        if (decode_batched(suffix_toks, prev_eval_n_tokens_, true) != 0) return "";
+        cur_pos_ = prev_eval_n_tokens_ + (int)suffix_toks.size();
+        n_prompt_tokens = cur_pos_;
+        // Image tokens are in the cached prefix.
+        auto conv_text_toks = common_tokenize(ctx_, prev_eval_prompt_, true, true);
+        n_image_tokens = prev_eval_n_tokens_ - (int)conv_text_toks.size();
+        if (n_image_tokens < 0) n_image_tokens = 0;
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "Multimodal KV cache reuse: %d cached, %d new text tokens",
+            prev_eval_n_tokens_, (int)suffix_toks.size());
+      } else {
+        // Full multimodal eval (first request or new image).
+        cur_pos_ = 0;
+        llama_memory_clear(llama_get_memory(ctx_), false);
+
+        mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, image_data, image_size);
+        if (!bmp) return "";
+
+        mtmd_input_text text{params.prompt.c_str(), true, true};
+        mtmd_input_chunks* chunks = mtmd_input_chunks_init();
+        const mtmd_bitmap* bitmaps[] = {bmp};
+        if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bitmaps, 1) != 0) {
+          mtmd_bitmap_free(bmp);
+          mtmd_input_chunks_free(chunks);
+          return "";
+        }
+
+        llama_pos n_past = 0;
+        if (mtmd_helper_eval_chunks(mtmd_ctx_, ctx_, chunks, 0, 0, 512, true, &n_past) != 0) {
+          mtmd_bitmap_free(bmp);
+          mtmd_input_chunks_free(chunks);
+          return "";
+        }
+
+        cur_pos_ = n_past;
+        n_prompt_tokens = (int)mtmd_helper_get_n_tokens(chunks);
+        auto text_toks = common_tokenize(ctx_, params.prompt, true, true);
+        n_image_tokens = n_prompt_tokens - (int)text_toks.size();
+        if (n_image_tokens < 0) n_image_tokens = 0;
+        mtmd_bitmap_free(bmp);
+        mtmd_input_chunks_free(chunks);
+      }
+
+      // Save conversation history (stripped of generation prompt) and token count.
+      prev_eval_prompt_ = conv_history;
+      auto gen_prompt_toks = common_tokenize(ctx_, params.prompt.substr(conv_history.size()), false, false);
+      prev_eval_n_tokens_ = n_prompt_tokens - (int)gen_prompt_toks.size();
       prev_prompt_tokens_.clear();
-      has_cache_ = false;
-
-      mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, image_data, image_size);
-      if (!bmp) return "";
-
-      mtmd_input_text text{params.prompt.c_str(), true, true};
-      mtmd_input_chunks* chunks = mtmd_input_chunks_init();
-      const mtmd_bitmap* bitmaps[] = {bmp};
-      if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bitmaps, 1) != 0) {
-        mtmd_bitmap_free(bmp);
-        mtmd_input_chunks_free(chunks);
-        return "";
-      }
-
-      llama_pos n_past = 0;
-      if (mtmd_helper_eval_chunks(mtmd_ctx_, ctx_, chunks, 0, 0, 512, true, &n_past) != 0) {
-        mtmd_bitmap_free(bmp);
-        mtmd_input_chunks_free(chunks);
-        return "";
-      }
-
-      cur_pos_ = n_past;
-      n_prompt_tokens = (int)mtmd_helper_get_n_tokens(chunks);
-      // Estimate image tokens: total prompt tokens minus text-only tokenization.
-      auto text_toks = common_tokenize(ctx_, params.prompt, true, true);
-      n_image_tokens = n_prompt_tokens - (int)text_toks.size();
-      if (n_image_tokens < 0) n_image_tokens = 0;
-      mtmd_bitmap_free(bmp);
-      mtmd_input_chunks_free(chunks);
+      has_cache_ = true;
     } else {
       // Text-only path with KV cache prefix reuse.
       auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
@@ -401,6 +433,8 @@ public:
     llama_memory_clear(llama_get_memory(ctx_), false);
     common_sampler_reset(sampler_);
     prev_prompt_tokens_.clear();
+    prev_eval_prompt_.clear();
+    prev_eval_n_tokens_ = 0;
     has_cache_ = false;
   }
 
@@ -542,6 +576,16 @@ private:
     return "{}";
   }
 
+  // Strip trailing generation prompt from formatted chat template output.
+  static std::string strip_generation_prompt(const std::string& formatted) {
+    size_t cut = std::string::npos;
+    for (const char* marker : {"<|im_start|>assistant", "<start_of_turn>model"}) {
+      auto pos = formatted.rfind(marker);
+      if (pos != std::string::npos && (cut == std::string::npos || pos > cut)) cut = pos;
+    }
+    return (cut != std::string::npos) ? formatted.substr(0, cut) : formatted;
+  }
+
   // Return native thinking start/end tags for models that don't use <think>/<​/think>.
   // The streaming loop normalizes these to <think>/<​/think> so the Kotlin SSE layer
   // only needs to handle one format.
@@ -594,6 +638,8 @@ private:
     cur_pos_ -= n_discard;
     // Invalidate cache — positions shifted, prefix matching no longer valid.
     prev_prompt_tokens_.clear();
+    prev_eval_prompt_.clear();
+    prev_eval_n_tokens_ = 0;
     has_cache_ = false;
   }
 
@@ -636,7 +682,9 @@ private:
   std::string media_marker_;
   InferenceMetrics last_metrics_;
   // KV cache prefix reuse state.
-  std::vector<llama_token> prev_prompt_tokens_;
+  std::vector<llama_token> prev_prompt_tokens_;  // text-only token comparison
+  std::string prev_eval_prompt_;                 // multimodal string prefix comparison
+  int prev_eval_n_tokens_ = 0;                   // total tokens from last multimodal eval
   bool has_cache_ = false;
 };
 
