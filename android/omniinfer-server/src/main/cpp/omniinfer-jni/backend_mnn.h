@@ -91,11 +91,12 @@ public:
 
     // Apply chat template and tokenize.
     std::string formatted = llm_->apply_chat_template(msgs);
+    // Save original formatted (before image insertion) for multimodal KV cache comparison.
+    std::string formatted_text_only = formatted;
 
     std::vector<int> input_ids;
     int n_image_tokens = 0;
     if (!tmp_image_path.empty()) {
-      // Tokenize text-only first (before image tag insertion) for image token count.
       auto text_ids = llm_->tokenizer_encode(formatted);
       std::string user_marker = "user\n";
       auto pos = formatted.rfind(user_marker);
@@ -115,12 +116,38 @@ public:
     // KV cache prefix reuse.
     int n_cached_tokens = 0;
     if (is_multimodal) {
-      // Multimodal: always full reset and prefill, invalidate cache.
-      llm_->reset();
+      // Compare conversation history (without generation prompt) for KV cache reuse.
+      std::string conv_history = strip_generation_prompt(formatted_text_only);
+      bool reuse_mm = has_cache_ && !prev_eval_prompt_.empty() &&
+                      conv_history.size() > prev_eval_prompt_.size() &&
+                      conv_history.compare(0, prev_eval_prompt_.size(), prev_eval_prompt_) == 0;
+
+      if (reuse_mm) {
+        // Reuse multimodal KV cache: trim old generation prompt + generated tokens,
+        // prefill new turns + new generation prompt as text-only suffix.
+        std::string suffix_text = formatted_text_only.substr(prev_eval_prompt_.size());
+        auto suffix_ids = llm_->tokenizer_encode(suffix_text);
+        n_cached_tokens = prev_eval_n_tokens_;
+        llm_->generate_init(nullptr, "<eop>");
+        llm_->eraseHistory(prev_eval_n_tokens_, 0);
+        llm_->generate(suffix_ids, 0);
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "MNN multimodal KV cache reuse: %d cached, %d new text tokens",
+            prev_eval_n_tokens_, (int)suffix_ids.size());
+      } else {
+        // Full multimodal eval (first request or new image).
+        llm_->reset();
+        llm_->generate_init(nullptr, "<eop>");
+        llm_->generate(input_ids, 0);
+      }
+
+      // Save conversation history (stripped) and token count up to that point.
+      prev_eval_prompt_ = conv_history;
+      std::string gen_prompt = formatted_text_only.substr(conv_history.size());
+      int gen_prompt_tokens = gen_prompt.empty() ? 0 : (int)llm_->tokenizer_encode(gen_prompt).size();
+      prev_eval_n_tokens_ = (int)input_ids.size() - gen_prompt_tokens;
       prev_input_ids_.clear();
-      has_cache_ = false;
-      llm_->generate_init(nullptr, "<eop>");
-      llm_->generate(input_ids, 0);
+      has_cache_ = true;
     } else {
       // Find common prefix with previous request.
       int common_prefix = 0;
@@ -204,9 +231,10 @@ public:
       }
     }
 
-    // Collect metrics.
+    // Collect metrics. prompt_tokens = cached + actually prefilled.
     if (ctx) {
-      last_metrics_ = {ctx->prompt_len, ctx->gen_seq_len, ctx->prefill_us, ctx->decode_us,
+      int total_prompt = n_cached_tokens + ctx->prompt_len;
+      last_metrics_ = {total_prompt, ctx->gen_seq_len, ctx->prefill_us, ctx->decode_us,
                        n_reasoning_tokens, n_image_tokens, n_cached_tokens};
     }
 
@@ -226,6 +254,8 @@ public:
   void reset() override {
     if (llm_) llm_->reset();
     prev_input_ids_.clear();
+    prev_eval_prompt_.clear();
+    prev_eval_n_tokens_ = 0;
     has_cache_ = false;
   }
 
@@ -260,6 +290,18 @@ private:
       pos = obj_end + 1;
     }
     return msgs;
+  }
+
+  // Strip the trailing generation prompt from a formatted chat template output.
+  // The generation prompt starts at the last assistant/model role marker.
+  // Used by multimodal KV cache to compare only conversation history.
+  static std::string strip_generation_prompt(const std::string& formatted) {
+    size_t cut = std::string::npos;
+    for (const char* marker : {"<|im_start|>assistant", "<start_of_turn>model"}) {
+      auto pos = formatted.rfind(marker);
+      if (pos != std::string::npos && (cut == std::string::npos || pos > cut)) cut = pos;
+    }
+    return (cut != std::string::npos) ? formatted.substr(0, cut) : formatted;
   }
 
   // Read llm_config.json and inject jinja.bos / jinja.eos as bos_token / eos_token
@@ -344,7 +386,9 @@ private:
   std::string cache_dir_;
   InferenceMetrics last_metrics_;
   // KV cache prefix reuse state.
-  std::vector<int> prev_input_ids_;
+  std::vector<int> prev_input_ids_;     // text-only token comparison
+  std::string prev_eval_prompt_;        // multimodal string prefix comparison
+  int prev_eval_n_tokens_ = 0;          // total tokens from last multimodal eval
   bool has_cache_ = false;
 };
 
