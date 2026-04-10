@@ -64,19 +64,6 @@ public:
       if (!user_prompt.empty()) msgs.push_back({"user", user_prompt});
     }
 
-    // Thinking control via system prompt (/no_think).
-    if (!thinking_enabled) {
-      bool found_sys = false;
-      for (auto& m : msgs) {
-        if (m.first == "system") {
-          m.second += "\n/no_think";
-          found_sys = true;
-          break;
-        }
-      }
-      if (!found_sys) msgs.insert(msgs.begin(), {"system", "/no_think"});
-    }
-
     // Handle multimodal: save image to temp file in model directory (writable).
     std::string tmp_image_path;
     if (image_data && image_size > 0) {
@@ -87,6 +74,13 @@ public:
 
     // Stateless: reset all state at start of each request.
     llm_->reset();
+
+    // Thinking control via jinja context variable (must be set before apply_chat_template).
+    if (thinking_enabled) {
+      llm_->set_config(R"({"jinja":{"context":{"enable_thinking":true}}})");
+    } else {
+      llm_->set_config(R"({"jinja":{"context":{"enable_thinking":false}}})");
+    }
 
     // Apply chat template and tokenize.
     std::string formatted = llm_->apply_chat_template(msgs);
