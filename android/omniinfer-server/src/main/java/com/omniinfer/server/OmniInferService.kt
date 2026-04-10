@@ -211,101 +211,99 @@ class OmniInferService : Service() {
                     thinkEnabled = thinkEnabled,
                     toolsJson = toolsJson,
                     toolChoice = toolChoice,
-                    callback = object {
-                        @Suppress("unused")
-                        fun onToken(token: String) {
-                            if (!connectionAlive) return
-
-                            try { runBlocking {
-                                if (isFirst) {
-                                    val initChunk = buildChunk(completionId, requestModel, created) {
-                                        put("role", "assistant")
-                                        put("content", "")
+                    callback = OmniInferStreamCallback(
+                        onTokenHandler = { token ->
+                            if (connectionAlive) {
+                                try { runBlocking {
+                                    if (isFirst) {
+                                        val initChunk = buildChunk(completionId, requestModel, created) {
+                                            put("role", "assistant")
+                                            put("content", "")
+                                        }
+                                        write("data: $initChunk\n\n")
+                                        flush()
+                                        isFirst = false
                                     }
-                                    write("data: $initChunk\n\n")
-                                    flush()
-                                    isFirst = false
-                                }
 
-                                if (token.trim() == "<think>") {
-                                    inReasoning = true
-                                    return@runBlocking
-                                }
+                                    if (token.trim() == "<think>") {
+                                        inReasoning = true
+                                        return@runBlocking
+                                    }
 
-                                if (inReasoning) {
-                                    thinkEndBuf.append(token)
-                                    val buf = thinkEndBuf.toString()
-                                    val endIdx = buf.indexOf("</think>")
-                                    if (endIdx >= 0) {
-                                        val reasonPart = buf.substring(0, endIdx)
-                                        if (reasonPart.isNotEmpty()) {
-                                            val chunk = buildChunk(completionId, requestModel, created) {
-                                                put("reasoning_content", reasonPart)
-                                                put("content", JsonNull)
+                                    if (inReasoning) {
+                                        thinkEndBuf.append(token)
+                                        val buf = thinkEndBuf.toString()
+                                        val endIdx = buf.indexOf("</think>")
+                                        if (endIdx >= 0) {
+                                            val reasonPart = buf.substring(0, endIdx)
+                                            if (reasonPart.isNotEmpty()) {
+                                                val chunk = buildChunk(completionId, requestModel, created) {
+                                                    put("reasoning_content", reasonPart)
+                                                    put("content", JsonNull)
+                                                }
+                                                write("data: $chunk\n\n")
                                             }
-                                            write("data: $chunk\n\n")
-                                        }
-                                        inReasoning = false
-                                        val contentPart = buf.substring(endIdx + "</think>".length)
-                                        if (contentPart.isNotBlank()) {
-                                            val chunk = buildChunk(completionId, requestModel, created) {
-                                                put("content", contentPart)
+                                            inReasoning = false
+                                            val contentPart = buf.substring(endIdx + "</think>".length)
+                                            if (contentPart.isNotBlank()) {
+                                                val chunk = buildChunk(completionId, requestModel, created) {
+                                                    put("content", contentPart)
+                                                }
+                                                write("data: $chunk\n\n")
                                             }
-                                            write("data: $chunk\n\n")
-                                        }
-                                        thinkEndBuf.clear()
-                                    } else {
-                                        val safe = if (buf.length > 10) buf.substring(0, buf.length - 10) else ""
-                                        if (safe.isNotEmpty()) {
-                                            val chunk = buildChunk(completionId, requestModel, created) {
-                                                put("reasoning_content", safe)
-                                                put("content", JsonNull)
-                                            }
-                                            write("data: $chunk\n\n")
                                             thinkEndBuf.clear()
-                                            thinkEndBuf.append(buf.substring(buf.length - 10))
+                                        } else {
+                                            val safe = if (buf.length > 10) buf.substring(0, buf.length - 10) else ""
+                                            if (safe.isNotEmpty()) {
+                                                val chunk = buildChunk(completionId, requestModel, created) {
+                                                    put("reasoning_content", safe)
+                                                    put("content", JsonNull)
+                                                }
+                                                write("data: $chunk\n\n")
+                                                thinkEndBuf.clear()
+                                                thinkEndBuf.append(buf.substring(buf.length - 10))
+                                            }
                                         }
-                                    }
-                                } else if (!inToolCall) {
-                                    // Detect tool call start markers in content stream.
-                                    if (hasTools) {
-                                        contentBuf.append(token)
-                                        // Check for known tool call markers.
-                                        if (contentBuf.contains("<|tool_call") || contentBuf.contains("<tool_call")) {
-                                            inToolCall = true
-                                            return@runBlocking
-                                        }
-                                        // Flush content up to a safe point (keep tail for marker detection).
-                                        val buf = contentBuf.toString()
-                                        val safe = if (buf.length > 15) buf.substring(0, buf.length - 15) else ""
-                                        if (safe.isNotEmpty()) {
+                                    } else if (!inToolCall) {
+                                        // Detect tool call start markers in content stream.
+                                        if (hasTools) {
+                                            contentBuf.append(token)
+                                            // Check for known tool call markers.
+                                            if (contentBuf.contains("<|tool_call") || contentBuf.contains("<tool_call")) {
+                                                inToolCall = true
+                                                return@runBlocking
+                                            }
+                                            // Flush content up to a safe point (keep tail for marker detection).
+                                            val buf = contentBuf.toString()
+                                            val safe = if (buf.length > 15) buf.substring(0, buf.length - 15) else ""
+                                            if (safe.isNotEmpty()) {
+                                                val chunk = buildChunk(completionId, requestModel, created) {
+                                                    put("content", safe)
+                                                }
+                                                write("data: $chunk\n\n")
+                                                contentBuf.clear()
+                                                contentBuf.append(buf.substring(buf.length - 15))
+                                            }
+                                        } else {
                                             val chunk = buildChunk(completionId, requestModel, created) {
-                                                put("content", safe)
+                                                put("content", token)
                                             }
                                             write("data: $chunk\n\n")
-                                            contentBuf.clear()
-                                            contentBuf.append(buf.substring(buf.length - 15))
                                         }
-                                    } else {
-                                        val chunk = buildChunk(completionId, requestModel, created) {
-                                            put("content", token)
-                                        }
-                                        write("data: $chunk\n\n")
                                     }
+                                    // inToolCall == true: suppress content, C++ will parse tool calls after generate()
+                                    flush()
+                                } } catch (_: Exception) {
+                                    // Client disconnected — cancel backend generation.
+                                    connectionAlive = false
+                                    OmniInferBridge.cancel(handle)
                                 }
-                                // inToolCall == true: suppress content, C++ will parse tool calls after generate()
-                                flush()
-                            } } catch (_: Exception) {
-                                // Client disconnected — cancel backend generation.
-                                connectionAlive = false
-                                OmniInferBridge.cancel(handle)
                             }
-                        }
-                        @Suppress("unused")
-                        fun onMetrics(metrics: String) {
+                        },
+                        onMetricsHandler = { metrics ->
                             metricsStr = metrics
                         }
-                    }
+                    )
                 )
                 } catch (e: Exception) {
                     // Client disconnected or write failed — cancel the running generate.
@@ -412,12 +410,11 @@ class OmniInferService : Service() {
                 thinkEnabled = thinkEnabled,
                 toolsJson = toolsJson,
                 toolChoice = toolChoice,
-                callback = object {
-                    @Suppress("unused")
-                    fun onMetrics(metrics: String) {
+                callback = OmniInferStreamCallback(
+                    onMetricsHandler = { metrics ->
                         metricsStr = metrics
                     }
-                }
+                )
             )
             val toolCallResult = runCatching {
                 val parsed = Json.parseToJsonElement(result).jsonObject
@@ -520,9 +517,8 @@ class OmniInferService : Service() {
         }.toMap()
     }
 
-    private fun buildUsageObject(handle: Long, metricsStr: String?): JsonObject? {
+    private fun buildUsageObject(handle: Long, @Suppress("UNUSED_PARAMETER") metricsStr: String?): JsonObject? {
         val diag = OmniInferBridge.collectDiagnostics(handle)
-        val metrics = parseMetrics(metricsStr)
         val promptTokens = diag["prompt_tokens"]?.toIntOrNull() ?: 0
         val completionTokens = diag["generated_tokens"]?.toIntOrNull() ?: 0
         if (promptTokens == 0 && completionTokens == 0) return null
@@ -530,6 +526,8 @@ class OmniInferService : Service() {
         val reasoningTokens = diag["reasoning_tokens"]?.toIntOrNull() ?: 0
         val imageTokens = diag["image_tokens"]?.toIntOrNull() ?: 0
         val cachedTokens = diag["cached_tokens"]?.toIntOrNull() ?: 0
+        val prefillUs = diag["prefill_us"]?.toLongOrNull() ?: 0L
+        val decodeUs = diag["decode_us"]?.toLongOrNull() ?: 0L
 
         return buildJsonObject {
             put("prompt_tokens", promptTokens)
@@ -550,8 +548,20 @@ class OmniInferService : Service() {
                 put("cache_type", "ephemeral")
             }
 
-            metrics["prefill_tps"]?.let { put("prefill_tokens_per_second", "%.1f".format(it).toDouble()) }
-            metrics["decode_tps"]?.let { put("decode_tokens_per_second", "%.1f".format(it).toDouble()) }
+            val prefillMs = prefillUs / 1000.0
+            val decodeMs = decodeUs / 1000.0
+            putJsonObject("performance") {
+                put("prefill_time_ms", "%.1f".format(prefillMs).toDouble())
+                if (prefillUs > 0 && promptTokens > 0) {
+                    put("prefill_tokens_per_second", "%.1f".format(promptTokens / (prefillUs / 1e6)).toDouble())
+                }
+                put("decode_time_ms", "%.1f".format(decodeMs).toDouble())
+                if (decodeUs > 0 && completionTokens > 0) {
+                    put("decode_tokens_per_second", "%.1f".format(completionTokens / (decodeUs / 1e6)).toDouble())
+                }
+                put("total_time_ms", "%.1f".format(prefillMs + decodeMs).toDouble())
+                put("time_to_first_token_ms", "%.1f".format(prefillMs).toDouble())
+            }
         }
     }
 
