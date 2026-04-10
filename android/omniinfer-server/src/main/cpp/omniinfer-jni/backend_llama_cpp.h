@@ -195,15 +195,13 @@ public:
         }
       }
 
-      if (common_prefix > 0) {
-        // Reuse KV cache: trim entries after common prefix, decode only suffix.
+      if (common_prefix > 0 && common_prefix < (int)prompt_toks.size()) {
+        // Partial prefix match: trim KV after common prefix, decode only suffix.
         llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1);
         cur_pos_ = common_prefix;
-        if (common_prefix < (int)prompt_toks.size()) {
-          std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
-          if (decode_batched(suffix, common_prefix, true) != 0) return "";
-          cur_pos_ = (int)prompt_toks.size();
-        }
+        std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
+        if (decode_batched(suffix, common_prefix, true) != 0) return "";
+        cur_pos_ = (int)prompt_toks.size();
         __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
             "KV cache reuse: %d/%d tokens cached, %d new",
             common_prefix, (int)prompt_toks.size(),
