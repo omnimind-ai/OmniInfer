@@ -120,16 +120,12 @@ public:
         }
       }
 
-      if (common_prefix > 0) {
-        // Reuse KV cache: generate_init preserves KV when reuse_kv=true.
+      if (common_prefix > 0 && common_prefix < (int)input_ids.size()) {
+        // Partial prefix match: reuse cached KV, prefill only suffix.
         llm_->generate_init(nullptr, "<eop>");
-        // Trim KV entries from common_prefix to end (remove old suffix).
         llm_->eraseHistory(common_prefix, 0);
-        // Prefill only the new suffix tokens.
-        if (common_prefix < (int)input_ids.size()) {
-          std::vector<int> suffix(input_ids.begin() + common_prefix, input_ids.end());
-          llm_->generate(suffix, 0);
-        }
+        std::vector<int> suffix(input_ids.begin() + common_prefix, input_ids.end());
+        llm_->generate(suffix, 0);
         __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
             "MNN KV cache reuse: %d/%d tokens cached, %d new",
             common_prefix, (int)input_ids.size(),
