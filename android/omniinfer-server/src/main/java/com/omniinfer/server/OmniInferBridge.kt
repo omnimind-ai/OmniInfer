@@ -47,7 +47,7 @@ object OmniInferBridge {
         thinkEnabled: Boolean = false,
         toolsJson: String? = null,
         toolChoice: String? = null,
-        callback: Any? = null
+        callback: OmniInferStreamCallback? = null
     ): String {
         if (!isNativeLibraryLoaded) return ""
         val req = JSONObject()
@@ -87,7 +87,7 @@ object OmniInferBridge {
     }
 
     private external fun nativeInit(configJson: String): Long
-    private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageData: ByteArray?, callback: Any?): String
+    private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageData: ByteArray?, callback: OmniInferStreamCallback?): String
     private external fun nativeLoadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean
     private external fun nativePrewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int): Boolean
     private external fun nativeSetThinkMode(handle: Long, enabled: Boolean)

@@ -1,29 +1,29 @@
 
 [submodule "framework/llama.cpp"]
 	path = framework/llama.cpp
-	url = https://github.com/ggml-org/llama.cpp
+	url = git@github.com:ggml-org/llama.cpp.git
 [submodule "framework/mlx"]
 	path = framework/mlx
-	url = https://github.com/ml-explore/mlx
+	url = git@github.com:ml-explore/mlx.git
 [submodule "framework/mnn"]
 	path = framework/mnn
-	url = https://github.com/alibaba/mnn
+	url = git@github.com:alibaba/mnn.git
 [submodule "framework/OmniInfer-LLM"]
 	path = framework/OmniInfer-LLM
-	url = https://github.com/omnimind-ai/OmniInfer-LLM
+	url = git@github.com:omnimind-ai/OmniInfer-LLM.git
 [submodule "framework/OmniInfer-VLM"]
 	path = framework/OmniInfer-VLM
-	url = https://github.com/omnimind-ai/OmniInfer-VLM
+	url = git@github.com:omnimind-ai/OmniInfer-VLM.git
 [submodule "framework/OmniOp-NPU"]
 	path = framework/OmniOp-NPU
-	url = https://github.com/omnimind-ai/OmniOp-NPU
+	url = git@github.com:omnimind-ai/OmniOp-NPU.git
 [submodule "framework/llama-cpp-turboquant"]
 	path = framework/llama-cpp-turboquant
-	url = https://github.com/TheTom/llama-cpp-turboquant.git
+	url = git@github.com:TheTom/llama-cpp-turboquant.git
 	branch = feature/turboquant-kv-cache
 [submodule "framework/executorch"]
 	path = framework/executorch
-	url = https://github.com/pytorch/executorch
+	url = git@github.com:pytorch/executorch.git
 [submodule "framework/omniinfer-native"]
 	path = framework/omniinfer-native
 	url = git@github.com:36330/llama.git
