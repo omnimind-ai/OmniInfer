@@ -34,10 +34,19 @@ public:
 
     if (!config_json.empty()) llm_->set_config(config_json);
 
+    // Enable KV cache reuse for multi-turn prefix matching.
+    llm_->set_config(R"({"reuse_kv": true})");
+
     if (!llm_->load()) {
       MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr;
       return false;
     }
+
+    // Workaround: MNN's setChatTemplate passes eos but not bos from the jinja config.
+    // Read llm_config.json and inject jinja.bos as bos_token in the jinja context
+    // so {{ bos_token }} renders correctly in chat templates (e.g. Gemma models).
+    inject_jinja_special_tokens(model_path);
+
     return true;
   }
 
@@ -64,41 +73,30 @@ public:
       if (!user_prompt.empty()) msgs.push_back({"user", user_prompt});
     }
 
-    // Thinking control via system prompt (/no_think).
-    if (!thinking_enabled) {
-      bool found_sys = false;
-      for (auto& m : msgs) {
-        if (m.first == "system") {
-          m.second += "\n/no_think";
-          found_sys = true;
-          break;
-        }
-      }
-      if (!found_sys) msgs.insert(msgs.begin(), {"system", "/no_think"});
-    }
-
     // Handle multimodal: save image to temp file in model directory (writable).
     std::string tmp_image_path;
-    if (image_data && image_size > 0) {
+    bool is_multimodal = image_data && image_size > 0;
+    if (is_multimodal) {
       tmp_image_path = cache_dir_ + "/.omniinfer_vlm_tmp";
       FILE* f = fopen(tmp_image_path.c_str(), "wb");
       if (f) { fwrite(image_data, 1, image_size, f); fclose(f); }
     }
 
-    // Stateless: reset all state at start of each request.
-    llm_->reset();
+    // Thinking control via jinja context variable (must be set before apply_chat_template).
+    if (thinking_enabled) {
+      llm_->set_config(R"({"jinja":{"context":{"enable_thinking":true}}})");
+    } else {
+      llm_->set_config(R"({"jinja":{"context":{"enable_thinking":false}}})");
+    }
 
     // Apply chat template and tokenize.
     std::string formatted = llm_->apply_chat_template(msgs);
 
-    // For multimodal: insert <img> tag into the formatted prompt after the last
-    // user turn marker, so tokenizer_encode(MultimodalPrompt) can find and
-    // process it. The chat template outputs plain text; <img> tags must be in
-    // the final prompt_template for MNN's regex-based multimodal tokenizer.
     std::vector<int> input_ids;
+    int n_image_tokens = 0;
     if (!tmp_image_path.empty()) {
-      // Find last user turn in formatted prompt (e.g. "<|im_start|>user\n")
-      // and insert <img> tag right after the marker.
+      // Tokenize text-only first (before image tag insertion) for image token count.
+      auto text_ids = llm_->tokenizer_encode(formatted);
       std::string user_marker = "user\n";
       auto pos = formatted.rfind(user_marker);
       if (pos != std::string::npos) {
@@ -108,40 +106,86 @@ public:
       MNN::Transformer::MultimodalPrompt mprompt;
       mprompt.prompt_template = formatted;
       input_ids = llm_->tokenizer_encode(mprompt);
+      n_image_tokens = (int)input_ids.size() - (int)text_ids.size();
+      if (n_image_tokens < 0) n_image_tokens = 0;
     } else {
       input_ids = llm_->tokenizer_encode(formatted);
     }
 
-    // Initialize generation context (no ostream — we handle output manually).
-    llm_->generate_init(nullptr, "<eop>");
+    // KV cache prefix reuse.
+    int n_cached_tokens = 0;
+    if (is_multimodal) {
+      // Multimodal: always full reset and prefill, invalidate cache.
+      llm_->reset();
+      prev_input_ids_.clear();
+      has_cache_ = false;
+      llm_->generate_init(nullptr, "<eop>");
+      llm_->generate(input_ids, 0);
+    } else {
+      // Find common prefix with previous request.
+      int common_prefix = 0;
+      if (has_cache_ && !prev_input_ids_.empty()) {
+        int max_common = std::min((int)prev_input_ids_.size(), (int)input_ids.size());
+        while (common_prefix < max_common &&
+               prev_input_ids_[common_prefix] == input_ids[common_prefix]) {
+          common_prefix++;
+        }
+      }
 
-    // Prefill (max_tokens=0 means no generation, just fill KV cache).
-    llm_->generate(input_ids, 0);
+      if (common_prefix > 0 && common_prefix == (int)input_ids.size()) {
+        // Exact match: erase from last prompt token, re-prefill 1 token for logits.
+        n_cached_tokens = common_prefix - 1;
+        llm_->generate_init(nullptr, "<eop>");
+        llm_->eraseHistory(common_prefix - 1, 0);
+        std::vector<int> last_tok = {input_ids.back()};
+        llm_->generate(last_tok, 0);
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "MNN KV cache reuse: %d/%d tokens cached (exact, 1 re-prefilled)",
+            common_prefix - 1, (int)input_ids.size());
+      } else if (common_prefix > 0) {
+        // Partial prefix match: reuse cached KV, prefill only suffix.
+        n_cached_tokens = common_prefix;
+        llm_->generate_init(nullptr, "<eop>");
+        llm_->eraseHistory(common_prefix, 0);
+        std::vector<int> suffix(input_ids.begin() + common_prefix, input_ids.end());
+        llm_->generate(suffix, 0);
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "MNN KV cache reuse: %d/%d tokens cached, %d new",
+            common_prefix, (int)input_ids.size(),
+            (int)input_ids.size() - common_prefix);
+      } else {
+        // No cache match: full reset + prefill.
+        llm_->reset();
+        llm_->generate_init(nullptr, "<eop>");
+        llm_->generate(input_ids, 0);
+      }
+
+      prev_input_ids_ = input_ids;
+      has_cache_ = true;
+    }
 
     // Decode: generate tokens one by one for streaming.
     std::string full_response;
     auto* ctx = llm_->getContext();
     int max_tokens = 2048;
     size_t prev_len = 0;
+    int n_reasoning_tokens = 0;
+    bool counting_reasoning = thinking_enabled && !detect_trailing_tag(formatted).empty();
 
-    // Prepend thinking start tag when thinking is enabled (consumed during prefill).
-    if (thinking_enabled) {
-      auto end = formatted.find_last_not_of(" \t\n\r");
-      if (end != std::string::npos && formatted[end] == '>') {
-        auto lt = formatted.rfind('<', end);
-        if (lt != std::string::npos && end - lt >= 3) {
-          std::string tag = formatted.substr(lt, end - lt + 1);
-          if (tag[1] != '/' && tag.find('|') == std::string::npos) {
-            full_response += tag + "\n";
-            if (on_token) on_token(tag + "\n");
-          }
-        }
-      }
+    // MNN's generate_str doesn't include text consumed during prefill. When
+    // thinking is enabled, the chat template appends a thinking start tag
+    // (e.g. <think>) that gets consumed. Detect and re-emit it so the Kotlin
+    // SSE layer can parse reasoning_content vs content.
+    std::string thinking_tag = detect_trailing_tag(formatted);
+    if (!thinking_tag.empty() && thinking_enabled) {
+      full_response += thinking_tag + "\n";
+      if (on_token) on_token(thinking_tag + "\n");
     }
 
     while (!cancelled.load() && !llm_->stoped() && ctx->gen_seq_len < max_tokens) {
       llm_->generate(1);
       if (llm_->stoped()) break;
+      if (counting_reasoning) n_reasoning_tokens++;
 
       const std::string& current = ctx->generate_str;
       if (current.size() > prev_len) {
@@ -154,12 +198,16 @@ public:
         if (on_token && !delta.empty()) {
           if (!on_token(delta)) { cancelled.store(true); break; }
         }
+        if (counting_reasoning && full_response.find("</think>") != std::string::npos) {
+          counting_reasoning = false;
+        }
       }
     }
 
     // Collect metrics.
     if (ctx) {
-      last_metrics_ = {ctx->prompt_len, ctx->gen_seq_len, ctx->prefill_us, ctx->decode_us};
+      last_metrics_ = {ctx->prompt_len, ctx->gen_seq_len, ctx->prefill_us, ctx->decode_us,
+                       n_reasoning_tokens, n_image_tokens, n_cached_tokens};
     }
 
     // Clean up temp image file.
@@ -177,6 +225,8 @@ public:
 
   void reset() override {
     if (llm_) llm_->reset();
+    prev_input_ids_.clear();
+    has_cache_ = false;
   }
 
   InferenceMetrics get_metrics() override { return last_metrics_; }
@@ -212,6 +262,62 @@ private:
     return msgs;
   }
 
+  // Read llm_config.json and inject jinja.bos / jinja.eos as bos_token / eos_token
+  // into the jinja context. Works around MNN's setChatTemplate not passing bos.
+  void inject_jinja_special_tokens(const std::string& model_path) {
+    auto slash = model_path.find_last_of("/\\");
+    if (slash == std::string::npos) return;
+    std::string cfg_path = model_path.substr(0, slash) + "/llm_config.json";
+    FILE* f = fopen(cfg_path.c_str(), "r");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::string buf(sz, '\0');
+    fread(&buf[0], 1, sz, f);
+    fclose(f);
+
+    // Find the "jinja" section so we read bos/eos from it (not the top-level keys).
+    size_t jinja_pos = buf.find("\"jinja\"");
+    if (jinja_pos == std::string::npos) return;
+    std::string jinja_section = buf.substr(jinja_pos);
+
+    std::string bos = extract_string(jinja_section, "bos");
+    std::string eos = extract_string(jinja_section, "eos");
+    if (bos.empty() && eos.empty()) return;
+
+    // Build a single set_config call to inject both tokens.
+    std::ostringstream cfg;
+    cfg << R"({"jinja":{"context":{)";
+    bool need_comma = false;
+    if (!bos.empty()) {
+      cfg << R"("bos_token":")" << bos << "\"";
+      need_comma = true;
+    }
+    if (!eos.empty()) {
+      if (need_comma) cfg << ",";
+      cfg << R"("eos_token":")" << eos << "\"";
+    }
+    cfg << "}}}";
+    llm_->set_config(cfg.str());
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "Injected jinja tokens: bos=[%s] eos=[%s]", bos.c_str(), eos.c_str());
+  }
+
+  // Detect a trailing opening tag at the end of the formatted prompt.
+  // Returns the tag string (e.g. "<think>") or empty if none found.
+  // Filters out template role markers like <|im_start|> and closing tags.
+  static std::string detect_trailing_tag(const std::string& text) {
+    auto end = text.find_last_not_of(" \t\n\r");
+    if (end == std::string::npos || text[end] != '>') return "";
+    auto lt = text.rfind('<', end);
+    if (lt == std::string::npos || end - lt < 3) return "";
+    std::string tag = text.substr(lt, end - lt + 1);
+    if (tag[1] == '/') return "";              // closing tag </...>
+    if (tag.find('|') != std::string::npos) return "";  // role marker <|...|>
+    return tag;
+  }
+
   static std::string extract_string(const std::string& json, const std::string& key) {
     std::string token = "\"" + key + "\"";
     size_t kp = json.find(token);
@@ -237,6 +343,9 @@ private:
   MNN::Transformer::Llm* llm_ = nullptr;
   std::string cache_dir_;
   InferenceMetrics last_metrics_;
+  // KV cache prefix reuse state.
+  std::vector<int> prev_input_ids_;
+  bool has_cache_ = false;
 };
 
 }  // namespace omniinfer

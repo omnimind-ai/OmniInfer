@@ -13,6 +13,9 @@ struct InferenceMetrics {
   int generated_tokens = 0;
   int64_t prefill_us = 0;
   int64_t decode_us = 0;
+  int reasoning_tokens = 0;  // completion tokens before </think>
+  int image_tokens = 0;      // image tokens in prompt (multimodal only)
+  int cached_tokens = 0;     // KV cache prefix reuse count
 };
 
 class InferenceBackend {
