@@ -110,9 +110,10 @@ public:
     bool is_multimodal = image_data && image_size > 0 && mtmd_ctx_;
 
     if (is_multimodal) {
-      for (int i = (int)messages.size() - 1; i >= 0; i--) {
-        if (messages[i].role == "user") {
-          messages[i].content = media_marker_ + "\n" + messages[i].content;
+      // Insert media marker into the first user message (matching Kotlin's image extraction order).
+      for (auto& msg : messages) {
+        if (msg.role == "user") {
+          msg.content = media_marker_ + "\n" + msg.content;
           break;
         }
       }
