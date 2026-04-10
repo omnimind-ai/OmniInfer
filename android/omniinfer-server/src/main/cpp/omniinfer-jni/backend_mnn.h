@@ -34,6 +34,9 @@ public:
 
     if (!config_json.empty()) llm_->set_config(config_json);
 
+    // Enable KV cache reuse for multi-turn prefix matching.
+    llm_->set_config(R"({"reuse_kv": true})");
+
     if (!llm_->load()) {
       MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr;
       return false;
@@ -66,14 +69,12 @@ public:
 
     // Handle multimodal: save image to temp file in model directory (writable).
     std::string tmp_image_path;
-    if (image_data && image_size > 0) {
+    bool is_multimodal = image_data && image_size > 0;
+    if (is_multimodal) {
       tmp_image_path = cache_dir_ + "/.omniinfer_vlm_tmp";
       FILE* f = fopen(tmp_image_path.c_str(), "wb");
       if (f) { fwrite(image_data, 1, image_size, f); fclose(f); }
     }
-
-    // Stateless: reset all state at start of each request.
-    llm_->reset();
 
     // Thinking control via jinja context variable (must be set before apply_chat_template).
     if (thinking_enabled) {
@@ -85,14 +86,8 @@ public:
     // Apply chat template and tokenize.
     std::string formatted = llm_->apply_chat_template(msgs);
 
-    // For multimodal: insert <img> tag into the formatted prompt after the last
-    // user turn marker, so tokenizer_encode(MultimodalPrompt) can find and
-    // process it. The chat template outputs plain text; <img> tags must be in
-    // the final prompt_template for MNN's regex-based multimodal tokenizer.
     std::vector<int> input_ids;
     if (!tmp_image_path.empty()) {
-      // Find last user turn in formatted prompt (e.g. "<|im_start|>user\n")
-      // and insert <img> tag right after the marker.
       std::string user_marker = "user\n";
       auto pos = formatted.rfind(user_marker);
       if (pos != std::string::npos) {
@@ -106,11 +101,49 @@ public:
       input_ids = llm_->tokenizer_encode(formatted);
     }
 
-    // Initialize generation context (no ostream — we handle output manually).
-    llm_->generate_init(nullptr, "<eop>");
+    // KV cache prefix reuse.
+    if (is_multimodal) {
+      // Multimodal: always full reset and prefill, invalidate cache.
+      llm_->reset();
+      prev_input_ids_.clear();
+      has_cache_ = false;
+      llm_->generate_init(nullptr, "<eop>");
+      llm_->generate(input_ids, 0);
+    } else {
+      // Find common prefix with previous request.
+      int common_prefix = 0;
+      if (has_cache_ && !prev_input_ids_.empty()) {
+        int max_common = std::min((int)prev_input_ids_.size(), (int)input_ids.size());
+        while (common_prefix < max_common &&
+               prev_input_ids_[common_prefix] == input_ids[common_prefix]) {
+          common_prefix++;
+        }
+      }
 
-    // Prefill (max_tokens=0 means no generation, just fill KV cache).
-    llm_->generate(input_ids, 0);
+      if (common_prefix > 0) {
+        // Reuse KV cache: generate_init preserves KV when reuse_kv=true.
+        llm_->generate_init(nullptr, "<eop>");
+        // Trim KV entries from common_prefix to end (remove old suffix).
+        llm_->eraseHistory(common_prefix, 0);
+        // Prefill only the new suffix tokens.
+        if (common_prefix < (int)input_ids.size()) {
+          std::vector<int> suffix(input_ids.begin() + common_prefix, input_ids.end());
+          llm_->generate(suffix, 0);
+        }
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "MNN KV cache reuse: %d/%d tokens cached, %d new",
+            common_prefix, (int)input_ids.size(),
+            (int)input_ids.size() - common_prefix);
+      } else {
+        // No cache match: full reset + prefill.
+        llm_->reset();
+        llm_->generate_init(nullptr, "<eop>");
+        llm_->generate(input_ids, 0);
+      }
+
+      prev_input_ids_ = input_ids;
+      has_cache_ = true;
+    }
 
     // Decode: generate tokens one by one for streaming.
     std::string full_response;
@@ -171,6 +204,8 @@ public:
 
   void reset() override {
     if (llm_) llm_->reset();
+    prev_input_ids_.clear();
+    has_cache_ = false;
   }
 
   InferenceMetrics get_metrics() override { return last_metrics_; }
@@ -231,6 +266,9 @@ private:
   MNN::Transformer::Llm* llm_ = nullptr;
   std::string cache_dir_;
   InferenceMetrics last_metrics_;
+  // KV cache prefix reuse state.
+  std::vector<int> prev_input_ids_;
+  bool has_cache_ = false;
 };
 
 }  // namespace omniinfer
