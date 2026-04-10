@@ -520,9 +520,8 @@ class OmniInferService : Service() {
         }.toMap()
     }
 
-    private fun buildUsageObject(handle: Long, metricsStr: String?): JsonObject? {
+    private fun buildUsageObject(handle: Long, @Suppress("UNUSED_PARAMETER") metricsStr: String?): JsonObject? {
         val diag = OmniInferBridge.collectDiagnostics(handle)
-        val metrics = parseMetrics(metricsStr)
         val promptTokens = diag["prompt_tokens"]?.toIntOrNull() ?: 0
         val completionTokens = diag["generated_tokens"]?.toIntOrNull() ?: 0
         if (promptTokens == 0 && completionTokens == 0) return null
@@ -530,6 +529,8 @@ class OmniInferService : Service() {
         val reasoningTokens = diag["reasoning_tokens"]?.toIntOrNull() ?: 0
         val imageTokens = diag["image_tokens"]?.toIntOrNull() ?: 0
         val cachedTokens = diag["cached_tokens"]?.toIntOrNull() ?: 0
+        val prefillUs = diag["prefill_us"]?.toLongOrNull() ?: 0L
+        val decodeUs = diag["decode_us"]?.toLongOrNull() ?: 0L
 
         return buildJsonObject {
             put("prompt_tokens", promptTokens)
@@ -550,8 +551,20 @@ class OmniInferService : Service() {
                 put("cache_type", "ephemeral")
             }
 
-            metrics["prefill_tps"]?.let { put("prefill_tokens_per_second", "%.1f".format(it).toDouble()) }
-            metrics["decode_tps"]?.let { put("decode_tokens_per_second", "%.1f".format(it).toDouble()) }
+            val prefillMs = prefillUs / 1000.0
+            val decodeMs = decodeUs / 1000.0
+            putJsonObject("performance") {
+                put("prefill_time_ms", "%.1f".format(prefillMs).toDouble())
+                if (prefillUs > 0 && promptTokens > 0) {
+                    put("prefill_tokens_per_second", "%.1f".format(promptTokens / (prefillUs / 1e6)).toDouble())
+                }
+                put("decode_time_ms", "%.1f".format(decodeMs).toDouble())
+                if (decodeUs > 0 && completionTokens > 0) {
+                    put("decode_tokens_per_second", "%.1f".format(completionTokens / (decodeUs / 1e6)).toDouble())
+                }
+                put("total_time_ms", "%.1f".format(prefillMs + decodeMs).toDouble())
+                put("time_to_first_token_ms", "%.1f".format(prefillMs).toDouble())
+            }
         }
     }
 
