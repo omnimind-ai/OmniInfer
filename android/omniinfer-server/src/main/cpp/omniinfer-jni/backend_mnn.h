@@ -41,6 +41,12 @@ public:
       MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr;
       return false;
     }
+
+    // Workaround: MNN's setChatTemplate passes eos but not bos from the jinja config.
+    // Read llm_config.json and inject jinja.bos as bos_token in the jinja context
+    // so {{ bos_token }} renders correctly in chat templates (e.g. Gemma models).
+    inject_jinja_special_tokens(model_path);
+
     return true;
   }
 
@@ -156,19 +162,14 @@ public:
     int max_tokens = 2048;
     size_t prev_len = 0;
 
-    // Prepend thinking start tag when thinking is enabled (consumed during prefill).
-    if (thinking_enabled) {
-      auto end = formatted.find_last_not_of(" \t\n\r");
-      if (end != std::string::npos && formatted[end] == '>') {
-        auto lt = formatted.rfind('<', end);
-        if (lt != std::string::npos && end - lt >= 3) {
-          std::string tag = formatted.substr(lt, end - lt + 1);
-          if (tag[1] != '/' && tag.find('|') == std::string::npos) {
-            full_response += tag + "\n";
-            if (on_token) on_token(tag + "\n");
-          }
-        }
-      }
+    // MNN's generate_str doesn't include text consumed during prefill. When
+    // thinking is enabled, the chat template appends a thinking start tag
+    // (e.g. <think>) that gets consumed. Detect and re-emit it so the Kotlin
+    // SSE layer can parse reasoning_content vs content.
+    std::string thinking_tag = detect_trailing_tag(formatted);
+    if (!thinking_tag.empty() && thinking_enabled) {
+      full_response += thinking_tag + "\n";
+      if (on_token) on_token(thinking_tag + "\n");
     }
 
     while (!cancelled.load() && !llm_->stoped() && ctx->gen_seq_len < max_tokens) {
@@ -244,6 +245,62 @@ private:
       pos = obj_end + 1;
     }
     return msgs;
+  }
+
+  // Read llm_config.json and inject jinja.bos / jinja.eos as bos_token / eos_token
+  // into the jinja context. Works around MNN's setChatTemplate not passing bos.
+  void inject_jinja_special_tokens(const std::string& model_path) {
+    auto slash = model_path.find_last_of("/\\");
+    if (slash == std::string::npos) return;
+    std::string cfg_path = model_path.substr(0, slash) + "/llm_config.json";
+    FILE* f = fopen(cfg_path.c_str(), "r");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::string buf(sz, '\0');
+    fread(&buf[0], 1, sz, f);
+    fclose(f);
+
+    // Find the "jinja" section so we read bos/eos from it (not the top-level keys).
+    size_t jinja_pos = buf.find("\"jinja\"");
+    if (jinja_pos == std::string::npos) return;
+    std::string jinja_section = buf.substr(jinja_pos);
+
+    std::string bos = extract_string(jinja_section, "bos");
+    std::string eos = extract_string(jinja_section, "eos");
+    if (bos.empty() && eos.empty()) return;
+
+    // Build a single set_config call to inject both tokens.
+    std::ostringstream cfg;
+    cfg << R"({"jinja":{"context":{)";
+    bool need_comma = false;
+    if (!bos.empty()) {
+      cfg << R"("bos_token":")" << bos << "\"";
+      need_comma = true;
+    }
+    if (!eos.empty()) {
+      if (need_comma) cfg << ",";
+      cfg << R"("eos_token":")" << eos << "\"";
+    }
+    cfg << "}}}";
+    llm_->set_config(cfg.str());
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "Injected jinja tokens: bos=[%s] eos=[%s]", bos.c_str(), eos.c_str());
+  }
+
+  // Detect a trailing opening tag at the end of the formatted prompt.
+  // Returns the tag string (e.g. "<think>") or empty if none found.
+  // Filters out template role markers like <|im_start|> and closing tags.
+  static std::string detect_trailing_tag(const std::string& text) {
+    auto end = text.find_last_not_of(" \t\n\r");
+    if (end == std::string::npos || text[end] != '>') return "";
+    auto lt = text.rfind('<', end);
+    if (lt == std::string::npos || end - lt < 3) return "";
+    std::string tag = text.substr(lt, end - lt + 1);
+    if (tag[1] == '/') return "";              // closing tag </...>
+    if (tag.find('|') != std::string::npos) return "";  // role marker <|...|>
+    return tag;
   }
 
   static std::string extract_string(const std::string& json, const std::string& key) {
