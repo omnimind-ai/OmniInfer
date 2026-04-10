@@ -195,7 +195,18 @@ public:
         }
       }
 
-      if (common_prefix > 0 && common_prefix < (int)prompt_toks.size()) {
+      if (common_prefix > 0 && common_prefix == (int)prompt_toks.size()) {
+        // Exact match: trim generated tokens + last prompt token, re-decode 1 token for logits.
+        llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix - 1, -1);
+        cur_pos_ = common_prefix - 1;
+        common_batch_clear(batch_);
+        common_batch_add(batch_, prompt_toks.back(), common_prefix - 1, {0}, true);
+        if (llama_decode(ctx_, batch_) != 0) return "";
+        cur_pos_ = common_prefix;
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "KV cache reuse: %d/%d tokens cached (exact, 1 re-decoded)",
+            common_prefix - 1, (int)prompt_toks.size());
+      } else if (common_prefix > 0) {
         // Partial prefix match: trim KV after common prefix, decode only suffix.
         llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1);
         cur_pos_ = common_prefix;
