@@ -360,7 +360,10 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
        << "\"prompt_tokens\":" << m.prompt_tokens << ","
        << "\"generated_tokens\":" << m.generated_tokens << ","
        << "\"prefill_us\":" << m.prefill_us << ","
-       << "\"decode_us\":" << m.decode_us
+       << "\"decode_us\":" << m.decode_us << ","
+       << "\"reasoning_tokens\":" << m.reasoning_tokens << ","
+       << "\"image_tokens\":" << m.image_tokens << ","
+       << "\"cached_tokens\":" << m.cached_tokens
        << "}";
   return StdStringToJString(env, json.str());
 }

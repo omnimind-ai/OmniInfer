@@ -86,18 +86,13 @@ public:
       const uint8_t* image_data = nullptr,
       size_t image_size = 0) override {
 
-    // Stateless: reset all state at start of each request.
-    cur_pos_ = 0;
-    llama_memory_clear(llama_get_memory(ctx_), false);
     common_sampler_reset(sampler_);
 
     // Build full messages vector.
     std::vector<common_chat_msg> messages;
     if (!messages_json.empty()) {
-      // Parse messages from JSON array: [{"role":"...","content":"..."},...]
       messages = parse_messages(messages_json);
     } else {
-      // Legacy single-turn path.
       if (!system_prompt.empty()) {
         common_chat_msg sys_msg;
         sys_msg.role = "system";
@@ -112,9 +107,9 @@ public:
       }
     }
 
-    // If image provided, prepend media marker to the last user message content
-    // so mtmd_tokenize will replace it with image tokens at the right position.
-    if (image_data && image_size > 0 && mtmd_ctx_) {
+    bool is_multimodal = image_data && image_size > 0 && mtmd_ctx_;
+
+    if (is_multimodal) {
       for (int i = (int)messages.size() - 1; i >= 0; i--) {
         if (messages[i].role == "user") {
           messages[i].content = media_marker_ + "\n" + messages[i].content;
@@ -151,13 +146,19 @@ public:
       parser_params.parser.load(params.parser);
     }
 
-    // Prefill: text-only or multimodal path.
+    // Prefill with KV cache prefix reuse.
     auto t_prefill_start = std::chrono::steady_clock::now();
     int n_prompt_tokens = 0;
+    int n_cached_tokens = 0;
+    int n_image_tokens = 0;
 
-    if (image_data && image_size > 0 && mtmd_ctx_) {
-      // Multimodal path: use mtmd to process text + image.
-      // Media marker was already inserted into user message before template apply.
+    if (is_multimodal) {
+      // Multimodal: always full prefill, invalidate cache.
+      cur_pos_ = 0;
+      llama_memory_clear(llama_get_memory(ctx_), false);
+      prev_prompt_tokens_.clear();
+      has_cache_ = false;
+
       mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, image_data, image_size);
       if (!bmp) return "";
 
@@ -179,14 +180,62 @@ public:
 
       cur_pos_ = n_past;
       n_prompt_tokens = (int)mtmd_helper_get_n_tokens(chunks);
+      // Estimate image tokens: total prompt tokens minus text-only tokenization.
+      auto text_toks = common_tokenize(ctx_, params.prompt, true, true);
+      n_image_tokens = n_prompt_tokens - (int)text_toks.size();
+      if (n_image_tokens < 0) n_image_tokens = 0;
       mtmd_bitmap_free(bmp);
       mtmd_input_chunks_free(chunks);
     } else {
-      // Text-only path.
+      // Text-only path with KV cache prefix reuse.
       auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
-      if (decode_batched(prompt_toks, 0, true) != 0) return "";
-      cur_pos_ = (int)prompt_toks.size();
       n_prompt_tokens = (int)prompt_toks.size();
+
+      // Find common prefix length with previous prompt tokens.
+      int common_prefix = 0;
+      if (has_cache_ && !prev_prompt_tokens_.empty()) {
+        int max_common = std::min((int)prev_prompt_tokens_.size(), (int)prompt_toks.size());
+        while (common_prefix < max_common &&
+               prev_prompt_tokens_[common_prefix] == prompt_toks[common_prefix]) {
+          common_prefix++;
+        }
+      }
+
+      if (common_prefix > 0 && common_prefix == (int)prompt_toks.size()) {
+        // Exact match: trim generated tokens + last prompt token, re-decode 1 token for logits.
+        n_cached_tokens = common_prefix - 1;
+        llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix - 1, -1);
+        cur_pos_ = common_prefix - 1;
+        common_batch_clear(batch_);
+        common_batch_add(batch_, prompt_toks.back(), common_prefix - 1, {0}, true);
+        if (llama_decode(ctx_, batch_) != 0) return "";
+        cur_pos_ = common_prefix;
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "KV cache reuse: %d/%d tokens cached (exact, 1 re-decoded)",
+            common_prefix - 1, (int)prompt_toks.size());
+      } else if (common_prefix > 0) {
+        // Partial prefix match: trim KV after common prefix, decode only suffix.
+        n_cached_tokens = common_prefix;
+        llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1);
+        cur_pos_ = common_prefix;
+        std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
+        if (decode_batched(suffix, common_prefix, true) != 0) return "";
+        cur_pos_ = (int)prompt_toks.size();
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "KV cache reuse: %d/%d tokens cached, %d new",
+            common_prefix, (int)prompt_toks.size(),
+            (int)prompt_toks.size() - common_prefix);
+      } else {
+        // No cache match: full clear + full prefill.
+        cur_pos_ = 0;
+        llama_memory_clear(llama_get_memory(ctx_), false);
+        if (decode_batched(prompt_toks, 0, true) != 0) return "";
+        cur_pos_ = (int)prompt_toks.size();
+      }
+
+      // Save tokens for next request's prefix matching.
+      prev_prompt_tokens_ = std::move(prompt_toks);
+      has_cache_ = true;
     }
 
     auto t_prefill_end = std::chrono::steady_clock::now();
@@ -196,12 +245,62 @@ public:
     common_sampler_reset(sampler_);
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     std::string full_response;
+    int n_reasoning_tokens = 0;
+    bool counting_reasoning = thinking_enabled && params.supports_thinking;
     std::string utf8_buf;
 
-    // Prepend thinking start tag only when thinking is enabled.
-    if (thinking_enabled && params.supports_thinking && !params.thinking_start_tag.empty()) {
-      if (on_token) on_token(params.thinking_start_tag);
+    // Set up thinking tag handling.
+    // Models with standard tags (e.g. <think>): prepend start tag, stream as-is.
+    // Models with non-standard tags (e.g. Gemma 4): normalize to <think>/<​/think> on the fly.
+    std::string native_think_start, native_think_end;
+    bool normalize_thinking = false;
+
+    if (thinking_enabled && params.supports_thinking) {
+      if (!params.thinking_start_tag.empty()) {
+        // Standard format — prepend start tag, model outputs </think> natively.
+        if (on_token) on_token(params.thinking_start_tag);
+      } else {
+        // Non-standard format — look up native tags for on-the-fly normalization.
+        auto tags = get_native_thinking_tags(params.format);
+        native_think_start = tags.first;
+        native_think_end = tags.second;
+        normalize_thinking = !native_think_start.empty();
+      }
     }
+
+    // Emit helper: normalizes thinking tags when needed, otherwise passes through.
+    std::string norm_buf;
+    auto emit = [&](const std::string& text) -> bool {
+      if (!normalize_thinking) {
+        full_response += text;
+        return !on_token || on_token(text);
+      }
+      norm_buf += text;
+      std::string out;
+      // Replace native start tag with <think>\n
+      auto sp = norm_buf.find(native_think_start);
+      if (sp != std::string::npos) {
+        out += norm_buf.substr(0, sp) + "<think>\n";
+        norm_buf = norm_buf.substr(sp + native_think_start.size());
+      }
+      // Replace native end tag with </think>
+      auto ep = norm_buf.find(native_think_end);
+      if (ep != std::string::npos) {
+        out += norm_buf.substr(0, ep) + "</think>";
+        norm_buf = norm_buf.substr(ep + native_think_end.size());
+      }
+      // Flush safe content, keep tail for partial tag matching.
+      size_t keep = std::max(native_think_start.size(), native_think_end.size());
+      if (norm_buf.size() > keep) {
+        out += norm_buf.substr(0, norm_buf.size() - keep);
+        norm_buf = norm_buf.substr(norm_buf.size() - keep);
+      }
+      if (!out.empty()) {
+        full_response += out;
+        if (on_token && !on_token(out)) return false;
+      }
+      return true;
+    };
 
     auto t_decode_start = std::chrono::steady_clock::now();
 
@@ -213,12 +312,13 @@ public:
 
       if (llama_vocab_is_eog(vocab, tok)) {
         if (!utf8_buf.empty()) {
-          full_response += utf8_buf;
-          if (on_token) on_token(utf8_buf);
+          if (!emit(utf8_buf)) { cancelled.store(true); }
           utf8_buf.clear();
         }
         break;
       }
+
+      if (counting_reasoning) n_reasoning_tokens++;
 
       common_batch_clear(batch_);
       common_batch_add(batch_, tok, cur_pos_, {0}, true);
@@ -229,10 +329,20 @@ public:
       utf8_buf += piece;
 
       if (is_valid_utf8(utf8_buf.c_str())) {
-        full_response += utf8_buf;
-        if (on_token && !on_token(utf8_buf)) { cancelled.store(true); break; }
+        if (!emit(utf8_buf)) { cancelled.store(true); break; }
         utf8_buf.clear();
+        // Stop counting reasoning tokens once </think> appears in output.
+        if (counting_reasoning && full_response.find("</think>") != std::string::npos) {
+          counting_reasoning = false;
+        }
       }
+    }
+
+    // Flush normalizer buffer.
+    if (!norm_buf.empty()) {
+      full_response += norm_buf;
+      if (on_token) on_token(norm_buf);
+      norm_buf.clear();
     }
 
     // Strip template-specific stop sequences from output.
@@ -256,7 +366,8 @@ public:
     int64_t decode_us = std::chrono::duration_cast<std::chrono::microseconds>(t_decode_end - t_decode_start).count();
     int n_prompt = n_prompt_tokens;
     int n_generated = cur_pos_ - n_prompt;
-    last_metrics_ = {n_prompt, n_generated, prefill_us, decode_us};
+    last_metrics_ = {n_prompt, n_generated, prefill_us, decode_us,
+                     n_reasoning_tokens, n_image_tokens, n_cached_tokens};
     return full_response;
   }
 
@@ -289,6 +400,8 @@ public:
     cur_pos_ = 0;
     llama_memory_clear(llama_get_memory(ctx_), false);
     common_sampler_reset(sampler_);
+    prev_prompt_tokens_.clear();
+    has_cache_ = false;
   }
 
   InferenceMetrics get_metrics() override { return last_metrics_; }
@@ -429,6 +542,18 @@ private:
     return "{}";
   }
 
+  // Return native thinking start/end tags for models that don't use <think>/<​/think>.
+  // The streaming loop normalizes these to <think>/<​/think> so the Kotlin SSE layer
+  // only needs to handle one format.
+  static std::pair<std::string, std::string> get_native_thinking_tags(common_chat_format fmt) {
+    switch (fmt) {
+      case COMMON_CHAT_FORMAT_PEG_GEMMA4:
+        return {"<|channel>thought\n", "<channel|>"};
+      default:
+        return {"", ""};
+    }
+  }
+
   // Format parsed tool calls as JSON for the HTTP layer.
   // Returns: {"tool_calls":[{"id":"call_xxx","type":"function","function":{"name":"...","arguments":"..."}}],"content":"..."}
   static std::string format_tool_calls_json(const common_chat_msg& msg) {
@@ -467,6 +592,9 @@ private:
     llama_memory_seq_rm(llama_get_memory(ctx_), 0, 0, n_discard);
     llama_memory_seq_add(llama_get_memory(ctx_), 0, n_discard, cur_pos_, -n_discard);
     cur_pos_ -= n_discard;
+    // Invalidate cache — positions shifted, prefix matching no longer valid.
+    prev_prompt_tokens_.clear();
+    has_cache_ = false;
   }
 
   int decode_batched(const std::vector<llama_token>& toks, llama_pos start, bool last_logit = false) {
@@ -507,6 +635,9 @@ private:
   mtmd_context* mtmd_ctx_ = nullptr;
   std::string media_marker_;
   InferenceMetrics last_metrics_;
+  // KV cache prefix reuse state.
+  std::vector<llama_token> prev_prompt_tokens_;
+  bool has_cache_ = false;
 };
 
 std::once_flag LlamaCppBackend::s_backend_init;
