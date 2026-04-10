@@ -149,6 +149,8 @@ public:
     // Prefill with KV cache prefix reuse.
     auto t_prefill_start = std::chrono::steady_clock::now();
     int n_prompt_tokens = 0;
+    int n_cached_tokens = 0;
+    int n_image_tokens = 0;
 
     if (is_multimodal) {
       // Multimodal: always full prefill, invalidate cache.
@@ -178,6 +180,10 @@ public:
 
       cur_pos_ = n_past;
       n_prompt_tokens = (int)mtmd_helper_get_n_tokens(chunks);
+      // Estimate image tokens: total prompt tokens minus text-only tokenization.
+      auto text_toks = common_tokenize(ctx_, params.prompt, true, true);
+      n_image_tokens = n_prompt_tokens - (int)text_toks.size();
+      if (n_image_tokens < 0) n_image_tokens = 0;
       mtmd_bitmap_free(bmp);
       mtmd_input_chunks_free(chunks);
     } else {
@@ -197,6 +203,7 @@ public:
 
       if (common_prefix > 0 && common_prefix == (int)prompt_toks.size()) {
         // Exact match: trim generated tokens + last prompt token, re-decode 1 token for logits.
+        n_cached_tokens = common_prefix - 1;
         llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix - 1, -1);
         cur_pos_ = common_prefix - 1;
         common_batch_clear(batch_);
@@ -208,6 +215,7 @@ public:
             common_prefix - 1, (int)prompt_toks.size());
       } else if (common_prefix > 0) {
         // Partial prefix match: trim KV after common prefix, decode only suffix.
+        n_cached_tokens = common_prefix;
         llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1);
         cur_pos_ = common_prefix;
         std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
@@ -237,6 +245,8 @@ public:
     common_sampler_reset(sampler_);
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     std::string full_response;
+    int n_reasoning_tokens = 0;
+    bool counting_reasoning = thinking_enabled && params.supports_thinking;
     std::string utf8_buf;
 
     // Set up thinking tag handling.
@@ -308,6 +318,8 @@ public:
         break;
       }
 
+      if (counting_reasoning) n_reasoning_tokens++;
+
       common_batch_clear(batch_);
       common_batch_add(batch_, tok, cur_pos_, {0}, true);
       if (llama_decode(ctx_, batch_) != 0) break;
@@ -319,6 +331,10 @@ public:
       if (is_valid_utf8(utf8_buf.c_str())) {
         if (!emit(utf8_buf)) { cancelled.store(true); break; }
         utf8_buf.clear();
+        // Stop counting reasoning tokens once </think> appears in output.
+        if (counting_reasoning && full_response.find("</think>") != std::string::npos) {
+          counting_reasoning = false;
+        }
       }
     }
 
@@ -350,7 +366,8 @@ public:
     int64_t decode_us = std::chrono::duration_cast<std::chrono::microseconds>(t_decode_end - t_decode_start).count();
     int n_prompt = n_prompt_tokens;
     int n_generated = cur_pos_ - n_prompt;
-    last_metrics_ = {n_prompt, n_generated, prefill_us, decode_us};
+    last_metrics_ = {n_prompt, n_generated, prefill_us, decode_us,
+                     n_reasoning_tokens, n_image_tokens, n_cached_tokens};
     return full_response;
   }
 

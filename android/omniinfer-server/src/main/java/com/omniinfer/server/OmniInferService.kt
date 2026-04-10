@@ -526,10 +526,30 @@ class OmniInferService : Service() {
         val promptTokens = diag["prompt_tokens"]?.toIntOrNull() ?: 0
         val completionTokens = diag["generated_tokens"]?.toIntOrNull() ?: 0
         if (promptTokens == 0 && completionTokens == 0) return null
+
+        val reasoningTokens = diag["reasoning_tokens"]?.toIntOrNull() ?: 0
+        val imageTokens = diag["image_tokens"]?.toIntOrNull() ?: 0
+        val cachedTokens = diag["cached_tokens"]?.toIntOrNull() ?: 0
+
         return buildJsonObject {
             put("prompt_tokens", promptTokens)
             put("completion_tokens", completionTokens)
             put("total_tokens", promptTokens + completionTokens)
+
+            if (reasoningTokens > 0) {
+                putJsonObject("completion_tokens_details") {
+                    put("reasoning_tokens", reasoningTokens)
+                    put("text_tokens", completionTokens - reasoningTokens)
+                }
+            }
+            putJsonObject("prompt_tokens_details") {
+                if (imageTokens > 0) put("image_tokens", imageTokens)
+                put("text_tokens", promptTokens - imageTokens)
+                put("cached_tokens", cachedTokens)
+                put("cache_creation_input_tokens", promptTokens - cachedTokens)
+                put("cache_type", "ephemeral")
+            }
+
             metrics["prefill_tps"]?.let { put("prefill_tokens_per_second", "%.1f".format(it).toDouble()) }
             metrics["decode_tps"]?.let { put("decode_tokens_per_second", "%.1f".format(it).toDouble()) }
         }

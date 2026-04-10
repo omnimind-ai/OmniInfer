@@ -93,7 +93,10 @@ public:
     std::string formatted = llm_->apply_chat_template(msgs);
 
     std::vector<int> input_ids;
+    int n_image_tokens = 0;
     if (!tmp_image_path.empty()) {
+      // Tokenize text-only first (before image tag insertion) for image token count.
+      auto text_ids = llm_->tokenizer_encode(formatted);
       std::string user_marker = "user\n";
       auto pos = formatted.rfind(user_marker);
       if (pos != std::string::npos) {
@@ -103,11 +106,14 @@ public:
       MNN::Transformer::MultimodalPrompt mprompt;
       mprompt.prompt_template = formatted;
       input_ids = llm_->tokenizer_encode(mprompt);
+      n_image_tokens = (int)input_ids.size() - (int)text_ids.size();
+      if (n_image_tokens < 0) n_image_tokens = 0;
     } else {
       input_ids = llm_->tokenizer_encode(formatted);
     }
 
     // KV cache prefix reuse.
+    int n_cached_tokens = 0;
     if (is_multimodal) {
       // Multimodal: always full reset and prefill, invalidate cache.
       llm_->reset();
@@ -128,6 +134,7 @@ public:
 
       if (common_prefix > 0 && common_prefix == (int)input_ids.size()) {
         // Exact match: erase from last prompt token, re-prefill 1 token for logits.
+        n_cached_tokens = common_prefix - 1;
         llm_->generate_init(nullptr, "<eop>");
         llm_->eraseHistory(common_prefix - 1, 0);
         std::vector<int> last_tok = {input_ids.back()};
@@ -137,6 +144,7 @@ public:
             common_prefix - 1, (int)input_ids.size());
       } else if (common_prefix > 0) {
         // Partial prefix match: reuse cached KV, prefill only suffix.
+        n_cached_tokens = common_prefix;
         llm_->generate_init(nullptr, "<eop>");
         llm_->eraseHistory(common_prefix, 0);
         std::vector<int> suffix(input_ids.begin() + common_prefix, input_ids.end());
@@ -161,6 +169,8 @@ public:
     auto* ctx = llm_->getContext();
     int max_tokens = 2048;
     size_t prev_len = 0;
+    int n_reasoning_tokens = 0;
+    bool counting_reasoning = thinking_enabled && !detect_trailing_tag(formatted).empty();
 
     // MNN's generate_str doesn't include text consumed during prefill. When
     // thinking is enabled, the chat template appends a thinking start tag
@@ -175,6 +185,7 @@ public:
     while (!cancelled.load() && !llm_->stoped() && ctx->gen_seq_len < max_tokens) {
       llm_->generate(1);
       if (llm_->stoped()) break;
+      if (counting_reasoning) n_reasoning_tokens++;
 
       const std::string& current = ctx->generate_str;
       if (current.size() > prev_len) {
@@ -187,12 +198,16 @@ public:
         if (on_token && !delta.empty()) {
           if (!on_token(delta)) { cancelled.store(true); break; }
         }
+        if (counting_reasoning && full_response.find("</think>") != std::string::npos) {
+          counting_reasoning = false;
+        }
       }
     }
 
     // Collect metrics.
     if (ctx) {
-      last_metrics_ = {ctx->prompt_len, ctx->gen_seq_len, ctx->prefill_us, ctx->decode_us};
+      last_metrics_ = {ctx->prompt_len, ctx->gen_seq_len, ctx->prefill_us, ctx->decode_us,
+                       n_reasoning_tokens, n_image_tokens, n_cached_tokens};
     }
 
     // Clean up temp image file.
