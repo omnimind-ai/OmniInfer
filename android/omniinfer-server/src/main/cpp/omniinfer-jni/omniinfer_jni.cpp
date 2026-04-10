@@ -371,7 +371,7 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
 
 JNINativeMethod kMethods[] = {
     {"nativeInit", "(Ljava/lang/String;)J", reinterpret_cast<void*>(NativeInit)},
-    {"nativeGenerate", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BLjava/lang/Object;)Ljava/lang/String;", reinterpret_cast<void*>(NativeGenerate)},
+    {"nativeGenerate", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BLcom/omniinfer/server/OmniInferStreamCallback;)Ljava/lang/String;", reinterpret_cast<void*>(NativeGenerate)},
     {"nativeLoadHistory", "(J[Ljava/lang/String;[Ljava/lang/String;)Z", reinterpret_cast<void*>(NativeLoadHistory)},
     {"nativePrewarmImage", "(J[BI)Z", reinterpret_cast<void*>(NativePrewarmImage)},
     {"nativeSetThinkMode", "(JZ)V", reinterpret_cast<void*>(NativeSetThinkMode)},
