@@ -239,10 +239,58 @@ public:
     std::string full_response;
     std::string utf8_buf;
 
-    // Prepend thinking start tag only when thinking is enabled.
-    if (thinking_enabled && params.supports_thinking && !params.thinking_start_tag.empty()) {
-      if (on_token) on_token(params.thinking_start_tag);
+    // Set up thinking tag handling.
+    // Models with standard tags (e.g. <think>): prepend start tag, stream as-is.
+    // Models with non-standard tags (e.g. Gemma 4): normalize to <think>/<​/think> on the fly.
+    std::string native_think_start, native_think_end;
+    bool normalize_thinking = false;
+
+    if (thinking_enabled && params.supports_thinking) {
+      if (!params.thinking_start_tag.empty()) {
+        // Standard format — prepend start tag, model outputs </think> natively.
+        if (on_token) on_token(params.thinking_start_tag);
+      } else {
+        // Non-standard format — look up native tags for on-the-fly normalization.
+        auto tags = get_native_thinking_tags(params.format);
+        native_think_start = tags.first;
+        native_think_end = tags.second;
+        normalize_thinking = !native_think_start.empty();
+      }
     }
+
+    // Emit helper: normalizes thinking tags when needed, otherwise passes through.
+    std::string norm_buf;
+    auto emit = [&](const std::string& text) -> bool {
+      if (!normalize_thinking) {
+        full_response += text;
+        return !on_token || on_token(text);
+      }
+      norm_buf += text;
+      std::string out;
+      // Replace native start tag with <think>\n
+      auto sp = norm_buf.find(native_think_start);
+      if (sp != std::string::npos) {
+        out += norm_buf.substr(0, sp) + "<think>\n";
+        norm_buf = norm_buf.substr(sp + native_think_start.size());
+      }
+      // Replace native end tag with </think>
+      auto ep = norm_buf.find(native_think_end);
+      if (ep != std::string::npos) {
+        out += norm_buf.substr(0, ep) + "</think>";
+        norm_buf = norm_buf.substr(ep + native_think_end.size());
+      }
+      // Flush safe content, keep tail for partial tag matching.
+      size_t keep = std::max(native_think_start.size(), native_think_end.size());
+      if (norm_buf.size() > keep) {
+        out += norm_buf.substr(0, norm_buf.size() - keep);
+        norm_buf = norm_buf.substr(norm_buf.size() - keep);
+      }
+      if (!out.empty()) {
+        full_response += out;
+        if (on_token && !on_token(out)) return false;
+      }
+      return true;
+    };
 
     auto t_decode_start = std::chrono::steady_clock::now();
 
@@ -254,8 +302,7 @@ public:
 
       if (llama_vocab_is_eog(vocab, tok)) {
         if (!utf8_buf.empty()) {
-          full_response += utf8_buf;
-          if (on_token) on_token(utf8_buf);
+          if (!emit(utf8_buf)) { cancelled.store(true); }
           utf8_buf.clear();
         }
         break;
@@ -270,10 +317,16 @@ public:
       utf8_buf += piece;
 
       if (is_valid_utf8(utf8_buf.c_str())) {
-        full_response += utf8_buf;
-        if (on_token && !on_token(utf8_buf)) { cancelled.store(true); break; }
+        if (!emit(utf8_buf)) { cancelled.store(true); break; }
         utf8_buf.clear();
       }
+    }
+
+    // Flush normalizer buffer.
+    if (!norm_buf.empty()) {
+      full_response += norm_buf;
+      if (on_token) on_token(norm_buf);
+      norm_buf.clear();
     }
 
     // Strip template-specific stop sequences from output.
@@ -470,6 +523,18 @@ private:
       else if (c == '}') { depth--; if (depth == 0) return json.substr(start, i - start + 1); }
     }
     return "{}";
+  }
+
+  // Return native thinking start/end tags for models that don't use <think>/<​/think>.
+  // The streaming loop normalizes these to <think>/<​/think> so the Kotlin SSE layer
+  // only needs to handle one format.
+  static std::pair<std::string, std::string> get_native_thinking_tags(common_chat_format fmt) {
+    switch (fmt) {
+      case COMMON_CHAT_FORMAT_PEG_GEMMA4:
+        return {"<|channel>thought\n", "<channel|>"};
+      default:
+        return {"", ""};
+    }
   }
 
   // Format parsed tool calls as JSON for the HTTP layer.
