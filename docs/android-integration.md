@@ -108,32 +108,89 @@ android {
 
 ## Step 3: Use the API
 
-### Initialize and Load a Model
+### Lifecycle
+
+```
+init() → loadModel() → [requests...] → unloadModel() / stop()
+```
+
+- `init()` — call once at app startup. Only passes application context.
+- `loadModel()` — loads model weights into memory, starts a foreground service running the Ktor HTTP server. Blocks until the model is ready.
+- `unloadModel()` — frees model memory but keeps the HTTP server alive (for loading another model).
+- `stop()` — unloads model AND stops the HTTP server.
+
+### Initialize
 
 ```kotlin
 import com.omniinfer.server.OmniInferServer
 
-// Initialize (once, at app startup)
-OmniInferServer.init(
-    context = applicationContext,
-    backend = "mnn",  // or "llama.cpp"
-    nThreads = 4,
-    nCtx = 2048
-)
+// Call once, e.g. in Application.onCreate() or Activity.onCreate()
+OmniInferServer.init(context = applicationContext)
+```
 
-// Load a model
-OmniInferServer.loadModel(
-    modelPath = "/data/local/tmp/Qwen3.5-0.8B-MNN/config.json",
-    port = 9099  // starts HTTP server on this port
+`init()` only stores the application context. No native resources are allocated.
+
+### Load a Model
+
+```kotlin
+// Must be called on a background thread (blocks during model loading).
+val success: Boolean = OmniInferServer.loadModel(
+    modelPath = "/path/to/model",   // required — see "Model Paths" below
+    backend   = "llama.cpp",        // "llama.cpp" (default) or "mnn"
+    port      = 9099,               // HTTP server port (default 9099)
+    nThreads  = 0,                  // CPU threads, 0 = auto (cores - 1)
+    nCtx      = 16384               // context window size in tokens (default 16384)
 )
+```
+
+`loadModel()` does three things internally:
+1. Calls `OmniInferBridge.init()` (JNI) to load the model into memory.
+2. Starts `OmniInferService` as a foreground service (notification required by Android).
+3. The Ktor HTTP server binds to `127.0.0.1:<port>`.
+
+If you call `loadModel()` again with a different model/backend, the previous model is automatically unloaded first. If called with the same model, it returns immediately.
+
+**Model Paths:**
+
+| Backend | `modelPath` points to | Example |
+|---------|----------------------|---------|
+| `llama.cpp` | The `.gguf` model file | `/data/.../Qwen3.5-2B-gguf/Qwen3.5-2B-Q4_K_M.gguf` |
+| `mnn` | The `config.json` in the MNN model directory | `/data/.../Qwen3.5-2B-MNN/config.json` |
+
+### Multimodal (Vision) Models
+
+Both backends auto-detect multimodal support — **no extra API call needed**.
+
+**llama.cpp:** The backend scans the model file's parent directory for a file matching `mmproj*.gguf`. If found, the vision encoder is loaded and image inputs are enabled. **The mmproj file MUST be in the same directory as the model GGUF.**
+
+```
+/sdcard/models/Qwen3.5-2B-gguf/
+├── Qwen3.5-2B-Q4_K_M.gguf    ← modelPath points here
+└── mmproj-F16.gguf             ← auto-discovered, enables vision
+```
+
+If the mmproj file is missing or in a different directory, the model loads as text-only and silently ignores image inputs.
+
+**MNN:** The model directory should contain `visual.mnn` and `visual.mnn.weight`. MNN discovers them via `config.json` references.
+
+```
+/sdcard/models/Qwen3.5-2B-MNN/
+├── config.json                 ← modelPath points here
+├── llm.mnn / llm.mnn.weight
+└── visual.mnn / visual.mnn.weight  ← enables vision
 ```
 
 ### Send Requests
 
-Once the model is loaded, send requests to `http://127.0.0.1:9099/v1/chat/completions` using any OpenAI-compatible client library or plain HTTP.
+Once the model is loaded, the OpenAI-compatible API is available at `http://127.0.0.1:<port>`.
+
+**Endpoints:**
+- `GET /health` — returns `{"status":"ok"}`
+- `GET /v1/models` — lists loaded models
+- `POST /v1/chat/completions` — chat inference (streaming and non-streaming)
 
 ```kotlin
-// Example with OkHttp
+// Text request
 val json = """
 {
   "model": "any",
@@ -143,15 +200,45 @@ val json = """
 }
 """.trimIndent()
 
+// Multimodal request (image as base64 data URI)
+val imageB64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+val json = """
+{
+  "model": "any",
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "Describe this image."},
+      {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,$imageB64"}}
+    ]
+  }],
+  "stream": true,
+  "max_tokens": 200
+}
+""".trimIndent()
+
 val request = Request.Builder()
     .url("http://127.0.0.1:9099/v1/chat/completions")
     .post(json.toRequestBody("application/json".toMediaType()))
     .build()
 ```
 
+### Utility Methods
+
+```kotlin
+OmniInferServer.isReady()         // true if model loaded and server running
+OmniInferServer.getPort()         // current server port (default 9099)
+OmniInferServer.getLoadedModels() // list of loaded model filenames
+OmniInferServer.getDiagnostics()  // last inference metrics (tokens, timing, etc.)
+```
+
 ### Cleanup
 
 ```kotlin
+// Unload model only (server stays alive for loading another model)
+OmniInferServer.unloadModel()
+
+// Full shutdown (unload + stop HTTP server)
 OmniInferServer.stop()
 ```
 
@@ -198,9 +285,11 @@ your-app/
 
 ## Supported Models
 
-| Backend | Model Format | Example |
-|---------|-------------|---------|
-| llama.cpp | `.gguf` files | `gemma-4-E2B-it-Q4_K_M.gguf` |
-| MNN | MNN model directory with `config.json` | `Qwen3.5-0.8B-MNN/config.json` |
+| Backend | Model Format | Text-only example | Multimodal example |
+|---------|-------------|-------------------|-------------------|
+| llama.cpp | `.gguf` + optional `mmproj*.gguf` | `Qwen3.5-2B-Q4_K_M.gguf` | Same `.gguf` + `mmproj-F16.gguf` in same dir |
+| MNN | Directory with `config.json` | `Qwen3.5-2B-MNN/config.json` | Same dir + `visual.mnn` / `visual.mnn.weight` |
 
-Both backends support text-only and multimodal (vision) models. See `docs/API.md` for the full API reference.
+**Important for llama.cpp multimodal:** The mmproj and model GGUF must be in the **same directory**. The backend scans the directory automatically. If you place the GGUF in one location and the mmproj elsewhere, vision will silently not work and the model will respond with "I cannot view images."
+
+See `docs/API.md` for the full HTTP API reference.
