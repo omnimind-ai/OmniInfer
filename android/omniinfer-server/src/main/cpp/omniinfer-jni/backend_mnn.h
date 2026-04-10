@@ -99,7 +99,7 @@ public:
     if (!tmp_image_path.empty()) {
       auto text_ids = llm_->tokenizer_encode(formatted);
       std::string user_marker = "user\n";
-      auto pos = formatted.rfind(user_marker);
+      auto pos = formatted.find(user_marker);
       if (pos != std::string::npos) {
         std::string img_tag = "<img>" + tmp_image_path + "</img>\n";
         formatted.insert(pos + user_marker.size(), img_tag);
