@@ -120,7 +120,16 @@ public:
         }
       }
 
-      if (common_prefix > 0 && common_prefix < (int)input_ids.size()) {
+      if (common_prefix > 0 && common_prefix == (int)input_ids.size()) {
+        // Exact match: erase from last prompt token, re-prefill 1 token for logits.
+        llm_->generate_init(nullptr, "<eop>");
+        llm_->eraseHistory(common_prefix - 1, 0);
+        std::vector<int> last_tok = {input_ids.back()};
+        llm_->generate(last_tok, 0);
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "MNN KV cache reuse: %d/%d tokens cached (exact, 1 re-prefilled)",
+            common_prefix - 1, (int)input_ids.size());
+      } else if (common_prefix > 0) {
         // Partial prefix match: reuse cached KV, prefill only suffix.
         llm_->generate_init(nullptr, "<eop>");
         llm_->eraseHistory(common_prefix, 0);
