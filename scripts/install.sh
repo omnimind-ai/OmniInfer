@@ -65,27 +65,104 @@ need_cmd() {
     ok "$1"
 }
 
-# Read a line from the user. Falls back to default when non-interactive
-# or when stdin is not a terminal (piped install).
-prompt_choice() {
-    local prompt_text="$1" default="$2" result
-    if [[ "${NON_INTERACTIVE}" -eq 1 ]] || [[ ! -t 0 ]]; then
-        # When piped (curl | bash), reopen /dev/tty for user input
-        if [[ -t 0 ]]; then
-            echo "${default}"
-            return
-        fi
-        if [[ -e /dev/tty ]]; then
-            printf '%s' "${prompt_text}" > /dev/tty
-            read -r result < /dev/tty || result=""
-            echo "${result:-${default}}"
-            return
-        fi
+# Resolve the TTY file descriptor for interactive input.
+# Works in both normal terminal and curl|bash piped mode.
+INPUT_TTY=""
+resolve_tty() {
+    if [[ -n "${INPUT_TTY}" ]]; then return; fi
+    if [[ -t 0 ]]; then
+        INPUT_TTY="/dev/stdin"
+    elif [[ -e /dev/tty ]]; then
+        INPUT_TTY="/dev/tty"
+    fi
+}
+
+# Arrow-key menu selector.
+#   select_menu <default_index> <label1> <label2> ...
+# Prints the selected 0-based index to stdout.
+select_menu() {
+    local default="$1"; shift
+    local options=("$@")
+    local count=${#options[@]}
+    local cur=${default}
+
+    resolve_tty
+    if [[ -z "${INPUT_TTY}" ]] || [[ "${NON_INTERACTIVE}" -eq 1 ]]; then
         echo "${default}"
         return
     fi
-    printf '%s' "${prompt_text}"
-    read -r result
+
+    # Read escape sequence continuation byte.
+    # Bash 3 (macOS default) doesn't support fractional -t, so we use a
+    # simple non-blocking read: try -t 1 which is fine because escape
+    # sequence bytes arrive together in the same buffer.
+    _read_seq() {
+        IFS= read -rsn1 -t 1 "$1" < "${INPUT_TTY}" 2>/dev/null || eval "$1="
+    }
+
+    # Hide cursor
+    printf '\033[?25l' >&2
+
+    # Ensure cursor is restored on exit (Ctrl-C, etc.)
+    trap 'printf "\033[?25h" >&2' EXIT
+
+    # Draw menu
+    _draw_menu() {
+        for i in "${!options[@]}"; do
+            if [[ "$i" -eq "${cur}" ]]; then
+                printf '\033[1;36m  > %s\033[0m\n' "${options[$i]}" >&2
+            else
+                printf '    %s\n' "${options[$i]}" >&2
+            fi
+        done
+    }
+
+    _draw_menu
+
+    # Read keys
+    while true; do
+        local key
+        IFS= read -rsn1 key < "${INPUT_TTY}" || break
+        if [[ "${key}" == $'\x1b' ]]; then
+            local seq1 seq2
+            _read_seq seq1
+            if [[ "${seq1}" == "[" ]]; then
+                _read_seq seq2
+                case "${seq2}" in
+                    A) (( cur > 0 )) && (( cur-- )) ;;            # Up
+                    B) (( cur < count - 1 )) && (( cur++ )) ;;    # Down
+                esac
+            fi
+        elif [[ "${key}" == "" ]]; then
+            # Enter
+            break
+        fi
+        # Move cursor up and redraw
+        printf '\033[%dA\r' "${count}" >&2
+        _draw_menu
+    done
+
+    # Show cursor
+    printf '\033[?25h' >&2
+    trap - EXIT
+
+    echo "${cur}"
+}
+
+# Simple text prompt. Falls back to default in non-interactive / piped mode.
+prompt_input() {
+    local prompt_text="$1" default="$2" result
+    if [[ "${NON_INTERACTIVE}" -eq 1 ]]; then
+        echo "${default}"
+        return
+    fi
+    resolve_tty
+    if [[ -z "${INPUT_TTY}" ]]; then
+        echo "${default}"
+        return
+    fi
+    printf '%s' "${prompt_text}" >&2
+    IFS= read -r result < "${INPUT_TTY}" || result=""
     echo "${result:-${default}}"
 }
 
@@ -131,7 +208,7 @@ fi
 ok "Repository ready at ${INSTALL_DIR}"
 
 info "Initializing llama.cpp submodule ..."
-git -C "${INSTALL_DIR}" submodule update --init --recursive --depth 1 framework/llama.cpp 2>&1 | tail -1
+git -C "${INSTALL_DIR}" submodule update --init --recursive --depth 1 --progress framework/llama.cpp
 ok "Submodule ready"
 echo ""
 
@@ -214,24 +291,20 @@ if [[ -n "${BACKEND_OVERRIDE}" ]]; then
     done
     [[ -z "${SELECTED_SCRIPT}" ]] && fatal "Unknown backend: ${SELECTED_BACKEND}"
 else
-    echo "  Available backends:"
+    echo "  Available backends (arrow keys to move, Enter to select):"
     echo ""
+
+    # Build display labels with recommended tag
+    declare -a MENU_LABELS=()
     for i in "${!BACKEND_IDS[@]}"; do
-        local_marker=""
+        label="${BACKEND_LABELS[$i]}"
         if [[ "$i" -eq "${RECOMMENDED_INDEX}" ]]; then
-            local_marker=" $(bold '(recommended)')"
+            label="${label} (recommended)"
         fi
-        printf '    [%d] %s%s\n' $((i + 1)) "${BACKEND_LABELS[$i]}" "${local_marker}"
+        MENU_LABELS+=("${label}")
     done
-    echo ""
 
-    choice=$(prompt_choice "  Select backend [$(( RECOMMENDED_INDEX + 1 ))]: " "$(( RECOMMENDED_INDEX + 1 ))")
-    idx=$(( choice - 1 ))
-
-    if [[ "${idx}" -lt 0 ]] || [[ "${idx}" -ge "${#BACKEND_IDS[@]}" ]]; then
-        warn "Invalid choice, using recommended"
-        idx=${RECOMMENDED_INDEX}
-    fi
+    idx=$(select_menu "${RECOMMENDED_INDEX}" "${MENU_LABELS[@]}")
 
     SELECTED_BACKEND="${BACKEND_IDS[$idx]}"
     SELECTED_SCRIPT="${BACKEND_SCRIPTS[$idx]}"
@@ -330,10 +403,6 @@ info "Step 5/6: Model configuration"
 echo ""
 echo "  How would you like to set up a model?"
 echo ""
-echo "    [1] Download a recommended model"
-echo "    [2] Use a local model file"
-echo "    [3] Skip (configure later)"
-echo ""
 
 MODEL_CONFIGURED=0
 
@@ -342,10 +411,13 @@ if [[ -n "${MODEL_PATH}" ]]; then
     info "Using provided model: ${MODEL_PATH}"
     MODEL_CONFIGURED=1
 else
-    model_choice=$(prompt_choice "  Choose [1]: " "1")
+    model_choice=$(select_menu 0 \
+        "Download a recommended model" \
+        "Use a local model file" \
+        "Skip (configure later)")
 
     case "${model_choice}" in
-        1)
+        0)
             # ── Download recommended model ──────────────────────
             info "Fetching model catalog ..."
 
@@ -415,22 +487,17 @@ for i, (name, quant, size, url) in enumerate(models[:6]):
                 echo ""
                 echo "  Recommended models:"
                 echo ""
-                printf '    %-4s %-35s %-10s %s\n' "#" "Model" "Quant" "Size"
-                printf '    %-4s %-35s %-10s %s\n' "---" "---" "---" "---"
+
+                # Build menu labels from catalog
+                declare -a DL_LABELS=()
+                declare -a DL_LINES=()
                 while IFS='|' read -r num name quant size url; do
-                    printf '    [%s]  %-35s %-10s %s GiB\n' "${num}" "${name}" "${quant}" "${size}"
+                    DL_LABELS+=("$(printf '%-32s %-10s %s GiB' "${name}" "${quant}" "${size}")")
+                    DL_LINES+=("${num}|${name}|${quant}|${size}|${url}")
                 done <<< "${MODEL_INFO}"
-                echo ""
 
-                total_models=$(echo "${MODEL_INFO}" | wc -l | tr -d ' ')
-                dl_choice=$(prompt_choice "  Select a model [1]: " "1")
-
-                # Extract chosen line
-                dl_line=$(echo "${MODEL_INFO}" | sed -n "${dl_choice}p")
-                if [[ -z "${dl_line}" ]]; then
-                    warn "Invalid choice, using first model"
-                    dl_line=$(echo "${MODEL_INFO}" | head -1)
-                fi
+                dl_idx=$(select_menu 0 "${DL_LABELS[@]}")
+                dl_line="${DL_LINES[$dl_idx]}"
 
                 IFS='|' read -r _ dl_name dl_quant dl_size dl_url <<< "${dl_line}"
 
@@ -441,19 +508,20 @@ for i, (name, quant, size, url) in enumerate(models[:6]):
                 MODEL_PATH="${MODELS_DIR}/${dl_filename}"
 
                 if [[ -f "${MODEL_PATH}" ]]; then
-                    ok "Model already downloaded: ${dl_filename}"
+                    ok "Model already downloaded: ${MODEL_PATH}"
                 else
                     info "Downloading ${dl_name} (${dl_quant}, ${dl_size} GiB) ..."
+                    info "Saving to: ${MODEL_PATH}"
                     curl -L --progress-bar -o "${MODEL_PATH}" "${dl_url}"
-                    ok "Download complete: ${dl_filename}"
+                    ok "Download complete: ${MODEL_PATH}"
                 fi
                 MODEL_CONFIGURED=1
             fi
             ;;
-        2)
+        1)
             # ── Use local model ─────────────────────────────────
             echo ""
-            local_path=$(prompt_choice "  Enter model path: " "")
+            local_path=$(prompt_input "  Enter model path: " "")
             if [[ -n "${local_path}" ]] && [[ -e "${local_path}" ]]; then
                 MODEL_PATH="${local_path}"
                 MODEL_CONFIGURED=1
@@ -463,7 +531,7 @@ for i, (name, quant, size, url) in enumerate(models[:6]):
                 warn "Skipping model configuration."
             fi
             ;;
-        3|*)
+        2|*)
             info "Skipping model configuration."
             ;;
     esac
@@ -482,166 +550,81 @@ if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     ok "Model loaded"
     echo ""
 
-    # ── Print quick reference ──────────────────────────────
-    if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
-        cat <<EOF
+    # ── Cleanup function (runs on exit or Ctrl+C) ────────
+    print_finish() {
+        echo ""
+        "${INSTALL_DIR}/omniinfer" shutdown 2>/dev/null || true
+
+        cat <<FINISH
 
 ╔══════════════════════════════════════════════════════════╗
 ║                  Setup Complete!                         ║
 ╚══════════════════════════════════════════════════════════╝
 
-  Install location:  ${INSTALL_DIR}
-  Backend:           ${SELECTED_BACKEND}
-  Model:             $(basename "${MODEL_PATH}")
+  Install:  ${INSTALL_DIR}
+  Backend:  ${SELECTED_BACKEND}
+  Model:    $(basename "${MODEL_PATH}")
 
-  ── Quick Reference (Android / Termux) ───────────────────
+  Your backend selection is saved. Next time just run:
 
-  Chat directly:
-    cd ${INSTALL_DIR} && ./omniinfer chat --message "Hello"
+    cd ${INSTALL_DIR}
+    ./omniinfer model load -m ${MODEL_PATH}
+    ./omniinfer chat --message "Hello"
 
-  Vision chat:
-    ./omniinfer chat --image /path/to/image.jpg --message "Describe this"
+  The model needs to be loaded each time after a restart.
+  The CLI auto-starts the service if needed.
 
-  Other commands:
-    ./omniinfer backend list
-    ./omniinfer select <backend>
-    ./omniinfer model load -m /path/to/model.gguf
+  Full documentation:
+    CLI guide:   ${INSTALL_DIR}/docs/CLI.md
+    API guide:   ${INSTALL_DIR}/docs/API.md
+    Build guide: ${INSTALL_DIR}/docs/build.md
 
-  Note: Android runs in direct mode (no HTTP gateway/API server).
+FINISH
+    }
+    trap print_finish EXIT
 
-  ─────────────────────────────────────────────────────────
-
-EOF
-    else
-        cat <<EOF
-
-╔══════════════════════════════════════════════════════════╗
-║                  Setup Complete!                         ║
-╚══════════════════════════════════════════════════════════╝
-
-  Install location:  ${INSTALL_DIR}
-  Backend:           ${SELECTED_BACKEND}
-  Model:             $(basename "${MODEL_PATH}")
-
-  ── Quick Reference ──────────────────────────────────────
-
-  Start the API server:
-    cd ${INSTALL_DIR} && ./omniinfer serve
-
-  API endpoint:  http://127.0.0.1:9000
-
-  Chat completion (curl):
-    curl -X POST http://127.0.0.1:9000/v1/chat/completions \\
-      -H "Content-Type: application/json" \\
-      -d '{"messages":[{"role":"user","content":"Hello"}]}'
-
-  Health check:
-    curl http://127.0.0.1:9000/health
-
-  CLI chat:
-    cd ${INSTALL_DIR} && ./omniinfer chat --message "Hello"
-
-  Stop the service:
-    cd ${INSTALL_DIR} && ./omniinfer shutdown
-
-  ─────────────────────────────────────────────────────────
-
-EOF
-    fi
-
-    # ── Run a quick chat to demonstrate ────────────────────
-    info "Let's try a quick chat to make sure everything works ..."
+    # ── Interactive chat loop ─────────────────────────────
+    ok "Setup complete! Try chatting with the model (type 'exit' to quit)."
     echo ""
-    "${INSTALL_DIR}/omniinfer" chat --message "Hello! Introduce yourself in one sentence."
-    echo ""
-    echo ""
-    ok "Everything is working! Enjoy OmniInfer."
-    echo ""
-    if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
-        echo "  To chat anytime:"
-        echo "    cd ${INSTALL_DIR} && ./omniinfer chat --message \"your message\""
-    else
-        echo "  To start the API server anytime:"
-        echo "    cd ${INSTALL_DIR} && ./omniinfer serve"
-    fi
-    echo ""
+    resolve_tty
+    while true; do
+        printf '\033[1;36mYou:\033[0m ' >&2
+        user_msg=""
+        if [[ -n "${INPUT_TTY}" ]] && [[ "${INPUT_TTY}" != "/dev/stdin" ]]; then
+            IFS= read -r user_msg < "${INPUT_TTY}" || break
+        else
+            IFS= read -r user_msg || break
+        fi
+        [[ -z "${user_msg}" ]] && continue
+        [[ "${user_msg}" == "exit" || "${user_msg}" == "quit" ]] && break
+        printf '\033[1;32mAI:\033[0m ' >&2
+        "${INSTALL_DIR}/omniinfer" chat --message "${user_msg}"
+        echo ""
+    done
 
 else
-    # ── No model configured — print full tutorial ──────────
-    if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
-        cat <<EOF
+    # ── No model configured — print next steps ──────────
+    cat <<EOF
 
 ╔══════════════════════════════════════════════════════════╗
 ║                  Install Complete!                       ║
 ╚══════════════════════════════════════════════════════════╝
 
-  Install location:  ${INSTALL_DIR}
-  Backend:           ${SELECTED_BACKEND}
+  Install:  ${INSTALL_DIR}
+  Backend:  ${SELECTED_BACKEND}
 
-  ── Next Steps (Android / Termux) ────────────────────────
+  To start chatting, load a model first:
 
-  1. Load a model:
-     cd ${INSTALL_DIR}
-     ./omniinfer model load -m /path/to/model.gguf
+    cd ${INSTALL_DIR}
+    ./omniinfer model load -m /path/to/model.gguf
+    ./omniinfer chat --message "Hello"
 
-  2. Start chatting:
-     ./omniinfer chat --message "Hello"
+  The model needs to be loaded each time after a restart.
 
-  ── Other Useful Commands ────────────────────────────────
-
-  List backends:       ./omniinfer backend list
-  Switch backend:      ./omniinfer select <backend>
-  Vision chat:         ./omniinfer chat --image /path/to/img.jpg --message "Describe"
-
-  Note: Android runs in direct mode (no HTTP gateway/API server).
-
-  ─────────────────────────────────────────────────────────
+  Full documentation:
+    CLI guide:   ${INSTALL_DIR}/docs/CLI.md
+    API guide:   ${INSTALL_DIR}/docs/API.md
+    Build guide: ${INSTALL_DIR}/docs/build.md
 
 EOF
-    else
-        cat <<EOF
-
-╔══════════════════════════════════════════════════════════╗
-║                  Install Complete!                       ║
-╚══════════════════════════════════════════════════════════╝
-
-  Install location:  ${INSTALL_DIR}
-  Backend:           ${SELECTED_BACKEND}
-
-  ── Next Steps ───────────────────────────────────────────
-
-  1. Load a model:
-     cd ${INSTALL_DIR}
-     ./omniinfer model load -m /path/to/model.gguf
-
-  2. Start the API server:
-     ./omniinfer serve
-
-  3. Use the API (http://127.0.0.1:9000):
-
-     Health check:
-       curl http://127.0.0.1:9000/health
-
-     Chat completion:
-       curl -X POST http://127.0.0.1:9000/v1/chat/completions \\
-         -H "Content-Type: application/json" \\
-         -d '{"messages":[{"role":"user","content":"Hello"}]}'
-
-     CLI chat:
-       ./omniinfer chat --message "Hello"
-
-  4. Stop the service:
-     ./omniinfer shutdown
-
-  ── Other Useful Commands ────────────────────────────────
-
-  List backends:       ./omniinfer backend list
-  Switch backend:      ./omniinfer select <backend>
-  Check status:        ./omniinfer status
-  Browse models:       ./omniinfer model list
-
-  ─────────────────────────────────────────────────────────
-
-EOF
-    fi
 fi
