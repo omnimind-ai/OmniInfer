@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("runtime")
 
 from service_core.backends import BackendSpec
 from service_core.drivers import EmbeddedBackendDriver, get_embedded_backend_driver
@@ -90,6 +94,9 @@ class RuntimeManager:
             resolved_default_backend if resolved_default_backend in self.backends else next(iter(self.backends))
         )
         self.loaded_runtime: LoadedRuntime | None = None
+        logger.info("RuntimeManager initialized: platform=%s runtime_root=%s", self.platform.system_name, self.runtime_root)
+        logger.info("Backends discovered: %s", ", ".join(self.backends.keys()))
+        logger.info("Default backend: %s", self.selected_backend_id)
 
     def _normalize_backend_id(self, backend_id: str | None) -> str | None:
         if not backend_id:
@@ -175,12 +182,15 @@ class RuntimeManager:
         if runtime is None:
             return
 
+        logger.info("Stopping runtime: backend=%s mode=%s", runtime.backend_id, runtime.runtime_mode)
+
         if runtime.runtime_mode == "embedded":
             if runtime.embedded_driver is not None:
                 try:
                     runtime.embedded_driver.unload_model(runtime.embedded_state)
                 except Exception:
-                    pass
+                    logger.warning("Error unloading embedded model", exc_info=True)
+            logger.info("Embedded runtime stopped")
             return
 
         proc = runtime.process
@@ -199,6 +209,7 @@ class RuntimeManager:
                     proc.kill()
                 except OSError:
                     pass
+        logger.info("External runtime stopped (backend=%s)", runtime.backend_id)
         if runtime.log_handle:
             try:
                 runtime.log_handle.flush()
@@ -221,13 +232,16 @@ class RuntimeManager:
         target = Path(model_path)
         if backend.model_artifact == "directory":
             if not target.is_dir():
+                logger.error("Model directory not found: %s", model_path)
                 raise FileNotFoundError(f"model directory not found: {model_path}")
             return
         if backend.model_artifact == "file":
             if not target.is_file():
+                logger.error("Model file not found: %s", model_path)
                 raise FileNotFoundError(f"model file not found: {model_path}")
             return
         if not target.exists():
+            logger.error("Model path not found: %s", model_path)
             raise FileNotFoundError(f"model path not found: {model_path}")
 
     def _resolve_mmproj_path(
@@ -293,11 +307,13 @@ class RuntimeManager:
         request_defaults: dict[str, Any] | None = None,
     ) -> LoadedRuntime:
         if not backend.binary_exists:
+            logger.error("Embedded backend %s not available: required Python packages missing", backend.id)
             raise RuntimeError(
                 f"{backend.id} is not available in the current Python environment; "
                 "install its required Python packages before loading a model"
             )
 
+        logger.info("Loading embedded model via %s: %s", backend.id, model_path)
         driver = get_embedded_backend_driver(backend.id)
         model_ref = display_path_reference(model_path, backend.models_dir)
         state = driver.load_model(
@@ -323,6 +339,7 @@ class RuntimeManager:
             embedded_driver=driver,
             embedded_state=state,
         )
+        logger.info("Embedded model loaded: %s (backend=%s)", model_ref, backend.id)
         self.loaded_runtime = runtime
         return runtime
 
@@ -336,8 +353,9 @@ class RuntimeManager:
         request_defaults: dict[str, Any] | None = None,
     ) -> LoadedRuntime:
         if not backend.binary_exists or not backend.launcher_path:
+            logger.error("Backend launcher not found: %s (path=%s)", backend.id, backend.launcher_path or "(unset)")
             raise FileNotFoundError(f"backend launcher not found: {backend.launcher_path or '(unset)'}")
-
+        logger.info("Starting external backend %s", backend.id)
         effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
         self._validate_launch_args(effective_launch_args)
         launch = self._prepare_external_runtime_launch(
@@ -368,6 +386,10 @@ class RuntimeManager:
             startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
             startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
 
+        logger.info("Command: %s", " ".join(launch.cmd))
+        logger.info("Log file: %s", log_path)
+        logger.debug("Environment overrides: %s", backend.env)
+
         proc = subprocess.Popen(
             launch.cmd,
             stdin=subprocess.DEVNULL,
@@ -382,6 +404,8 @@ class RuntimeManager:
             startupinfo=startupinfo,
         )
 
+        logger.info("Backend %s started (PID %d), waiting for health check on port %d...", backend.id, proc.pid, launch.port)
+        _health_start = time.perf_counter()
         if not wait_http_ready(self.backend_host, launch.port, self.startup_timeout_s):
             message = "backend did not become ready in time"
             if proc.poll() is not None:
@@ -407,8 +431,11 @@ class RuntimeManager:
                 log_path=str(log_path),
                 log_handle=log_handle,
             )
+            logger.error("Backend %s did not become ready within %ds", backend.id, self.startup_timeout_s)
             self._stop_runtime_locked()
             raise RuntimeError(message)
+
+        logger.info("Backend health check: passed in %.1fs", time.perf_counter() - _health_start)
 
         runtime = LoadedRuntime(
             backend_id=backend.id,
@@ -488,6 +515,7 @@ class RuntimeManager:
         with self.lock:
             backend = self._get_backend(backend_id)
             if self.selected_backend_id != backend.id:
+                logger.info("Switching backend: %s -> %s", self.selected_backend_id, backend.id)
                 self._stop_runtime_locked()
             self.selected_backend_id = backend.id
             return {
@@ -558,13 +586,27 @@ class RuntimeManager:
                         launch_args=desired_launch_args,
                         request_defaults=desired_request_defaults,
                     )
+                logger.warning("No model loaded and no model specified in request")
                 raise RuntimeError("no backend model loaded; call /omni/model/select first or provide 'model'")
 
+            logger.info("Loading model: model=%s backend=%s ctx_size=%s", model, backend_id or "(auto)", ctx_size)
             preferred_backend = self._get_backend(requested_backend_id) if requested_backend_id else self._get_backend()
             if ctx_size is not None and not preferred_backend.supports_ctx_size:
                 raise ValueError(f"{preferred_backend.id} does not support ctx_size overrides")
             model_path, auto_mmproj_path = self._resolve_model_path(preferred_backend, model)
             self._ensure_supported_model_artifact(preferred_backend, model_path)
+
+            # Log model file size and available memory for OOM diagnosis
+            try:
+                model_size = Path(model_path).stat().st_size
+                logger.info("Model file: %s (%.2f GiB)", model_path, model_size / (1024**3))
+            except OSError:
+                logger.info("Model path: %s (size unknown)", model_path)
+            try:
+                from service_core.platforms.common import bytes_to_gib, get_available_memory_bytes
+                logger.info("Available memory before load: %.2f GiB", bytes_to_gib(get_available_memory_bytes()))
+            except Exception:
+                pass
 
             mmproj_path = self._resolve_mmproj_path(
                 preferred_backend,
