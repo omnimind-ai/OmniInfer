@@ -1,6 +1,6 @@
 # OmniInfer Android CLI
 
-OmniInfer supports Android in direct mode.
+OmniInfer supports Android in direct mode via [Termux](https://termux.dev/).
 
 The repository now includes two Android helper scripts:
 
