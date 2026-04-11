@@ -309,26 +309,8 @@ fi
 ok "Selected: ${SELECTED_BACKEND}"
 echo ""
 
-# ── Initialize required submodules ──────────────────────────
-
-case "${SELECTED_BACKEND}" in
-    llama.cpp-*|turboquant-mac)
-        SUBMODULE="framework/llama.cpp"
-        [[ "${SELECTED_BACKEND}" == "turboquant-mac" ]] && SUBMODULE="framework/llama-cpp-turboquant"
-        info "Initializing ${SUBMODULE} submodule ..."
-        git -C "${INSTALL_DIR}" submodule update --init --recursive --depth 1 --progress "${SUBMODULE}"
-        ok "Submodule ready"
-        ;;
-    mlx-mac)
-        info "MLX backend uses pip packages, no submodule needed"
-        ;;
-    *)
-        info "No submodule needed for ${SELECTED_BACKEND}"
-        ;;
-esac
-echo ""
-
 # ── Step 4: Build backend ───────────────────────────────────
+# Note: build scripts auto-bootstrap their required submodules.
 
 info "Step 4/6: Building backend ..."
 
@@ -345,6 +327,9 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     elif [[ "${ALREADY_BUILT}" -eq 1 ]]; then
         ok "Android backend already built, skipping"
     else
+        # Android/Termux builds llama.cpp directly, need the submodule
+        info "Initializing llama.cpp submodule ..."
+        git -C "${INSTALL_DIR}" submodule update --init --recursive --depth 1 --progress framework/llama.cpp
         info "Building llama.cpp natively in Termux (this may take a few minutes) ..."
 
         NPROC=4
