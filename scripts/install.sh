@@ -126,12 +126,12 @@ if [ -d "${INSTALL_DIR}/.git" ]; then
     git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || warn "Pull failed, continuing with existing code"
 else
     info "Cloning OmniInfer to ${INSTALL_DIR} ..."
-    git clone "${REPO_URL}" "${INSTALL_DIR}"
+    git clone --depth 1 "${REPO_URL}" "${INSTALL_DIR}"
 fi
 ok "Repository ready at ${INSTALL_DIR}"
 
 info "Initializing llama.cpp submodule ..."
-git -C "${INSTALL_DIR}" submodule update --init --recursive framework/llama.cpp 2>&1 | tail -1
+git -C "${INSTALL_DIR}" submodule update --init --recursive --depth 1 framework/llama.cpp 2>&1 | tail -1
 ok "Submodule ready"
 echo ""
 
