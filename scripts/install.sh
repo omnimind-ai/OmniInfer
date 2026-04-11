@@ -206,10 +206,6 @@ else
     git clone --depth 1 "${REPO_URL}" "${INSTALL_DIR}"
 fi
 ok "Repository ready at ${INSTALL_DIR}"
-
-info "Initializing llama.cpp submodule ..."
-git -C "${INSTALL_DIR}" submodule update --init --recursive --depth 1 --progress framework/llama.cpp
-ok "Submodule ready"
 echo ""
 
 # ── Step 3: Detect platform & choose backend ────────────────
@@ -311,6 +307,25 @@ else
 fi
 
 ok "Selected: ${SELECTED_BACKEND}"
+echo ""
+
+# ── Initialize required submodules ──────────────────────────
+
+case "${SELECTED_BACKEND}" in
+    llama.cpp-*|turboquant-mac)
+        SUBMODULE="framework/llama.cpp"
+        [[ "${SELECTED_BACKEND}" == "turboquant-mac" ]] && SUBMODULE="framework/llama-cpp-turboquant"
+        info "Initializing ${SUBMODULE} submodule ..."
+        git -C "${INSTALL_DIR}" submodule update --init --recursive --depth 1 --progress "${SUBMODULE}"
+        ok "Submodule ready"
+        ;;
+    mlx-mac)
+        info "MLX backend uses pip packages, no submodule needed"
+        ;;
+    *)
+        info "No submodule needed for ${SELECTED_BACKEND}"
+        ;;
+esac
 echo ""
 
 # ── Step 4: Build backend ───────────────────────────────────

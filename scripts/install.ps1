@@ -103,10 +103,6 @@ if (Test-Path "$InstallDir\.git") {
     git clone --depth 1 $RepoUrl $InstallDir
 }
 Write-Ok "Repository ready at $InstallDir"
-
-Write-Info "Initializing llama.cpp submodule ..."
-git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
-Write-Ok "Submodule ready"
 Write-Host ""
 
 # ── Step 3: Detect platform & choose backend ────────────────
@@ -187,6 +183,13 @@ if ($Backend) {
 }
 
 Write-Ok "Selected: $SelectedBackend"
+Write-Host ""
+
+# ── Initialize required submodules ──────────────────────────
+
+Write-Info "Initializing submodule for $SelectedBackend ..."
+git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
+Write-Ok "Submodule ready"
 Write-Host ""
 
 # ── Step 4: Build backend ───────────────────────────────────
