@@ -86,7 +86,8 @@ public:
       const std::string& tool_choice = "",
       const std::string& messages_json = "",
       const uint8_t* image_data = nullptr,
-      size_t image_size = 0) override {
+      size_t image_size = 0,
+      int max_tokens = 0) override {
 
     common_sampler_reset(sampler_);
 
@@ -239,11 +240,15 @@ public:
       if (common_prefix > 0 && common_prefix == (int)prompt_toks.size()) {
         // Exact match: trim generated tokens + last prompt token, re-decode 1 token for logits.
         n_cached_tokens = common_prefix - 1;
-        llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix - 1, -1);
+        if (!llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix - 1, -1)) {
+          goto full_prefill;
+        }
         cur_pos_ = common_prefix - 1;
         common_batch_clear(batch_);
         common_batch_add(batch_, prompt_toks.back(), common_prefix - 1, {0}, true);
-        if (llama_decode(ctx_, batch_) != 0) return "";
+        if (llama_decode(ctx_, batch_) != 0) {
+          goto full_prefill;
+        }
         cur_pos_ = common_prefix;
         __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
             "KV cache reuse: %d/%d tokens cached (exact, 1 re-decoded)",
@@ -251,17 +256,24 @@ public:
       } else if (common_prefix > 0) {
         // Partial prefix match: trim KV after common prefix, decode only suffix.
         n_cached_tokens = common_prefix;
-        llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1);
+        if (!llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1)) {
+          n_cached_tokens = 0;
+          goto full_prefill;
+        }
         cur_pos_ = common_prefix;
         std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
-        if (decode_batched(suffix, common_prefix, true) != 0) return "";
+        if (decode_batched(suffix, common_prefix, true) != 0) {
+          n_cached_tokens = 0;
+          goto full_prefill;
+        }
         cur_pos_ = (int)prompt_toks.size();
         __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
             "KV cache reuse: %d/%d tokens cached, %d new",
             common_prefix, (int)prompt_toks.size(),
             (int)prompt_toks.size() - common_prefix);
       } else {
-        // No cache match: full clear + full prefill.
+full_prefill:
+        // No cache match (or fallback from failed seq_rm/decode): full clear + full prefill.
         cur_pos_ = 0;
         llama_memory_clear(llama_get_memory(ctx_), false);
         if (decode_batched(prompt_toks, 0, true) != 0) return "";
@@ -281,6 +293,7 @@ public:
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     std::string full_response;
     int n_reasoning_tokens = 0;
+    int eff_max_tokens = max_tokens > 0 ? max_tokens : (n_ctx_ - n_prompt_tokens - 4);
     bool counting_reasoning = thinking_enabled && params.supports_thinking;
     std::string utf8_buf;
 
@@ -339,7 +352,9 @@ public:
 
     auto t_decode_start = std::chrono::steady_clock::now();
 
+    int n_generated = 0;
     while (!cancelled.load()) {
+      if (n_generated >= eff_max_tokens) break;
       if (cur_pos_ >= n_ctx_ - 4) shift_context();
 
       llama_token tok = common_sampler_sample(sampler_, ctx_, -1);
@@ -353,6 +368,7 @@ public:
         break;
       }
 
+      n_generated++;
       if (counting_reasoning) n_reasoning_tokens++;
 
       common_batch_clear(batch_);
@@ -400,7 +416,6 @@ public:
     auto t_decode_end = std::chrono::steady_clock::now();
     int64_t decode_us = std::chrono::duration_cast<std::chrono::microseconds>(t_decode_end - t_decode_start).count();
     int n_prompt = n_prompt_tokens;
-    int n_generated = cur_pos_ - n_prompt;
     last_metrics_ = {n_prompt, n_generated, prefill_us, decode_us,
                      n_reasoning_tokens, n_image_tokens, n_cached_tokens};
     return full_response;
