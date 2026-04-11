@@ -206,6 +206,45 @@ else
     git clone --depth 1 "${REPO_URL}" "${INSTALL_DIR}"
 fi
 ok "Repository ready at ${INSTALL_DIR}"
+
+# ── Ensure a usable port ────────────────────────────────────
+# If default port 9000 is occupied, find a free one and write config.
+
+OMNI_PORT=9000
+port_in_use() {
+    if command -v ss >/dev/null 2>&1; then
+        ss -tlnH "sport = :$1" 2>/dev/null | grep -q .
+    elif command -v lsof >/dev/null 2>&1; then
+        lsof -iTCP:"$1" -sTCP:LISTEN -t >/dev/null 2>&1
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -tln 2>/dev/null | grep -q ":$1 "
+    else
+        return 1
+    fi
+}
+
+if port_in_use "${OMNI_PORT}"; then
+    warn "Port ${OMNI_PORT} is in use, looking for a free port ..."
+    for try_port in 9001 9002 9003 9004 9005; do
+        if ! port_in_use "${try_port}"; then
+            OMNI_PORT="${try_port}"
+            break
+        fi
+    done
+    if [[ "${OMNI_PORT}" -eq 9000 ]]; then
+        fatal "Could not find a free port (tried 9000-9005)"
+    fi
+    info "Using port ${OMNI_PORT}"
+    CONFIG_DIR="${INSTALL_DIR}/config"
+    mkdir -p "${CONFIG_DIR}"
+    cat > "${CONFIG_DIR}/omniinfer.json" <<PORTCFG
+{
+  "host": "127.0.0.1",
+  "port": ${OMNI_PORT}
+}
+PORTCFG
+    ok "Config written: ${CONFIG_DIR}/omniinfer.json (port ${OMNI_PORT})"
+fi
 echo ""
 
 # ── Step 3: Detect platform & choose backend ────────────────
@@ -534,7 +573,7 @@ if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     ./omniinfer select <backend>          # switch backend
     ./omniinfer model list                # browse supported models
     ./omniinfer status                    # check current state
-    ./omniinfer serve                     # start API server (http://127.0.0.1:9000)
+    ./omniinfer serve                     # start API server (http://127.0.0.1:${OMNI_PORT})
     ./omniinfer shutdown                  # stop the service
 
   Full documentation:
@@ -589,7 +628,7 @@ else
     ./omniinfer select <backend>          # switch backend
     ./omniinfer model list                # browse supported models
     ./omniinfer status                    # check current state
-    ./omniinfer serve                     # start API server (http://127.0.0.1:9000)
+    ./omniinfer serve                     # start API server (http://127.0.0.1:${OMNI_PORT})
     ./omniinfer shutdown                  # stop the service
 
   Full documentation:

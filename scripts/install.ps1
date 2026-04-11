@@ -100,6 +100,41 @@ if (Test-Path "$InstallDir\.git") {
     git clone --depth 1 $RepoUrl $InstallDir
 }
 Write-Ok "Repository ready at $InstallDir"
+
+# ── Ensure a usable port ────────────────────────────────────
+
+$OmniPort = 9000
+
+function Test-PortInUse {
+    param([int]$Port)
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+        $listener.Start()
+        $listener.Stop()
+        return $false
+    } catch {
+        return $true
+    }
+}
+
+if (Test-PortInUse $OmniPort) {
+    Write-Warn "Port $OmniPort is in use, looking for a free port ..."
+    foreach ($tryPort in 9001, 9002, 9003, 9004, 9005) {
+        if (-not (Test-PortInUse $tryPort)) {
+            $OmniPort = $tryPort
+            break
+        }
+    }
+    if ($OmniPort -eq 9000) {
+        Stop-Fatal "Could not find a free port (tried 9000-9005)"
+    }
+    Write-Info "Using port $OmniPort"
+    $configDir = Join-Path $InstallDir "config"
+    if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
+    $configFile = Join-Path $configDir "omniinfer.json"
+    @{ host = "127.0.0.1"; port = $OmniPort } | ConvertTo-Json | Set-Content $configFile
+    Write-Ok "Config written: $configFile (port $OmniPort)"
+}
 Write-Host ""
 
 # ── Step 3: Detect platform & choose backend ────────────────
