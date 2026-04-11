@@ -107,14 +107,18 @@ $OmniPort = 9000
 
 function Test-PortInUse {
     param([int]$Port)
-    try {
-        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
-        $listener.Start()
-        $listener.Stop()
-        return $false
-    } catch {
-        return $true
-    }
+    # Use Python for reliable cross-platform port check
+    $result = & python -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.bind(('127.0.0.1', $Port))
+    s.close()
+    sys.exit(0)
+except:
+    sys.exit(1)
+" 2>$null
+    return $LASTEXITCODE -ne 0
 }
 
 if (Test-PortInUse $OmniPort) {
