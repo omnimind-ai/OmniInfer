@@ -263,24 +263,29 @@ else
 fi
 echo ""
 
-# Get available backends from CLI
+# Get available backends
 declare -a BACKEND_IDS=()
 declare -a BACKEND_DESCS=()
 
-while IFS= read -r line; do
-    # Backend ID lines: "* backend-id" or "  backend-id"
-    id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
-    if [[ -n "${id}" ]]; then
-        BACKEND_IDS+=("${id}")
-        BACKEND_DESCS+=("${id}")
-    fi
-    # Description line for the last backend
-    desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
-    if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
-        last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
-        BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
-    fi
-done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
+    # Android: runtime not installed yet, backends are fixed
+    BACKEND_IDS+=("llama.cpp-llama");  BACKEND_DESCS+=("llama.cpp-llama  —  Text chat")
+    BACKEND_IDS+=("llama.cpp-mtmd");   BACKEND_DESCS+=("llama.cpp-mtmd  —  Multimodal (text + vision)")
+else
+    # Desktop: query CLI (service auto-starts)
+    while IFS= read -r line; do
+        id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
+        if [[ -n "${id}" ]]; then
+            BACKEND_IDS+=("${id}")
+            BACKEND_DESCS+=("${id}")
+        fi
+        desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
+        if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
+            last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
+            BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
+        fi
+    done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+fi
 
 if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
     fatal "No backends found. Check your platform support."
