@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import MLXLMCommon
 import MLXLLM
 
@@ -15,12 +16,16 @@ public final class MLXEngine: InferenceEngine, @unchecked Sendable {
 
     /// Load the model. Must be called before generate().
     public func loadModel() async -> Bool {
+        // Limit Metal buffer cache to reduce memory pressure on low-RAM devices.
+        Memory.cacheLimit = 20 * 1024 * 1024
+        NSLog("[OmniInfer/MLX] loading from \(modelPath), cacheLimit=20MB")
+
         do {
             let url = URL(fileURLWithPath: modelPath)
             let container = try await loadModelContainer(directory: url)
             self.modelContainer = container
             self.session = ChatSession(container)
-            NSLog("[OmniInfer/MLX] model loaded from \(modelPath)")
+            NSLog("[OmniInfer/MLX] model loaded successfully")
             return true
         } catch {
             NSLog("[OmniInfer/MLX] loadModel failed: \(error)")
