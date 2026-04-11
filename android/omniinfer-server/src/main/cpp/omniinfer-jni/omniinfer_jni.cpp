@@ -256,7 +256,9 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
 
   session->cancelled.store(false);
   const std::string req = JStringToStdString(env, request_json);
+
   const bool thinking = ExtractJsonBool(req, "thinking_enabled").value_or(session->thinking_enabled);
+  const int max_tokens = ExtractJsonInt(req, "max_tokens").value_or(0);
   const auto tools_json = ExtractJsonRaw(req, "tools");
   const auto tool_choice = ExtractJsonString(req, "tool_choice");
   const auto messages_json = ExtractJsonRaw(req, "messages");
@@ -284,7 +286,7 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
 
   std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token,
       tools_json.value_or(""), tool_choice.value_or(""), messages_json.value_or(""),
-      img_ptr, static_cast<size_t>(img_len));
+      img_ptr, static_cast<size_t>(img_len), max_tokens);
 
   if (img_bytes) env->ReleaseByteArrayElements(image_data_arr, img_bytes, JNI_ABORT);
 

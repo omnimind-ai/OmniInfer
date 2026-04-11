@@ -47,17 +47,23 @@ object OmniInferBridge {
         thinkEnabled: Boolean = false,
         toolsJson: String? = null,
         toolChoice: String? = null,
+        maxTokens: Int? = null,
         callback: OmniInferStreamCallback? = null
     ): String {
         if (!isNativeLibraryLoaded) return ""
-        val req = JSONObject()
-            .put("thinking_enabled", if (thinkModes.containsKey(handle)) thinkModes[handle] else thinkEnabled)
-            .put("messages", org.json.JSONArray(messagesJson))
+        // Build request JSON by string concatenation to avoid org.json re-serialization
+        // which can corrupt non-ASCII characters (Chinese, emoji) through its parse/toString cycle.
+        val thinking = if (thinkModes.containsKey(handle)) thinkModes[handle] else thinkEnabled
+        val sb = StringBuilder()
+        sb.append("{\"thinking_enabled\":").append(thinking)
+        sb.append(",\"messages\":").append(messagesJson)
         if (toolsJson != null) {
-            req.put("tools", org.json.JSONArray(toolsJson))
-            if (toolChoice != null) req.put("tool_choice", toolChoice)
+            sb.append(",\"tools\":").append(toolsJson)
+            if (toolChoice != null) sb.append(",\"tool_choice\":\"").append(toolChoice).append("\"")
         }
-        return nativeGenerate(handle, "", "", req.toString(), imageData, callback)
+        if (maxTokens != null && maxTokens > 0) sb.append(",\"max_tokens\":").append(maxTokens)
+        sb.append("}")
+        return nativeGenerate(handle, "", "", sb.toString(), imageData, callback)
     }
 
     fun loadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean {
