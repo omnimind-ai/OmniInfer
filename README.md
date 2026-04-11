@@ -38,11 +38,25 @@ OmniInfer runs everywhere:
 
 ## Getting Started
 
-Choose the setup path that matches how you want to run OmniInfer:
+### Quick Install
+
+macOS, Linux, and Android:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1 | iex
+```
+
+The installer detects your platform and hardware, recommends a backend, and walks you through model setup interactively.
 
 ### Source Checkout
 
-If you cloned this repository, build or prepare at least one local runtime backend first.
+If you already cloned this repository, build at least one local runtime backend first.
 
 - Windows: see [Build Guide: Windows](docs/build.md#windows)
 - Linux: see [Build Guide: Linux](docs/build.md#linux)
