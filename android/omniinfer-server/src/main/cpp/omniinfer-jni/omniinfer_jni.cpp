@@ -61,38 +61,44 @@ std::string JStringToStdString(JNIEnv* env, jstring value) {
 }
 
 jstring StdStringToJString(JNIEnv* env, const std::string& value) {
-  // Sanitize: replace invalid UTF-8 bytes with '?' to avoid JNI Modified UTF-8 abort.
-  std::string safe;
-  safe.reserve(value.size());
+  // Convert UTF-8 to UTF-16 (jchar array) for JNI. This correctly handles
+  // 4-byte UTF-8 sequences (emoji, etc.) by encoding them as surrogate pairs,
+  // which NewStringUTF (Modified UTF-8) cannot do.
+  std::vector<jchar> utf16;
+  utf16.reserve(value.size());
   size_t i = 0;
   while (i < value.size()) {
     unsigned char c = static_cast<unsigned char>(value[i]);
-    if (c == 0) { break; } // Null byte terminates — JNI Modified UTF-8 encodes null differently.
-    if (c < 0x80) { safe.push_back(value[i]); i++; }
-    else if ((c & 0xE0) == 0xC0) {
-      if (i + 1 < value.size() && (static_cast<unsigned char>(value[i+1]) & 0xC0) == 0x80) {
-        safe.push_back(value[i]); safe.push_back(value[i+1]); i += 2;
-      } else { safe.push_back('?'); i++; }
+    uint32_t cp = 0;
+    int len = 0;
+    if (c < 0x80) { cp = c; len = 1; }
+    else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
+    else { utf16.push_back(0xFFFD); i++; continue; } // invalid byte
+
+    // Validate and decode continuation bytes.
+    bool valid = (i + len <= value.size());
+    for (int j = 1; j < len && valid; j++) {
+      if ((static_cast<unsigned char>(value[i + j]) & 0xC0) != 0x80) valid = false;
+      else cp = (cp << 6) | (value[i + j] & 0x3F);
     }
-    else if ((c & 0xF0) == 0xE0) {
-      if (i + 2 < value.size() && (static_cast<unsigned char>(value[i+1]) & 0xC0) == 0x80
-          && (static_cast<unsigned char>(value[i+2]) & 0xC0) == 0x80) {
-        safe.push_back(value[i]); safe.push_back(value[i+1]); safe.push_back(value[i+2]); i += 3;
-      } else { safe.push_back('?'); i++; }
+    if (!valid) { utf16.push_back(0xFFFD); i++; continue; }
+    i += len;
+
+    // Encode codepoint as UTF-16.
+    if (cp <= 0xFFFF) {
+      utf16.push_back(static_cast<jchar>(cp));
+    } else if (cp <= 0x10FFFF) {
+      // Surrogate pair for emoji and other supplementary characters.
+      cp -= 0x10000;
+      utf16.push_back(static_cast<jchar>(0xD800 | (cp >> 10)));
+      utf16.push_back(static_cast<jchar>(0xDC00 | (cp & 0x3FF)));
+    } else {
+      utf16.push_back(0xFFFD);
     }
-    else if ((c & 0xF8) == 0xF0) {
-      // 4-byte UTF-8: JNI Modified UTF-8 doesn't support 4-byte sequences directly,
-      // but NewStringUTF on most Android VMs handles them. Pass through.
-      if (i + 3 < value.size() && (static_cast<unsigned char>(value[i+1]) & 0xC0) == 0x80
-          && (static_cast<unsigned char>(value[i+2]) & 0xC0) == 0x80
-          && (static_cast<unsigned char>(value[i+3]) & 0xC0) == 0x80) {
-        safe.push_back(value[i]); safe.push_back(value[i+1]);
-        safe.push_back(value[i+2]); safe.push_back(value[i+3]); i += 4;
-      } else { safe.push_back('?'); i++; }
-    }
-    else { safe.push_back('?'); i++; }
   }
-  return env->NewStringUTF(safe.c_str());
+  return env->NewString(utf16.data(), static_cast<jsize>(utf16.size()));
 }
 
 std::optional<std::string> ExtractJsonString(const std::string& json, const std::string& key) {
@@ -363,7 +369,8 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
        << "\"decode_us\":" << m.decode_us << ","
        << "\"reasoning_tokens\":" << m.reasoning_tokens << ","
        << "\"image_tokens\":" << m.image_tokens << ","
-       << "\"cached_tokens\":" << m.cached_tokens
+       << "\"cached_tokens\":" << m.cached_tokens << ","
+       << "\"n_threads\":" << it->second->backend->n_threads()
        << "}";
   return StdStringToJString(env, json.str());
 }

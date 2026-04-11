@@ -37,8 +37,7 @@ public:
     model_ = llama_model_load_from_file(model_path.c_str(), mp);
     if (!model_) return false;
 
-    int eff_threads = std::max(2, n_threads > 0 ? n_threads
-        : (int)sysconf(_SC_NPROCESSORS_ONLN) - 1);
+    int eff_threads = n_threads > 0 ? n_threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = n_ctx;
@@ -46,6 +45,9 @@ public:
     cp.n_ubatch = 512;
     cp.n_threads = eff_threads;
     cp.n_threads_batch = eff_threads;
+    cp.type_k = GGML_TYPE_F16;                          // KV cache quantization: 50% memory reduction
+    cp.type_v = GGML_TYPE_F16;
+    cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // Flash attention: faster prefill, less memory
     ctx_ = llama_init_from_model(model_, cp);
     if (!ctx_) { llama_model_free(model_); model_ = nullptr; return false; }
 
@@ -440,6 +442,7 @@ public:
   }
 
   InferenceMetrics get_metrics() override { return last_metrics_; }
+  int n_threads() const override { return n_threads_; }
   const char* name() const override { return "llama.cpp"; }
 
 private:
@@ -580,7 +583,7 @@ private:
   // Strip trailing generation prompt from formatted chat template output.
   static std::string strip_generation_prompt(const std::string& formatted) {
     size_t cut = std::string::npos;
-    for (const char* marker : {"<|im_start|>assistant", "<start_of_turn>model"}) {
+    for (const char* marker : {"<|im_start|>assistant", "<start_of_turn>model", "<|turn>model"}) {
       auto pos = formatted.rfind(marker);
       if (pos != std::string::npos && (cut == std::string::npos || pos > cut)) cut = pos;
     }
