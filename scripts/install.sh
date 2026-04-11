@@ -574,8 +574,13 @@ if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
   The model needs to be loaded each time after a restart.
   The CLI auto-starts the service if needed.
 
-  Stop the service:
-    ./omniinfer shutdown
+  Other useful commands:
+    ./omniinfer backend list              # list available backends
+    ./omniinfer select <backend>          # switch backend
+    ./omniinfer model list                # browse supported models
+    ./omniinfer status                    # check current state
+    ./omniinfer serve                     # start API server (http://127.0.0.1:9000)
+    ./omniinfer shutdown                  # stop the service
 
   Full documentation:
     CLI guide:   ${INSTALL_DIR}/docs/CLI.md
@@ -624,8 +629,13 @@ else
 
   The model needs to be loaded each time after a restart.
 
-  Stop the service:
-    ./omniinfer shutdown
+  Other useful commands:
+    ./omniinfer backend list              # list available backends
+    ./omniinfer select <backend>          # switch backend
+    ./omniinfer model list                # browse supported models
+    ./omniinfer status                    # check current state
+    ./omniinfer serve                     # start API server (http://127.0.0.1:9000)
+    ./omniinfer shutdown                  # stop the service
 
   Full documentation:
     CLI guide:   ${INSTALL_DIR}/docs/CLI.md
