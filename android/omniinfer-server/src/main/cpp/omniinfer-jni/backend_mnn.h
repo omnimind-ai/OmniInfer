@@ -211,6 +211,9 @@ public:
       if (on_token) on_token(thinking_tag + "\n");
     }
 
+    // Buffer for incomplete multi-byte UTF-8 sequences (e.g. emoji split across tokens).
+    std::string utf8_buf;
+
     while (!cancelled.load() && !llm_->stoped() && ctx->gen_seq_len < max_tokens) {
       llm_->generate(1);
       if (llm_->stoped()) break;
@@ -223,14 +226,25 @@ public:
 
         if (delta.find("<eop>") != std::string::npos) break;
 
-        full_response += delta;
-        if (on_token && !delta.empty()) {
-          if (!on_token(delta)) { cancelled.store(true); break; }
-        }
-        if (counting_reasoning && full_response.find("</think>") != std::string::npos) {
-          counting_reasoning = false;
+        utf8_buf += delta;
+        if (is_valid_utf8(utf8_buf)) {
+          full_response += utf8_buf;
+          if (on_token && !utf8_buf.empty()) {
+            if (!on_token(utf8_buf)) { cancelled.store(true); break; }
+          }
+          if (counting_reasoning && full_response.find("</think>") != std::string::npos) {
+            counting_reasoning = false;
+          }
+          utf8_buf.clear();
         }
       }
+    }
+
+    // Flush any remaining buffered bytes.
+    if (!utf8_buf.empty()) {
+      full_response += utf8_buf;
+      if (on_token) on_token(utf8_buf);
+      utf8_buf.clear();
     }
 
     // Collect metrics. prompt_tokens = cached + actually prefilled.
@@ -293,6 +307,21 @@ private:
       pos = obj_end + 1;
     }
     return msgs;
+  }
+
+  static bool is_valid_utf8(const std::string& s) {
+    size_t i = 0;
+    while (i < s.size()) {
+      unsigned char c = static_cast<unsigned char>(s[i]);
+      int len = (c < 0x80) ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 0;
+      if (!len) return false;
+      if (i + len > s.size()) return false; // incomplete sequence at end
+      for (int j = 1; j < len; j++) {
+        if ((static_cast<unsigned char>(s[i + j]) & 0xC0) != 0x80) return false;
+      }
+      i += len;
+    }
+    return true;
   }
 
   // Strip the trailing generation prompt from a formatted chat template output.
