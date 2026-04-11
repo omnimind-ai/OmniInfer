@@ -123,14 +123,14 @@ except:
 
 if (Test-PortInUse $OmniPort) {
     Write-Warn "Port $OmniPort is in use, looking for a free port ..."
-    foreach ($tryPort in 9001, 9002, 9003, 9004, 9005) {
+    foreach ($tryPort in 9001, 9002, 9003, 9004, 9005, 9010, 9020, 9050, 9100, 8900, 8800, 19000) {
         if (-not (Test-PortInUse $tryPort)) {
             $OmniPort = $tryPort
             break
         }
     }
     if ($OmniPort -eq 9000) {
-        Stop-Fatal "Could not find a free port (tried 9000-9005)"
+        Stop-Fatal "Could not find a free port"
     }
     Write-Info "Using port $OmniPort"
     $configDir = Join-Path $InstallDir "config"
