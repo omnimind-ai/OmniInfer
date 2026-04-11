@@ -103,7 +103,7 @@ Write-Ok "Repository ready at $InstallDir"
 Write-Host ""
 
 # ── Step 3: Detect platform & choose backend ────────────────
-# Get available backends from OmniInfer's platform module (no service needed)
+# Get available backends from CLI
 
 Write-Info "Step 3/6: Detecting platform and hardware ..."
 
@@ -111,26 +111,17 @@ $cmdPath = Join-Path $InstallDir "omniinfer.cmd"
 
 $BackendIds   = @()
 $BackendDescs = @()
-
-$backendOutput = & python -c @"
-import sys, os
-sys.path.insert(0, r'$InstallDir')
-from service_core.platforms.registry import current_host_platform
-p = current_host_platform()
-for t in p.backend_templates:
-    desc = getattr(t, 'description', '') or ''
-    print(f'{t.id}|{desc}')
-"@ 2>$null
-
-foreach ($line in $backendOutput -split "`n") {
-    $parts = $line.Trim() -split '\|', 2
-    if ($parts[0]) {
-        $BackendIds += $parts[0]
-        if ($parts.Count -gt 1 -and $parts[1]) {
-            $BackendDescs += "$($parts[0])  -  $($parts[1])"
-        } else {
-            $BackendDescs += $parts[0]
-        }
+$rawOutput = & cmd /c $cmdPath backend list 2>$null
+$currentId = ""
+foreach ($line in $rawOutput -split "`n") {
+    $line = $line.Trim()
+    if ($line -match '^[*\s]*([a-zA-Z0-9._-]+)$') {
+        $currentId = $Matches[1]
+        $BackendIds += $currentId
+        $BackendDescs += $currentId
+    }
+    if ($line -match '^Description:\s*(.+)$' -and $currentId) {
+        $BackendDescs[$BackendDescs.Count - 1] = "$currentId  -  $($Matches[1])"
     }
 }
 
@@ -154,17 +145,8 @@ if ($Backend) {
 Write-Ok "Selected: $SelectedBackend"
 Write-Host ""
 
-# Select backend by writing CLI state directly (no service needed)
-$stateDir = Join-Path $env:USERPROFILE ".config\omniinfer"
-if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
-$stateFile = Join-Path $stateDir "cli_state.json"
-$state = @{}
-if (Test-Path $stateFile) {
-    $state = Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable
-}
-$state["selected_backend"] = $SelectedBackend
-$state | ConvertTo-Json | Set-Content $stateFile
-Write-Ok "Backend $SelectedBackend selected"
+# Select backend via CLI
+& cmd /c $cmdPath select $SelectedBackend 2>$null
 
 # ── Step 4: Build backend ───────────────────────────────────
 # Windows build scripts do NOT auto-bootstrap submodules.
@@ -188,8 +170,9 @@ if (-not (Test-Path $fullScript)) {
 if ($SkipBuild) {
     Write-Info "Skipping build (-SkipBuild)"
 } else {
-    $buildOutputDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
-    if (Test-Path $buildOutputDir) {
+    $runtimeCheck = & cmd /c $cmdPath backend list 2>$null
+    $isBuilt = ($runtimeCheck -join "`n") -match "$([regex]::Escape($SelectedBackend))[\s\S]*?Runtime available: yes"
+    if ($isBuilt) {
         Write-Ok "Backend $SelectedBackend already built, skipping"
     } else {
         Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
