@@ -32,6 +32,12 @@ if(OMNIINFER_BACKEND_LLAMA_CPP)
     endif()
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     add_subdirectory(${LLAMA_CPP_DIR} build-llama)
+    # Multimodal (vision) support via mtmd
+    if(NOT DEFINED LLAMA_INSTALL_VERSION)
+        set(LLAMA_INSTALL_VERSION "0.0.0" CACHE STRING "" FORCE)
+    endif()
+    set(LLAMA_TOOLS_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${LLAMA_CPP_DIR}/tools/mtmd build-mtmd)
 endif()
 
 # MNN backend
@@ -43,6 +49,7 @@ if(OMNIINFER_BACKEND_MNN)
     set(MNN_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(MNN_BUILD_FOR_ANDROID_COMMAND ON CACHE BOOL "" FORCE)
     set(MNN_BUILD_LLM ON CACHE BOOL "" FORCE)
+    set(MNN_BUILD_LLM_OMNI ON CACHE BOOL "" FORCE)
     set(MNN_LOW_MEMORY ON CACHE BOOL "" FORCE)
     set(MNN_CPU_WEIGHT_DEQUANT_GEMM ON CACHE BOOL "" FORCE)
     set(MNN_SUPPORT_TRANSFORMER_FUSE ON CACHE BOOL "" FORCE)
@@ -62,8 +69,9 @@ if(OMNIINFER_BACKEND_LLAMA_CPP)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE OMNIINFER_BACKEND_LLAMA_CPP=1)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
             ${LLAMA_CPP_DIR} ${LLAMA_CPP_DIR}/common ${LLAMA_CPP_DIR}/include
-            ${LLAMA_CPP_DIR}/ggml/include ${LLAMA_CPP_DIR}/ggml/src)
-    target_link_libraries(${CMAKE_PROJECT_NAME} llama common)
+            ${LLAMA_CPP_DIR}/ggml/include ${LLAMA_CPP_DIR}/ggml/src
+            ${LLAMA_CPP_DIR}/tools/mtmd)
+    target_link_libraries(${CMAKE_PROJECT_NAME} llama common mtmd)
 endif()
 
 if(OMNIINFER_BACKEND_MNN)

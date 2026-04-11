@@ -6,9 +6,11 @@
 #include "common.h"
 #include "chat.h"
 #include "sampling.h"
+#include "peg-parser.h"
 
 #include <chrono>
 #include <unistd.h>
+#include <sstream>
 
 namespace omniinfer {
 
@@ -57,7 +59,10 @@ public:
       const std::string& user_prompt,
       bool thinking_enabled,
       std::atomic<bool>& cancelled,
-      std::function<bool(const std::string& token)> on_token) override {
+      std::function<bool(const std::string& token)> on_token,
+      const std::string& tools_json = "",
+      const std::string& tool_choice = "",
+      const std::string& messages_json = "") override {
 
     // Stateless: reset all state at start of each request.
     cur_pos_ = 0;
@@ -66,27 +71,52 @@ public:
 
     // Build full messages vector.
     std::vector<common_chat_msg> messages;
-    if (!system_prompt.empty()) {
-      common_chat_msg sys_msg;
-      sys_msg.role = "system";
-      sys_msg.content = system_prompt;
-      messages.push_back(std::move(sys_msg));
-    }
-    {
-      common_chat_msg user_msg;
-      user_msg.role = "user";
-      user_msg.content = user_prompt;
-      messages.push_back(std::move(user_msg));
+    if (!messages_json.empty()) {
+      // Parse messages from JSON array: [{"role":"...","content":"..."},...]
+      messages = parse_messages(messages_json);
+    } else {
+      // Legacy single-turn path.
+      if (!system_prompt.empty()) {
+        common_chat_msg sys_msg;
+        sys_msg.role = "system";
+        sys_msg.content = system_prompt;
+        messages.push_back(std::move(sys_msg));
+      }
+      {
+        common_chat_msg user_msg;
+        user_msg.role = "user";
+        user_msg.content = user_prompt;
+        messages.push_back(std::move(user_msg));
+      }
     }
 
-    // Apply chat template with all messages at once (avoids Qwen3.5 Jinja crash).
+    // Apply chat template with all messages at once.
     common_chat_templates_inputs inputs;
     inputs.messages = messages;
     inputs.add_generation_prompt = true;
     inputs.use_jinja = true;
     inputs.enable_thinking = thinking_enabled;
 
+    // Parse and set tools if provided.
+    bool has_tools = false;
+    if (!tools_json.empty()) {
+      inputs.tools = parse_tools(tools_json);
+      has_tools = !inputs.tools.empty();
+      if (!tool_choice.empty()) {
+        if (tool_choice == "none") inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
+        else if (tool_choice == "required") inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
+        else inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+      }
+    }
+
     common_chat_params params = common_chat_templates_apply(chat_templates_.get(), inputs);
+
+    // Build parser params for tool call detection.
+    common_chat_parser_params parser_params(params);
+    parser_params.parse_tool_calls = has_tools;
+    if (!params.parser.empty()) {
+      parser_params.parser.load(params.parser);
+    }
 
     // Tokenize the full formatted prompt.
     auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
@@ -103,11 +133,9 @@ public:
     std::string full_response;
     std::string utf8_buf;
 
-    // If template supports thinking, the generation prompt includes <think> but it
-    // is part of the input (prefill), not the output. Prepend it so the client sees
-    // a complete <think>...</think> block.
+    // Always prepend thinking start tag when template supports it.
+    // If thinking is off, the model emits </think> immediately (empty block).
     if (params.supports_thinking && !params.thinking_start_tag.empty()) {
-      full_response += params.thinking_start_tag;
       if (on_token) on_token(params.thinking_start_tag);
     }
 
@@ -148,6 +176,15 @@ public:
       auto pos = full_response.find(stop);
       if (pos != std::string::npos) {
         full_response = full_response.substr(0, pos);
+      }
+    }
+
+    // If tools were provided, parse output for tool calls.
+    if (has_tools && parser_params.format != COMMON_CHAT_FORMAT_CONTENT_ONLY) {
+      common_chat_msg parsed = common_chat_parse(full_response, false, parser_params);
+      if (!parsed.tool_calls.empty()) {
+        // Return structured JSON so the HTTP layer can format tool_calls response.
+        full_response = format_tool_calls_json(parsed);
       }
     }
 
@@ -200,6 +237,143 @@ private:
     llama_batch_free(batch_); batch_ = {};
     if (ctx_) { llama_free(ctx_); ctx_ = nullptr; }
     if (model_) { llama_model_free(model_); model_ = nullptr; }
+  }
+
+  // Parse messages JSON array into common_chat_msg vector.
+  // Input: [{"role":"system","content":"..."},{"role":"user","content":"..."},...]
+  static std::vector<common_chat_msg> parse_messages(const std::string& json) {
+    std::vector<common_chat_msg> msgs;
+    size_t pos = 0;
+    while (pos < json.size()) {
+      // Find next object.
+      size_t obj_start = json.find('{', pos);
+      if (obj_start == std::string::npos) break;
+      std::string obj = extract_json_object(json, obj_start);
+      if (obj == "{}") { pos = obj_start + 1; continue; }
+
+      common_chat_msg msg;
+      size_t role_key = obj.find("\"role\"");
+      if (role_key != std::string::npos) msg.role = extract_json_string_value(obj, role_key);
+      size_t content_key = obj.find("\"content\"");
+      if (content_key != std::string::npos) msg.content = extract_json_string_value(obj, content_key);
+
+      if (!msg.role.empty()) msgs.push_back(std::move(msg));
+      pos = obj_start + obj.size();
+    }
+    return msgs;
+  }
+
+  // Parse OpenAI tools JSON array into common_chat_tool vector.
+  // Input: [{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}]
+  static std::vector<common_chat_tool> parse_tools(const std::string& json) {
+    std::vector<common_chat_tool> tools;
+    // Minimal JSON array parsing — extract function objects.
+    // Find each {"type":"function","function":{...}} block.
+    size_t pos = 0;
+    while ((pos = json.find("\"function\"", pos)) != std::string::npos) {
+      // Find the nested object after "function":
+      size_t colon = json.find(':', pos + 10);
+      if (colon == std::string::npos) break;
+      size_t obj_start = json.find('{', colon);
+      if (obj_start == std::string::npos) break;
+
+      // Extract name
+      std::string name, description, parameters;
+      size_t name_key = json.find("\"name\"", obj_start);
+      if (name_key != std::string::npos) {
+        name = extract_json_string_value(json, name_key);
+      }
+      size_t desc_key = json.find("\"description\"", obj_start);
+      if (desc_key != std::string::npos) {
+        description = extract_json_string_value(json, desc_key);
+      }
+      // Extract parameters as raw JSON object
+      size_t params_key = json.find("\"parameters\"", obj_start);
+      if (params_key != std::string::npos) {
+        size_t params_colon = json.find(':', params_key + 12);
+        if (params_colon != std::string::npos) {
+          size_t params_obj = json.find('{', params_colon);
+          if (params_obj != std::string::npos) {
+            parameters = extract_json_object(json, params_obj);
+          }
+        }
+      }
+
+      if (!name.empty()) {
+        common_chat_tool tool;
+        tool.name = name;
+        tool.description = description;
+        tool.parameters = parameters;
+        tools.push_back(std::move(tool));
+      }
+      pos = colon + 1;
+    }
+    return tools;
+  }
+
+  // Extract a JSON string value after a key position.
+  static std::string extract_json_string_value(const std::string& json, size_t key_pos) {
+    size_t colon = json.find(':', key_pos);
+    if (colon == std::string::npos) return "";
+    size_t quote1 = json.find('"', colon + 1);
+    if (quote1 == std::string::npos) return "";
+    size_t quote2 = quote1 + 1;
+    while (quote2 < json.size()) {
+      if (json[quote2] == '"' && json[quote2 - 1] != '\\') break;
+      quote2++;
+    }
+    return json.substr(quote1 + 1, quote2 - quote1 - 1);
+  }
+
+  // Extract a balanced JSON object starting at pos.
+  static std::string extract_json_object(const std::string& json, size_t pos) {
+    if (pos >= json.size() || json[pos] != '{') return "{}";
+    int depth = 0;
+    bool in_string = false;
+    size_t start = pos;
+    for (size_t i = pos; i < json.size(); i++) {
+      char c = json[i];
+      if (in_string) {
+        if (c == '"' && json[i - 1] != '\\') in_string = false;
+        continue;
+      }
+      if (c == '"') { in_string = true; continue; }
+      if (c == '{') depth++;
+      else if (c == '}') { depth--; if (depth == 0) return json.substr(start, i - start + 1); }
+    }
+    return "{}";
+  }
+
+  // Format parsed tool calls as JSON for the HTTP layer.
+  // Returns: {"tool_calls":[{"id":"call_xxx","type":"function","function":{"name":"...","arguments":"..."}}],"content":"..."}
+  static std::string format_tool_calls_json(const common_chat_msg& msg) {
+    std::ostringstream ss;
+    ss << "{\"tool_calls\":[";
+    for (size_t i = 0; i < msg.tool_calls.size(); i++) {
+      if (i > 0) ss << ",";
+      const auto& tc = msg.tool_calls[i];
+      std::string id = tc.id.empty() ? ("call_" + std::to_string(i)) : tc.id;
+      ss << "{\"id\":\"" << id << "\","
+         << "\"type\":\"function\","
+         << "\"function\":{\"name\":\"" << tc.name << "\","
+         << "\"arguments\":" << tc.arguments << "}}";
+    }
+    ss << "]";
+    if (!msg.content.empty()) {
+      ss << ",\"content\":\"";
+      // Escape content for JSON
+      for (char c : msg.content) {
+        if (c == '"') ss << "\\\"";
+        else if (c == '\\') ss << "\\\\";
+        else if (c == '\n') ss << "\\n";
+        else if (c == '\r') ss << "\\r";
+        else if (c == '\t') ss << "\\t";
+        else ss << c;
+      }
+      ss << "\"";
+    }
+    ss << "}";
+    return ss.str();
   }
 
   void shift_context() {
