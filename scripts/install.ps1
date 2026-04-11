@@ -68,12 +68,12 @@ if (Test-Path "$InstallDir\.git") {
     git -C $InstallDir pull --ff-only 2>$null
 } else {
     Write-Info "Cloning OmniInfer to $InstallDir ..."
-    git clone $RepoUrl $InstallDir
+    git clone --depth 1 $RepoUrl $InstallDir
 }
 Write-Ok "Repository ready at $InstallDir"
 
 Write-Info "Initializing llama.cpp submodule ..."
-git -C $InstallDir submodule update --init --recursive framework/llama.cpp 2>$null
+git -C $InstallDir submodule update --init --recursive --depth 1 framework/llama.cpp 2>$null
 Write-Ok "Submodule ready"
 Write-Host ""
 
