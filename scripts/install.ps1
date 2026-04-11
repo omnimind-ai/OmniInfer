@@ -105,38 +105,45 @@ Write-Ok "Repository ready at $InstallDir"
 
 $OmniPort = 9000
 
-function Test-PortInUse {
+function Test-PortFree {
     param([int]$Port)
-    # Use Python for reliable cross-platform port check
-    $result = & python -c "
-import socket, sys
+    # Use Python to test if we can bind to the port
+    $output = python -c "
+import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     s.bind(('127.0.0.1', $Port))
     s.close()
-    sys.exit(0)
+    print('FREE')
 except:
-    sys.exit(1)
-" 2>$null
-    return $LASTEXITCODE -ne 0
+    print('USED')
+" 2>&1
+    return ($output -match "FREE")
 }
 
-if (Test-PortInUse $OmniPort) {
+if (-not (Test-PortFree $OmniPort)) {
     Write-Warn "Port $OmniPort is in use, looking for a free port ..."
+    $found = $false
     foreach ($tryPort in 9001, 9002, 9003, 9004, 9005, 9010, 9020, 9050, 9100, 8900, 8800, 19000) {
-        if (-not (Test-PortInUse $tryPort)) {
+        if (Test-PortFree $tryPort) {
             $OmniPort = $tryPort
+            $found = $true
             break
         }
     }
-    if ($OmniPort -eq 9000) {
+    if (-not $found) {
         Stop-Fatal "Could not find a free port"
     }
     Write-Info "Using port $OmniPort"
     $configDir = Join-Path $InstallDir "config"
     if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
     $configFile = Join-Path $configDir "omniinfer.json"
-    @{ host = "127.0.0.1"; port = $OmniPort } | ConvertTo-Json | Set-Content $configFile
+    @"
+{
+  "host": "127.0.0.1",
+  "port": $OmniPort
+}
+"@ | Set-Content -Path $configFile -Encoding UTF8
     Write-Ok "Config written: $configFile (port $OmniPort)"
 }
 Write-Host ""
