@@ -431,21 +431,51 @@ if ($ModelConfigured -and $ModelPath) {
     Write-Host ""
 
     # ── Interactive chat loop ──────────────────────────────
-    Write-Ok "Setup complete! Try chatting with the model (type 'exit' to quit)."
+    Write-Ok "Setup complete! Try chatting with the model (type 'exit' to quit, Ctrl+C to stop)."
     Write-Host ""
-    try {
+
+    # Capture Ctrl+C ourselves so we can run cleanup
+    [Console]::TreatControlCAsInput = $true
+    $chatDone = $false
+
+    while (-not $chatDone) {
+        Write-Host "You: " -ForegroundColor Cyan -NoNewline
+        $inputBuf = ""
+
+        # Read char-by-char to detect Ctrl+C
         while ($true) {
-            Write-Host "You: " -ForegroundColor Cyan -NoNewline
-            $userMsg = Read-Host
-            if ([string]::IsNullOrWhiteSpace($userMsg)) { continue }
-            if ($userMsg -eq "exit" -or $userMsg -eq "quit") { break }
-            Write-Host "AI: " -ForegroundColor Green -NoNewline
-            Invoke-OmniInfer chat --message $userMsg
-            Write-Host ""
+            $keyInfo = [Console]::ReadKey($true)
+            if ($keyInfo.Key -eq "Enter") {
+                Write-Host ""
+                break
+            }
+            if ($keyInfo.Modifiers -band [ConsoleModifiers]::Control -and $keyInfo.Key -eq "C") {
+                Write-Host ""
+                $chatDone = $true
+                break
+            }
+            if ($keyInfo.Key -eq "Backspace") {
+                if ($inputBuf.Length -gt 0) {
+                    $inputBuf = $inputBuf.Substring(0, $inputBuf.Length - 1)
+                    Write-Host "`b `b" -NoNewline
+                }
+                continue
+            }
+            $inputBuf += $keyInfo.KeyChar
+            Write-Host $keyInfo.KeyChar -NoNewline
         }
-    } finally {
-        Print-Finish
+
+        if ($chatDone) { break }
+        if ([string]::IsNullOrWhiteSpace($inputBuf)) { continue }
+        if ($inputBuf -eq "exit" -or $inputBuf -eq "quit") { break }
+
+        Write-Host "AI: " -ForegroundColor Green -NoNewline
+        Invoke-OmniInfer chat --message $inputBuf
+        Write-Host ""
     }
+
+    [Console]::TreatControlCAsInput = $false
+    Print-Finish
 } else {
     Print-Finish
 }
