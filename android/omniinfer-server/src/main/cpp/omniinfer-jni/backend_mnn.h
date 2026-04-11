@@ -162,6 +162,7 @@ public:
         }
       }
 
+      bool cache_reuse_ok = false;
       if (common_prefix > 0 && common_prefix == (int)input_ids.size()) {
         // Exact match: erase from last prompt token, re-prefill 1 token for logits.
         n_cached_tokens = common_prefix - 1;
@@ -169,9 +170,12 @@ public:
         llm_->eraseHistory(common_prefix - 1, 0);
         std::vector<int> last_tok = {input_ids.back()};
         llm_->generate(last_tok, 0);
-        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-            "MNN KV cache reuse: %d/%d tokens cached (exact, 1 re-prefilled)",
-            common_prefix - 1, (int)input_ids.size());
+        cache_reuse_ok = !llm_->stoped();
+        if (cache_reuse_ok) {
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "MNN KV cache reuse: %d/%d tokens cached (exact, 1 re-prefilled)",
+              common_prefix - 1, (int)input_ids.size());
+        }
       } else if (common_prefix > 0) {
         // Partial prefix match: reuse cached KV, prefill only suffix.
         n_cached_tokens = common_prefix;
@@ -179,12 +183,17 @@ public:
         llm_->eraseHistory(common_prefix, 0);
         std::vector<int> suffix(input_ids.begin() + common_prefix, input_ids.end());
         llm_->generate(suffix, 0);
-        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-            "MNN KV cache reuse: %d/%d tokens cached, %d new",
-            common_prefix, (int)input_ids.size(),
-            (int)input_ids.size() - common_prefix);
-      } else {
-        // No cache match: full reset + prefill.
+        cache_reuse_ok = !llm_->stoped();
+        if (cache_reuse_ok) {
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "MNN KV cache reuse: %d/%d tokens cached, %d new",
+              common_prefix, (int)input_ids.size(),
+              (int)input_ids.size() - common_prefix);
+        }
+      }
+      if (!cache_reuse_ok) {
+        // No cache match, or cache reuse failed: full reset + prefill.
+        n_cached_tokens = 0;
         llm_->reset();
         llm_->generate_init(nullptr, "<eop>");
         llm_->generate(input_ids, 0);
