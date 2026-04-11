@@ -6,7 +6,7 @@
 # ──────────────────────────────────────────────────────────────
 
 param(
-    [string]$InstallDir = "$env:USERPROFILE\OmniInfer",
+    [string]$InstallDir = "$(Get-Location)\OmniInfer",
     [Alias("m")]
     [string]$Model = "",
     [switch]$SkipBuild,
