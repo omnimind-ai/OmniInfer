@@ -185,14 +185,17 @@ if ($Backend) {
 Write-Ok "Selected: $SelectedBackend"
 Write-Host ""
 
-# ── Initialize required submodules ──────────────────────────
-
-Write-Info "Initializing submodule for $SelectedBackend ..."
-git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
-Write-Ok "Submodule ready"
-Write-Host ""
-
 # ── Step 4: Build backend ───────────────────────────────────
+# Note: Windows build scripts do NOT auto-bootstrap submodules.
+# Initialize llama.cpp here since all Windows backends need it.
+
+$llamaCppDir = Join-Path $InstallDir "framework\llama.cpp"
+if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
+    Write-Info "Initializing llama.cpp submodule ..."
+    git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
+    Write-Ok "Submodule ready"
+    Write-Host ""
+}
 
 Write-Info "Step 4/6: Building backend ..."
 
