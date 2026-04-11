@@ -580,7 +580,7 @@ private:
   // Strip trailing generation prompt from formatted chat template output.
   static std::string strip_generation_prompt(const std::string& formatted) {
     size_t cut = std::string::npos;
-    for (const char* marker : {"<|im_start|>assistant", "<start_of_turn>model"}) {
+    for (const char* marker : {"<|im_start|>assistant", "<start_of_turn>model", "<|turn>model"}) {
       auto pos = formatted.rfind(marker);
       if (pos != std::string::npos && (cut == std::string::npos || pos > cut)) cut = pos;
     }
