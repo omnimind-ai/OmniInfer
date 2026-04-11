@@ -107,18 +107,16 @@ $OmniPort = 9000
 
 function Test-PortFree {
     param([int]$Port)
-    # Use Python to test if we can bind to the port
-    $output = python -c "
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    s.bind(('127.0.0.1', $Port))
-    s.close()
-    print('FREE')
-except:
-    print('USED')
-" 2>&1
-    return ($output -match "FREE")
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $tcp.Connect("127.0.0.1", $Port)
+        $tcp.Close()
+        # Connection succeeded = something is listening = port in use
+        return $false
+    } catch {
+        # Connection refused = nothing listening = port is free
+        return $true
+    }
 }
 
 if (-not (Test-PortFree $OmniPort)) {
