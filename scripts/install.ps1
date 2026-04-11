@@ -43,10 +43,8 @@ function Select-Menu {
     $cur = $Default
     $count = $Options.Count
 
-    # Hide cursor
     [Console]::CursorVisible = $false
 
-    # Draw
     function Draw-Menu {
         for ($i = 0; $i -lt $count; $i++) {
             if ($i -eq $cur) {
@@ -66,7 +64,6 @@ function Select-Menu {
         elseif ($key.Key -eq "Enter") { break }
         else { continue }
 
-        # Move cursor up and redraw
         [Console]::SetCursorPosition(0, [Console]::CursorTop - $count)
         Draw-Menu
     }
@@ -106,88 +103,58 @@ Write-Ok "Repository ready at $InstallDir"
 Write-Host ""
 
 # ── Step 3: Detect platform & choose backend ────────────────
+# Reuse ./omniinfer backend list to get available backends.
 
 Write-Info "Step 3/6: Detecting platform and hardware ..."
 
-$Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLower()
+$cmdPath = Join-Path $InstallDir "omniinfer.cmd"
 
-$BackendIds     = @()
-$BackendLabels  = @()
-$BackendScripts = @()
-$Recommended    = 0
-
-if ($Arch -eq "arm64") {
-    $BackendIds     += "llama.cpp-windows-arm64"
-    $BackendLabels  += "llama.cpp CPU (ARM64)"
-    $BackendScripts += "windows\build-llama-arm64.ps1"
-} else {
-    $BackendIds     += "llama.cpp-cpu"
-    $BackendLabels  += "llama.cpp CPU (x64)"
-    $BackendScripts += "windows\build-llama-cpu.ps1"
-
-    if (Get-Command "nvidia-smi" -ErrorAction SilentlyContinue) {
-        try {
-            nvidia-smi 2>$null | Out-Null
-            Write-Ok "NVIDIA GPU detected"
-            $BackendIds     += "llama.cpp-cuda"
-            $BackendLabels  += "llama.cpp CUDA (NVIDIA)"
-            $BackendScripts += "windows\build-llama-cuda.ps1"
-            $Recommended = $BackendIds.Count - 1
-
-            $BackendIds     += "llama.cpp-vulkan"
-            $BackendLabels  += "llama.cpp Vulkan"
-            $BackendScripts += "windows\build-llama-vulkan.ps1"
-        } catch {}
+# Parse backend list from CLI
+$BackendIds   = @()
+$BackendDescs = @()
+$rawOutput = & cmd /c $cmdPath backend list 2>$null
+$currentId = ""
+foreach ($line in $rawOutput -split "`n") {
+    $line = $line.Trim()
+    # Backend ID line: starts with * (selected) or is a bare ID
+    if ($line -match '^[*\s]*([a-zA-Z0-9._-]+)$') {
+        $currentId = $Matches[1]
+        $BackendIds += $currentId
+        $BackendDescs += $currentId
     }
-
-    if (Get-Command "hipconfig" -ErrorAction SilentlyContinue) {
-        Write-Ok "AMD HIP detected"
-        $BackendIds     += "llama.cpp-hip"
-        $BackendLabels  += "llama.cpp HIP (AMD)"
-        $BackendScripts += "windows\build-llama-hip.ps1"
-        $Recommended = $BackendIds.Count - 1
-    }
-
-    if (Get-Command "vulkaninfo" -ErrorAction SilentlyContinue) {
-        if (-not ($BackendIds -contains "llama.cpp-vulkan")) {
-            $BackendIds     += "llama.cpp-vulkan"
-            $BackendLabels  += "llama.cpp Vulkan"
-            $BackendScripts += "windows\build-llama-vulkan.ps1"
-        }
+    # Description line
+    if ($line -match '^Description:\s*(.+)$' -and $currentId) {
+        $BackendDescs[$BackendDescs.Count - 1] = "$currentId  -  $($Matches[1])"
     }
 }
 
-Write-Info "Platform: Windows ($Arch)"
+if ($BackendIds.Count -eq 0) {
+    Stop-Fatal "No backends found. Check your platform support."
+}
+
+Write-Info "Platform: Windows"
 Write-Host ""
 
 if ($Backend) {
     $SelectedBackend = $Backend
-    $idx = [array]::IndexOf($BackendIds, $Backend)
-    if ($idx -lt 0) { Stop-Fatal "Unknown backend: $Backend" }
-    $SelectedScript = $BackendScripts[$idx]
 } else {
     Write-Host "  Available backends (arrow keys to move, Enter to select):"
     Write-Host ""
 
-    $menuLabels = @()
-    for ($i = 0; $i -lt $BackendIds.Count; $i++) {
-        $label = $BackendLabels[$i]
-        if ($i -eq $Recommended) { $label += " (recommended)" }
-        $menuLabels += $label
-    }
-
-    $idx = Select-Menu -Default $Recommended -Options $menuLabels
-
+    $idx = Select-Menu -Default 0 -Options $BackendDescs
     $SelectedBackend = $BackendIds[$idx]
-    $SelectedScript  = $BackendScripts[$idx]
 }
 
 Write-Ok "Selected: $SelectedBackend"
 Write-Host ""
 
+# Select backend via CLI
+& cmd /c $cmdPath select $SelectedBackend 2>$null
+
 # ── Step 4: Build backend ───────────────────────────────────
-# Note: Windows build scripts do NOT auto-bootstrap submodules.
-# Initialize llama.cpp here since all Windows backends need it.
+# Windows build scripts do NOT auto-bootstrap submodules.
+
+Write-Info "Step 4/6: Building backend ..."
 
 $llamaCppDir = Join-Path $InstallDir "framework\llama.cpp"
 if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
@@ -197,26 +164,26 @@ if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
     Write-Host ""
 }
 
-Write-Info "Step 4/6: Building backend ..."
-
-$cmdPath = Join-Path $InstallDir "omniinfer.cmd"
-$fullScript = Join-Path $InstallDir "scripts\platforms\$SelectedScript"
-
-$runtimeDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
-$alreadyBuilt = Test-Path $runtimeDir
+# Discover build script by convention: scripts/platforms/windows/<backend_id>/build.ps1
+$fullScript = Join-Path $InstallDir "scripts\platforms\windows\$SelectedBackend\build.ps1"
+if (-not (Test-Path $fullScript)) {
+    Stop-Fatal "Build script not found: $fullScript"
+}
 
 if ($SkipBuild) {
     Write-Info "Skipping build (-SkipBuild)"
-} elseif ($alreadyBuilt) {
-    Write-Ok "Backend $SelectedBackend already built, skipping"
 } else {
-    Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
-    powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
-    Write-Ok "Build complete"
+    # Check if runtime is already available via CLI
+    $runtimeAvailable = $rawOutput -split "`n" | Select-String -Pattern "^\s*\*?\s*$([regex]::Escape($SelectedBackend))\s*$" -Context 0,3
+    $isBuilt = $runtimeAvailable -match "Runtime available: yes"
+    if ($isBuilt) {
+        Write-Ok "Backend $SelectedBackend already built, skipping"
+    } else {
+        Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
+        powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
+        Write-Ok "Build complete"
+    }
 }
-
-& cmd /c $cmdPath select $SelectedBackend 2>$null
-Write-Ok "Backend $SelectedBackend selected"
 Write-Host ""
 
 # ── Step 5: Model configuration ─────────────────────────────
@@ -341,24 +308,23 @@ Write-Host ""
 Write-Info "Step 6/6: Finishing up ..."
 Write-Host ""
 
-if ($ModelConfigured -and $ModelPath) {
-    Write-Info "Loading model ..."
-    & cmd /c $cmdPath model load -m $ModelPath
-    Write-Ok "Model loaded"
+# ── Finish message (reused by both paths) ──────────────────
+function Print-Finish {
     Write-Host ""
+    & cmd /c $cmdPath shutdown 2>$null
 
-    # ── Cleanup function (runs on exit or Ctrl+C) ──────────
-    function Print-Finish {
-        Write-Host ""
-        & cmd /c $cmdPath shutdown 2>$null
-
-        Write-Host ""
-        Write-Host "============================================================"
+    Write-Host ""
+    Write-Host "============================================================"
+    if ($ModelConfigured) {
         Write-Host "                   Setup Complete!"
-        Write-Host "============================================================"
-        Write-Host ""
-        Write-Host "  Install:  $InstallDir"
-        Write-Host "  Backend:  $SelectedBackend"
+    } else {
+        Write-Host "                   Install Complete!"
+    }
+    Write-Host "============================================================"
+    Write-Host ""
+    Write-Host "  Install:  $InstallDir"
+    Write-Host "  Backend:  $SelectedBackend"
+    if ($ModelPath) {
         Write-Host "  Model:    $(Split-Path $ModelPath -Leaf)"
         Write-Host ""
         Write-Host "  Your backend selection is saved. Next time just run:"
@@ -366,24 +332,38 @@ if ($ModelConfigured -and $ModelPath) {
         Write-Host "    cd $InstallDir"
         Write-Host "    .\omniinfer.cmd model load -m $ModelPath"
         Write-Host "    .\omniinfer.cmd chat --message `"Hello`""
+    } else {
         Write-Host ""
-        Write-Host "  The model needs to be loaded each time after a restart."
-        Write-Host "  The CLI auto-starts the service if needed."
+        Write-Host "  To start chatting, load a model first:"
         Write-Host ""
-        Write-Host "  Other useful commands:"
-        Write-Host "    .\omniinfer.cmd backend list          # list available backends"
-        Write-Host "    .\omniinfer.cmd select <backend>      # switch backend"
-        Write-Host "    .\omniinfer.cmd model list            # browse supported models"
-        Write-Host "    .\omniinfer.cmd status                # check current state"
-        Write-Host "    .\omniinfer.cmd serve                 # start API server (http://127.0.0.1:9000)"
-        Write-Host "    .\omniinfer.cmd shutdown              # stop the service"
-        Write-Host ""
-        Write-Host "  Full documentation:"
-        Write-Host "    CLI guide:   $InstallDir\docs\CLI.md"
-        Write-Host "    API guide:   $InstallDir\docs\API.md"
-        Write-Host "    Build guide: $InstallDir\docs\build.md"
-        Write-Host ""
+        Write-Host "    cd $InstallDir"
+        Write-Host "    .\omniinfer.cmd model load -m C:\path\to\model.gguf"
+        Write-Host "    .\omniinfer.cmd chat --message `"Hello`""
     }
+    Write-Host ""
+    Write-Host "  The model needs to be loaded each time after a restart."
+    Write-Host "  The CLI auto-starts the service if needed."
+    Write-Host ""
+    Write-Host "  Other useful commands:"
+    Write-Host "    .\omniinfer.cmd backend list          # list available backends"
+    Write-Host "    .\omniinfer.cmd select <backend>      # switch backend"
+    Write-Host "    .\omniinfer.cmd model list            # browse supported models"
+    Write-Host "    .\omniinfer.cmd status                # check current state"
+    Write-Host "    .\omniinfer.cmd serve                 # start API server (http://127.0.0.1:9000)"
+    Write-Host "    .\omniinfer.cmd shutdown              # stop the service"
+    Write-Host ""
+    Write-Host "  Full documentation:"
+    Write-Host "    CLI guide:   $InstallDir\docs\CLI.md"
+    Write-Host "    API guide:   $InstallDir\docs\API.md"
+    Write-Host "    Build guide: $InstallDir\docs\build.md"
+    Write-Host ""
+}
+
+if ($ModelConfigured -and $ModelPath) {
+    Write-Info "Loading model ..."
+    & cmd /c $cmdPath model load -m $ModelPath
+    Write-Ok "Model loaded"
+    Write-Host ""
 
     # ── Interactive chat loop ──────────────────────────────
     Write-Ok "Setup complete! Try chatting with the model (type 'exit' to quit)."
@@ -402,28 +382,5 @@ if ($ModelConfigured -and $ModelPath) {
         Print-Finish
     }
 } else {
-    Write-Host ""
-    Write-Host "============================================================"
-    Write-Host "                   Install Complete!"
-    Write-Host "============================================================"
-    Write-Host ""
-    Write-Host "  Install:  $InstallDir"
-    Write-Host "  Backend:  $SelectedBackend"
-    Write-Host ""
-    Write-Host "  To start chatting, load a model first:"
-    Write-Host ""
-    Write-Host "    cd $InstallDir"
-    Write-Host "    .\omniinfer.cmd model load -m C:\path\to\model.gguf"
-    Write-Host "    .\omniinfer.cmd chat --message `"Hello`""
-    Write-Host ""
-    Write-Host "  The model needs to be loaded each time after a restart."
-    Write-Host ""
-    Write-Host "  Stop the service:"
-    Write-Host "    .\omniinfer.cmd shutdown"
-    Write-Host ""
-    Write-Host "  Full documentation:"
-    Write-Host "    CLI guide:   $InstallDir\docs\CLI.md"
-    Write-Host "    API guide:   $InstallDir\docs\API.md"
-    Write-Host "    Build guide: $InstallDir\docs\build.md"
-    Write-Host ""
+    Print-Finish
 }
