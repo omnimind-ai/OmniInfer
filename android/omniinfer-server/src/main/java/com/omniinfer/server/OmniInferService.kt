@@ -130,8 +130,9 @@ class OmniInferService : Service() {
             else -> false // default off on mobile for speed
         }
 
-        // Max tokens.
-        val maxTokens = req["max_tokens"]?.jsonPrimitive?.intOrNull
+        // Max tokens (OpenAI uses max_completion_tokens, we also accept max_tokens).
+        val maxTokens = req["max_completion_tokens"]?.jsonPrimitive?.intOrNull
+            ?: req["max_tokens"]?.jsonPrimitive?.intOrNull
 
         // Tools support.
         val toolsJson = req["tools"]?.jsonArray?.toString()
