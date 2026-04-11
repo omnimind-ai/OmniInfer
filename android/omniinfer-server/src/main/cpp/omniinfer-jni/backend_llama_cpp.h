@@ -37,8 +37,7 @@ public:
     model_ = llama_model_load_from_file(model_path.c_str(), mp);
     if (!model_) return false;
 
-    int eff_threads = std::max(2, n_threads > 0 ? n_threads
-        : (int)sysconf(_SC_NPROCESSORS_ONLN) - 1);
+    int eff_threads = n_threads > 0 ? n_threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = n_ctx;
@@ -440,6 +439,7 @@ public:
   }
 
   InferenceMetrics get_metrics() override { return last_metrics_; }
+  int n_threads() const override { return n_threads_; }
   const char* name() const override { return "llama.cpp"; }
 
 private:

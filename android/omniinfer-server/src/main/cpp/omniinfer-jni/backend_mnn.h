@@ -6,6 +6,7 @@
 
 #include <android/log.h>
 #include <cstdio>
+#include <unistd.h>
 
 namespace omniinfer {
 
@@ -24,11 +25,11 @@ public:
       cache_dir_ = (slash != std::string::npos) ? model_path.substr(0, slash) : "/tmp";
     }
 
+    int eff_threads = n_threads > 0 ? n_threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
+    n_threads_ = eff_threads;
     std::ostringstream cfg;
-    cfg << "{";
-    bool first = true;
-    if (n_threads > 0) { cfg << "\"thread_num\":" << n_threads; first = false; }
-    if (n_ctx > 0) { if (!first) cfg << ","; cfg << "\"max_new_tokens\":" << n_ctx; }
+    cfg << "{\"thread_num\":" << eff_threads;
+    if (n_ctx > 0) cfg << ",\"max_new_tokens\":" << n_ctx;
     cfg << "}";
     llm_->set_config(cfg.str());
 
@@ -260,6 +261,7 @@ public:
   }
 
   InferenceMetrics get_metrics() override { return last_metrics_; }
+  int n_threads() const override { return n_threads_; }
   const char* name() const override { return "mnn"; }
 
 private:
@@ -384,6 +386,7 @@ private:
 
   MNN::Transformer::Llm* llm_ = nullptr;
   std::string cache_dir_;
+  int n_threads_ = 0;
   InferenceMetrics last_metrics_;
   // KV cache prefix reuse state.
   std::vector<int> prev_input_ids_;     // text-only token comparison
