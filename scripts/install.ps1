@@ -35,21 +35,53 @@ function Test-Command {
     }
 }
 
-function Read-Choice {
-    param([string]$Prompt, [string]$Default)
+# Arrow-key menu selector. Returns 0-based index.
+function Select-Menu {
+    param([int]$Default, [string[]]$Options)
     if ($NonInteractive) { return $Default }
-    $input = Read-Host $Prompt
-    if ([string]::IsNullOrWhiteSpace($input)) { return $Default }
-    return $input.Trim()
+
+    $cur = $Default
+    $count = $Options.Count
+
+    # Hide cursor
+    [Console]::CursorVisible = $false
+
+    # Draw
+    function Draw-Menu {
+        for ($i = 0; $i -lt $count; $i++) {
+            if ($i -eq $cur) {
+                Write-Host "  > $($Options[$i])" -ForegroundColor Cyan
+            } else {
+                Write-Host "    $($Options[$i])"
+            }
+        }
+    }
+
+    Draw-Menu
+
+    while ($true) {
+        $key = [Console]::ReadKey($true)
+        if ($key.Key -eq "UpArrow" -and $cur -gt 0) { $cur-- }
+        elseif ($key.Key -eq "DownArrow" -and $cur -lt ($count - 1)) { $cur++ }
+        elseif ($key.Key -eq "Enter") { break }
+        else { continue }
+
+        # Move cursor up and redraw
+        [Console]::SetCursorPosition(0, [Console]::CursorTop - $count)
+        Draw-Menu
+    }
+
+    [Console]::CursorVisible = $true
+    return $cur
 }
 
 # ── Banner ──────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host ([char]0x2554 + ("=" * 58) + [char]0x2557)
-Write-Host ([char]0x2551 + "             OmniInfer Interactive Installer              " + [char]0x2551)
-Write-Host ([char]0x2551 + "       Local LLM/VLM inference on every device            " + [char]0x2551)
-Write-Host ([char]0x255A + ("=" * 58) + [char]0x255D)
+Write-Host "============================================================"
+Write-Host "           OmniInfer Interactive Installer"
+Write-Host "     Local LLM/VLM inference on every device"
+Write-Host "============================================================"
 Write-Host ""
 
 # ── Step 1: Check prerequisites ─────────────────────────────
@@ -73,7 +105,7 @@ if (Test-Path "$InstallDir\.git") {
 Write-Ok "Repository ready at $InstallDir"
 
 Write-Info "Initializing llama.cpp submodule ..."
-git -C $InstallDir submodule update --init --recursive --depth 1 framework/llama.cpp 2>$null
+git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
 Write-Ok "Submodule ready"
 Write-Host ""
 
@@ -92,14 +124,11 @@ if ($Arch -eq "arm64") {
     $BackendIds     += "llama.cpp-windows-arm64"
     $BackendLabels  += "llama.cpp CPU (ARM64)"
     $BackendScripts += "windows\build-llama-arm64.ps1"
-    $Recommended = 0
 } else {
     $BackendIds     += "llama.cpp-cpu"
     $BackendLabels  += "llama.cpp CPU (x64)"
     $BackendScripts += "windows\build-llama-cpu.ps1"
-    $Recommended = 0
 
-    # Detect NVIDIA GPU
     if (Get-Command "nvidia-smi" -ErrorAction SilentlyContinue) {
         try {
             nvidia-smi 2>$null | Out-Null
@@ -115,7 +144,6 @@ if ($Arch -eq "arm64") {
         } catch {}
     }
 
-    # Detect AMD GPU (HIP)
     if (Get-Command "hipconfig" -ErrorAction SilentlyContinue) {
         Write-Ok "AMD HIP detected"
         $BackendIds     += "llama.cpp-hip"
@@ -124,7 +152,6 @@ if ($Arch -eq "arm64") {
         $Recommended = $BackendIds.Count - 1
     }
 
-    # Vulkan fallback
     if (Get-Command "vulkaninfo" -ErrorAction SilentlyContinue) {
         if (-not ($BackendIds -contains "llama.cpp-vulkan")) {
             $BackendIds     += "llama.cpp-vulkan"
@@ -143,22 +170,17 @@ if ($Backend) {
     if ($idx -lt 0) { Stop-Fatal "Unknown backend: $Backend" }
     $SelectedScript = $BackendScripts[$idx]
 } else {
-    Write-Host "  Available backends:"
+    Write-Host "  Available backends (arrow keys to move, Enter to select):"
     Write-Host ""
+
+    $menuLabels = @()
     for ($i = 0; $i -lt $BackendIds.Count; $i++) {
-        $marker = ""
-        if ($i -eq $Recommended) { $marker = " (recommended)" }
-        Write-Host ("    [{0}] {1}{2}" -f ($i + 1), $BackendLabels[$i], $marker)
+        $label = $BackendLabels[$i]
+        if ($i -eq $Recommended) { $label += " (recommended)" }
+        $menuLabels += $label
     }
-    Write-Host ""
 
-    $choice = Read-Choice "  Select backend [$($Recommended + 1)]" "$($Recommended + 1)"
-    $idx = [int]$choice - 1
-
-    if ($idx -lt 0 -or $idx -ge $BackendIds.Count) {
-        Write-Warn "Invalid choice, using recommended"
-        $idx = $Recommended
-    }
+    $idx = Select-Menu -Default $Recommended -Options $menuLabels
 
     $SelectedBackend = $BackendIds[$idx]
     $SelectedScript  = $BackendScripts[$idx]
@@ -174,7 +196,6 @@ Write-Info "Step 4/6: Building backend ..."
 $cmdPath = Join-Path $InstallDir "omniinfer.cmd"
 $fullScript = Join-Path $InstallDir "scripts\platforms\$SelectedScript"
 
-# Check if already built
 $runtimeDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
 $alreadyBuilt = Test-Path $runtimeDir
 
@@ -198,32 +219,31 @@ Write-Info "Step 5/6: Model configuration"
 Write-Host ""
 Write-Host "  How would you like to set up a model?"
 Write-Host ""
-Write-Host "    [1] Download a recommended model"
-Write-Host "    [2] Use a local model file"
-Write-Host "    [3] Skip (configure later)"
-Write-Host ""
 
 $ModelConfigured = $false
+$ModelPath = ""
 
 if ($Model) {
     Write-Info "Using provided model: $Model"
     $ModelPath = $Model
     $ModelConfigured = $true
 } else {
-    $modelChoice = Read-Choice "  Choose [1]" "1"
+    $modelChoice = Select-Menu -Default 0 -Options @(
+        "Download a recommended model",
+        "Use a local model file",
+        "Skip (configure later)"
+    )
 
     switch ($modelChoice) {
-        "1" {
+        0 {
             Write-Info "Fetching model catalog ..."
             try {
                 $catalogRaw = (Invoke-WebRequest -Uri $CatalogUrl -UseBasicParsing).Content
-                # Remove BOM if present
                 if ($catalogRaw.Length -gt 0 -and $catalogRaw[0] -eq [char]0xFEFF) {
                     $catalogRaw = $catalogRaw.Substring(1)
                 }
                 $catalog = $catalogRaw | ConvertFrom-Json
 
-                # Parse catalog to find small models
                 $modelList = @()
                 foreach ($backendName in $catalog.PSObject.Properties.Name) {
                     $families = $catalog.$backendName
@@ -247,7 +267,7 @@ if ($Model) {
                                     Size  = $sizeGib
                                     Url   = $dl
                                 }
-                                break  # one quant per model
+                                break
                             }
                         }
                     }
@@ -261,17 +281,13 @@ if ($Model) {
                     Write-Host ""
                     Write-Host "  Recommended models:"
                     Write-Host ""
-                    Write-Host ("    {0,-4} {1,-35} {2,-10} {3}" -f "#", "Model", "Quant", "Size")
-                    Write-Host ("    {0,-4} {1,-35} {2,-10} {3}" -f "---", "---", "---", "---")
-                    for ($i = 0; $i -lt $modelList.Count; $i++) {
-                        $m = $modelList[$i]
-                        Write-Host ("    [{0}]  {1,-35} {2,-10} {3:F2} GiB" -f ($i+1), $m.Name, $m.Quant, $m.Size)
-                    }
-                    Write-Host ""
 
-                    $dlChoice = Read-Choice "  Select a model [1]" "1"
-                    $dlIdx = [int]$dlChoice - 1
-                    if ($dlIdx -lt 0 -or $dlIdx -ge $modelList.Count) { $dlIdx = 0 }
+                    $dlLabels = @()
+                    foreach ($m in $modelList) {
+                        $dlLabels += ("{0,-32} {1,-10} {2:F2} GiB" -f $m.Name, $m.Quant, $m.Size)
+                    }
+
+                    $dlIdx = Select-Menu -Default 0 -Options $dlLabels
                     $selected = $modelList[$dlIdx]
 
                     $modelsDir = Join-Path $InstallDir "models"
@@ -280,11 +296,12 @@ if ($Model) {
                     $ModelPath = Join-Path $modelsDir $dlFilename
 
                     if (Test-Path $ModelPath) {
-                        Write-Ok "Model already downloaded: $dlFilename"
+                        Write-Ok "Model already downloaded: $ModelPath"
                     } else {
                         Write-Info "Downloading $($selected.Name) ($($selected.Quant), $($selected.Size.ToString('F2')) GiB) ..."
+                        Write-Info "Saving to: $ModelPath"
                         Invoke-WebRequest -Uri $selected.Url -OutFile $ModelPath -UseBasicParsing
-                        Write-Ok "Download complete: $dlFilename"
+                        Write-Ok "Download complete: $ModelPath"
                     }
                     $ModelConfigured = $true
                 }
@@ -293,9 +310,9 @@ if ($Model) {
                 Write-Warn "You can configure a model manually later."
             }
         }
-        "2" {
+        1 {
             Write-Host ""
-            $localPath = Read-Choice "  Enter model path" ""
+            $localPath = Read-Host "  Enter model path"
             if ($localPath -and (Test-Path $localPath)) {
                 $ModelPath = $localPath
                 $ModelConfigured = $true
@@ -324,90 +341,72 @@ if ($ModelConfigured -and $ModelPath) {
     Write-Ok "Model loaded"
     Write-Host ""
 
-    $modelBasename = Split-Path $ModelPath -Leaf
-    Write-Host ""
-    Write-Host "============================================================"
-    Write-Host "                   Setup Complete!"
-    Write-Host "============================================================"
-    Write-Host ""
-    Write-Host "  Install location:  $InstallDir"
-    Write-Host "  Backend:           $SelectedBackend"
-    Write-Host "  Model:             $modelBasename"
-    Write-Host ""
-    Write-Host "  -- Quick Reference --"
-    Write-Host ""
-    Write-Host "  Start the API server:"
-    Write-Host "    cd $InstallDir"
-    Write-Host "    .\omniinfer.cmd serve"
-    Write-Host ""
-    Write-Host "  API endpoint:  http://127.0.0.1:9000"
-    Write-Host ""
-    Write-Host "  Chat completion (curl):"
-    Write-Host '    curl -X POST http://127.0.0.1:9000/v1/chat/completions \'
-    Write-Host '      -H "Content-Type: application/json" \'
-    Write-Host '      -d "{\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"'
-    Write-Host ""
-    Write-Host "  CLI chat:"
-    Write-Host "    .\omniinfer.cmd chat --message `"Hello`""
-    Write-Host ""
-    Write-Host "  Stop the service:"
-    Write-Host "    .\omniinfer.cmd shutdown"
-    Write-Host ""
-    Write-Host "============================================================"
-    Write-Host ""
+    # ── Cleanup function (runs on exit or Ctrl+C) ──────────
+    function Print-Finish {
+        Write-Host ""
+        & cmd /c $cmdPath shutdown 2>$null
 
-    Write-Info "Let's try a quick chat to make sure everything works ..."
+        Write-Host ""
+        Write-Host "============================================================"
+        Write-Host "                   Setup Complete!"
+        Write-Host "============================================================"
+        Write-Host ""
+        Write-Host "  Install:  $InstallDir"
+        Write-Host "  Backend:  $SelectedBackend"
+        Write-Host "  Model:    $(Split-Path $ModelPath -Leaf)"
+        Write-Host ""
+        Write-Host "  Your backend selection is saved. Next time just run:"
+        Write-Host ""
+        Write-Host "    cd $InstallDir"
+        Write-Host "    .\omniinfer.cmd model load -m $ModelPath"
+        Write-Host "    .\omniinfer.cmd chat --message `"Hello`""
+        Write-Host ""
+        Write-Host "  The model needs to be loaded each time after a restart."
+        Write-Host "  The CLI auto-starts the service if needed."
+        Write-Host ""
+        Write-Host "  Full documentation:"
+        Write-Host "    CLI guide:   $InstallDir\docs\CLI.md"
+        Write-Host "    API guide:   $InstallDir\docs\API.md"
+        Write-Host "    Build guide: $InstallDir\docs\build.md"
+        Write-Host ""
+    }
+
+    # ── Interactive chat loop ──────────────────────────────
+    Write-Ok "Setup complete! Try chatting with the model (type 'exit' to quit)."
     Write-Host ""
-    & cmd /c $cmdPath chat --message "Hello! Introduce yourself in one sentence."
-    Write-Host ""
-    Write-Host ""
-    Write-Ok "Everything is working! Enjoy OmniInfer."
-    Write-Host ""
-    Write-Host "  To start the API server anytime:"
-    Write-Host "    cd $InstallDir"
-    Write-Host "    .\omniinfer.cmd serve"
-    Write-Host ""
+    try {
+        while ($true) {
+            Write-Host "You: " -ForegroundColor Cyan -NoNewline
+            $userMsg = Read-Host
+            if ([string]::IsNullOrWhiteSpace($userMsg)) { continue }
+            if ($userMsg -eq "exit" -or $userMsg -eq "quit") { break }
+            Write-Host "AI: " -ForegroundColor Green -NoNewline
+            & cmd /c $cmdPath chat --message $userMsg
+            Write-Host ""
+        }
+    } finally {
+        Print-Finish
+    }
 } else {
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "                   Install Complete!"
     Write-Host "============================================================"
     Write-Host ""
-    Write-Host "  Install location:  $InstallDir"
-    Write-Host "  Backend:           $SelectedBackend"
+    Write-Host "  Install:  $InstallDir"
+    Write-Host "  Backend:  $SelectedBackend"
     Write-Host ""
-    Write-Host "  -- Next Steps --"
+    Write-Host "  To start chatting, load a model first:"
     Write-Host ""
-    Write-Host "  1. Load a model:"
-    Write-Host "     cd $InstallDir"
-    Write-Host "     .\omniinfer.cmd model load -m C:\path\to\model.gguf"
+    Write-Host "    cd $InstallDir"
+    Write-Host "    .\omniinfer.cmd model load -m C:\path\to\model.gguf"
+    Write-Host "    .\omniinfer.cmd chat --message `"Hello`""
     Write-Host ""
-    Write-Host "  2. Start the API server:"
-    Write-Host "     .\omniinfer.cmd serve"
+    Write-Host "  The model needs to be loaded each time after a restart."
     Write-Host ""
-    Write-Host "  3. Use the API (http://127.0.0.1:9000):"
-    Write-Host ""
-    Write-Host "     Health check:"
-    Write-Host "       curl http://127.0.0.1:9000/health"
-    Write-Host ""
-    Write-Host "     Chat completion:"
-    Write-Host '     curl -X POST http://127.0.0.1:9000/v1/chat/completions \'
-    Write-Host '       -H "Content-Type: application/json" \'
-    Write-Host '       -d "{\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"'
-    Write-Host ""
-    Write-Host "     CLI chat:"
-    Write-Host "       .\omniinfer.cmd chat --message `"Hello`""
-    Write-Host ""
-    Write-Host "  4. Stop the service:"
-    Write-Host "     .\omniinfer.cmd shutdown"
-    Write-Host ""
-    Write-Host "  -- Other Useful Commands --"
-    Write-Host ""
-    Write-Host "  List backends:   .\omniinfer.cmd backend list"
-    Write-Host "  Switch backend:  .\omniinfer.cmd select <backend>"
-    Write-Host "  Check status:    .\omniinfer.cmd status"
-    Write-Host "  Browse models:   .\omniinfer.cmd model list"
-    Write-Host ""
-    Write-Host "============================================================"
+    Write-Host "  Full documentation:"
+    Write-Host "    CLI guide:   $InstallDir\docs\CLI.md"
+    Write-Host "    API guide:   $InstallDir\docs\API.md"
+    Write-Host "    Build guide: $InstallDir\docs\build.md"
     Write-Host ""
 }
