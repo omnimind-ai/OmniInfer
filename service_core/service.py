@@ -397,14 +397,20 @@ class OmniHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/models":
-            self._send_json(
-                410,
-                {
-                    "error": {
-                        "message": "GET /v1/models is not maintained in OmniInfer right now"
-                    }
-                },
-            )
+            snapshot = self.manager.snapshot()
+            models: list[dict[str, Any]] = []
+            if snapshot.get("backend_ready") and snapshot.get("model"):
+                model_id = snapshot["model"]
+                models.append({
+                    "id": model_id,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "omniinfer",
+                    "permission": [],
+                    "root": model_id,
+                    "parent": None,
+                })
+            self._send_json(200, {"object": "list", "data": models})
             return
 
         self._send_json(404, {"error": {"message": f"not found: {path}"}})
