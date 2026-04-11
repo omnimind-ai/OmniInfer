@@ -247,20 +247,25 @@ OmniInferServer.stop()
 When OmniInfer releases updates:
 
 ```bash
-# Pull the latest OmniInfer commit
+# Step 1: Pull the latest OmniInfer commit
 cd third_party/omniinfer
 git fetch origin
 git checkout origin/main  # or a specific tag
 
-# Update only the framework submodules you use
+# Step 2: Update the framework submodules you use.
+# This is required — git pull/checkout does NOT update submodules automatically.
+# Without this step, framework/llama.cpp and framework/mnn stay at their old versions
+# even though OmniInfer now points to newer ones.
 git submodule update --init framework/llama.cpp
 git submodule update --init framework/mnn
 
-# Go back to your app root and commit the submodule pointer
+# Step 3: Go back to your app root and commit the submodule pointer
 cd ../..
 git add third_party/omniinfer
 git commit -m "Update OmniInfer to latest"
 ```
+
+**Common mistake:** Running only `git pull` or `git checkout` inside `third_party/omniinfer` without step 2. This updates OmniInfer's own code but leaves the native backends (llama.cpp, MNN) at their old versions, which can cause build failures or missing features.
 
 **Never use `--recursive`** when updating — it would pull all framework submodules including ones you don't need.
 
