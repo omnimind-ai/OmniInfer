@@ -550,7 +550,15 @@ echo ""
 
 if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     info "Loading model ..."
-    "${INSTALL_DIR}/omniinfer" model load -m "${MODEL_PATH}"
+    if ! "${INSTALL_DIR}/omniinfer" model load -m "${MODEL_PATH}"; then
+        err "Failed to load model. Make sure the backend is built and the model path is correct."
+        echo ""
+        echo "  Try building the backend first, then re-run:"
+        echo "    cd ${INSTALL_DIR}"
+        echo "    ./omniinfer model load -m ${MODEL_PATH}"
+        echo ""
+        exit 1
+    fi
     ok "Model loaded"
     echo ""
 
