@@ -108,10 +108,16 @@ Write-Host ""
 Write-Info "Step 3/6: Detecting platform and hardware ..."
 
 $cmdPath = Join-Path $InstallDir "omniinfer.cmd"
+$pyScript = Join-Path $InstallDir "omniinfer.py"
+
+# Helper: invoke omniinfer CLI via python directly (avoids cmd /c path issues)
+function Invoke-OmniInfer {
+    & python $pyScript @args
+}
 
 $BackendIds   = @()
 $BackendDescs = @()
-$rawOutput = & cmd /c $cmdPath backend list 2>$null
+$rawOutput = Invoke-OmniInfer backend list 2>$null
 $currentId = ""
 foreach ($line in $rawOutput -split "`n") {
     $line = $line.Trim()
@@ -146,7 +152,7 @@ Write-Ok "Selected: $SelectedBackend"
 Write-Host ""
 
 # Select backend via CLI
-& cmd /c $cmdPath select $SelectedBackend 2>$null
+Invoke-OmniInfer select $SelectedBackend 2>$null
 
 # ── Step 4: Build backend ───────────────────────────────────
 # Windows build scripts do NOT auto-bootstrap submodules.
@@ -170,7 +176,7 @@ if (-not (Test-Path $fullScript)) {
 if ($SkipBuild) {
     Write-Info "Skipping build (-SkipBuild)"
 } else {
-    $runtimeCheck = & cmd /c $cmdPath backend list 2>$null
+    $runtimeCheck = Invoke-OmniInfer backend list 2>$null
     $isBuilt = ($runtimeCheck -join "`n") -match "$([regex]::Escape($SelectedBackend))[\s\S]*?Runtime available: yes"
     if ($isBuilt) {
         Write-Ok "Backend $SelectedBackend already built, skipping"
@@ -307,7 +313,7 @@ Write-Host ""
 # ── Finish message (reused by both paths) ──────────────────
 function Print-Finish {
     Write-Host ""
-    & cmd /c $cmdPath shutdown 2>$null
+    Invoke-OmniInfer shutdown 2>$null
 
     Write-Host ""
     Write-Host "============================================================"
@@ -357,7 +363,7 @@ function Print-Finish {
 
 if ($ModelConfigured -and $ModelPath) {
     Write-Info "Loading model ..."
-    & cmd /c $cmdPath model load -m $ModelPath
+    Invoke-OmniInfer model load -m $ModelPath
     Write-Ok "Model loaded"
     Write-Host ""
 
@@ -371,7 +377,7 @@ if ($ModelConfigured -and $ModelPath) {
             if ([string]::IsNullOrWhiteSpace($userMsg)) { continue }
             if ($userMsg -eq "exit" -or $userMsg -eq "quit") { break }
             Write-Host "AI: " -ForegroundColor Green -NoNewline
-            & cmd /c $cmdPath chat --message $userMsg
+            Invoke-OmniInfer chat --message $userMsg
             Write-Host ""
         }
     } finally {
