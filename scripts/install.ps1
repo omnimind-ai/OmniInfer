@@ -248,6 +248,7 @@ $ModelConfigured = $false
 $ModelPath = ""
 
 if ($Model) {
+    $Model = $Model.Trim('"', "'", ' ')
     Write-Info "Using provided model: $Model"
     $ModelPath = $Model
     $ModelConfigured = $true
@@ -340,7 +341,7 @@ if ($Model) {
         }
         1 {
             Write-Host ""
-            $localPath = Read-Host "  Enter model path"
+            $localPath = (Read-Host "  Enter model path").Trim('"', "'", ' ')
             if ($localPath -and (Test-Path $localPath)) {
                 $ModelPath = $localPath
                 $ModelConfigured = $true

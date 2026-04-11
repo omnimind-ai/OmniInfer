@@ -526,6 +526,11 @@ for i, (name, quant, size, url) in enumerate(models[:6]):
             # ── Use local model ─────────────────────────────────
             echo ""
             local_path=$(prompt_input "  Enter model path: " "")
+            # Strip surrounding quotes if user pasted a quoted path
+            local_path="${local_path#\"}"
+            local_path="${local_path%\"}"
+            local_path="${local_path#\'}"
+            local_path="${local_path%\'}"
             if [[ -n "${local_path}" ]] && [[ -e "${local_path}" ]]; then
                 MODEL_PATH="${local_path}"
                 MODEL_CONFIGURED=1
