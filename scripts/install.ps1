@@ -407,6 +407,15 @@ function Print-Finish {
 if ($ModelConfigured -and $ModelPath) {
     Write-Info "Loading model ..."
     Invoke-OmniInfer model load -m $ModelPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to load model. Make sure the backend is built and the model path is correct."
+        Write-Host ""
+        Write-Host "  Try building the backend first, then re-run:"
+        Write-Host "    cd $InstallDir"
+        Write-Host "    .\omniinfer.cmd model load -m $ModelPath"
+        Write-Host ""
+        exit 1
+    }
     Write-Ok "Model loaded"
     Write-Host ""
 
