@@ -136,7 +136,7 @@ if (-not (Test-PortFree $OmniPort)) {
     $configDir = Join-Path $InstallDir "config"
     if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
     $configFile = Join-Path $configDir "omniinfer.json"
-    [IO.File]::WriteAllText($configFile, "{`n  `"host`": `"127.0.0.1`",`n  `"port`": $OmniPort`n}", [System.Text.UTF8Encoding]::new($false))
+    & python -c "import json; json.dump({'host':'127.0.0.1','port':$OmniPort}, open(r'$configFile','w',encoding='utf-8'), indent=2)"
     Write-Ok "Config written: $configFile (port $OmniPort)"
 }
 Write-Host ""
