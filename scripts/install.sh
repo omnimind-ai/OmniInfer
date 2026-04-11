@@ -255,14 +255,12 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 IS_ANDROID_PLATFORM=0
-info "[DEBUG] IS_ANDROID=${IS_ANDROID}"
 if [[ "${IS_ANDROID}" -eq 1 ]]; then
     IS_ANDROID_PLATFORM=1
     info "Platform: Android / Termux (${ARCH})"
 else
     info "Platform: ${OS} (${ARCH})"
 fi
-info "[DEBUG] IS_ANDROID_PLATFORM=${IS_ANDROID_PLATFORM}"
 echo ""
 
 # Get available backends
@@ -271,10 +269,8 @@ declare -a BACKEND_DESCS=()
 
 if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     # Android: runtime not installed yet, backends are fixed
-    info "[DEBUG] Entering Android backend branch"
     BACKEND_IDS+=("llama.cpp-llama");  BACKEND_DESCS+=("llama.cpp-llama  —  Text chat")
     BACKEND_IDS+=("llama.cpp-mtmd");   BACKEND_DESCS+=("llama.cpp-mtmd  —  Multimodal (text + vision)")
-    info "[DEBUG] BACKEND_IDS count=${#BACKEND_IDS[@]}"
 else
     # Desktop: query CLI (service auto-starts)
     while IFS= read -r line; do
@@ -309,8 +305,10 @@ fi
 ok "Selected: ${SELECTED_BACKEND}"
 echo ""
 
-# Select backend via CLI
-"${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}"
+# Select backend via CLI (skip on Android — runtime not installed yet)
+if [[ "${IS_ANDROID_PLATFORM}" -eq 0 ]]; then
+    "${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}"
+fi
 
 # ── Step 4: Build backend ───────────────────────────────────
 # Build scripts auto-bootstrap their required submodules.
@@ -376,6 +374,9 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
         bash "${INSTALL_DIR}/scripts/platforms/android/build-runtime.sh" "${RUNTIME_ARGS[@]}"
         ok "Android runtime installed"
     fi
+
+    # Now that runtime is installed, select the backend
+    "${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}"
 
 else
     # ── Desktop: discover and run build script by convention ──
