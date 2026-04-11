@@ -224,24 +224,37 @@ else
 fi
 echo ""
 
-# Get available backends from the CLI itself
+# Get available backends directly from OmniInfer's platform module
+# (no service needed — reads static backend templates)
 declare -a BACKEND_IDS=()
 declare -a BACKEND_DESCS=()
 
-while IFS= read -r line; do
-    # Lines starting with * or whitespace+ID are backend entries
-    id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
-    if [[ -n "${id}" ]]; then
-        BACKEND_IDS+=("${id}")
-        BACKEND_DESCS+=("${id}")
+BACKEND_OUTPUT=""
+if [[ "${IS_ANDROID_PLATFORM}" -eq 0 ]]; then
+    BACKEND_OUTPUT=$(cd "${INSTALL_DIR}" && python3 -c "
+import sys, os
+sys.path.insert(0, os.getcwd())
+from service_core.platforms.registry import current_host_platform
+p = current_host_platform()
+for t in p.backend_templates:
+    desc = getattr(t, 'description', '') or ''
+    print(f'{t.id}|{desc}')
+" 2>/dev/null) || true
+else
+    # Android: hardcoded (no Python, direct mode)
+    BACKEND_OUTPUT="llama.cpp-llama|llama.cpp Text (Android)
+llama.cpp-mtmd|llama.cpp Multimodal (Android)"
+fi
+
+while IFS='|' read -r bid bdesc; do
+    [[ -z "${bid}" ]] && continue
+    BACKEND_IDS+=("${bid}")
+    if [[ -n "${bdesc}" ]]; then
+        BACKEND_DESCS+=("${bid}  —  ${bdesc}")
+    else
+        BACKEND_DESCS+=("${bid}")
     fi
-    # Capture Description line for the last backend
-    desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
-    if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
-        last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
-        BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
-    fi
-done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+done <<< "${BACKEND_OUTPUT}"
 
 if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
     fatal "No backends found. Check your platform support."
@@ -261,8 +274,18 @@ fi
 ok "Selected: ${SELECTED_BACKEND}"
 echo ""
 
-# Select backend via CLI
-"${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}" 2>/dev/null
+# Select backend by writing CLI state directly (no service needed)
+mkdir -p "${HOME}/.config/omniinfer"
+python3 -c "
+import json, pathlib
+state_file = pathlib.Path.home() / '.config' / 'omniinfer' / 'cli_state.json'
+state = {}
+if state_file.is_file():
+    state = json.loads(state_file.read_text())
+state['selected_backend'] = '${SELECTED_BACKEND}'
+state_file.write_text(json.dumps(state, indent=2))
+" 2>/dev/null
+ok "Backend ${SELECTED_BACKEND} selected"
 
 # ── Step 4: Build backend ───────────────────────────────────
 # Build scripts auto-bootstrap their required submodules.
@@ -339,9 +362,9 @@ else
     if [[ "${SKIP_BUILD}" -eq 1 ]]; then
         info "Skipping build (--skip-build)"
     else
-        # Check if runtime is already available via CLI
-        RUNTIME_AVAILABLE=$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null | grep -A1 "^[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
-        if [[ "${RUNTIME_AVAILABLE}" -gt 0 ]]; then
+        # Check if build output already exists
+        BUILD_OUTPUT_DIR="${INSTALL_DIR}/.local/runtime/${PLATFORM_DIR}/${SELECTED_BACKEND}"
+        if [[ -d "${BUILD_OUTPUT_DIR}/bin" ]] || [[ -d "${BUILD_OUTPUT_DIR}/venv" ]]; then
             ok "Backend ${SELECTED_BACKEND} already built, skipping"
         else
             info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
