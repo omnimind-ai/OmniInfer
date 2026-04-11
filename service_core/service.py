@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import threading
-import traceback
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,8 +13,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from service_core.logger import log_session_header, resolve_log_level, setup_logging
 from service_core.platforms import current_host_platform, default_backend_for_current_host, parse_extra_args
 from service_core.runtime import RuntimeManager
+
+logger = logging.getLogger("gateway")
 
 
 if getattr(sys, "frozen", False):
@@ -262,17 +266,13 @@ class OmniHandler(BaseHTTPRequestHandler):
         self.server.default_thinking = value  # type: ignore[attr-defined]
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        print(f"[{self.log_date_time_string()}] {self.address_string()} {fmt % args}")
-
-    def _debug_enabled(self) -> bool:
-        return bool(getattr(self.server, "debug_http", False))  # type: ignore[attr-defined]
+        logging.getLogger("http").debug("%s %s", self.address_string(), fmt % args)
 
     def _debug_body_enabled(self) -> bool:
         return bool(getattr(self.server, "debug_body", False))  # type: ignore[attr-defined]
 
     def _debug(self, message: str) -> None:
-        if self._debug_enabled():
-            print(f"[debug] {message}", flush=True)
+        logger.debug(message)
 
     @property
     def forced_backend(self) -> str | None:
@@ -281,6 +281,12 @@ class OmniHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: int, payload: Any) -> None:
         self._debug(f"{self.command} {self.path} -> {status}")
+        if status >= 400:
+            error_msg = ""
+            if isinstance(payload, dict) and "error" in payload:
+                error_msg = payload["error"].get("message", "")
+            log_fn = logger.error if status >= 500 else logger.warning
+            log_fn("%s %s -> %d: %s", self.command, self.path, status, error_msg)
         if self._debug_body_enabled():
             self._debug(f"response body: {summarize_for_log(payload)}")
         body = json_dumps(payload)
@@ -327,7 +333,7 @@ class OmniHandler(BaseHTTPRequestHandler):
         try:
             self._do_GET_impl()
         except Exception as e:  # pragma: no cover - defensive server-side fallback
-            traceback.print_exc()
+            logger.exception("Unhandled error in %s %s", self.command, self.path)
             self._send_json(500, {"error": {"message": f"internal server error: {e}"}})
 
     def _do_GET_impl(self) -> None:
@@ -408,7 +414,7 @@ class OmniHandler(BaseHTTPRequestHandler):
         try:
             self._do_POST_impl()
         except Exception as e:  # pragma: no cover - defensive server-side fallback
-            traceback.print_exc()
+            logger.exception("Unhandled error in %s %s", self.command, self.path)
             self._send_json(500, {"error": {"message": f"internal server error: {e}"}})
 
     def _do_POST_impl(self) -> None:
@@ -484,7 +490,14 @@ class OmniHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/chat/completions":
+            _req_start = time.perf_counter()
             payload = self._read_json()
+            logger.info(
+                "POST /v1/chat/completions model=%s messages=%d stream=%s",
+                payload.get("model", ""),
+                len(payload.get("messages", [])),
+                payload.get("stream", False),
+            )
             requested_backend = self.forced_backend or (str(payload.pop("backend", "")).strip() or None)
             requested_model = str(payload.get("model", "")).strip() or None
             requested_mmproj = str(payload.pop("mmproj", "")).strip() or None
@@ -536,6 +549,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                     if payload.get("stream") is True:
                         events = self.manager.stream_chat_completion(payload)
                         stream_embedded_events(self, events)
+                        logger.info("POST /v1/chat/completions -> 200 (%.2fs, embedded stream)", time.perf_counter() - _req_start)
                         return
                     response = self.manager.chat_completion(payload)
                 except ValueError as e:
@@ -544,6 +558,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 except RuntimeError as e:
                     self._send_json(409, {"error": {"message": str(e)}})
                     return
+                logger.info("POST /v1/chat/completions -> 200 (%.2fs, embedded)", time.perf_counter() - _req_start)
                 self._send_json(200, response)
                 return
 
@@ -562,6 +577,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                     payload=payload,
                     timeout=3600,
                 )
+                logger.info("POST /v1/chat/completions -> stream done (%.2fs, proxy)", time.perf_counter() - _req_start)
                 return
 
             code, body = http_json(
@@ -570,7 +586,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 payload=payload,
                 timeout=600,
             )
-            self._debug(f"proxy chat -> http://{host}:{port}/v1/chat/completions -> {code}")
+            logger.info("POST /v1/chat/completions -> %d (%.2fs, proxy)", code, time.perf_counter() - _req_start)
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -630,12 +646,18 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
         help="With --verbose, also print truncated request/response JSON bodies",
     )
     p.add_argument("--startup-timeout", type=int, default=int(config["startup_timeout"]), help="Backend startup timeout seconds")
+    p.add_argument("--log-level", default=None, choices=("DEBUG", "INFO", "WARNING", "ERROR"), help="Log level override")
     return p.parse_args()
 
 
 def main() -> int:
     config = load_app_config(APP_ROOT)
     args = parse_args(config)
+
+    # --- Initialize logging ---
+    level = args.log_level or resolve_log_level(verbose=args.verbose, debug_body=args.debug_body)
+    log_file = setup_logging(level=level, console=True, log_to_file=True)
+
     manager = RuntimeManager(
         repo_root=str(REPO_ROOT),
         app_root=str(APP_ROOT),
@@ -648,6 +670,11 @@ def main() -> int:
         default_backend_id=args.default_backend,
     )
 
+    log_session_header(
+        config=config,
+        backends=[b["id"] for b in manager.list_backends()],
+    )
+
     httpd = ThreadingHTTPServer((args.host, args.port), OmniHandler)
     httpd.manager = manager  # type: ignore[attr-defined]
     httpd.default_thinking = args.default_thinking == "on"  # type: ignore[attr-defined]
@@ -655,14 +682,13 @@ def main() -> int:
     httpd.debug_body = bool(args.debug_body)  # type: ignore[attr-defined]
     httpd.forced_backend = args.force_backend.strip()  # type: ignore[attr-defined]
 
-    print(f"OmniInfer listening on http://{args.host}:{args.port}")
-    print(f"Selected backend on startup: {manager.snapshot()['backend']}")
-    print(f"Default thinking mode: {'on' if httpd.default_thinking else 'off'}")
+    logger.info("OmniInfer listening on http://%s:%s", args.host, args.port)
+    logger.info("Selected backend on startup: %s", manager.snapshot()["backend"])
+    logger.info("Default thinking mode: %s", "on" if httpd.default_thinking else "off")
     if httpd.forced_backend:
-        print(f"Forced backend: {httpd.forced_backend}")
-    print("Use GET /omni/backends -> GET /omni/supported-models/best -> POST /omni/model/select")
-    if httpd.debug_http:
-        print(f"Debug logging enabled (body={'on' if httpd.debug_body else 'off'})")
+        logger.info("Forced backend: %s", httpd.forced_backend)
+    if log_file:
+        logger.info("Log file: %s", log_file)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

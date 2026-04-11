@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from service_core.backends import BackendSpec
 from service_core.platforms.common import parse_extra_args
+
+logger = logging.getLogger("config")
 
 
 PROFILE_SCHEMA_VERSION = 2
@@ -30,15 +33,18 @@ def ensure_backend_profile_template(backend: BackendSpec) -> tuple[Path, bool]:
     path = profile_path_for_backend(backend.id)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
+        logger.debug("Backend profile exists: %s", path)
         return path, False
     path.write_text(
         json.dumps(build_backend_profile_template(backend), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    logger.debug("Backend profile template created: %s", path)
     return path, True
 
 
 def load_backend_profile(path_text: str) -> BackendProfile:
+    logger.debug("Loading backend profile: %s", path_text)
     path = Path(path_text).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"backend config file does not exist: {path}")
