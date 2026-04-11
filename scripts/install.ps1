@@ -94,7 +94,7 @@ Write-Host ""
 Write-Info "Step 2/6: Preparing repository ..."
 if (Test-Path "$InstallDir\.git") {
     Write-Info "Found existing clone at $InstallDir, updating ..."
-    git -C $InstallDir pull --ff-only 2>$null
+    try { git -C $InstallDir pull --ff-only 2>&1 | Out-Null } catch { Write-Warn "Pull failed, continuing with existing code" }
 } else {
     Write-Info "Cloning OmniInfer to $InstallDir ..."
     git clone --depth 1 $RepoUrl $InstallDir
