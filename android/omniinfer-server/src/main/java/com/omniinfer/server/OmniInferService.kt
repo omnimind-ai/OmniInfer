@@ -130,6 +130,9 @@ class OmniInferService : Service() {
             else -> false // default off on mobile for speed
         }
 
+        // Max tokens.
+        val maxTokens = req["max_tokens"]?.jsonPrimitive?.intOrNull
+
         // Tools support.
         val toolsJson = req["tools"]?.jsonArray?.toString()
         val toolChoice = req["tool_choice"]?.jsonPrimitive?.contentOrNull
@@ -211,6 +214,7 @@ class OmniInferService : Service() {
                     thinkEnabled = thinkEnabled,
                     toolsJson = toolsJson,
                     toolChoice = toolChoice,
+                    maxTokens = maxTokens,
                     callback = OmniInferStreamCallback(
                         onTokenHandler = { token ->
                             if (connectionAlive) {
@@ -253,15 +257,15 @@ class OmniInferService : Service() {
                                             }
                                             thinkEndBuf.clear()
                                         } else {
-                                            val safe = if (buf.length > 10) buf.substring(0, buf.length - 10) else ""
-                                            if (safe.isNotEmpty()) {
+                                            val splitAt = safeSplit(buf, if (buf.length > 10) buf.length - 10 else 0)
+                                            if (splitAt > 0) {
                                                 val chunk = buildChunk(completionId, requestModel, created) {
-                                                    put("reasoning_content", safe)
+                                                    put("reasoning_content", buf.substring(0, splitAt))
                                                     put("content", JsonNull)
                                                 }
                                                 write("data: $chunk\n\n")
                                                 thinkEndBuf.clear()
-                                                thinkEndBuf.append(buf.substring(buf.length - 10))
+                                                thinkEndBuf.append(buf.substring(splitAt))
                                             }
                                         }
                                     } else if (!inToolCall) {
@@ -275,14 +279,14 @@ class OmniInferService : Service() {
                                             }
                                             // Flush content up to a safe point (keep tail for marker detection).
                                             val buf = contentBuf.toString()
-                                            val safe = if (buf.length > 15) buf.substring(0, buf.length - 15) else ""
-                                            if (safe.isNotEmpty()) {
+                                            val splitAt = safeSplit(buf, if (buf.length > 15) buf.length - 15 else 0)
+                                            if (splitAt > 0) {
                                                 val chunk = buildChunk(completionId, requestModel, created) {
-                                                    put("content", safe)
+                                                    put("content", buf.substring(0, splitAt))
                                                 }
                                                 write("data: $chunk\n\n")
                                                 contentBuf.clear()
-                                                contentBuf.append(buf.substring(buf.length - 15))
+                                                contentBuf.append(buf.substring(splitAt))
                                             }
                                         } else {
                                             val chunk = buildChunk(completionId, requestModel, created) {
@@ -410,6 +414,7 @@ class OmniInferService : Service() {
                 thinkEnabled = thinkEnabled,
                 toolsJson = toolsJson,
                 toolChoice = toolChoice,
+                maxTokens = maxTokens,
                 callback = OmniInferStreamCallback(
                     onMetricsHandler = { metrics ->
                         metricsStr = metrics
@@ -582,6 +587,12 @@ class OmniInferService : Service() {
             // No closing tag — treat entire remainder as reasoning.
             contentAfterTag.trim() to ""
         }
+    }
+
+    /** Adjust a tentative split index so it doesn't land between a surrogate pair. */
+    private fun safeSplit(s: String, index: Int): Int {
+        if (index <= 0 || index >= s.length) return index
+        return if (Character.isLowSurrogate(s[index])) index - 1 else index
     }
 
     private fun extractTextContent(content: JsonElement?): String? {

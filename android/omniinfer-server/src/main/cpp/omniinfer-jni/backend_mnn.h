@@ -62,7 +62,8 @@ public:
       const std::string& /*tool_choice*/ = "",
       const std::string& messages_json = "",
       const uint8_t* image_data = nullptr,
-      size_t image_size = 0) override {
+      size_t image_size = 0,
+      int max_tokens = 0) override {
 
     using ChatMessages = MNN::Transformer::ChatMessages;
     ChatMessages msgs;
@@ -196,7 +197,7 @@ public:
     // Decode: generate tokens one by one for streaming.
     std::string full_response;
     auto* ctx = llm_->getContext();
-    int max_tokens = 2048;
+    int eff_max_tokens = max_tokens > 0 ? max_tokens : 2048;
     size_t prev_len = 0;
     int n_reasoning_tokens = 0;
     bool counting_reasoning = thinking_enabled && !detect_trailing_tag(formatted).empty();
@@ -214,7 +215,7 @@ public:
     // Buffer for incomplete multi-byte UTF-8 sequences (e.g. emoji split across tokens).
     std::string utf8_buf;
 
-    while (!cancelled.load() && !llm_->stoped() && ctx->gen_seq_len < max_tokens) {
+    while (!cancelled.load() && !llm_->stoped() && ctx->gen_seq_len < eff_max_tokens) {
       llm_->generate(1);
       if (llm_->stoped()) break;
       if (counting_reasoning) n_reasoning_tokens++;
