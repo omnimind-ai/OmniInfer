@@ -215,104 +215,67 @@ info "Step 3/6: Detecting platform and hardware ..."
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
-# Build the backend menu based on platform + detected hardware
-declare -a BACKEND_IDS=()
-declare -a BACKEND_LABELS=()
-declare -a BACKEND_SCRIPTS=()
-RECOMMENDED_INDEX=0
-
 IS_ANDROID_PLATFORM=0
 if [[ "${IS_ANDROID}" -eq 1 ]]; then
     IS_ANDROID_PLATFORM=1
-    BACKEND_IDS+=("llama.cpp-llama");  BACKEND_LABELS+=("llama.cpp Text (Android)");       BACKEND_SCRIPTS+=("__android__")
-    BACKEND_IDS+=("llama.cpp-mtmd");   BACKEND_LABELS+=("llama.cpp Multimodal (Android)");  BACKEND_SCRIPTS+=("__android__")
-    RECOMMENDED_INDEX=0
-else
-    case "${OS}" in
-        Darwin)
-            if [ "${ARCH}" = "arm64" ]; then
-                BACKEND_IDS+=("llama.cpp-mac");       BACKEND_LABELS+=("llama.cpp Metal (Apple Silicon)");  BACKEND_SCRIPTS+=("macos/build-llama-mac.sh")
-                BACKEND_IDS+=("turboquant-mac");      BACKEND_LABELS+=("TurboQuant (Apple Silicon)");       BACKEND_SCRIPTS+=("macos/build-turboquant-mac.sh")
-                BACKEND_IDS+=("mlx-mac");             BACKEND_LABELS+=("MLX embedded (Apple Silicon)");     BACKEND_SCRIPTS+=("macos/build-mlx-mac.sh")
-                RECOMMENDED_INDEX=0
-            else
-                BACKEND_IDS+=("llama.cpp-mac-intel");  BACKEND_LABELS+=("llama.cpp CPU (Intel Mac)");       BACKEND_SCRIPTS+=("macos/build-llama-mac-intel.sh")
-                RECOMMENDED_INDEX=0
-            fi
-            ;;
-        Linux)
-            BACKEND_IDS+=("llama.cpp-linux");          BACKEND_LABELS+=("llama.cpp CPU");                    BACKEND_SCRIPTS+=("linux/build-llama-cpu.sh")
-            RECOMMENDED_INDEX=0
-
-            if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
-                ok "NVIDIA GPU detected"
-                BACKEND_IDS+=("llama.cpp-linux-vulkan"); BACKEND_LABELS+=("llama.cpp Vulkan (NVIDIA)");       BACKEND_SCRIPTS+=("linux/build-llama-vulkan.sh")
-                RECOMMENDED_INDEX=$(( ${#BACKEND_IDS[@]} - 1 ))
-            fi
-
-            if command -v rocm-smi >/dev/null 2>&1; then
-                ok "AMD ROCm detected"
-                BACKEND_IDS+=("llama.cpp-linux-rocm");  BACKEND_LABELS+=("llama.cpp ROCm (AMD)");             BACKEND_SCRIPTS+=("linux/build-llama-rocm.sh")
-                RECOMMENDED_INDEX=$(( ${#BACKEND_IDS[@]} - 1 ))
-            fi
-
-            # Vulkan without nvidia-smi (e.g. Intel, other Vulkan drivers)
-            if command -v vulkaninfo >/dev/null 2>&1 && ! command -v nvidia-smi >/dev/null 2>&1; then
-                BACKEND_IDS+=("llama.cpp-linux-vulkan"); BACKEND_LABELS+=("llama.cpp Vulkan");                BACKEND_SCRIPTS+=("linux/build-llama-vulkan.sh")
-            fi
-            ;;
-        *)
-            fatal "This script supports macOS, Linux, and Android (Termux). For Windows, use install.ps1."
-            ;;
-    esac
-fi
-
-if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     info "Platform: Android / Termux (${ARCH})"
 else
     info "Platform: ${OS} (${ARCH})"
 fi
 echo ""
 
+# Get available backends from the CLI itself
+declare -a BACKEND_IDS=()
+declare -a BACKEND_DESCS=()
+
+while IFS= read -r line; do
+    # Lines starting with * or whitespace+ID are backend entries
+    id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
+    if [[ -n "${id}" ]]; then
+        BACKEND_IDS+=("${id}")
+        BACKEND_DESCS+=("${id}")
+    fi
+    # Capture Description line for the last backend
+    desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
+    if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
+        last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
+        BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
+    fi
+done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+
+if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
+    fatal "No backends found. Check your platform support."
+fi
+
 # If backend override is set, use it directly
 if [[ -n "${BACKEND_OVERRIDE}" ]]; then
     SELECTED_BACKEND="${BACKEND_OVERRIDE}"
-    # Find matching script
-    SELECTED_SCRIPT=""
-    for i in "${!BACKEND_IDS[@]}"; do
-        if [[ "${BACKEND_IDS[$i]}" == "${SELECTED_BACKEND}" ]]; then
-            SELECTED_SCRIPT="${BACKEND_SCRIPTS[$i]}"
-            break
-        fi
-    done
-    [[ -z "${SELECTED_SCRIPT}" ]] && fatal "Unknown backend: ${SELECTED_BACKEND}"
 else
     echo "  Available backends (arrow keys to move, Enter to select):"
     echo ""
 
-    # Build display labels with recommended tag
-    declare -a MENU_LABELS=()
-    for i in "${!BACKEND_IDS[@]}"; do
-        label="${BACKEND_LABELS[$i]}"
-        if [[ "$i" -eq "${RECOMMENDED_INDEX}" ]]; then
-            label="${label} (recommended)"
-        fi
-        MENU_LABELS+=("${label}")
-    done
-
-    idx=$(select_menu "${RECOMMENDED_INDEX}" "${MENU_LABELS[@]}")
-
+    idx=$(select_menu 0 "${BACKEND_DESCS[@]}")
     SELECTED_BACKEND="${BACKEND_IDS[$idx]}"
-    SELECTED_SCRIPT="${BACKEND_SCRIPTS[$idx]}"
 fi
 
 ok "Selected: ${SELECTED_BACKEND}"
 echo ""
 
+# Select backend via CLI
+"${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}" 2>/dev/null
+
 # ── Step 4: Build backend ───────────────────────────────────
-# Note: build scripts auto-bootstrap their required submodules.
+# Build scripts auto-bootstrap their required submodules.
+# Build script is discovered by convention: scripts/platforms/<platform_dir>/<backend_id>/build.sh
 
 info "Step 4/6: Building backend ..."
+
+# Map OS to platform directory name
+case "${OS}" in
+    Darwin) PLATFORM_DIR="macos" ;;
+    Linux)  PLATFORM_DIR="linux" ;;
+    *)      PLATFORM_DIR="linux" ;;
+esac
 
 if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     # ── Android / Termux: build llama.cpp natively, install via build-runtime.sh ──
@@ -366,34 +329,26 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
         ok "Android runtime installed"
     fi
 
-    "${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}" 2>/dev/null
-    ok "Backend ${SELECTED_BACKEND} selected"
-
 else
-    # ── Desktop: use platform build scripts ──
-    FULL_BUILD_SCRIPT="${INSTALL_DIR}/scripts/platforms/${SELECTED_SCRIPT}"
-
-    RUNTIME_CHECK="${INSTALL_DIR}/.local/runtime"
-    ALREADY_BUILT=0
-    case "${SELECTED_BACKEND}" in
-        llama.cpp-mac*)   [[ -d "${RUNTIME_CHECK}/macos/${SELECTED_BACKEND}/bin" ]]  && ALREADY_BUILT=1 ;;
-        llama.cpp-linux*) [[ -d "${RUNTIME_CHECK}/linux/${SELECTED_BACKEND}/bin" ]]  && ALREADY_BUILT=1 ;;
-        turboquant-mac)   [[ -d "${RUNTIME_CHECK}/macos/turboquant-mac/bin" ]]       && ALREADY_BUILT=1 ;;
-        mlx-mac)          [[ -d "${RUNTIME_CHECK}/macos/mlx-mac/venv" ]]             && ALREADY_BUILT=1 ;;
-    esac
+    # ── Desktop: discover and run build script by convention ──
+    FULL_BUILD_SCRIPT="${INSTALL_DIR}/scripts/platforms/${PLATFORM_DIR}/${SELECTED_BACKEND}/build.sh"
+    if [[ ! -f "${FULL_BUILD_SCRIPT}" ]]; then
+        fatal "Build script not found: ${FULL_BUILD_SCRIPT}"
+    fi
 
     if [[ "${SKIP_BUILD}" -eq 1 ]]; then
         info "Skipping build (--skip-build)"
-    elif [[ "${ALREADY_BUILT}" -eq 1 ]]; then
-        ok "Backend ${SELECTED_BACKEND} already built, skipping"
     else
-        info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
-        bash "${FULL_BUILD_SCRIPT}"
-        ok "Build complete"
+        # Check if runtime is already available via CLI
+        RUNTIME_AVAILABLE=$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null | grep -A1 "^[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
+        if [[ "${RUNTIME_AVAILABLE}" -gt 0 ]]; then
+            ok "Backend ${SELECTED_BACKEND} already built, skipping"
+        else
+            info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
+            bash "${FULL_BUILD_SCRIPT}"
+            ok "Build complete"
+        fi
     fi
-
-    "${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}" 2>/dev/null
-    ok "Backend ${SELECTED_BACKEND} selected"
 fi
 echo ""
 
