@@ -5,6 +5,7 @@ import binascii
 import imghdr
 import io
 import json
+import logging
 import os
 import tempfile
 import time
@@ -13,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
+
+logger = logging.getLogger("driver.mnn")
 
 from service_core.drivers.base import EmbeddedBackendDriver
 
@@ -43,6 +46,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         if ctx_size is not None:
             raise ValueError("mnn-linux does not support ctx_size overrides")
 
+        logger.info("MNN loading model: %s", model_path)
         llm_module = self._import_module("MNN.llm")
         cv_module = self._import_module("MNN.cv")
         config_path = self._resolve_config_path(model_path)
@@ -51,6 +55,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         model.set_config(config)
         model.load()
         supports_vision = self._config_supports_vision(config_path)
+        logger.info("MNN model loaded: %s (vision=%s)", model_ref, supports_vision)
         return MnnLoadedModel(
             model=model,
             cv=cv_module,
@@ -61,6 +66,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         )
 
     def unload_model(self, state: Any) -> None:
+        logger.info("MNN model unloaded")
         for path in getattr(state, "temp_files", []):
             try:
                 Path(path).unlink(missing_ok=True)

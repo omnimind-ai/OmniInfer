@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from service_core.drivers.base import EmbeddedBackendDriver
+
+logger = logging.getLogger("driver.mlx")
 
 
 @dataclass
@@ -46,6 +49,7 @@ class MlxMacDriver(EmbeddedBackendDriver):
         if ctx_size is not None:
             raise ValueError("mlx-mac does not support ctx_size overrides")
 
+        logger.info("MLX loading model: %s", model_path)
         supports_vision = self._model_supports_vision(model_path)
         if supports_vision:
             load = self._import_attr("mlx_vlm", "load")
@@ -74,6 +78,7 @@ class MlxMacDriver(EmbeddedBackendDriver):
         )
 
     def unload_model(self, state: Any) -> None:
+        logger.info("MLX model unloaded")
         del state
 
     def chat_completion(self, state: Any, payload: dict[str, Any]) -> dict[str, Any]:
