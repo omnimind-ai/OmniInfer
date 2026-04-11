@@ -11,7 +11,7 @@ set -euo pipefail
 
 # ── Defaults ────────────────────────────────────────────────
 
-INSTALL_DIR="${HOME}/OmniInfer"
+INSTALL_DIR="$(pwd)/OmniInfer"
 MODEL_PATH=""
 SKIP_BUILD=0
 BACKEND_OVERRIDE=""
