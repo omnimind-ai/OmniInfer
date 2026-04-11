@@ -369,7 +369,8 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
        << "\"decode_us\":" << m.decode_us << ","
        << "\"reasoning_tokens\":" << m.reasoning_tokens << ","
        << "\"image_tokens\":" << m.image_tokens << ","
-       << "\"cached_tokens\":" << m.cached_tokens
+       << "\"cached_tokens\":" << m.cached_tokens << ","
+       << "\"n_threads\":" << it->second->backend->n_threads()
        << "}";
   return StdStringToJString(env, json.str());
 }

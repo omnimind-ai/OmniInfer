@@ -44,6 +44,7 @@ public:
   virtual void reset() = 0;
 
   virtual InferenceMetrics get_metrics() = 0;
+  virtual int n_threads() const = 0;
 
   virtual const char* name() const = 0;
 };
