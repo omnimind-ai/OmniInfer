@@ -45,6 +45,9 @@ public:
     cp.n_ubatch = 512;
     cp.n_threads = eff_threads;
     cp.n_threads_batch = eff_threads;
+    cp.type_k = GGML_TYPE_F16;                          // KV cache quantization: 50% memory reduction
+    cp.type_v = GGML_TYPE_F16;
+    cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // Flash attention: faster prefill, less memory
     ctx_ = llama_init_from_model(model_, cp);
     if (!ctx_) { llama_model_free(model_); model_ = nullptr; return false; }
 

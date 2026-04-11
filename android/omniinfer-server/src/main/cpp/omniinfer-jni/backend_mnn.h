@@ -29,6 +29,7 @@ public:
     n_threads_ = eff_threads;
     std::ostringstream cfg;
     cfg << "{\"thread_num\":" << eff_threads;
+    cfg << ",\"attention_mode\":9";  // Mixed int8 QK + flash attention
     if (n_ctx > 0) cfg << ",\"max_new_tokens\":" << n_ctx;
     cfg << "}";
     llm_->set_config(cfg.str());
