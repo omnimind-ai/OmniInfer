@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
 from service_core.backends import BackendSpec, BackendTemplate
+
+logger = logging.getLogger("platform")
 from service_core.platforms.common import (
     bytes_to_gib,
     get_available_cuda_memory_bytes,
@@ -130,6 +133,10 @@ class HostPlatform(ABC):
                     ),
                     app_root,
                 )
+            logger.debug(
+                "Backend %s: runtime_dir=%s launcher=%s",
+                template.id, runtime_dir, launcher_path,
+            )
             backends[template.id] = BackendSpec(
                 id=template.id,
                 label=template.label,
