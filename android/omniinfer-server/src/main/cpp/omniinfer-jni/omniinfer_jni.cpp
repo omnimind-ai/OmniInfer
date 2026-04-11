@@ -61,38 +61,44 @@ std::string JStringToStdString(JNIEnv* env, jstring value) {
 }
 
 jstring StdStringToJString(JNIEnv* env, const std::string& value) {
-  // Sanitize: replace invalid UTF-8 bytes with '?' to avoid JNI Modified UTF-8 abort.
-  std::string safe;
-  safe.reserve(value.size());
+  // Convert UTF-8 to UTF-16 (jchar array) for JNI. This correctly handles
+  // 4-byte UTF-8 sequences (emoji, etc.) by encoding them as surrogate pairs,
+  // which NewStringUTF (Modified UTF-8) cannot do.
+  std::vector<jchar> utf16;
+  utf16.reserve(value.size());
   size_t i = 0;
   while (i < value.size()) {
     unsigned char c = static_cast<unsigned char>(value[i]);
-    if (c == 0) { break; } // Null byte terminates — JNI Modified UTF-8 encodes null differently.
-    if (c < 0x80) { safe.push_back(value[i]); i++; }
-    else if ((c & 0xE0) == 0xC0) {
-      if (i + 1 < value.size() && (static_cast<unsigned char>(value[i+1]) & 0xC0) == 0x80) {
-        safe.push_back(value[i]); safe.push_back(value[i+1]); i += 2;
-      } else { safe.push_back('?'); i++; }
+    uint32_t cp = 0;
+    int len = 0;
+    if (c < 0x80) { cp = c; len = 1; }
+    else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
+    else { utf16.push_back(0xFFFD); i++; continue; } // invalid byte
+
+    // Validate and decode continuation bytes.
+    bool valid = (i + len <= value.size());
+    for (int j = 1; j < len && valid; j++) {
+      if ((static_cast<unsigned char>(value[i + j]) & 0xC0) != 0x80) valid = false;
+      else cp = (cp << 6) | (value[i + j] & 0x3F);
     }
-    else if ((c & 0xF0) == 0xE0) {
-      if (i + 2 < value.size() && (static_cast<unsigned char>(value[i+1]) & 0xC0) == 0x80
-          && (static_cast<unsigned char>(value[i+2]) & 0xC0) == 0x80) {
-        safe.push_back(value[i]); safe.push_back(value[i+1]); safe.push_back(value[i+2]); i += 3;
-      } else { safe.push_back('?'); i++; }
+    if (!valid) { utf16.push_back(0xFFFD); i++; continue; }
+    i += len;
+
+    // Encode codepoint as UTF-16.
+    if (cp <= 0xFFFF) {
+      utf16.push_back(static_cast<jchar>(cp));
+    } else if (cp <= 0x10FFFF) {
+      // Surrogate pair for emoji and other supplementary characters.
+      cp -= 0x10000;
+      utf16.push_back(static_cast<jchar>(0xD800 | (cp >> 10)));
+      utf16.push_back(static_cast<jchar>(0xDC00 | (cp & 0x3FF)));
+    } else {
+      utf16.push_back(0xFFFD);
     }
-    else if ((c & 0xF8) == 0xF0) {
-      // 4-byte UTF-8: JNI Modified UTF-8 doesn't support 4-byte sequences directly,
-      // but NewStringUTF on most Android VMs handles them. Pass through.
-      if (i + 3 < value.size() && (static_cast<unsigned char>(value[i+1]) & 0xC0) == 0x80
-          && (static_cast<unsigned char>(value[i+2]) & 0xC0) == 0x80
-          && (static_cast<unsigned char>(value[i+3]) & 0xC0) == 0x80) {
-        safe.push_back(value[i]); safe.push_back(value[i+1]);
-        safe.push_back(value[i+2]); safe.push_back(value[i+3]); i += 4;
-      } else { safe.push_back('?'); i++; }
-    }
-    else { safe.push_back('?'); i++; }
   }
-  return env->NewStringUTF(safe.c_str());
+  return env->NewString(utf16.data(), static_cast<jsize>(utf16.size()));
 }
 
 std::optional<std::string> ExtractJsonString(const std::string& json, const std::string& key) {
@@ -114,6 +120,31 @@ std::optional<std::string> ExtractJsonString(const std::string& json, const std:
     if (ch == '\\') { esc = true; continue; }
     if (ch == '"') return out;
     out.push_back(ch);
+  }
+  return std::nullopt;
+}
+
+// Extract a raw JSON value (array or object) for a given key.
+std::optional<std::string> ExtractJsonRaw(const std::string& json, const std::string& key) {
+  const std::string token = "\"" + key + "\"";
+  size_t key_pos = json.find(token);
+  if (key_pos == std::string::npos) return std::nullopt;
+  size_t colon_pos = json.find(':', key_pos + token.size());
+  if (colon_pos == std::string::npos) return std::nullopt;
+  size_t pos = colon_pos + 1;
+  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+  if (pos >= json.size()) return std::nullopt;
+  char open = json[pos];
+  if (open != '[' && open != '{') return std::nullopt;
+  char close = (open == '[') ? ']' : '}';
+  int depth = 0;
+  bool in_str = false;
+  for (size_t i = pos; i < json.size(); i++) {
+    char c = json[i];
+    if (in_str) { if (c == '"' && json[i-1] != '\\') in_str = false; continue; }
+    if (c == '"') { in_str = true; continue; }
+    if (c == open) depth++;
+    else if (c == close) { depth--; if (depth == 0) return json.substr(pos, i - pos + 1); }
   }
   return std::nullopt;
 }
@@ -214,7 +245,7 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
 }
 
 jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt,
-                       jstring prompt, jstring request_json, jbyteArray, jobject callback) {
+                       jstring prompt, jstring request_json, jbyteArray image_data_arr, jobject callback) {
   Session* session = nullptr;
   {
     std::lock_guard<std::mutex> guard(g_sessions_mutex);
@@ -225,16 +256,39 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
 
   session->cancelled.store(false);
   const std::string req = JStringToStdString(env, request_json);
+
   const bool thinking = ExtractJsonBool(req, "thinking_enabled").value_or(session->thinking_enabled);
-  const std::string sys = JStringToStdString(env, system_prompt);
-  const std::string user = JStringToStdString(env, prompt);
+  const int max_tokens = ExtractJsonInt(req, "max_tokens").value_or(0);
+  const auto tools_json = ExtractJsonRaw(req, "tools");
+  const auto tool_choice = ExtractJsonString(req, "tool_choice");
+  const auto messages_json = ExtractJsonRaw(req, "messages");
+
+  // Legacy path: use system_prompt/prompt if messages not in requestJson.
+  const std::string sys = messages_json.has_value() ? "" : JStringToStdString(env, system_prompt);
+  const std::string user = messages_json.has_value() ? "" : JStringToStdString(env, prompt);
 
   auto on_token = [&](const std::string& token) -> bool {
     InvokeCallbackStringMethod(env, callback, "onToken", token);
     return !session->cancelled.load();
   };
 
-  std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token);
+  // Extract image bytes if provided.
+  const uint8_t* img_ptr = nullptr;
+  jsize img_len = 0;
+  jbyte* img_bytes = nullptr;
+  if (image_data_arr) {
+    img_len = env->GetArrayLength(image_data_arr);
+    if (img_len > 0) {
+      img_bytes = env->GetByteArrayElements(image_data_arr, nullptr);
+      img_ptr = reinterpret_cast<const uint8_t*>(img_bytes);
+    }
+  }
+
+  std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token,
+      tools_json.value_or(""), tool_choice.value_or(""), messages_json.value_or(""),
+      img_ptr, static_cast<size_t>(img_len), max_tokens);
+
+  if (img_bytes) env->ReleaseByteArrayElements(image_data_arr, img_bytes, JNI_ABORT);
 
   // Report metrics.
   auto m = session->backend->get_metrics();
@@ -314,7 +368,11 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
        << "\"prompt_tokens\":" << m.prompt_tokens << ","
        << "\"generated_tokens\":" << m.generated_tokens << ","
        << "\"prefill_us\":" << m.prefill_us << ","
-       << "\"decode_us\":" << m.decode_us
+       << "\"decode_us\":" << m.decode_us << ","
+       << "\"reasoning_tokens\":" << m.reasoning_tokens << ","
+       << "\"image_tokens\":" << m.image_tokens << ","
+       << "\"cached_tokens\":" << m.cached_tokens << ","
+       << "\"n_threads\":" << it->second->backend->n_threads()
        << "}";
   return StdStringToJString(env, json.str());
 }
@@ -325,7 +383,7 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
 
 JNINativeMethod kMethods[] = {
     {"nativeInit", "(Ljava/lang/String;)J", reinterpret_cast<void*>(NativeInit)},
-    {"nativeGenerate", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BLjava/lang/Object;)Ljava/lang/String;", reinterpret_cast<void*>(NativeGenerate)},
+    {"nativeGenerate", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BLcom/omniinfer/server/OmniInferStreamCallback;)Ljava/lang/String;", reinterpret_cast<void*>(NativeGenerate)},
     {"nativeLoadHistory", "(J[Ljava/lang/String;[Ljava/lang/String;)Z", reinterpret_cast<void*>(NativeLoadHistory)},
     {"nativePrewarmImage", "(J[BI)Z", reinterpret_cast<void*>(NativePrewarmImage)},
     {"nativeSetThinkMode", "(JZ)V", reinterpret_cast<void*>(NativeSetThinkMode)},

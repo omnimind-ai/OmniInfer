@@ -13,6 +13,9 @@ struct InferenceMetrics {
   int generated_tokens = 0;
   int64_t prefill_us = 0;
   int64_t decode_us = 0;
+  int reasoning_tokens = 0;  // completion tokens before </think>
+  int image_tokens = 0;      // image tokens in prompt (multimodal only)
+  int cached_tokens = 0;     // KV cache prefix reuse count
 };
 
 class InferenceBackend {
@@ -28,7 +31,13 @@ public:
       const std::string& user_prompt,
       bool thinking_enabled,
       std::atomic<bool>& cancelled,
-      std::function<bool(const std::string& token)> on_token) = 0;
+      std::function<bool(const std::string& token)> on_token,
+      const std::string& tools_json = "",
+      const std::string& tool_choice = "",
+      const std::string& messages_json = "",
+      const uint8_t* image_data = nullptr,
+      size_t image_size = 0,
+      int max_tokens = 0) = 0;
 
   virtual bool load_history(
       const std::vector<std::pair<std::string, std::string>>& messages) = 0;
@@ -36,6 +45,7 @@ public:
   virtual void reset() = 0;
 
   virtual InferenceMetrics get_metrics() = 0;
+  virtual int n_threads() const = 0;
 
   virtual const char* name() const = 0;
 };

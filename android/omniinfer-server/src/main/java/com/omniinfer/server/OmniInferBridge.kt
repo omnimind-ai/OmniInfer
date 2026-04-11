@@ -24,33 +24,46 @@ object OmniInferBridge {
         backend: String = "llama.cpp",
         nThreads: Int = 0,
         nCtx: Int = 4096,
-        nativeLibDir: String? = null
+        nativeLibDir: String? = null,
+        cacheDir: String? = null
     ): Long {
         if (!isNativeLibraryLoaded) return 0L
         val configJson = JSONObject()
             .put("backend", backend)
             .put("model_path", modelPath)
             .put("native_lib_dir", nativeLibDir ?: "")
+            .put("cache_dir", cacheDir ?: "")
             .put("n_threads", nThreads)
             .put("n_ctx", nCtx)
         val handle = nativeInit(configJson.toString())
-        if (handle != 0L) thinkModes[handle] = false
+        // Don't set default think mode — let each request's thinkEnabled param decide.
         return handle
     }
 
     fun generate(
         handle: Long,
-        systemPrompt: String?,
-        prompt: String,
+        messagesJson: String,
         imageData: ByteArray? = null,
         thinkEnabled: Boolean = false,
-        callback: Any? = null
+        toolsJson: String? = null,
+        toolChoice: String? = null,
+        maxTokens: Int? = null,
+        callback: OmniInferStreamCallback? = null
     ): String {
         if (!isNativeLibraryLoaded) return ""
-        val requestJson = JSONObject()
-            .put("thinking_enabled", thinkModes[handle] ?: thinkEnabled)
-            .toString()
-        return nativeGenerate(handle, systemPrompt, prompt, requestJson, imageData, callback)
+        // Build request JSON by string concatenation to avoid org.json re-serialization
+        // which can corrupt non-ASCII characters (Chinese, emoji) through its parse/toString cycle.
+        val thinking = if (thinkModes.containsKey(handle)) thinkModes[handle] else thinkEnabled
+        val sb = StringBuilder()
+        sb.append("{\"thinking_enabled\":").append(thinking)
+        sb.append(",\"messages\":").append(messagesJson)
+        if (toolsJson != null) {
+            sb.append(",\"tools\":").append(toolsJson)
+            if (toolChoice != null) sb.append(",\"tool_choice\":\"").append(toolChoice).append("\"")
+        }
+        if (maxTokens != null && maxTokens > 0) sb.append(",\"max_tokens\":").append(maxTokens)
+        sb.append("}")
+        return nativeGenerate(handle, "", "", sb.toString(), imageData, callback)
     }
 
     fun loadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean {
@@ -80,7 +93,7 @@ object OmniInferBridge {
     }
 
     private external fun nativeInit(configJson: String): Long
-    private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageData: ByteArray?, callback: Any?): String
+    private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageData: ByteArray?, callback: OmniInferStreamCallback?): String
     private external fun nativeLoadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean
     private external fun nativePrewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int): Boolean
     private external fun nativeSetThinkMode(handle: Long, enabled: Boolean)
