@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import logging
 import os
 import platform
 import re
@@ -12,6 +13,8 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("platform")
 
 
 SYSTEM_MODEL_LIST_URLS: dict[str, str] = {
@@ -45,6 +48,7 @@ def prepend_env_path(env: dict[str, str], key: str, value: str) -> None:
 
 
 def wait_http_ready(host: str, port: int, timeout_s: int) -> bool:
+    logger.debug("Waiting for %s:%d to become ready (timeout=%ds)", host, port, timeout_s)
     deadline = time.time() + timeout_s
     url = f"http://{host}:{port}/health"
     while time.time() < deadline:
@@ -140,7 +144,9 @@ def get_available_memory_bytes() -> int:
 
     page_size = os.sysconf("SC_PAGE_SIZE")
     avail_pages = os.sysconf("SC_AVPHYS_PAGES")
-    return int(page_size * avail_pages)
+    result = int(page_size * avail_pages)
+    logger.debug("Available memory: %d bytes (%.2f GiB)", result, result / (1024**3))
+    return result
 
 
 def get_available_cuda_memory_bytes() -> int | None:
