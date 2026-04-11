@@ -264,6 +264,7 @@ if ($Model) {
                 $catalog = $catalogRaw | ConvertFrom-Json
 
                 $modelList = @()
+                $seen = @{}
                 foreach ($backendName in $catalog.PSObject.Properties.Name) {
                     $families = $catalog.$backendName
                     foreach ($famName in $families.PSObject.Properties.Name) {
@@ -278,6 +279,9 @@ if ($Model) {
                                 $dl = $q.download
                                 $sizeStr = $q.size
                                 if (-not $dl -or -not $sizeStr) { continue }
+                                $dedup = "$modelName|$qName"
+                                if ($seen.ContainsKey($dedup)) { continue }
+                                $seen[$dedup] = $true
                                 try { $sizeGib = [double]$sizeStr } catch { continue }
                                 if ($sizeGib -gt 6.0 -or $sizeGib -lt 0.1) { continue }
                                 $modelList += [PSCustomObject]@{
