@@ -430,18 +430,14 @@ The iOS client runs the inference engine entirely on-device, similar to the Andr
 OmniStudio iOS (SwiftUI)
   └─ OmniInferServer (in-process)
        └─ Hummingbird HTTP Server (127.0.0.1:9099)
-            ├─ LlamaCppEngine → C Bridge → llama.cpp (Metal/CPU)
-            └─ MLXEngine → mlx-swift-lm (Metal, Apple Silicon)
 ```
 
 Unlike Android which uses a foreground service, the iOS client runs the HTTP server as an in-process NIO event loop within the app. iOS does not support background services, so the API is only available while the app is in the foreground.
 
 ### Prerequisites
 
-- OmniStudio iOS installed on an ARM64 device (iPhone/iPad with Apple Silicon)
+- OmniStudio iOS installed (requires iOS 17+)
 - At least one model downloaded to local storage
-- **llama.cpp backend:** iPhone 11 (A13) or newer
-- **MLX backend:** iPhone 15 Pro (A17 Pro, 8GB RAM) or newer recommended
 
 ### Endpoints
 
@@ -565,37 +561,6 @@ await OmniInferServer.shared.loadModel(
 
 // Server is ready — use HTTP or direct engine access
 ```
-
-### Available Backends
-
-| Backend | Model Format | Acceleration | Minimum Device |
-|---------|-------------|-------------|----------------|
-| `llama.cpp` | GGUF (`.gguf`) | CPU (NEON) / Metal | iPhone 11 (A13) |
-| `mlx` | Safetensors (HuggingFace dir) | Metal (Apple Silicon) | iPhone 15 Pro (A17 Pro) |
-
-Both backends support:
-- Multi-turn conversation (full message history per request)
-- Streaming and non-streaming responses
-- Thinking / reasoning mode (`enable_thinking` parameter)
-
-**Coming soon:**
-- MNN backend (mobile-optimized, ARM CPU acceleration)
-- Multimodal / vision input
-- KV cache prefix reuse
-
-### Thinking Mode
-
-To enable thinking mode, add `enable_thinking: true` to the request:
-
-```json
-{
-  "messages": [{"role": "user", "content": "Explain quantum computing."}],
-  "stream": true,
-  "enable_thinking": true
-}
-```
-
-Supported models: Qwen3/3.5 (uses `<think>` tags), Gemma 4 (uses `<|channel>thinking` / `<channel|>` markers, normalized to `<think>` / `</think>` in the response).
 
 ### Stop the Service
 

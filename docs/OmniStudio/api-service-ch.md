@@ -430,18 +430,14 @@ iOS 客户端与 Android 类似，完全在设备端运行推理引擎。OmniStu
 OmniStudio iOS (SwiftUI)
   └─ OmniInferServer（进程内）
        └─ Hummingbird HTTP Server (127.0.0.1:9099)
-            ├─ LlamaCppEngine → C Bridge → llama.cpp (Metal/CPU)
-            └─ MLXEngine → mlx-swift-lm (Metal, Apple Silicon)
 ```
 
 与 Android 使用前台服务不同，iOS 客户端以进程内 NIO 事件循环方式运行 HTTP 服务器。由于 iOS 不支持后台服务，API 仅在应用处于前台时可用。
 
 ### 前提条件
 
-- 已安装 OmniStudio iOS
+- 已安装 OmniStudio iOS（需要 iOS 17+）
 - 至少已下载一个模型
-- **llama.cpp 后端：** iPhone 11 (A13) 及以上
-- **MLX 后端：** 推荐 iPhone 15 Pro (A17 Pro, 8GB RAM) 及以上
 
 ### 端点
 
@@ -557,37 +553,6 @@ await OmniInferServer.shared.loadModel(
 )
 // 服务器已就绪
 ```
-
-### 可用后端
-
-| 后端 | 模型格式 | 加速方式 | 最低设备要求 |
-|------|---------|---------|------------|
-| `llama.cpp` | GGUF (`.gguf`) | CPU (NEON) / Metal | iPhone 11 (A13) |
-| `mlx` | Safetensors (HuggingFace 目录) | Metal (Apple Silicon) | iPhone 15 Pro (A17 Pro) |
-
-两个后端均支持：
-- 多轮对话（每次请求发送完整消息历史）
-- 流式和非流式响应
-- 思考/推理模式（`enable_thinking` 参数）
-
-**即将支持：**
-- MNN 后端（移动端优化，ARM CPU 加速）
-- 多模态/视觉输入
-- KV 缓存前缀复用
-
-### 思考模式
-
-在请求中添加 `enable_thinking: true` 开启思考模式：
-
-```json
-{
-  "messages": [{"role": "user", "content": "解释量子计算。"}],
-  "stream": true,
-  "enable_thinking": true
-}
-```
-
-支持的模型：Qwen3/3.5（使用 `<think>` 标签）、Gemma 4（使用 `<|channel>thinking` / `<channel|>` 标记，响应中统一标准化为 `<think>` / `</think>`）。
 
 ### 停止服务
 
