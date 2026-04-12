@@ -27,6 +27,7 @@ public:
 
     int eff_threads = n_threads > 0 ? n_threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
     n_threads_ = eff_threads;
+    n_ctx_ = n_ctx > 0 ? n_ctx : 16384;
     std::ostringstream cfg;
     cfg << "{\"thread_num\":" << eff_threads;
     cfg << ",\"attention_mode\":9";  // Mixed int8 QK + flash attention
@@ -114,6 +115,15 @@ public:
       if (n_image_tokens < 0) n_image_tokens = 0;
     } else {
       input_ids = llm_->tokenizer_encode(formatted);
+    }
+
+    // Check prompt fits in context window.
+    if ((int)input_ids.size() > n_ctx_ - 4) {
+      std::ostringstream err;
+      err << R"({"error":"prompt_too_long","prompt_tokens":)" << (int)input_ids.size()
+          << R"(,"max_context":)" << n_ctx_ << "}";
+      if (!tmp_image_path.empty()) remove(tmp_image_path.c_str());
+      return err.str();
     }
 
     // KV cache prefix reuse.
@@ -427,6 +437,7 @@ private:
   MNN::Transformer::Llm* llm_ = nullptr;
   std::string cache_dir_;
   int n_threads_ = 0;
+  int n_ctx_ = 16384;
   InferenceMetrics last_metrics_;
   // KV cache prefix reuse state.
   std::vector<int> prev_input_ids_;     // text-only token comparison

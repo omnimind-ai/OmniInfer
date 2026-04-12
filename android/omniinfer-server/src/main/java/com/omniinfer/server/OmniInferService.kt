@@ -320,6 +320,19 @@ class OmniInferService : Service() {
 
                 if (!connectionAlive) return@respondTextWriter
 
+                // Check for backend error (e.g. prompt too long).
+                if (result.startsWith("{\"error\":")) {
+                    write("data: ${buildJsonObject {
+                        put("id", completionId)
+                        put("object", "chat.completion.chunk")
+                        put("model", requestModel)
+                        put("error", Json.parseToJsonElement(result).jsonObject)
+                    }}\n\n")
+                    write("data: [DONE]\n\n")
+                    flush()
+                    return@respondTextWriter
+                }
+
                 // Flush remaining reasoning buffer as content if model ended without </think>.
                 if (inReasoning && thinkEndBuf.isNotEmpty()) {
                     val chunk = buildChunk(completionId, requestModel, created) {
@@ -422,6 +435,13 @@ class OmniInferService : Service() {
                     }
                 )
             )
+
+            // Check for backend error (e.g. prompt too long).
+            if (result.startsWith("{\"error\":")) {
+                call.respondText(result, ContentType.Application.Json, HttpStatusCode.BadRequest)
+                return
+            }
+
             val toolCallResult = runCatching {
                 val parsed = Json.parseToJsonElement(result).jsonObject
                 parsed["tool_calls"]?.jsonArray
