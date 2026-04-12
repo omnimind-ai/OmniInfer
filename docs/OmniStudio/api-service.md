@@ -1,5 +1,14 @@
 # OmniStudio API Service Guide
 
+## Table of Contents
+
+- [API Overview](#api-overview)
+- [PC Client (Windows / macOS)](#pc-client-windows--macos)
+- [Android Client](#android-client)
+- [iOS Client](#ios-client)
+
+---
+
 OmniStudio is a cross-platform model inference client powered by OmniInfer. When a model is loaded in the chat interface, OmniStudio automatically starts an OpenAI-compatible API service in the background, allowing external applications to call the local inference engine via HTTP.
 
 ## API Overview

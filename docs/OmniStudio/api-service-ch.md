@@ -1,5 +1,14 @@
 # OmniStudio API 服务指南
 
+## 目录
+
+- [API 概览](#api-概览)
+- [PC 客户端（Windows / macOS）](#pc-客户端windows--macos)
+- [Android 客户端](#android-客户端)
+- [iOS 客户端](#ios-客户端)
+
+---
+
 OmniStudio 是基于 OmniInfer 的多平台模型推理客户端。在对话界面加载模型后，OmniStudio 会自动在后台启动 OpenAI 兼容的 API 服务，供外部应用通过 HTTP 调用本地推理引擎。
 
 ## API 概览
