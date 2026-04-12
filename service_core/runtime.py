@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import signal
@@ -26,6 +27,73 @@ from service_core.platforms import (
     pick_available_port,
     wait_http_ready,
 )
+
+
+def _assign_to_kill_on_close_job(pid: int) -> Any | None:
+    """Assign a process to a Job Object with KILL_ON_JOB_CLOSE on Windows.
+
+    When the last handle to the Job is closed (i.e. this process exits or
+    crashes), the OS automatically terminates all processes in the Job.
+    Returns the job handle on success, None on non-Windows or failure.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+
+        PROCESS_SET_QUOTA = 0x0100
+        PROCESS_TERMINATE = 0x0001
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation_PerProcessUserTimeLimit", ctypes.c_int64),
+                ("BasicLimitInformation_PerJobUserTimeLimit", ctypes.c_int64),
+                ("BasicLimitInformation_LimitFlags", ctypes.c_uint32),
+                ("BasicLimitInformation_MinimumWorkingSetSize", ctypes.c_size_t),
+                ("BasicLimitInformation_MaximumWorkingSetSize", ctypes.c_size_t),
+                ("BasicLimitInformation_ActiveProcessLimit", ctypes.c_uint32),
+                ("BasicLimitInformation_Affinity", ctypes.c_size_t),
+                ("BasicLimitInformation_PriorityClass", ctypes.c_uint32),
+                ("BasicLimitInformation_SchedulingClass", ctypes.c_uint32),
+                ("IoInfo_ReadOperationCount", ctypes.c_uint64),
+                ("IoInfo_WriteOperationCount", ctypes.c_uint64),
+                ("IoInfo_OtherOperationCount", ctypes.c_uint64),
+                ("IoInfo_ReadTransferCount", ctypes.c_uint64),
+                ("IoInfo_WriteTransferCount", ctypes.c_uint64),
+                ("IoInfo_OtherTransferCount", ctypes.c_uint64),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation_LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            job, 9, ctypes.byref(info), ctypes.sizeof(info)
+        ):
+            kernel32.CloseHandle(job)
+            return None
+
+        h_process = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
+        if not h_process:
+            kernel32.CloseHandle(job)
+            return None
+
+        ok = kernel32.AssignProcessToJobObject(job, h_process)
+        kernel32.CloseHandle(h_process)
+        if not ok:
+            kernel32.CloseHandle(job)
+            return None
+
+        return job
+    except Exception:
+        return None
 
 
 @dataclass
@@ -209,6 +277,15 @@ class RuntimeManager:
                     proc.kill()
                 except OSError:
                     pass
+
+        job = getattr(self, "_backend_job_handle", None)
+        if job is not None:
+            try:
+                ctypes.windll.kernel32.CloseHandle(job)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            self._backend_job_handle = None
+
         logger.info("External runtime stopped (backend=%s)", runtime.backend_id)
         if runtime.log_handle:
             try:
@@ -355,6 +432,7 @@ class RuntimeManager:
         if not backend.binary_exists or not backend.launcher_path:
             logger.error("Backend launcher not found: %s (path=%s)", backend.id, backend.launcher_path or "(unset)")
             raise FileNotFoundError(f"backend launcher not found: {backend.launcher_path or '(unset)'}")
+
         logger.info("Starting external backend %s", backend.id)
         effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
         self._validate_launch_args(effective_launch_args)
@@ -403,6 +481,8 @@ class RuntimeManager:
             creationflags=creationflags,
             startupinfo=startupinfo,
         )
+
+        self._backend_job_handle = _assign_to_kill_on_close_job(proc.pid)
 
         logger.info("Backend %s started (PID %d), waiting for health check on port %d...", backend.id, proc.pid, launch.port)
         _health_start = time.perf_counter()
@@ -607,6 +687,7 @@ class RuntimeManager:
                 logger.info("Available memory before load: %.2f GiB", bytes_to_gib(get_available_memory_bytes()))
             except Exception:
                 pass
+
 
             mmproj_path = self._resolve_mmproj_path(
                 preferred_backend,

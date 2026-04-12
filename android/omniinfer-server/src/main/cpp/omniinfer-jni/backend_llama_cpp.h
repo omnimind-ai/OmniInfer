@@ -157,6 +157,15 @@ public:
     int n_image_tokens = 0;
 
     if (is_multimodal) {
+      // Quick check: text tokens alone (excluding image) must fit in context.
+      auto text_check = common_tokenize(ctx_, params.prompt, true, true);
+      if ((int)text_check.size() > n_ctx_ - 4) {
+        std::ostringstream err;
+        err << R"({"error":"prompt_too_long","prompt_tokens":)" << (int)text_check.size()
+            << R"(,"max_context":)" << n_ctx_ << "}";
+        return err.str();
+      }
+
       // Compare conversation history (without generation prompt) for KV cache reuse.
       std::string conv_history = strip_generation_prompt(params.prompt);
       bool reuse_mm = has_cache_ && !prev_eval_prompt_.empty() &&
@@ -226,6 +235,13 @@ public:
       // Text-only path with KV cache prefix reuse.
       auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
       n_prompt_tokens = (int)prompt_toks.size();
+
+      if (n_prompt_tokens > n_ctx_ - 4) {
+        std::ostringstream err;
+        err << R"({"error":"prompt_too_long","prompt_tokens":)" << n_prompt_tokens
+            << R"(,"max_context":)" << n_ctx_ << "}";
+        return err.str();
+      }
 
       // Find common prefix length with previous prompt tokens.
       int common_prefix = 0;

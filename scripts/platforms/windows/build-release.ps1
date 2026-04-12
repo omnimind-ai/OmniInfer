@@ -23,7 +23,7 @@ $Arm64Script = Join-Path $PlatformRoot "build-llama-arm64.ps1"
 $SyclScript = Join-Path $PlatformRoot "build-llama-sycl.ps1"
 $HipScript = Join-Path $PlatformRoot "build-llama-hip.ps1"
 $ReleaseScript = Join-Path $RepoRoot "release\build_portable.ps1"
-$PortableRoot = Join-Path $RepoRoot "release\portable\OmniInfer"
+$PortableRoot = Join-Path $RepoRoot "release\portable\windows-x64\OmniInfer"
 
 if (-not (Test-Path -LiteralPath $ReleaseScript)) {
     throw "Release build script not found: $ReleaseScript"
