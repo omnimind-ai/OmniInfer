@@ -3,6 +3,7 @@ from __future__ import annotations
 from service_core.platforms.android import AndroidPlatform
 from service_core.platforms.base import HostPlatform
 from service_core.platforms.common import current_system_name
+from service_core.platforms.ios import IOSPlatform
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
@@ -10,6 +11,7 @@ from service_core.platforms.windows import WindowsPlatform
 
 _PLATFORM_REGISTRY: dict[str, HostPlatform] = {
     "android": AndroidPlatform(),
+    "ios": IOSPlatform(),
     "windows": WindowsPlatform(),
     "mac": MacPlatform(),
     "linux": LinuxPlatform(),
