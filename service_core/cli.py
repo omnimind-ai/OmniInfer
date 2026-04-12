@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import logging
 import os
 import platform
 import re
@@ -238,7 +237,6 @@ def start_service_background() -> None:
         default_backend=default_backend,
     )
 
-    logging.getLogger("cli").info("Starting gateway service in background: %s", " ".join(command))
     CLI_LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_handle = CLI_LOG_FILE.open("a", encoding="utf-8")
     if os.name == "nt":
@@ -629,13 +627,11 @@ def combine_backend_extra_args(
 
 
 def print_model_load(args: argparse.Namespace) -> int:
-    config_arg = getattr(args, "config", None)
-    backend_extra_args = list(getattr(args, "backend_extra_args", []))
     selected_backend, backend = resolve_backend_spec_for_native_args(
-        allow_auto=bool(getattr(args, "auto", False)),
-        needs_native_args=bool(config_arg is not None or backend_extra_args),
+        allow_auto=args.auto,
+        needs_native_args=bool(args.config is not None or getattr(args, "backend_extra_args", [])),
     )
-    profile = resolve_backend_profile_arg(config_arg, selected_backend)
+    profile = resolve_backend_profile_arg(args.config, selected_backend)
     if profile and profile.backend_id and not selected_backend:
         selected_backend = profile.backend_id
         backend = local_backends().get(selected_backend)
@@ -643,7 +639,7 @@ def print_model_load(args: argparse.Namespace) -> int:
         backend=backend,
         command_name="load",
         profile=profile,
-        cli_tokens=backend_extra_args,
+        cli_tokens=list(getattr(args, "backend_extra_args", [])),
     ) if backend is not None else ParsedBackendExtraArgs()
 
     model_input = args.model
@@ -842,13 +838,11 @@ def stream_chat(payload: dict[str, Any]) -> int:
 
 
 def chat(args: argparse.Namespace) -> int:
-    config_arg = getattr(args, "config", None)
-    backend_extra_args = list(getattr(args, "backend_extra_args", []))
     selected_backend, backend = resolve_backend_spec_for_native_args(
-        allow_auto=bool(getattr(args, "auto", False)),
-        needs_native_args=bool(config_arg is not None or backend_extra_args),
+        allow_auto=args.auto,
+        needs_native_args=bool(args.config is not None or getattr(args, "backend_extra_args", [])),
     )
-    profile = resolve_backend_profile_arg(config_arg, selected_backend)
+    profile = resolve_backend_profile_arg(args.config, selected_backend)
     if profile and profile.backend_id and not selected_backend:
         selected_backend = profile.backend_id
         backend = local_backends().get(selected_backend)
@@ -856,7 +850,7 @@ def chat(args: argparse.Namespace) -> int:
         backend=backend,
         command_name="chat",
         profile=profile,
-        cli_tokens=backend_extra_args,
+        cli_tokens=list(getattr(args, "backend_extra_args", [])),
     ) if backend is not None else ParsedBackendExtraArgs()
     state = current_runtime_state()
 
@@ -1109,12 +1103,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from service_core.logger import setup_logging
-
-    setup_logging(level="DEBUG", console=False, log_to_file=True)
-    cli_logger = logging.getLogger("cli")
-    cli_logger.debug("CLI invoked: %s", " ".join(sys.argv))
-
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "__complete":
         return handle_hidden_completion(argv[1:])
