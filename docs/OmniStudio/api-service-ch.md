@@ -422,4 +422,183 @@ Android 不提供 HTTP 关闭端点，通过 OmniStudio 界面管理服务生命
 
 ## iOS 客户端
 
-> **TODO** — iOS API 服务文档待补充。
+iOS 客户端与 Android 类似，完全在设备端运行推理引擎。OmniStudio 内嵌 OmniInfer Swift Package，通过基于 Hummingbird (swift-nio) 的进程内 HTTP 服务器提供与桌面端相同的 OpenAI 兼容 API。
+
+### 架构
+
+```
+OmniStudio iOS (SwiftUI)
+  └─ OmniInferServer（进程内）
+       └─ Hummingbird HTTP Server (127.0.0.1:9099)
+            ├─ LlamaCppEngine → C Bridge → llama.cpp (Metal/CPU)
+            └─ MLXEngine → mlx-swift-lm (Metal, Apple Silicon)
+```
+
+与 Android 使用前台服务不同，iOS 客户端以进程内 NIO 事件循环方式运行 HTTP 服务器。由于 iOS 不支持后台服务，API 仅在应用处于前台时可用。
+
+### 前提条件
+
+- 已安装 OmniStudio iOS
+- 至少已下载一个模型
+- **llama.cpp 后端：** iPhone 11 (A13) 及以上
+- **MLX 后端：** 推荐 iPhone 15 Pro (A17 Pro, 8GB RAM) 及以上
+
+### 端点
+
+iOS API 提供与 Android 相同的端点子集：
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/v1/models` | GET | 列出已加载模型 |
+| `/v1/chat/completions` | POST | 聊天补全（流式和非流式） |
+
+### 第一步：加载模型
+
+打开 OmniStudio 选择一个模型进行对话。模型加载完成后，API 服务自动在 **9099** 端口启动。
+
+### 第二步：验证服务
+
+iOS API 绑定 `127.0.0.1`（仅本地回环），只能从 app 进程内或通过 USB 调试工具访问。
+
+**从 app 内以编程方式访问：**
+
+```swift
+import OmniInferServer
+
+// 加载模型
+await OmniInferServer.shared.loadModel(
+    modelPath: "/path/to/model.gguf",
+    backend: "llama.cpp"  // 或 "mlx"
+)
+
+// 服务器已在 http://127.0.0.1:9099 运行
+let url = URL(string: "http://127.0.0.1:9099/health")!
+let (data, _) = try await URLSession.shared.data(from: url)
+// {"status":"ok"}
+```
+
+### 第三步：调用 API
+
+**非流式请求（app 内调用）：**
+
+```swift
+let url = URL(string: "http://127.0.0.1:9099/v1/chat/completions")!
+var request = URLRequest(url: url)
+request.httpMethod = "POST"
+request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+request.httpBody = try JSONSerialization.data(withJSONObject: [
+    "messages": [["role": "user", "content": "2+2等于多少？"]],
+    "stream": false
+])
+
+let (data, _) = try await URLSession.shared.data(for: request)
+```
+
+响应：
+
+```json
+{
+  "object": "chat.completion",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "2 + 2 = 4。"
+      },
+      "index": 0,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prefill_tokens_per_second": 45.2,
+    "decode_tokens_per_second": 21.8
+  }
+}
+```
+
+**流式请求：**
+
+```swift
+let (bytes, _) = try await URLSession.shared.bytes(for: request)
+for try await line in bytes.lines {
+    guard line.hasPrefix("data: ") else { continue }
+    let payload = String(line.dropFirst(6))
+    if payload == "[DONE]" { break }
+    // 解析 SSE chunk...
+}
+```
+
+### 第四步：接入第三方应用
+
+同一设备上的其他 iOS 应用可以通过 URLSession 或任何 HTTP 库调用 `http://127.0.0.1:9099/v1/chat/completions`。访问 localhost 无需特殊权限。
+
+**通过 Swift Package 直接集成：**
+
+无需经过 HTTP，直接添加 OmniInferServer Swift Package 作为依赖：
+
+```swift
+// Package.swift
+dependencies: [
+    .package(path: "Vendor/OmniInfer/ios/OmniInferServer")
+]
+```
+
+然后直接使用 OmniInferServer API：
+
+```swift
+import OmniInferServer
+
+await OmniInferServer.shared.loadModel(
+    modelPath: modelDir,
+    backend: "llama.cpp",  // 或 "mlx"
+    port: 9099,
+    nCtx: 4096
+)
+// 服务器已就绪
+```
+
+### 可用后端
+
+| 后端 | 模型格式 | 加速方式 | 最低设备要求 |
+|------|---------|---------|------------|
+| `llama.cpp` | GGUF (`.gguf`) | CPU (NEON) / Metal | iPhone 11 (A13) |
+| `mlx` | Safetensors (HuggingFace 目录) | Metal (Apple Silicon) | iPhone 15 Pro (A17 Pro) |
+
+两个后端均支持：
+- 多轮对话（每次请求发送完整消息历史）
+- 流式和非流式响应
+- 思考/推理模式（`enable_thinking` 参数）
+
+**即将支持：**
+- MNN 后端（移动端优化，ARM CPU 加速）
+- 多模态/视觉输入
+- KV 缓存前缀复用
+
+### 思考模式
+
+在请求中添加 `enable_thinking: true` 开启思考模式：
+
+```json
+{
+  "messages": [{"role": "user", "content": "解释量子计算。"}],
+  "stream": true,
+  "enable_thinking": true
+}
+```
+
+支持的模型：Qwen3/3.5（使用 `<think>` 标签）、Gemma 4（使用 `<|channel>thinking` / `<channel|>` 标记，响应中统一标准化为 `<think>` / `</think>`）。
+
+### 停止服务
+
+API 服务在以下情况下自动停止：
+- 在 OmniStudio 中卸载模型
+- 关闭 OmniStudio 或应用进入后台
+
+通过代码停止：
+
+```swift
+await OmniInferServer.shared.stop()
+```
+
+iOS 不提供 HTTP 关闭端点，通过 OmniInferServer Swift API 管理服务生命周期。

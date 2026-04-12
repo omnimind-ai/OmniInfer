@@ -422,4 +422,191 @@ There is no HTTP shutdown endpoint on Android. Use the OmniStudio UI to manage t
 
 ## iOS Client
 
-> **TODO** — iOS API service documentation pending.
+The iOS client runs the inference engine entirely on-device, similar to the Android client. OmniStudio embeds the OmniInfer Swift Package and exposes the same OpenAI-compatible API through an in-process HTTP server powered by Hummingbird (swift-nio).
+
+### Architecture
+
+```
+OmniStudio iOS (SwiftUI)
+  └─ OmniInferServer (in-process)
+       └─ Hummingbird HTTP Server (127.0.0.1:9099)
+            ├─ LlamaCppEngine → C Bridge → llama.cpp (Metal/CPU)
+            └─ MLXEngine → mlx-swift-lm (Metal, Apple Silicon)
+```
+
+Unlike Android which uses a foreground service, the iOS client runs the HTTP server as an in-process NIO event loop within the app. iOS does not support background services, so the API is only available while the app is in the foreground.
+
+### Prerequisites
+
+- OmniStudio iOS installed on an ARM64 device (iPhone/iPad with Apple Silicon)
+- At least one model downloaded to local storage
+- **llama.cpp backend:** iPhone 11 (A13) or newer
+- **MLX backend:** iPhone 15 Pro (A17 Pro, 8GB RAM) or newer recommended
+
+### Endpoints
+
+The iOS API exposes the same subset as Android:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/v1/models` | GET | List loaded models |
+| `/v1/chat/completions` | POST | Chat completions (streaming and non-streaming) |
+
+### Step 1: Load a Model
+
+Open OmniStudio and select a model to chat with. Once the model finishes loading, the API service starts automatically on port **9099**.
+
+### Step 2: Verify the Service
+
+**From a Mac on the same network:**
+
+The iOS API binds to `127.0.0.1` (loopback only), so it is only accessible from within the app process or via USB debugging tools. To access from a Mac:
+
+1. Connect the iPhone via USB
+2. Use Xcode's Network Link Conditioner or a proxy tool to forward traffic
+
+**From within the app (programmatic access):**
+
+```swift
+import OmniInferServer
+
+// Load a model
+await OmniInferServer.shared.loadModel(
+    modelPath: "/path/to/model.gguf",
+    backend: "llama.cpp"  // or "mlx"
+)
+
+// The server is now running at http://127.0.0.1:9099
+let url = URL(string: "http://127.0.0.1:9099/health")!
+let (data, _) = try await URLSession.shared.data(from: url)
+// {"status":"ok"}
+```
+
+### Step 3: Call the API
+
+**Non-streaming request (from within the app):**
+
+```swift
+let url = URL(string: "http://127.0.0.1:9099/v1/chat/completions")!
+var request = URLRequest(url: url)
+request.httpMethod = "POST"
+request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+request.httpBody = try JSONSerialization.data(withJSONObject: [
+    "messages": [["role": "user", "content": "What is 2+2?"]],
+    "stream": false
+])
+
+let (data, _) = try await URLSession.shared.data(for: request)
+let json = try JSONSerialization.jsonObject(with: data)
+```
+
+Response:
+
+```json
+{
+  "object": "chat.completion",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "2 + 2 = 4."
+      },
+      "index": 0,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prefill_tokens_per_second": 45.2,
+    "decode_tokens_per_second": 21.8
+  }
+}
+```
+
+**Streaming request:**
+
+```swift
+let (bytes, _) = try await URLSession.shared.bytes(for: request)
+for try await line in bytes.lines {
+    guard line.hasPrefix("data: ") else { continue }
+    let payload = String(line.dropFirst(6))
+    if payload == "[DONE]" { break }
+    // Parse SSE chunk...
+}
+```
+
+### Step 4: Integrate with Other iOS Apps
+
+Third-party iOS apps on the same device can call `http://127.0.0.1:9099/v1/chat/completions` via URLSession or any HTTP library. No special entitlements are needed for localhost connections on iOS.
+
+**Integration via Swift Package:**
+
+For direct integration without HTTP, add the OmniInferServer Swift Package as a dependency:
+
+```swift
+// Package.swift
+dependencies: [
+    .package(path: "Vendor/OmniInfer/ios/OmniInferServer")
+]
+```
+
+Then use the OmniInferServer API directly:
+
+```swift
+import OmniInferServer
+
+// Load model
+await OmniInferServer.shared.loadModel(
+    modelPath: modelDir,
+    backend: "llama.cpp",  // or "mlx"
+    port: 9099,
+    nCtx: 4096
+)
+
+// Server is ready — use HTTP or direct engine access
+```
+
+### Available Backends
+
+| Backend | Model Format | Acceleration | Minimum Device |
+|---------|-------------|-------------|----------------|
+| `llama.cpp` | GGUF (`.gguf`) | CPU (NEON) / Metal | iPhone 11 (A13) |
+| `mlx` | Safetensors (HuggingFace dir) | Metal (Apple Silicon) | iPhone 15 Pro (A17 Pro) |
+
+Both backends support:
+- Multi-turn conversation (full message history per request)
+- Streaming and non-streaming responses
+- Thinking / reasoning mode (`enable_thinking` parameter)
+
+**Coming soon:**
+- MNN backend (mobile-optimized, ARM CPU acceleration)
+- Multimodal / vision input
+- KV cache prefix reuse
+
+### Thinking Mode
+
+To enable thinking mode, add `enable_thinking: true` to the request:
+
+```json
+{
+  "messages": [{"role": "user", "content": "Explain quantum computing."}],
+  "stream": true,
+  "enable_thinking": true
+}
+```
+
+Supported models: Qwen3/3.5 (uses `<think>` tags), Gemma 4 (uses `<|channel>thinking` / `<channel|>` markers, normalized to `<think>` / `</think>` in the response).
+
+### Stop the Service
+
+The API service stops automatically when:
+- The model is unloaded in OmniStudio
+- OmniStudio is closed or goes to background
+
+To stop programmatically:
+
+```swift
+await OmniInferServer.shared.stop()
+```
+
+There is no HTTP shutdown endpoint on iOS. Use the OmniInferServer Swift API to manage the service lifecycle.
