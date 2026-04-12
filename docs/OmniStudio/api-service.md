@@ -19,6 +19,8 @@ Key endpoints:
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions |
 | `/omni/shutdown` | POST | Shut down the gateway |
 
+For the full API reference, see [API.md](https://github.com/omnimind-ai/OmniInfer/blob/main/docs/API.md).
+
 ---
 
 ## PC Client (Windows / macOS)
@@ -220,7 +222,201 @@ curl -X POST http://127.0.0.1:9000/omni/shutdown
 
 ## Android Client
 
-> **TODO** — Android API service documentation pending.
+The Android client runs the inference engine entirely on-device. OmniStudio embeds the OmniInfer native library and exposes the same OpenAI-compatible API through a local HTTP server powered by Ktor.
+
+### Architecture
+
+```
+OmniStudio Android (UI)
+  └─ OmniInferService (Foreground Service)
+       └─ Ktor HTTP Server (127.0.0.1:9099)
+            └─ JNI → Native C++
+```
+
+Unlike the PC client which runs a separate gateway process, the Android client runs the HTTP server as an Android foreground service within the app process. This keeps everything in a single process and complies with Android's background execution limits.
+
+### Prerequisites
+
+- OmniStudio Android installed on an ARM64 device (Snapdragon 8 Gen 1 or newer recommended)
+- At least one model downloaded to local storage
+- Sufficient free RAM
+
+### Endpoints
+
+The Android API exposes a subset of the full API:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/v1/models` | GET | List loaded models |
+| `/v1/chat/completions` | POST | Chat completions (streaming and non-streaming) |
+
+> **Note:** The `/omni/*` management endpoints are not available on Android. Model loading and backend selection are controlled through the OmniStudio UI or the Kotlin API (`OmniInferServer.loadModel()`).
+
+### Step 1: Load a Model
+
+Open OmniStudio and select a model to chat with. Once the model finishes loading, the API service starts automatically on port **9099**.
+
+### Step 2: Verify the Service
+
+**From a PC (via adb port forwarding):**
+
+```bash
+adb forward tcp:9099 tcp:9099
+curl http://127.0.0.1:9099/health
+```
+
+**From another app on the same device:**
+
+```kotlin
+val url = URL("http://127.0.0.1:9099/health")
+val result = url.readText()  // {"status":"ok"}
+```
+
+Expected response:
+
+```json
+{"status": "ok"}
+```
+
+### Step 3: Call the API
+
+**Non-streaming request:**
+
+```bash
+curl -X POST http://127.0.0.1:9099/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "What is 2+2?"}
+    ],
+    "max_tokens": 256,
+    "stream": false
+  }'
+```
+
+Response:
+
+```json
+{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "model": "omniinfer",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "2 + 2 = 4."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 19,
+    "completion_tokens": 8,
+    "total_tokens": 27,
+    "prompt_tokens_details": {
+      "text_tokens": 19,
+      "cached_tokens": 0,
+      "cache_creation_input_tokens": 19,
+      "cache_type": "ephemeral"
+    },
+    "performance": {
+      "prefill_time_ms": 150.0,
+      "prefill_tokens_per_second": 126.7,
+      "decode_time_ms": 280.0,
+      "decode_tokens_per_second": 28.6,
+      "total_time_ms": 430.0,
+      "time_to_first_token_ms": 150.0
+    }
+  }
+}
+```
+
+**Streaming request:**
+
+```bash
+curl -X POST http://127.0.0.1:9099/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Write a haiku about code."}
+    ],
+    "stream": true
+  }'
+```
+
+The response is Server-Sent Events (SSE):
+
+```text
+data: {"choices":[{"delta":{"role":"assistant","content":""},"index":0,"finish_reason":null}]}
+data: {"choices":[{"delta":{"content":"Lines"},"index":0,"finish_reason":null}]}
+data: {"choices":[{"delta":{"content":" of"},"index":0,"finish_reason":null}]}
+...
+data: {"choices":[{"delta":{},"index":0,"finish_reason":"stop"}]}
+data: {"choices":[],"usage":{...}}
+data: [DONE]
+```
+
+### Step 4: Integrate with Third-Party Applications
+
+**From a PC (via adb):**
+
+Any OpenAI-compatible application on your PC can connect to the phone's inference engine. Set up port forwarding first:
+
+```bash
+adb forward tcp:9099 tcp:9099
+```
+
+Then point your application to `http://127.0.0.1:9099` as the base URL.
+
+**Python (openai SDK):**
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:9099/v1",  # after adb forward
+    api_key="not-needed",
+)
+
+response = client.chat.completions.create(
+    model="local",
+    messages=[{"role": "user", "content": "Hello"}],
+    stream=True,
+)
+
+for chunk in response:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+**From another Android app on the same device:**
+
+Any Android app can call `http://127.0.0.1:9099/v1/chat/completions` via OkHttp, Retrofit, Ktor client, or any HTTP library. No special permissions are needed for localhost connections.
+
+### Available Backends
+
+| Backend | Model Format | Acceleration |
+|---------|-------------|-------------|
+| `llama.cpp` | GGUF (`.gguf`) | CPU (ARM NEON, i8mm, dotprod) |
+| `mnn` | MNN (`config.json` + `.mnn` weights) | CPU (ARM82) + optional OpenCL |
+
+Both backends support:
+- Multi-turn conversation
+- KV cache prefix reuse (automatic, no config needed)
+- Multimodal / vision (model must include vision encoder files)
+- Thinking / reasoning mode (`enable_thinking` or `reasoning_effort` parameter)
+- Tool calling (llama.cpp: all models with tool templates; MNN: Qwen3.5, Qwen3, Hunyuan families)
+
+### Stop the Service
+
+The API service stops automatically when:
+- The model is unloaded in OmniStudio
+- OmniStudio is closed or the foreground service is dismissed
+
+There is no HTTP shutdown endpoint on Android. Use the OmniStudio UI to manage the service lifecycle.
 
 ---
 
