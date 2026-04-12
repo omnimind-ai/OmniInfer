@@ -6,9 +6,9 @@ This guide shows how to use the OmniInfer CLI on Linux, macOS, Windows, and Andr
 
 If you are running OmniInfer from a source checkout, prepare at least one local runtime backend before using the CLI.
 
-- Windows: build `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan` first. See [Build Guide: Windows](build.md#windows).
-- Linux: build `llama.cpp-linux` or `llama.cpp-linux-rocm` first. See [Build Guide: Linux](build.md#linux).
-- macOS: build `llama.cpp-mac` or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
+- Windows: build one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip` first. See [Build Guide: Windows](build.md#windows).
+- Linux: build one of `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino` first. See [Build Guide: Linux](build.md#linux).
+- macOS: build `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
 - Android: prepare the Android runtime assets first. See [Build Guide: Android](build.md#android).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
@@ -18,7 +18,7 @@ If you are using a packaged release that already includes `runtime/`, you can sk
 If you want to use the embedded `mlx-mac` backend from a source checkout:
 
 - Use Python `3.10+`.
-- Make sure the Python interpreter that launches OmniInfer can import `mlx` and `mlx_lm`.
+- Make sure the Python interpreter that launches OmniInfer can import `mlx`, `mlx_lm`, `mlx_vlm`, `torch`, and `torchvision`.
 - The repository includes [`scripts/platforms/macos/mlx-mac/requirements.txt`](../scripts/platforms/macos/mlx-mac/requirements.txt) for that runtime.
 - The recommended local setup is your `conda` environment named `mlx`.
 
@@ -107,10 +107,10 @@ Windows:
 
 Examples:
 
-- Linux: `llama.cpp-linux` or `llama.cpp-linux-rocm`
-- macOS: `llama.cpp-mac` or `mlx-mac`
-- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, or `llama.cpp-vulkan`
-- Android: `llama.cpp-llama` or `llama.cpp-mtmd`
+- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino`
+- macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac`
+- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`
+- Android: `llama.cpp-llama`, `llama.cpp-mtmd`, or `omniinfer-native`
 
 When you select a desktop backend, OmniInfer also creates a backend-specific JSON config template under:
 
@@ -150,6 +150,23 @@ For `llama.cpp-*`, OmniInfer accepts either a model file or a model directory. I
 
 For `mlx-mac`, OmniInfer passes the model directory directly to the embedded backend.
 
+For `omniinfer-native` on Android, OmniInfer accepts either:
+
+- a `.pte` model file
+- a model directory that contains `omniinfer-native.env`
+- or a compatibility-mode model directory that contains `hybrid_llama_qnn.pte`
+
+In package mode, `omniinfer-native.env` tells OmniInfer which ExecuTorch Qualcomm llama runner to use and which `.pte` artifacts belong to the package.
+The recommended way to generate that manifest is:
+
+```sh
+bash ./scripts/platforms/android/package-omniinfer-native.sh \
+  --artifact-dir /path/to/executorch-artifacts \
+  --decoder-model-version qwen3
+```
+
+OmniInfer also auto-discovers `tokenizer.json` beside the selected `.pte` file when available.
+
 Explicit file path:
 
 ```sh
@@ -175,6 +192,24 @@ Vision-language model:
 ./omniinfer model load -m /path/to/model.gguf -mm /path/to/mmproj.gguf
 ```
 
+Android OmniInfer Native QNN:
+
+```sh
+./omniinfer select omniinfer-native
+./omniinfer model load -m /data/local/tmp/syf/executorch/static_llm
+./omniinfer chat --message "你好啊，你是谁？"
+```
+
+For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or `mmproj` sidecar:
+
+```sh
+./omniinfer select mlx-mac
+./omniinfer model load -m /path/to/mlx-vlm-model-directory
+./omniinfer chat \
+  --image /path/to/image.jpg \
+  --message "Describe this image in one sentence."
+```
+
 The backend config JSON is where advanced users should put backend-native launch parameters such as `-ngl`, `--threads`, and other backend-specific options.
 
 You can also skip `--config` entirely and pass backend-native extra args directly after the stable OmniInfer args. OmniInfer parses those extra args according to the currently selected backend.
@@ -183,7 +218,7 @@ Example:
 
 ```powershell
 .\omniinfer.cmd select llama.cpp-vulkan
-.\omniinfer.cmd model load -m C:\models\Qwen3 -- -ngl 99 -t 8
+.\omniinfer.cmd model load -m C:\models\Qwen3 -ngl 99 -t 8
 ```
 
 ### 4. Chat
@@ -243,13 +278,16 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 - `select` stores your current backend choice for later runs.
 - `select` also creates a backend-specific config JSON template for advanced backend-native parameters.
-- `--config` without a path means “use the selected backend profile under `~/.config/omniinfer/backend_profiles/`”.
+- `--config` without a path means "use the selected backend profile under `~/.config/omniinfer/backend_profiles/`".
 - Backend profile JSON files should only hold backend-native extra parameters. Keep model paths, prompts/messages, and images on the CLI.
 - `model load` stores the current model path, optional `mmproj`, optional `ctx-size`, and any request defaults loaded from backend-native extra args.
 - `llama.cpp-*` backends accept either a model file such as `.gguf` or a model directory. Passing a model directory is the simplest cross-backend habit.
 - If a `llama.cpp-*` model directory contains multiple text GGUF files or multiple `mmproj` GGUF files, OmniInfer stops and asks you to make the choice explicit.
-- `mlx-mac` is text-only in the current phase. Do not pass `-mm/--mmproj` or `--image` when using it.
+- `turboquant-mac` uses the same `llama-server` HTTP protocol family as `llama.cpp-*`, but it remains a separate backend id.
+- `mlx-mac` supports both text model directories and vision-language model directories.
+- `mlx-mac` does not use `-mm/--mmproj`; multimodal support comes from the selected MLX model directory itself.
 - `chat` streams output by default. Backend-native request defaults can come from `--config` or from backend-specific extra args typed directly on the CLI.
+- Load-time backend-native extra args are broadly passthrough for `llama.cpp-*` and `turboquant-mac`. Chat-time backend-native extra args support many common official flags plus generic long-form request overrides, but they are still interpreted through the current backend family rather than exposed as a blind global flag bag.
 - Do not combine `--auto` with backend-native extra args or `--config`, because those flows need a concrete selected backend to interpret flags correctly.
 - `status` shows the current backend, model, and thinking state.
 - `shutdown` stops the local desktop service. On Android it just confirms that direct mode has no background gateway.
@@ -272,4 +310,5 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - The repo-root [omniinfer](../omniinfer) script detects Android automatically.
 - Android direct mode uses the local launcher at `.local/runtime/android/bin/omniinfer-android`.
 - Android backend binaries live under `.local/runtime/android/lib/arm64-v8a`.
+- Android OmniInfer Native QNN runtime files can also live under `.local/runtime/android/qnn`.
 - For more Android-specific details, see [Android CLI Notes](android-cli.md).
