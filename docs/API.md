@@ -231,7 +231,47 @@ Example response:
 }
 ```
 
-## 8. Chat completions
+## 8. List models
+
+### `GET /v1/models`
+
+Returns the currently loaded model in OpenAI-compatible list format. If no model is loaded, the `data` array is empty.
+
+Example:
+
+```bash
+curl -s http://127.0.0.1:9000/v1/models
+```
+
+Example response (model loaded):
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "object": "model",
+      "created": 0,
+      "owned_by": "omniinfer",
+      "permission": [],
+      "root": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "parent": null
+    }
+  ]
+}
+```
+
+Example response (no model loaded):
+
+```json
+{
+  "object": "list",
+  "data": []
+}
+```
+
+## 9. Chat completions
 
 ### `POST /v1/chat/completions`
 
@@ -308,7 +348,7 @@ data: {"usage":{"prompt_tokens":13,"completion_tokens":12,"total_tokens":25}}
 data: [DONE]
 ```
 
-## 9. Shutdown
+## 10. Shutdown
 
 ### `POST /omni/shutdown`
 
@@ -323,7 +363,7 @@ Example response:
 }
 ```
 
-## 10. Error format
+## 11. Error format
 
 Errors are returned as JSON:
 
