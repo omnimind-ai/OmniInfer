@@ -213,28 +213,77 @@ static std::string parse_json_tool_calls(const std::string& output) {
 }
 
 // ---------------------------------------------------------------------------
-// Registry: marker -> parser function.
-// To add a new model format, add one entry here.
+// Hunyuan format:
+//   <tool_call>function_name
+//   ```json
+//   {"key": "value"}
+//   ```
+//   </tool_call>
 // ---------------------------------------------------------------------------
 
-struct ToolCallFormat {
-  const char* marker;
-  std::string (*parse)(const std::string& output);
-};
+static std::string parse_hunyuan_tool_calls(const std::string& output) {
+  std::ostringstream ss;
+  int count = 0;
+  size_t pos = 0;
 
-static const ToolCallFormat kFormats[] = {
-    {"<tool_call>", parse_qwen_tool_calls},   // Qwen XML format (primary)
-    {"<tool_call>", parse_json_tool_calls},    // JSON fallback
-};
+  while (pos < output.size()) {
+    size_t tc_start = output.find("<tool_call>", pos);
+    if (tc_start == std::string::npos) break;
+    size_t tc_end = output.find("</tool_call>", tc_start);
+    if (tc_end == std::string::npos) break;
+
+    std::string body = output.substr(tc_start + 11, tc_end - tc_start - 11);
+    // First line (after trim) is the function name.
+    std::string trimmed = trim(body);
+    size_t nl = trimmed.find('\n');
+    if (nl == std::string::npos) { pos = tc_end + 12; continue; }
+    std::string name = trim(trimmed.substr(0, nl));
+
+    // Arguments between ```json and ```.
+    std::string args = "{}";
+    size_t json_start = trimmed.find("```json");
+    size_t json_end = (json_start != std::string::npos)
+        ? trimmed.find("```", json_start + 7) : std::string::npos;
+    if (json_start != std::string::npos && json_end != std::string::npos) {
+      args = trim(trimmed.substr(json_start + 7, json_end - json_start - 7));
+      if (args.empty()) args = "{}";
+    }
+
+    if (!name.empty()) {
+      if (count == 0) ss << "{\"tool_calls\":[";
+      else ss << ",";
+      ss << "{\"id\":\"call_" << count << "\","
+         << "\"type\":\"function\","
+         << "\"function\":{\"name\":\"" << json_escape(name) << "\","
+         << "\"arguments\":" << args << "}}";
+      count++;
+    }
+    pos = tc_end + 12;
+  }
+
+  if (count == 0) return "";
+  ss << "]}";
+  return ss.str();
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch: detect format and call the right parser.
+// ---------------------------------------------------------------------------
 
 // Try each registered format. Returns OpenAI-compatible JSON or empty string.
 static std::string parse_tool_calls(const std::string& output) {
   if (output.find("<tool_call>") == std::string::npos) return "";
-  // Try Qwen XML format first (has <function= tag), fall back to JSON.
+  // Qwen3.5 XML: has <function= tag
   if (output.find("<function=") != std::string::npos) {
     std::string result = parse_qwen_tool_calls(output);
     if (!result.empty()) return result;
   }
+  // Hunyuan: has ```json inside tool_call block
+  if (output.find("```json") != std::string::npos) {
+    std::string result = parse_hunyuan_tool_calls(output);
+    if (!result.empty()) return result;
+  }
+  // Qwen3 JSON fallback
   return parse_json_tool_calls(output);
 }
 
