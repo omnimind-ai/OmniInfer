@@ -21,7 +21,7 @@ Key endpoints:
 |----------|--------|-------------|
 | `/health` | GET | Health check and runtime state |
 | `/omni/state` | GET | Current backend, model, and config |
-| `/omni/backends` | GET | List available backends |
+| `/omni/backends` | GET | List backends (scope: installed/compatible/all) |
 | `/omni/model/select` | POST | Load a model |
 | `/omni/backend/stop` | POST | Stop current backend |
 | `/v1/models` | GET | List currently loaded models |
