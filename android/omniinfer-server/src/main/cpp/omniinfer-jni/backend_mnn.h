@@ -1,6 +1,7 @@
 #pragma once
 
 #include "inference_backend.h"
+#include "thinking_tags.h"
 #include "tool_call_parser.h"
 
 #include <llm/llm.hpp>
@@ -226,16 +227,32 @@ public:
     int eff_max_tokens = max_tokens > 0 ? max_tokens : 2048;
     size_t prev_len = 0;
     int n_reasoning_tokens = 0;
-    bool counting_reasoning = thinking_enabled && !detect_trailing_tag(formatted).empty();
 
-    // MNN's generate_str doesn't include text consumed during prefill. When
-    // thinking is enabled, the chat template appends a thinking start tag
-    // (e.g. <think>) that gets consumed. Detect and re-emit it so the Kotlin
-    // SSE layer can parse reasoning_content vs content.
+    // Detect thinking tag from formatted prompt and set up normalization.
+    // Try standard detection first, then fall back to the shared registry
+    // for non-standard tags (e.g. Gemma 4's <|channel>thought contains |
+    // which detect_trailing_tag() filters out).
     std::string thinking_tag = detect_trailing_tag(formatted);
-    if (!thinking_tag.empty() && thinking_enabled) {
-      full_response += thinking_tag + "\n";
-      if (on_token) on_token(thinking_tag + "\n");
+    const thinking_tags::NativeTagPair* think_non_std = nullptr;
+    if (thinking_tag.empty() && thinking_enabled) {
+      think_non_std = thinking_tags::detect_in_prompt(formatted);
+    }
+    if (!think_non_std && !thinking_tag.empty()) {
+      think_non_std = thinking_tags::find_non_standard(thinking_tag);
+    }
+
+    std::optional<thinking_tags::Normalizer> think_norm;
+    bool counting_reasoning = false;
+    if (thinking_enabled && (think_non_std || !thinking_tag.empty())) {
+      counting_reasoning = true;
+      if (think_non_std) {
+        think_norm.emplace(*think_non_std);
+        full_response += "<think>\n";
+        if (on_token) on_token("<think>\n");
+      } else {
+        full_response += thinking_tag + "\n";
+        if (on_token) on_token(thinking_tag + "\n");
+      }
     }
 
     // Buffer for incomplete multi-byte UTF-8 sequences (e.g. emoji split across tokens).
@@ -255,9 +272,10 @@ public:
 
         utf8_buf += delta;
         if (is_valid_utf8(utf8_buf)) {
-          full_response += utf8_buf;
-          if (on_token && !utf8_buf.empty()) {
-            if (!on_token(utf8_buf)) { cancelled.store(true); break; }
+          std::string to_emit = think_norm ? think_norm->process(utf8_buf) : utf8_buf;
+          if (!to_emit.empty()) {
+            full_response += to_emit;
+            if (on_token && !on_token(to_emit)) { cancelled.store(true); break; }
           }
           if (counting_reasoning && full_response.find("</think>") != std::string::npos) {
             counting_reasoning = false;
@@ -267,11 +285,15 @@ public:
       }
     }
 
-    // Flush any remaining buffered bytes.
+    // Flush any remaining buffered bytes (through normalizer if active).
     if (!utf8_buf.empty()) {
-      full_response += utf8_buf;
-      if (on_token) on_token(utf8_buf);
+      std::string to_emit = think_norm ? think_norm->process(utf8_buf) : utf8_buf;
+      if (!to_emit.empty()) { full_response += to_emit; if (on_token) on_token(to_emit); }
       utf8_buf.clear();
+    }
+    if (think_norm) {
+      auto remaining = think_norm->flush();
+      if (!remaining.empty()) { full_response += remaining; if (on_token) on_token(remaining); }
     }
 
     // Collect metrics. prompt_tokens = cached + actually prefilled.
