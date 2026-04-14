@@ -43,7 +43,7 @@ object OmniInferBridge {
     fun generate(
         handle: Long,
         messagesJson: String,
-        imageData: ByteArray? = null,
+        imageDataArray: Array<ByteArray>? = null,
         thinkEnabled: Boolean = false,
         toolsJson: String? = null,
         toolChoice: String? = null,
@@ -63,7 +63,7 @@ object OmniInferBridge {
         }
         if (maxTokens != null && maxTokens > 0) sb.append(",\"max_tokens\":").append(maxTokens)
         sb.append("}")
-        return nativeGenerate(handle, "", "", sb.toString(), imageData, callback)
+        return nativeGenerate(handle, "", "", sb.toString(), imageDataArray, callback)
     }
 
     fun loadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean {
@@ -93,7 +93,7 @@ object OmniInferBridge {
     }
 
     private external fun nativeInit(configJson: String): Long
-    private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageData: ByteArray?, callback: OmniInferStreamCallback?): String
+    private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageDataArray: Array<ByteArray>?, callback: OmniInferStreamCallback?): String
     private external fun nativeLoadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean
     private external fun nativePrewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int): Boolean
     private external fun nativeSetThinkMode(handle: Long, enabled: Boolean)

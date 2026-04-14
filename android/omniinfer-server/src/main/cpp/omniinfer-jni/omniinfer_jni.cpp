@@ -245,7 +245,7 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
 }
 
 jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt,
-                       jstring prompt, jstring request_json, jbyteArray image_data_arr, jobject callback) {
+                       jstring prompt, jstring request_json, jobjectArray image_data_array, jobject callback) {
   Session* session = nullptr;
   {
     std::lock_guard<std::mutex> guard(g_sessions_mutex);
@@ -272,23 +272,26 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
     return !session->cancelled.load();
   };
 
-  // Extract image bytes if provided.
-  const uint8_t* img_ptr = nullptr;
-  jsize img_len = 0;
-  jbyte* img_bytes = nullptr;
-  if (image_data_arr) {
-    img_len = env->GetArrayLength(image_data_arr);
-    if (img_len > 0) {
-      img_bytes = env->GetByteArrayElements(image_data_arr, nullptr);
-      img_ptr = reinterpret_cast<const uint8_t*>(img_bytes);
+  // Extract image bytes from Array<ByteArray>.
+  std::vector<std::vector<uint8_t>> images;
+  if (image_data_array) {
+    jsize n = env->GetArrayLength(image_data_array);
+    for (jsize i = 0; i < n; i++) {
+      auto arr = reinterpret_cast<jbyteArray>(env->GetObjectArrayElement(image_data_array, i));
+      if (!arr) continue;
+      jsize len = env->GetArrayLength(arr);
+      if (len <= 0) { env->DeleteLocalRef(arr); continue; }
+      jbyte* bytes = env->GetByteArrayElements(arr, nullptr);
+      images.emplace_back(reinterpret_cast<uint8_t*>(bytes),
+                          reinterpret_cast<uint8_t*>(bytes) + len);
+      env->ReleaseByteArrayElements(arr, bytes, JNI_ABORT);
+      env->DeleteLocalRef(arr);
     }
   }
 
   std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token,
       tools_json.value_or(""), tool_choice.value_or(""), messages_json.value_or(""),
-      img_ptr, static_cast<size_t>(img_len), max_tokens);
-
-  if (img_bytes) env->ReleaseByteArrayElements(image_data_arr, img_bytes, JNI_ABORT);
+      images, max_tokens);
 
   // Report metrics.
   auto m = session->backend->get_metrics();
@@ -383,7 +386,7 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
 
 JNINativeMethod kMethods[] = {
     {"nativeInit", "(Ljava/lang/String;)J", reinterpret_cast<void*>(NativeInit)},
-    {"nativeGenerate", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BLcom/omniinfer/server/OmniInferStreamCallback;)Ljava/lang/String;", reinterpret_cast<void*>(NativeGenerate)},
+    {"nativeGenerate", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[[BLcom/omniinfer/server/OmniInferStreamCallback;)Ljava/lang/String;", reinterpret_cast<void*>(NativeGenerate)},
     {"nativeLoadHistory", "(J[Ljava/lang/String;[Ljava/lang/String;)Z", reinterpret_cast<void*>(NativeLoadHistory)},
     {"nativePrewarmImage", "(J[BI)Z", reinterpret_cast<void*>(NativePrewarmImage)},
     {"nativeSetThinkMode", "(JZ)V", reinterpret_cast<void*>(NativeSetThinkMode)},

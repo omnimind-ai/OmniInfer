@@ -64,8 +64,7 @@ public:
       const std::string& tools_json = "",
       const std::string& /*tool_choice*/ = "",
       const std::string& messages_json = "",
-      const uint8_t* image_data = nullptr,
-      size_t image_size = 0,
+      const std::vector<std::vector<uint8_t>>& images = {},
       int max_tokens = 0) override {
 
     using ChatMessages = MNN::Transformer::ChatMessages;
@@ -79,13 +78,16 @@ public:
       if (!user_prompt.empty()) msgs.push_back({"user", user_prompt});
     }
 
-    // Handle multimodal: save image to temp file in model directory (writable).
-    std::string tmp_image_path;
-    bool is_multimodal = image_data && image_size > 0;
+    // Handle multimodal: write each image to a temp file.
+    std::vector<std::string> tmp_image_paths;
+    bool is_multimodal = !images.empty();
     if (is_multimodal) {
-      tmp_image_path = cache_dir_ + "/.omniinfer_vlm_tmp";
-      FILE* f = fopen(tmp_image_path.c_str(), "wb");
-      if (f) { fwrite(image_data, 1, image_size, f); fclose(f); }
+      for (size_t i = 0; i < images.size(); i++) {
+        std::string path = cache_dir_ + "/.omniinfer_vlm_tmp_" + std::to_string(i);
+        FILE* f = fopen(path.c_str(), "wb");
+        if (f) { fwrite(images[i].data(), 1, images[i].size(), f); fclose(f); }
+        tmp_image_paths.push_back(path);
+      }
     }
 
     // Thinking control via jinja context variable (must be set before apply_chat_template).
@@ -108,13 +110,16 @@ public:
 
     std::vector<int> input_ids;
     int n_image_tokens = 0;
-    if (!tmp_image_path.empty()) {
+    if (!tmp_image_paths.empty()) {
       auto text_ids = llm_->tokenizer_encode(formatted);
-      std::string user_marker = "user\n";
-      auto pos = formatted.find(user_marker);
-      if (pos != std::string::npos) {
-        std::string img_tag = "<img>" + tmp_image_path + "</img>\n";
-        formatted.insert(pos + user_marker.size(), img_tag);
+      // Replace each <image> placeholder with <img>path</img> tag.
+      size_t img_idx = 0;
+      size_t pos = 0;
+      while ((pos = formatted.find("<image>", pos)) != std::string::npos && img_idx < tmp_image_paths.size()) {
+        std::string img_tag = "<img>" + tmp_image_paths[img_idx] + "</img>";
+        formatted.replace(pos, 7, img_tag);
+        pos += img_tag.size();
+        img_idx++;
       }
       MNN::Transformer::MultimodalPrompt mprompt;
       mprompt.prompt_template = formatted;
@@ -130,7 +135,7 @@ public:
       std::ostringstream err;
       err << R"({"error":"prompt_too_long","prompt_tokens":)" << (int)input_ids.size()
           << R"(,"max_context":)" << n_ctx_ << "}";
-      if (!tmp_image_path.empty()) remove(tmp_image_path.c_str());
+      for (const auto& p : tmp_image_paths) remove(p.c_str());
       return err.str();
     }
 
@@ -310,8 +315,8 @@ public:
       if (!tool_result.empty()) full_response = tool_result;
     }
 
-    // Clean up temp image file.
-    if (!tmp_image_path.empty()) remove(tmp_image_path.c_str());
+    // Clean up temp image files.
+    for (const auto& path : tmp_image_paths) remove(path.c_str());
 
     return full_response;
   }
