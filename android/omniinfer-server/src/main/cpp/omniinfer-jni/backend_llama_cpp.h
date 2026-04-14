@@ -278,23 +278,34 @@ public:
             "KV cache reuse: %d/%d tokens cached (exact, 1 re-decoded)",
             common_prefix - 1, (int)prompt_toks.size());
       } else if (common_prefix > 0) {
-        // Partial prefix match: trim KV after common prefix, decode only suffix.
+        // Partial prefix match: remove old entries after common prefix, decode suffix.
         n_cached_tokens = common_prefix;
-        if (!llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1)) {
+        bool trimmed = llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1);
+        if (!trimmed) {
+          // seq_rm failed (SWA/hybrid models like Qwen3.5): clear ALL and re-decode
+          // full prompt. This is the same fallback the official llama.cpp server uses.
           n_cached_tokens = 0;
-          goto full_prefill;
+          llama_memory_clear(llama_get_memory(ctx_), false);
+          cur_pos_ = 0;
+          if (decode_batched(prompt_toks, 0, true) != 0) goto full_prefill;
+          cur_pos_ = (int)prompt_toks.size();
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "KV cache: seq_rm failed (SWA model), full re-decode %d tokens",
+              (int)prompt_toks.size());
+        } else {
+          // seq_rm succeeded: decode only suffix
+          cur_pos_ = common_prefix;
+          std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
+          if (decode_batched(suffix, common_prefix, true) != 0) {
+            n_cached_tokens = 0;
+            goto full_prefill;
+          }
+          cur_pos_ = (int)prompt_toks.size();
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "KV cache reuse: %d/%d tokens cached, %d new",
+              common_prefix, (int)prompt_toks.size(),
+              (int)prompt_toks.size() - common_prefix);
         }
-        cur_pos_ = common_prefix;
-        std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
-        if (decode_batched(suffix, common_prefix, true) != 0) {
-          n_cached_tokens = 0;
-          goto full_prefill;
-        }
-        cur_pos_ = (int)prompt_toks.size();
-        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-            "KV cache reuse: %d/%d tokens cached, %d new",
-            common_prefix, (int)prompt_toks.size(),
-            (int)prompt_toks.size() - common_prefix);
       } else {
 full_prefill:
         // No cache match (or fallback from failed seq_rm/decode): full clear + full prefill.
