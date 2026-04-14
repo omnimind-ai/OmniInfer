@@ -66,43 +66,48 @@ class OmniInferService : Service() {
     }
 
     private fun startServer(port: Int) {
-        server = embeddedServer(CIO, port = port, host = "127.0.0.1") {
-            routing {
-                get("/health") {
-                    call.respondText("{\"status\":\"ok\"}", ContentType.Application.Json)
-                }
+        try {
+            server = embeddedServer(CIO, port = port, host = "127.0.0.1") {
+                routing {
+                    get("/health") {
+                        call.respondText("{\"status\":\"ok\"}", ContentType.Application.Json)
+                    }
 
-                get("/v1/models") {
-                    val models = OmniInferServer.getLoadedModels()
-                    val json = buildJsonObject {
-                        put("object", "list")
-                        putJsonArray("data") {
-                            models.forEach { m ->
-                                addJsonObject {
-                                    put("id", m)
-                                    put("object", "model")
+                    get("/v1/models") {
+                        val models = OmniInferServer.getLoadedModels()
+                        val json = buildJsonObject {
+                            put("object", "list")
+                            putJsonArray("data") {
+                                models.forEach { m ->
+                                    addJsonObject {
+                                        put("id", m)
+                                        put("object", "model")
+                                    }
                                 }
                             }
                         }
+                        call.respondText(json.toString(), ContentType.Application.Json)
                     }
-                    call.respondText(json.toString(), ContentType.Application.Json)
-                }
 
-                post("/v1/chat/completions") {
-                    try {
-                        handleChatCompletion(call)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "chat/completions error", e)
-                        call.respondText(
-                            buildJsonObject { put("error", e.message ?: "internal error") }.toString(),
-                            ContentType.Application.Json,
-                            HttpStatusCode.InternalServerError
-                        )
+                    post("/v1/chat/completions") {
+                        try {
+                            handleChatCompletion(call)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "chat/completions error", e)
+                            call.respondText(
+                                buildJsonObject { put("error", e.message ?: "internal error") }.toString(),
+                                ContentType.Application.Json,
+                                HttpStatusCode.InternalServerError
+                            )
+                        }
                     }
                 }
-            }
-        }.also { it.start(wait = false) }
-        Log.i(TAG, "Server started on port $port")
+            }.also { it.start(wait = false) }
+            Log.i(TAG, "Server started on port $port")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start server on port $port: ${e.message}")
+            server = null
+        }
     }
 
     private suspend fun handleChatCompletion(call: ApplicationCall) {
