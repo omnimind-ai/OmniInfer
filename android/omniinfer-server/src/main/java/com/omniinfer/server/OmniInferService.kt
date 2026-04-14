@@ -12,6 +12,7 @@ import android.util.Log
 import io.ktor.http.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
+import io.ktor.server.engine.connector
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -19,6 +20,7 @@ import io.ktor.server.application.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import java.util.UUID
+import kotlin.coroutines.CoroutineContext
 
 class OmniInferService : Service() {
     companion object {
@@ -67,41 +69,52 @@ class OmniInferService : Service() {
 
     private fun startServer(port: Int) {
         try {
-            server = embeddedServer(CIO, port = port, host = "127.0.0.1") {
-                routing {
-                    get("/health") {
-                        call.respondText("{\"status\":\"ok\"}", ContentType.Application.Json)
-                    }
+            // CoroutineExceptionHandler prevents Ktor's async BindException from
+            // propagating to the Android framework as FATAL EXCEPTION.
+            val handler = CoroutineExceptionHandler { _, throwable ->
+                Log.e(TAG, "Server engine error on port $port: ${throwable.message}")
+            }
+            val config = serverConfig {
+                parentCoroutineContext = handler
+                module {
+                    routing {
+                        get("/health") {
+                            call.respondText("{\"status\":\"ok\"}", ContentType.Application.Json)
+                        }
 
-                    get("/v1/models") {
-                        val models = OmniInferServer.getLoadedModels()
-                        val json = buildJsonObject {
-                            put("object", "list")
-                            putJsonArray("data") {
-                                models.forEach { m ->
-                                    addJsonObject {
-                                        put("id", m)
-                                        put("object", "model")
+                        get("/v1/models") {
+                            val models = OmniInferServer.getLoadedModels()
+                            val json = buildJsonObject {
+                                put("object", "list")
+                                putJsonArray("data") {
+                                    models.forEach { m ->
+                                        addJsonObject {
+                                            put("id", m)
+                                            put("object", "model")
+                                        }
                                     }
                                 }
                             }
+                            call.respondText(json.toString(), ContentType.Application.Json)
                         }
-                        call.respondText(json.toString(), ContentType.Application.Json)
-                    }
 
-                    post("/v1/chat/completions") {
-                        try {
-                            handleChatCompletion(call)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "chat/completions error", e)
-                            call.respondText(
-                                buildJsonObject { put("error", e.message ?: "internal error") }.toString(),
-                                ContentType.Application.Json,
-                                HttpStatusCode.InternalServerError
-                            )
+                        post("/v1/chat/completions") {
+                            try {
+                                handleChatCompletion(call)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "chat/completions error", e)
+                                call.respondText(
+                                    buildJsonObject { put("error", e.message ?: "internal error") }.toString(),
+                                    ContentType.Application.Json,
+                                    HttpStatusCode.InternalServerError
+                                )
+                            }
                         }
                     }
                 }
+            }
+            server = embeddedServer(CIO, config) {
+                connector { this.port = port; this.host = "127.0.0.1" }
             }.also { it.start(wait = false) }
             Log.i(TAG, "Server started on port $port")
         } catch (e: Exception) {
