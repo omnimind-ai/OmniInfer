@@ -2,6 +2,7 @@
 
 #include "inference_backend.h"
 #include "thinking_tags.h"
+#include "tool_call_parser.h"
 
 #include "llama.h"
 #include "common.h"
@@ -396,11 +397,20 @@ full_prefill:
     }
 
     // If tools were provided, parse output for tool calls.
+    // Wrapped in try-catch: llama.cpp's PEG parser throws std::runtime_error
+    // on certain multi-tool-call outputs that don't match its grammar.
     if (has_tools && parser_params.format != COMMON_CHAT_FORMAT_CONTENT_ONLY) {
-      common_chat_msg parsed = common_chat_parse(full_response, false, parser_params);
-      if (!parsed.tool_calls.empty()) {
-        // Return structured JSON so the HTTP layer can format tool_calls response.
-        full_response = format_tool_calls_json(parsed);
+      try {
+        common_chat_msg parsed = common_chat_parse(full_response, false, parser_params);
+        if (!parsed.tool_calls.empty()) {
+          full_response = format_tool_calls_json(parsed);
+        }
+      } catch (const std::exception& e) {
+        __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+            "PEG tool call parse failed, trying fallback parser: %s", e.what());
+        // Fallback to our own tool_call_parser (handles Qwen XML, JSON, Hunyuan formats).
+        std::string fallback = tool_parser::parse_tool_calls(full_response);
+        if (!fallback.empty()) full_response = fallback;
       }
     }
 
