@@ -1,6 +1,8 @@
 #pragma once
 
 #include "inference_backend.h"
+#include "thinking_tags.h"
+#include "tool_call_parser.h"
 
 #include "llama.h"
 #include "common.h"
@@ -85,8 +87,7 @@ public:
       const std::string& tools_json = "",
       const std::string& tool_choice = "",
       const std::string& messages_json = "",
-      const uint8_t* image_data = nullptr,
-      size_t image_size = 0,
+      const std::vector<std::vector<uint8_t>>& images = {},
       int max_tokens = 0) override {
 
     common_sampler_reset(sampler_);
@@ -110,14 +111,16 @@ public:
       }
     }
 
-    bool is_multimodal = image_data && image_size > 0 && mtmd_ctx_;
+    bool is_multimodal = !images.empty() && mtmd_ctx_;
 
     if (is_multimodal) {
-      // Insert media marker into the first user message (matching Kotlin's image extraction order).
+      // Replace <image> placeholders with media markers for mtmd.
+      // Kotlin inserts <image> at the exact position of each image_url in the content.
       for (auto& msg : messages) {
-        if (msg.role == "user") {
-          msg.content = media_marker_ + "\n" + msg.content;
-          break;
+        size_t pos = 0;
+        while ((pos = msg.content.find("<image>", pos)) != std::string::npos) {
+          msg.content.replace(pos, 7, media_marker_ + "\n");
+          pos += media_marker_.size() + 1;
         }
       }
     }
@@ -197,21 +200,26 @@ public:
         cur_pos_ = 0;
         llama_memory_clear(llama_get_memory(ctx_), false);
 
-        mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, image_data, image_size);
-        if (!bmp) return "";
+        // Create bitmaps for all images.
+        std::vector<mtmd_bitmap*> bmps;
+        for (const auto& img : images) {
+          auto* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, img.data(), img.size());
+          if (bmp) bmps.push_back(bmp);
+        }
+        if (bmps.empty()) return "";
 
         mtmd_input_text text{params.prompt.c_str(), true, true};
         mtmd_input_chunks* chunks = mtmd_input_chunks_init();
-        const mtmd_bitmap* bitmaps[] = {bmp};
-        if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bitmaps, 1) != 0) {
-          mtmd_bitmap_free(bmp);
+        std::vector<const mtmd_bitmap*> bmp_ptrs(bmps.begin(), bmps.end());
+        if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bmp_ptrs.data(), bmp_ptrs.size()) != 0) {
+          for (auto* b : bmps) mtmd_bitmap_free(b);
           mtmd_input_chunks_free(chunks);
           return "";
         }
 
         llama_pos n_past = 0;
         if (mtmd_helper_eval_chunks(mtmd_ctx_, ctx_, chunks, 0, 0, 512, true, &n_past) != 0) {
-          mtmd_bitmap_free(bmp);
+          for (auto* b : bmps) mtmd_bitmap_free(b);
           mtmd_input_chunks_free(chunks);
           return "";
         }
@@ -221,7 +229,7 @@ public:
         auto text_toks = common_tokenize(ctx_, params.prompt, true, true);
         n_image_tokens = n_prompt_tokens - (int)text_toks.size();
         if (n_image_tokens < 0) n_image_tokens = 0;
-        mtmd_bitmap_free(bmp);
+        for (auto* b : bmps) mtmd_bitmap_free(b);
         mtmd_input_chunks_free(chunks);
       }
 
@@ -313,52 +321,24 @@ full_prefill:
     bool counting_reasoning = thinking_enabled && params.supports_thinking;
     std::string utf8_buf;
 
-    // Set up thinking tag handling.
-    // Models with standard tags (e.g. <think>): prepend start tag, stream as-is.
-    // Models with non-standard tags (e.g. Gemma 4): normalize to <think>/<​/think> on the fly.
-    std::string native_think_start, native_think_end;
-    bool normalize_thinking = false;
+    // Set up thinking tag normalization.
+    // All non-standard thinking tags (e.g. Gemma 4's <|channel>thought) are
+    // normalized to <think>/<​/think> so Kotlin only handles one format.
+    std::optional<thinking_tags::Normalizer> think_norm;
 
     if (thinking_enabled && params.supports_thinking) {
-      if (!params.thinking_start_tag.empty()) {
-        // Standard format — prepend start tag, model outputs </think> natively.
+      auto* non_std = thinking_tags::find_non_standard(params.thinking_start_tag);
+      if (non_std) {
+        think_norm.emplace(*non_std);
+        if (on_token) on_token("<think>\n");
+      } else if (!params.thinking_start_tag.empty()) {
         if (on_token) on_token(params.thinking_start_tag);
-      } else {
-        // Non-standard format — look up native tags for on-the-fly normalization.
-        auto tags = get_native_thinking_tags(params.format);
-        native_think_start = tags.first;
-        native_think_end = tags.second;
-        normalize_thinking = !native_think_start.empty();
       }
     }
 
-    // Emit helper: normalizes thinking tags when needed, otherwise passes through.
-    std::string norm_buf;
+    // Emit helper: passes through normalizer when active, otherwise direct.
     auto emit = [&](const std::string& text) -> bool {
-      if (!normalize_thinking) {
-        full_response += text;
-        return !on_token || on_token(text);
-      }
-      norm_buf += text;
-      std::string out;
-      // Replace native start tag with <think>\n
-      auto sp = norm_buf.find(native_think_start);
-      if (sp != std::string::npos) {
-        out += norm_buf.substr(0, sp) + "<think>\n";
-        norm_buf = norm_buf.substr(sp + native_think_start.size());
-      }
-      // Replace native end tag with </think>
-      auto ep = norm_buf.find(native_think_end);
-      if (ep != std::string::npos) {
-        out += norm_buf.substr(0, ep) + "</think>";
-        norm_buf = norm_buf.substr(ep + native_think_end.size());
-      }
-      // Flush safe content, keep tail for partial tag matching.
-      size_t keep = std::max(native_think_start.size(), native_think_end.size());
-      if (norm_buf.size() > keep) {
-        out += norm_buf.substr(0, norm_buf.size() - keep);
-        norm_buf = norm_buf.substr(norm_buf.size() - keep);
-      }
+      std::string out = think_norm ? think_norm->process(text) : text;
       if (!out.empty()) {
         full_response += out;
         if (on_token && !on_token(out)) return false;
@@ -405,11 +385,13 @@ full_prefill:
       }
     }
 
-    // Flush normalizer buffer.
-    if (!norm_buf.empty()) {
-      full_response += norm_buf;
-      if (on_token) on_token(norm_buf);
-      norm_buf.clear();
+    // Flush thinking normalizer buffer.
+    if (think_norm) {
+      auto remaining = think_norm->flush();
+      if (!remaining.empty()) {
+        full_response += remaining;
+        if (on_token) on_token(remaining);
+      }
     }
 
     // Strip template-specific stop sequences from output.
@@ -421,11 +403,25 @@ full_prefill:
     }
 
     // If tools were provided, parse output for tool calls.
+    // Wrapped in try-catch: llama.cpp's PEG parser throws std::runtime_error
+    // on certain multi-tool-call outputs that don't match its grammar.
     if (has_tools && parser_params.format != COMMON_CHAT_FORMAT_CONTENT_ONLY) {
-      common_chat_msg parsed = common_chat_parse(full_response, false, parser_params);
-      if (!parsed.tool_calls.empty()) {
-        // Return structured JSON so the HTTP layer can format tool_calls response.
-        full_response = format_tool_calls_json(parsed);
+      try {
+        common_chat_msg parsed = common_chat_parse(full_response, false, parser_params);
+        if (!parsed.tool_calls.empty()) {
+          full_response = format_tool_calls_json(parsed);
+        }
+      } catch (const std::exception& e) {
+        __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+            "PEG tool call parse failed, trying fallback parser: %s", e.what());
+        std::string fallback = tool_parser::parse_tool_calls(full_response);
+        if (!fallback.empty()) {
+          full_response = fallback;
+        } else {
+          __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+              "Both PEG and fallback parser failed. Raw output (first 200): %.200s",
+              full_response.c_str());
+        }
       }
     }
 
@@ -619,18 +615,6 @@ private:
       if (pos != std::string::npos && (cut == std::string::npos || pos > cut)) cut = pos;
     }
     return (cut != std::string::npos) ? formatted.substr(0, cut) : formatted;
-  }
-
-  // Return native thinking start/end tags for models that don't use <think>/<​/think>.
-  // The streaming loop normalizes these to <think>/<​/think> so the Kotlin SSE layer
-  // only needs to handle one format.
-  static std::pair<std::string, std::string> get_native_thinking_tags(common_chat_format fmt) {
-    switch (fmt) {
-      case COMMON_CHAT_FORMAT_PEG_GEMMA4:
-        return {"<|channel>thought\n", "<channel|>"};
-      default:
-        return {"", ""};
-    }
   }
 
   // Format parsed tool calls as JSON for the HTTP layer.

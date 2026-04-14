@@ -35,8 +35,7 @@ public:
       const std::string& tools_json = "",
       const std::string& tool_choice = "",
       const std::string& messages_json = "",
-      const uint8_t* image_data = nullptr,
-      size_t image_size = 0,
+      const std::vector<std::vector<uint8_t>>& images = {},
       int max_tokens = 0) = 0;
 
   virtual bool load_history(

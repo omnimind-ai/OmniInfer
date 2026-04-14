@@ -66,43 +66,48 @@ class OmniInferService : Service() {
     }
 
     private fun startServer(port: Int) {
-        server = embeddedServer(CIO, port = port, host = "127.0.0.1") {
-            routing {
-                get("/health") {
-                    call.respondText("{\"status\":\"ok\"}", ContentType.Application.Json)
-                }
+        try {
+            server = embeddedServer(CIO, port = port, host = "127.0.0.1") {
+                routing {
+                    get("/health") {
+                        call.respondText("{\"status\":\"ok\"}", ContentType.Application.Json)
+                    }
 
-                get("/v1/models") {
-                    val models = OmniInferServer.getLoadedModels()
-                    val json = buildJsonObject {
-                        put("object", "list")
-                        putJsonArray("data") {
-                            models.forEach { m ->
-                                addJsonObject {
-                                    put("id", m)
-                                    put("object", "model")
+                    get("/v1/models") {
+                        val models = OmniInferServer.getLoadedModels()
+                        val json = buildJsonObject {
+                            put("object", "list")
+                            putJsonArray("data") {
+                                models.forEach { m ->
+                                    addJsonObject {
+                                        put("id", m)
+                                        put("object", "model")
+                                    }
                                 }
                             }
                         }
+                        call.respondText(json.toString(), ContentType.Application.Json)
                     }
-                    call.respondText(json.toString(), ContentType.Application.Json)
-                }
 
-                post("/v1/chat/completions") {
-                    try {
-                        handleChatCompletion(call)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "chat/completions error", e)
-                        call.respondText(
-                            buildJsonObject { put("error", e.message ?: "internal error") }.toString(),
-                            ContentType.Application.Json,
-                            HttpStatusCode.InternalServerError
-                        )
+                    post("/v1/chat/completions") {
+                        try {
+                            handleChatCompletion(call)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "chat/completions error", e)
+                            call.respondText(
+                                buildJsonObject { put("error", e.message ?: "internal error") }.toString(),
+                                ContentType.Application.Json,
+                                HttpStatusCode.InternalServerError
+                            )
+                        }
                     }
                 }
-            }
-        }.also { it.start(wait = false) }
-        Log.i(TAG, "Server started on port $port")
+            }.also { it.start(wait = false) }
+            Log.i(TAG, "Server started on port $port")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start server on port $port: ${e.message}")
+            server = null
+        }
     }
 
     private suspend fun handleChatCompletion(call: ApplicationCall) {
@@ -138,12 +143,37 @@ class OmniInferService : Service() {
         val toolsJson = req["tools"]?.jsonArray?.toString()
         val toolChoice = req["tool_choice"]?.jsonPrimitive?.contentOrNull
 
-        // Build normalized messages array for the backend.
-        // Preserve tool_calls on assistant messages and tool role messages for multi-turn tool use.
+        // Build normalized messages and extract all images in one pass.
+        // Image positions are preserved as <image> placeholders in the content text.
+        // The C++ backend replaces each <image> with its native marker.
+        val imageDataList = mutableListOf<ByteArray>()
         val normalizedMessages = buildJsonArray {
             for (msg in messages) {
                 val role = msg.jsonObject["role"]?.jsonPrimitive?.contentOrNull ?: continue
-                val content = extractTextContent(msg.jsonObject["content"]) ?: ""
+                val contentEl = msg.jsonObject["content"]
+                // For array content (may contain text + image_url parts):
+                // extract text and insert <image> placeholder for each image.
+                val content = if (contentEl is JsonArray) {
+                    buildString {
+                        for (part in contentEl) {
+                            when (part.jsonObject["type"]?.jsonPrimitive?.contentOrNull) {
+                                "text" -> append(part.jsonObject["text"]?.jsonPrimitive?.contentOrNull ?: "")
+                                "image_url" -> {
+                                    val url = part.jsonObject["image_url"]?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull
+                                    if (url != null && url.startsWith("data:")) {
+                                        val base64Part = url.substringAfter("base64,", "")
+                                        if (base64Part.isNotEmpty()) {
+                                            imageDataList.add(android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT))
+                                            append("<image>")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    extractTextContent(contentEl) ?: ""
+                }
                 addJsonObject {
                     put("role", role)
                     put("content", content)
@@ -157,27 +187,7 @@ class OmniInferService : Service() {
                 }
             }
         }
-
-        // Extract first image from messages (base64 data URI).
-        val imageData: ByteArray? = run {
-            for (msg in messages) {
-                val contentEl = msg.jsonObject["content"]
-                if (contentEl is JsonArray) {
-                    for (part in contentEl) {
-                        if (part.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "image_url") {
-                            val url = part.jsonObject["image_url"]?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull ?: continue
-                            if (url.startsWith("data:")) {
-                                val base64Part = url.substringAfter("base64,", "")
-                                if (base64Part.isNotEmpty()) {
-                                    return@run android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            null
-        }
+        val imageDataArray: Array<ByteArray>? = if (imageDataList.isNotEmpty()) imageDataList.toTypedArray() else null
 
         val hasUser = messages.any { it.jsonObject["role"]?.jsonPrimitive?.contentOrNull == "user" }
         if (!hasUser) {
@@ -211,7 +221,7 @@ class OmniInferService : Service() {
                     OmniInferBridge.generate(
                     handle = handle,
                     messagesJson = normalizedMessages.toString(),
-                    imageData = imageData,
+                    imageDataArray = imageDataArray,
                     thinkEnabled = thinkEnabled,
                     toolsJson = toolsJson,
                     toolChoice = toolChoice,
@@ -424,7 +434,7 @@ class OmniInferService : Service() {
             val result = OmniInferBridge.generate(
                 handle = handle,
                 messagesJson = normalizedMessages.toString(),
-                imageData = imageData,
+                imageDataArray = imageDataArray,
                 thinkEnabled = thinkEnabled,
                 toolsJson = toolsJson,
                 toolChoice = toolChoice,

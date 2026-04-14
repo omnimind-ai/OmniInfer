@@ -3,6 +3,8 @@ package com.omniinfer.server
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * OmniInfer local inference server facade.
@@ -85,7 +87,7 @@ object OmniInferServer {
         currentModelPath = modelPath
         serverPort = port
 
-        // Start HTTP server.
+        // Start HTTP server and verify it's reachable.
         if (!serverRunning) {
             val intent = Intent(ctx, OmniInferService::class.java).apply {
                 putExtra("port", port)
@@ -94,6 +96,14 @@ object OmniInferServer {
                 ctx.startForegroundService(intent)
             } else {
                 ctx.startService(intent)
+            }
+
+            // Wait for the server to become reachable. This catches port-in-use
+            // and other startup failures instead of returning a false success.
+            if (!waitForHealth(port, timeoutMs = 5000)) {
+                Log.e(TAG, "Server failed to start on port $port (port may be in use)")
+                unloadModel()
+                return false
             }
             serverRunning = true
         }
@@ -128,5 +138,26 @@ object OmniInferServer {
     fun getDiagnostics(): Map<String, String> {
         if (currentHandle == 0L) return emptyMap()
         return OmniInferBridge.collectDiagnostics(currentHandle)
+    }
+
+    private fun waitForHealth(port: Int, timeoutMs: Long = 5000): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                val conn = URL("http://127.0.0.1:$port/health").openConnection() as HttpURLConnection
+                conn.connectTimeout = 500
+                conn.readTimeout = 500
+                conn.requestMethod = "GET"
+                if (conn.responseCode == 200) {
+                    conn.disconnect()
+                    return true
+                }
+                conn.disconnect()
+            } catch (_: Exception) {
+                // Server not ready yet.
+            }
+            Thread.sleep(200)
+        }
+        return false
     }
 }
