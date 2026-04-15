@@ -163,17 +163,44 @@ Register-EngineEvent PowerShell.Exiting -Action {
 
 $BackendIds   = @()
 $BackendDescs = @()
-$rawOutput = Invoke-OmniInfer backend list 2>$null
-$currentId = ""
-foreach ($line in $rawOutput -split "`n") {
-    $line = $line.Trim()
-    if ($line -match '^[*\s]*([a-zA-Z0-9._-]+)$') {
-        $currentId = $Matches[1]
-        $BackendIds += $currentId
-        $BackendDescs += $currentId
+# Query the gateway API for compatible backends (hardware-matched)
+$_backendsJson = $null
+try {
+    Invoke-OmniInfer status 2>$null | Out-Null  # ensure gateway is running
+    $_backendsJson = Invoke-RestMethod -Uri "http://127.0.0.1:$_gatewayPort/omni/backends?scope=compatible" -TimeoutSec 15 -ErrorAction Stop
+} catch {}
+
+if ($_backendsJson -and $_backendsJson.data) {
+    foreach ($b in $_backendsJson.data) {
+        $BackendIds   += $b.id
+        $desc = $b.description
+        if ($desc) { $BackendDescs += "$($b.id)  -  $desc" } else { $BackendDescs += $b.id }
     }
-    if ($line -match '^Description:\s*(.+)$' -and $currentId) {
-        $BackendDescs[$BackendDescs.Count - 1] = "$currentId  -  $($Matches[1])"
+    if ($_backendsJson.recommended) {
+        # Move recommended backend to the top of the list
+        $recIdx = [Array]::IndexOf($BackendIds, $_backendsJson.recommended)
+        if ($recIdx -gt 0) {
+            $recId   = $BackendIds[$recIdx];   $recDesc = $BackendDescs[$recIdx]
+            $BackendIds   = @($recId)   + ($BackendIds   | Where-Object { $_ -ne $recId })
+            $BackendDescs = @("$recDesc  (recommended)") + ($BackendDescs | Where-Object { $_ -ne $recDesc })
+        } elseif ($recIdx -eq 0) {
+            $BackendDescs[0] = "$($BackendDescs[0])  (recommended)"
+        }
+    }
+} else {
+    # Fallback: parse CLI text output
+    $rawOutput = Invoke-OmniInfer backend list 2>$null
+    $currentId = ""
+    foreach ($line in $rawOutput -split "`n") {
+        $line = $line.Trim()
+        if ($line -match '^[*\s]*([a-zA-Z0-9._-]+)$') {
+            $currentId = $Matches[1]
+            $BackendIds += $currentId
+            $BackendDescs += $currentId
+        }
+        if ($line -match '^Description:\s*(.+)$' -and $currentId) {
+            $BackendDescs[$BackendDescs.Count - 1] = "$currentId  -  $($Matches[1])"
+        }
     }
 }
 
