@@ -15,7 +15,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$RepoUrl = "https://github.com/omnimind-ai/OmniInfer.git"
+$RepoSsh   = "git@github.com:omnimind-ai/OmniInfer.git"
+$RepoHttps = "https://github.com/omnimind-ai/OmniInfer.git"
 $CatalogUrl = "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/windows/model_list.json"
 
 # ── Helpers ─────────────────────────────────────────────────
@@ -97,7 +98,25 @@ if (Test-Path "$InstallDir\.git") {
     try { git -C $InstallDir pull --ff-only 2>&1 | Out-Null } catch { Write-Warn "Pull failed, continuing with existing code" }
 } else {
     Write-Info "Cloning OmniInfer to $InstallDir ..."
-    git clone --depth 1 $RepoUrl $InstallDir
+    $clonedViaHttps = $false
+    Write-Info "Trying SSH ..."
+    git clone --depth 1 $RepoSsh $InstallDir 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "SSH clone failed, falling back to HTTPS ..."
+        if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue }
+        git clone --depth 1 $RepoHttps $InstallDir
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Fatal "git clone failed via both SSH and HTTPS. Check your network connection and try again."
+        }
+        $clonedViaHttps = $true
+    }
+    # If cloned via HTTPS, rewrite SSH submodule URLs to HTTPS so submodule init works
+    if ($clonedViaHttps) {
+        git -C $InstallDir config --local url."https://github.com/".insteadOf "git@github.com:"
+    }
+}
+if (-not (Test-Path (Join-Path $InstallDir "omniinfer.py"))) {
+    Stop-Fatal "Repository clone appears incomplete — omniinfer.py not found in $InstallDir"
 }
 Write-Ok "Repository ready at $InstallDir"
 
@@ -278,14 +297,15 @@ if ($SkipBuild) {
     } else {
         Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
         powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ""
+            Write-Err "Build failed (exit code $LASTEXITCODE). See the messages above for details."
+            exit 1
+        }
         # Verify build produced the expected binary
         $binDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
         if (-not (Test-Path $binDir) -or (Get-ChildItem $binDir -File -ErrorAction SilentlyContinue).Count -eq 0) {
-            Write-Err "Build failed — no binaries produced."
-            Write-Host ""
-            Write-Host "  Common fix: run from a Visual Studio Developer PowerShell"
-            Write-Host "  so that cl.exe, link.exe, and rc.exe are in PATH."
-            Write-Host ""
+            Write-Err "Build completed but no binaries found in $binDir"
             exit 1
         }
         Write-Ok "Build complete"

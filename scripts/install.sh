@@ -16,7 +16,8 @@ MODEL_PATH=""
 SKIP_BUILD=0
 BACKEND_OVERRIDE=""
 NON_INTERACTIVE=0
-REPO_URL="https://github.com/omnimind-ai/OmniInfer.git"
+REPO_SSH="git@github.com:omnimind-ai/OmniInfer.git"
+REPO_HTTPS="https://github.com/omnimind-ai/OmniInfer.git"
 
 # ── Parse args ──────────────────────────────────────────────
 
@@ -212,7 +213,23 @@ if [ -d "${INSTALL_DIR}/.git" ]; then
     git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || warn "Pull failed, continuing with existing code"
 else
     info "Cloning OmniInfer to ${INSTALL_DIR} ..."
-    git clone --depth 1 "${REPO_URL}" "${INSTALL_DIR}"
+    CLONED_VIA_HTTPS=0
+    info "Trying SSH ..."
+    if ! git clone --depth 1 "${REPO_SSH}" "${INSTALL_DIR}" 2>/dev/null; then
+        warn "SSH clone failed, falling back to HTTPS ..."
+        rm -rf "${INSTALL_DIR}" 2>/dev/null || true
+        if ! git clone --depth 1 "${REPO_HTTPS}" "${INSTALL_DIR}"; then
+            fatal "git clone failed via both SSH and HTTPS. Check your network connection and try again."
+        fi
+        CLONED_VIA_HTTPS=1
+    fi
+    # If cloned via HTTPS, rewrite SSH submodule URLs to HTTPS so submodule init works
+    if [[ "${CLONED_VIA_HTTPS}" -eq 1 ]]; then
+        git -C "${INSTALL_DIR}" config --local url."https://github.com/".insteadOf "git@github.com:"
+    fi
+fi
+if [[ ! -f "${INSTALL_DIR}/omniinfer.py" ]]; then
+    fatal "Repository clone appears incomplete — omniinfer.py not found in ${INSTALL_DIR}"
 fi
 ok "Repository ready at ${INSTALL_DIR}"
 
@@ -446,7 +463,10 @@ else
             ok "Backend ${SELECTED_BACKEND} already built, skipping"
         else
             info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
-            bash "${FULL_BUILD_SCRIPT}"
+            if ! bash "${FULL_BUILD_SCRIPT}"; then
+                echo ""
+                fatal "Build failed (exit code $?). See the messages above for details."
+            fi
             ok "Build complete"
         fi
     fi
