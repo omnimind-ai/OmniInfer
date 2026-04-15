@@ -297,14 +297,15 @@ if ($SkipBuild) {
     } else {
         Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
         powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ""
+            Write-Err "Build failed (exit code $LASTEXITCODE). See the messages above for details."
+            exit 1
+        }
         # Verify build produced the expected binary
         $binDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
         if (-not (Test-Path $binDir) -or (Get-ChildItem $binDir -File -ErrorAction SilentlyContinue).Count -eq 0) {
-            Write-Err "Build failed — no binaries produced."
-            Write-Host ""
-            Write-Host "  Common fix: run from a Visual Studio Developer PowerShell"
-            Write-Host "  so that cl.exe, link.exe, and rc.exe are in PATH."
-            Write-Host ""
+            Write-Err "Build completed but no binaries found in $binDir"
             exit 1
         }
         Write-Ok "Build complete"

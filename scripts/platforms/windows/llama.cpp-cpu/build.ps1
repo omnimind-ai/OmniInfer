@@ -126,17 +126,25 @@ if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -Erro
         $threadModel = Get-GppThreadModel -Compiler "g++"
         if ($threadModel -eq "win32") {
             $gccPath = (Get-Command g++.exe).Source
-            throw @"
-The MinGW g++ found at '$gccPath' uses the 'win32' thread model, which cannot build llama-server.
-
-Fix (pick one):
-  1. Install MSYS2 (https://www.msys2.org/) then run in MSYS2 terminal:
-       pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake
-     Then add C:\msys64\ucrt64\bin to PATH (or set `$env:MSYS2_ROOT`).
-
-  2. Install Visual Studio Build Tools (https://visualstudio.microsoft.com/downloads/#build-tools)
-     and run this script from a Developer PowerShell.
-"@
+            Write-Host ""
+            Write-Host "  Problem: " -ForegroundColor Red -NoNewline
+            Write-Host "The g++ at '$gccPath' uses the 'win32' thread model."
+            Write-Host "           This cannot build llama-server (requires posix thread model)."
+            Write-Host ""
+            Write-Host "  Fix (pick one):" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "    1. " -ForegroundColor Cyan -NoNewline
+            Write-Host "Install MSYS2 ucrt64 toolchain"
+            Write-Host "       Download:  https://www.msys2.org/"
+            Write-Host "       Then run:  pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake"
+            Write-Host '       Then set:  $env:MSYS2_ROOT = "C:\msys64"  (or your install path)'
+            Write-Host ""
+            Write-Host "    2. " -ForegroundColor Cyan -NoNewline
+            Write-Host "Install Visual Studio Build Tools"
+            Write-Host "       Download:  https://visualstudio.microsoft.com/downloads/#build-tools"
+            Write-Host "       Then run this script from a Developer PowerShell."
+            Write-Host ""
+            exit 1
         }
 
         $generator = "MinGW Makefiles"
