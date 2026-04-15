@@ -136,19 +136,35 @@ if ($script:PythonCmd) {
 }
 
 # C/C++ toolchain (needed for building backends)
+# Check PATH first, then MSYS2_ROOT, then registry, then scan drives
 $hasMsvc = [bool](Get-Command cl.exe -ErrorAction SilentlyContinue)
 $hasMsys2Gcc = [bool](Get-Command gcc.exe -ErrorAction SilentlyContinue)
+$msys2Ucrt64Bin = $null
 if (-not $hasMsvc -and -not $hasMsys2Gcc) {
-    $msys2Found = $false
+    # Try to find MSYS2 ucrt64 even if not in PATH
+    $msys2Candidates = @()
+    if ($env:MSYS2_ROOT) { $msys2Candidates += $env:MSYS2_ROOT }
     foreach ($key in @("HKLM:\SOFTWARE\MSYS2","HKCU:\SOFTWARE\MSYS2","HKLM:\SOFTWARE\WOW6432Node\MSYS2")) {
-        try { if ((Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation) { $msys2Found = $true; break } } catch {}
+        try { $loc = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation; if ($loc) { $msys2Candidates += $loc } } catch {}
     }
-    if ($msys2Found) {
-        Write-Warn "MSYS2 is installed but its ucrt64\bin is not in PATH."
-        Write-Host "  Add it to PATH and retry, e.g.:"
-        Write-Host '    $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"'
-        Write-Host ""
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $msys2Candidates += Join-Path $drive.Root "msys64"
     }
+    foreach ($root in $msys2Candidates) {
+        $ucrt = Join-Path $root "ucrt64\bin"
+        if ((Test-Path (Join-Path $ucrt "gcc.exe")) -and (Test-Path (Join-Path $ucrt "g++.exe"))) {
+            $msys2Ucrt64Bin = $ucrt
+            break
+        }
+    }
+    if ($msys2Ucrt64Bin) {
+        # Auto-add to PATH for this session so build scripts can find it
+        Write-Info "Found MSYS2 ucrt64 at $msys2Ucrt64Bin, adding to PATH"
+        $env:PATH = "$msys2Ucrt64Bin;$env:PATH"
+        $hasMsys2Gcc = $true
+    }
+}
+if (-not $hasMsvc -and -not $hasMsys2Gcc) {
     Stop-Fatal "No C/C++ compiler found. Install one of:`n  - Visual Studio Build Tools (cl.exe): https://visualstudio.microsoft.com/downloads/#build-tools`n  - MSYS2 with ucrt64 toolchain (gcc.exe): https://www.msys2.org/`n    Then: pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake`n`nAfter installing, re-run this script."
 } elseif ($hasMsvc) {
     Write-Ok "C++ toolchain: MSVC (cl.exe)"
