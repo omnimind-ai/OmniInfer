@@ -47,8 +47,15 @@ function Find-Msys2Ucrt64Toolchain {
         }
     }
 
-    # 4. Common default location
-    $candidates += "C:\msys64"
+    # 4. Scan all drive roots for common MSYS2 install locations
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $root = $drive.Root  # e.g. "C:\"
+        $candidates += Join-Path $root "msys64"
+        $candidates += Join-Path $root "msys2"
+    }
+    # Also check well-known non-root paths (chocolatey, scoop, custom)
+    if ($env:ChocolateyInstall) { $candidates += Join-Path $env:ChocolateyInstall "lib\msys2\msys64" }
+    if ($env:SCOOP) { $candidates += Join-Path $env:SCOOP "apps\msys2\current" }
 
     foreach ($msys2Root in $candidates) {
         $ucrt64Bin = Join-Path $msys2Root "ucrt64\bin"
