@@ -413,23 +413,24 @@ full_prefill:
       }
     }
 
-    if (cancelled.load()) {
-      if (graceful_stop.load()) {
-        // Graceful stop (/v1/cancel): keep KV cache for prefix matching.
-        // Append generated tokens to text-only tracking vector.
-        // Multimodal tracking (prev_eval_prompt_, prev_eval_n_tokens_)
-        // was already set during prefill and remains valid.
-        prev_prompt_tokens_.insert(prev_prompt_tokens_.end(),
-            generated_toks.begin(), generated_toks.end());
-      } else {
-        // Hard cancel (client disconnect): invalidate cache for clean state.
-        cur_pos_ = 0;
-        llama_memory_clear(llama_get_memory(ctx_), false);
-        has_cache_ = false;
-        prev_prompt_tokens_.clear();
-        prev_eval_prompt_.clear();
-        prev_eval_n_tokens_ = 0;
-      }
+    // Hard cancel (client disconnect): invalidate cache for clean state.
+    if (cancelled.load() && !graceful_stop.load()) {
+      cur_pos_ = 0;
+      llama_memory_clear(llama_get_memory(ctx_), false);
+      has_cache_ = false;
+      prev_prompt_tokens_.clear();
+      prev_eval_prompt_.clear();
+      prev_eval_n_tokens_ = 0;
+    }
+
+    // Append generated tokens to tracking for next request's prefix matching.
+    // This matches llama-server's slot behavior: input + generated tokens are
+    // stored together, so the next turn can prefix-match across the boundary
+    // (e.g. assistant response re-encoded through template still shares most
+    // tokens with the raw generation). Skipped when hard cancel cleared above.
+    if (!generated_toks.empty() && has_cache_) {
+      prev_prompt_tokens_.insert(prev_prompt_tokens_.end(),
+          generated_toks.begin(), generated_toks.end());
     }
 
     // Flush thinking normalizer buffer.
