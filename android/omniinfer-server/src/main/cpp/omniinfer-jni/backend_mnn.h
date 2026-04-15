@@ -290,14 +290,15 @@ public:
       }
     }
 
-    // Cancel left MNN in an indeterminate state — invalidate cache
-    // so the next request does a full reset instead of reuse.
+    // Cancel: keep KV cache intact for next request's prefix matching.
+    // Re-tokenize prompt + generated text to update tracking.
+    // Multimodal tracking (prev_eval_prompt_, prev_eval_n_tokens_)
+    // was already set during prefill and remains valid.
     if (cancelled.load()) {
-      llm_->reset();
-      has_cache_ = false;
-      prev_input_ids_.clear();
-      prev_eval_prompt_.clear();
-      prev_eval_n_tokens_ = 0;
+      if (!is_multimodal && !full_response.empty()) {
+        prev_input_ids_ = llm_->tokenizer_encode(formatted + full_response);
+      }
+      // has_cache_ stays true, no llm_->reset().
     }
 
     // Flush any remaining buffered bytes (through normalizer if active).

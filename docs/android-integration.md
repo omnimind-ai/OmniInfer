@@ -223,6 +223,25 @@ val request = Request.Builder()
     .build()
 ```
 
+### Cancel / Stop Generation
+
+Two mechanisms to interrupt an in-progress generation:
+
+**Graceful stop** — Send `POST /v1/cancel` while a streaming request is active. The backend stops generating immediately, the current streaming response finishes normally (finish chunk + usage + `[DONE]`), and the KV cache is preserved. The next request can reuse the cached prefix, skipping re-prefill of prompt + partial response tokens.
+
+```bash
+# While a streaming request is in progress:
+curl -s -X POST http://127.0.0.1:9099/v1/cancel
+# Returns: {"status":"ok"}
+```
+
+**Hard cancel (client disconnect)** — If the client closes the HTTP connection (e.g. user navigates away, process killed), the server detects the broken pipe, cancels generation, and cleans up safely. The KV cache is invalidated and the next request will do a full prefill.
+
+| Scenario | Streaming response | KV cache | Next request |
+|----------|-------------------|----------|-------------|
+| Graceful stop (`/v1/cancel`) | Finishes normally (finish + usage + `[DONE]`) | Preserved | Prefix reuse (`cached_tokens > 0`) |
+| Hard cancel (disconnect) | Interrupted | Cleared | Full prefill (`cached_tokens = 0`) |
+
 ### Utility Methods
 
 ```kotlin

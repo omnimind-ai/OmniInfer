@@ -359,6 +359,7 @@ full_prefill:
 
     auto t_decode_start = std::chrono::steady_clock::now();
 
+    std::vector<llama_token> generated_toks;
     int n_generated = 0;
     while (!cancelled.load()) {
       if (n_generated >= eff_max_tokens) break;
@@ -376,6 +377,7 @@ full_prefill:
       }
 
       n_generated++;
+      generated_toks.push_back(tok);
       if (counting_reasoning) n_reasoning_tokens++;
 
       common_batch_clear(batch_);
@@ -396,16 +398,14 @@ full_prefill:
       }
     }
 
-    // Cancel may leave cur_pos_ past the prompt boundary (generated tokens
-    // still in KV cache). Invalidate cache so next request does a full
-    // prefill rather than attempting partial reuse on stale state.
+    // Cancel: keep KV cache intact for next request's prefix matching.
+    // Append generated tokens to the text-only tracking vector so
+    // prompt + partial response can be matched on the next turn.
+    // Multimodal tracking (prev_eval_prompt_, prev_eval_n_tokens_)
+    // was already set during prefill and remains valid.
     if (cancelled.load()) {
-      cur_pos_ = 0;
-      llama_memory_clear(llama_get_memory(ctx_), false);
-      has_cache_ = false;
-      prev_prompt_tokens_.clear();
-      prev_eval_prompt_.clear();
-      prev_eval_n_tokens_ = 0;
+      prev_prompt_tokens_.insert(prev_prompt_tokens_.end(),
+          generated_toks.begin(), generated_toks.end());
     }
 
     // Flush thinking normalizer buffer.
