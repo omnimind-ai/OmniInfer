@@ -170,7 +170,61 @@ if (-not $hasMsvc -and -not $hasMsys2Gcc) {
     }
 }
 if (-not $hasMsvc -and -not $hasMsys2Gcc) {
-    Stop-Fatal "No C/C++ compiler found. Install one of:`n  - Visual Studio Build Tools (cl.exe): https://visualstudio.microsoft.com/downloads/#build-tools`n  - MSYS2 with ucrt64 toolchain (gcc.exe): https://www.msys2.org/`n    Then: pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake`n`nAfter installing, re-run this script."
+    # Diagnostic: show what we searched
+    Write-Host ""
+    Write-Host "  Diagnosis:" -ForegroundColor Yellow
+    Write-Host "    cl.exe (MSVC):  not found in PATH"
+    Write-Host "    gcc.exe:        not found in PATH"
+    $envVal = $env:MSYS2_ROOT
+    $regVal = [System.Environment]::GetEnvironmentVariable("MSYS2_ROOT", "Machine")
+    if ($envVal) {
+        Write-Host "    `$env:MSYS2_ROOT = $envVal"
+        $ucrtPath = Join-Path $envVal "ucrt64\bin\gcc.exe"
+        if (Test-Path $ucrtPath) {
+            Write-Host "    gcc.exe found at $ucrtPath" -ForegroundColor Green
+            Write-Host "    But it was not detected — this is a bug, please report it." -ForegroundColor Red
+        } else {
+            Write-Host "    $ucrtPath does NOT exist" -ForegroundColor Red
+            Write-Host "    -> MSYS2 ucrt64 toolchain is not installed."
+        }
+    } elseif ($regVal) {
+        Write-Host "    MSYS2_ROOT (from registry) = $regVal"
+        $ucrtPath = Join-Path $regVal "ucrt64\bin\gcc.exe"
+        if (Test-Path $ucrtPath) {
+            Write-Host "    gcc.exe found at $ucrtPath" -ForegroundColor Green
+            Write-Host "    But it was not detected — this is a bug, please report it." -ForegroundColor Red
+        } else {
+            Write-Host "    $ucrtPath does NOT exist" -ForegroundColor Red
+            Write-Host "    -> MSYS2 ucrt64 toolchain is not installed."
+        }
+    } else {
+        Write-Host "    `$env:MSYS2_ROOT:  not set"
+        Write-Host "    Registry MSYS2_ROOT:  not set"
+        Write-Host "    Scanned drives for msys64/:  not found"
+    }
+    Write-Host ""
+    Write-Err "No C/C++ compiler found."
+    Write-Host ""
+    Write-Host "  Fix (pick one):" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "    Option A: " -ForegroundColor Cyan -NoNewline
+    Write-Host "Install MSYS2 + ucrt64 toolchain"
+    Write-Host "      1. Download and install MSYS2: https://www.msys2.org/"
+    Write-Host "      2. Open MSYS2 UCRT64 terminal and run:"
+    Write-Host "           pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake" -ForegroundColor White
+    Write-Host "      3. Set system environment variable:"
+    Write-Host '           MSYS2_ROOT = C:\msys64  (or your install path)' -ForegroundColor White
+    Write-Host "      4. Re-run this script."
+    Write-Host ""
+    Write-Host "    Option B: " -ForegroundColor Cyan -NoNewline
+    Write-Host "Install Visual Studio Build Tools"
+    Write-Host "      1. Download: https://visualstudio.microsoft.com/downloads/#build-tools"
+    Write-Host "      2. Install the 'Desktop development with C++' workload."
+    Write-Host "      3. Open 'Developer PowerShell for VS' and re-run this script."
+    Write-Host ""
+    Write-Host "Press any key to exit ..." -ForegroundColor DarkGray
+    try { [void][Console]::ReadKey($true) } catch { Start-Sleep -Seconds 10 }
+    exit 1
 } elseif ($hasMsvc) {
     Write-Ok "C++ toolchain: MSVC (cl.exe)"
 } else {
