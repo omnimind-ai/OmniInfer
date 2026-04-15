@@ -396,6 +396,18 @@ full_prefill:
       }
     }
 
+    // Cancel may leave cur_pos_ past the prompt boundary (generated tokens
+    // still in KV cache). Invalidate cache so next request does a full
+    // prefill rather than attempting partial reuse on stale state.
+    if (cancelled.load()) {
+      cur_pos_ = 0;
+      llama_memory_clear(llama_get_memory(ctx_), false);
+      has_cache_ = false;
+      prev_prompt_tokens_.clear();
+      prev_eval_prompt_.clear();
+      prev_eval_n_tokens_ = 0;
+    }
+
     // Flush thinking normalizer buffer.
     if (think_norm) {
       auto remaining = think_norm->flush();

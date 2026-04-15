@@ -290,6 +290,16 @@ public:
       }
     }
 
+    // Cancel left MNN in an indeterminate state — invalidate cache
+    // so the next request does a full reset instead of reuse.
+    if (cancelled.load()) {
+      llm_->reset();
+      has_cache_ = false;
+      prev_input_ids_.clear();
+      prev_eval_prompt_.clear();
+      prev_eval_n_tokens_ = 0;
+    }
+
     // Flush any remaining buffered bytes (through normalizer if active).
     if (!utf8_buf.empty()) {
       std::string to_emit = think_norm ? think_norm->process(utf8_buf) : utf8_buf;
