@@ -15,7 +15,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$RepoUrl = "https://github.com/omnimind-ai/OmniInfer.git"
+$RepoSsh   = "git@github.com:omnimind-ai/OmniInfer.git"
+$RepoHttps = "https://github.com/omnimind-ai/OmniInfer.git"
 $CatalogUrl = "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/windows/model_list.json"
 
 # ── Helpers ─────────────────────────────────────────────────
@@ -97,9 +98,21 @@ if (Test-Path "$InstallDir\.git") {
     try { git -C $InstallDir pull --ff-only 2>&1 | Out-Null } catch { Write-Warn "Pull failed, continuing with existing code" }
 } else {
     Write-Info "Cloning OmniInfer to $InstallDir ..."
-    git clone --depth 1 $RepoUrl $InstallDir
+    $clonedViaHttps = $false
+    Write-Info "Trying SSH ..."
+    git clone --depth 1 $RepoSsh $InstallDir 2>$null
     if ($LASTEXITCODE -ne 0) {
-        Stop-Fatal "git clone failed (exit code $LASTEXITCODE). Check your network connection and try again."
+        Write-Warn "SSH clone failed, falling back to HTTPS ..."
+        if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue }
+        git clone --depth 1 $RepoHttps $InstallDir
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Fatal "git clone failed via both SSH and HTTPS. Check your network connection and try again."
+        }
+        $clonedViaHttps = $true
+    }
+    # If cloned via HTTPS, rewrite SSH submodule URLs to HTTPS so submodule init works
+    if ($clonedViaHttps) {
+        git -C $InstallDir config --local url."https://github.com/".insteadOf "git@github.com:"
     }
 }
 if (-not (Test-Path (Join-Path $InstallDir "omniinfer.py"))) {
