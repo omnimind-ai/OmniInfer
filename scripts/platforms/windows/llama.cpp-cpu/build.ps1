@@ -125,7 +125,18 @@ if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -Erro
 
         $threadModel = Get-GppThreadModel -Compiler "g++"
         if ($threadModel -eq "win32") {
-            throw "The detected MinGW toolchain uses the 'win32' thread model and cannot build llama-server reliably."
+            $gccPath = (Get-Command g++.exe).Source
+            throw @"
+The MinGW g++ found at '$gccPath' uses the 'win32' thread model, which cannot build llama-server.
+
+Fix (pick one):
+  1. Install MSYS2 (https://www.msys2.org/) then run in MSYS2 terminal:
+       pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake
+     Then add C:\msys64\ucrt64\bin to PATH (or set `$env:MSYS2_ROOT`).
+
+  2. Install Visual Studio Build Tools (https://visualstudio.microsoft.com/downloads/#build-tools)
+     and run this script from a Developer PowerShell.
+"@
         }
 
         $generator = "MinGW Makefiles"
