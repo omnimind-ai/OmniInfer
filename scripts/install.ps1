@@ -143,7 +143,12 @@ $msys2Ucrt64Bin = $null
 if (-not $hasMsvc -and -not $hasMsys2Gcc) {
     # Try to find MSYS2 ucrt64 even if not in PATH
     $msys2Candidates = @()
+    # Read MSYS2_ROOT from process env, then directly from registry (conda/venv may not inherit new system vars)
     if ($env:MSYS2_ROOT) { $msys2Candidates += $env:MSYS2_ROOT }
+    foreach ($scope in @("Machine", "User")) {
+        $regVal = [System.Environment]::GetEnvironmentVariable("MSYS2_ROOT", $scope)
+        if ($regVal -and ($regVal -notin $msys2Candidates)) { $msys2Candidates += $regVal }
+    }
     foreach ($key in @("HKLM:\SOFTWARE\MSYS2","HKCU:\SOFTWARE\MSYS2","HKLM:\SOFTWARE\WOW6432Node\MSYS2")) {
         try { $loc = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation; if ($loc) { $msys2Candidates += $loc } } catch {}
     }
