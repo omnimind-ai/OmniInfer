@@ -190,8 +190,20 @@ fi
 info "Step 1/6: Checking prerequisites ..."
 need_cmd git    "Install from https://git-scm.com/"
 need_cmd cmake  "Termux: pkg install cmake  |  macOS: brew install cmake  |  Linux: apt install cmake"
+PYTHON_CMD=""
 if [[ "${IS_ANDROID}" -eq 0 ]]; then
-    need_cmd python3 "Install Python 3 from https://python.org/"
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_CMD="python3"
+        ok "python3"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_CMD="python"
+        ok "python"
+    elif command -v uv >/dev/null 2>&1 && uv run python3 --version >/dev/null 2>&1; then
+        PYTHON_CMD="uv run python3"
+        ok "python3 (via uv)"
+    else
+        fatal "'python3' is required but not found. Install from https://python.org/ or use uv: https://docs.astral.sh/uv/"
+    fi
 fi
 need_cmd curl   "Install curl for your platform"
 # C/C++ compiler (needed for building backends)
