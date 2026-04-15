@@ -84,11 +84,12 @@ public:
       bool thinking_enabled,
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token,
-      const std::string& tools_json = "",
-      const std::string& tool_choice = "",
-      const std::string& messages_json = "",
-      const std::vector<std::vector<uint8_t>>& images = {},
-      int max_tokens = 0) override {
+      const std::string& tools_json,
+      const std::string& tool_choice,
+      const std::string& messages_json,
+      const std::vector<std::vector<uint8_t>>& images,
+      int max_tokens,
+      std::atomic<bool>& graceful_stop) override {
 
     common_sampler_reset(sampler_);
 
@@ -181,21 +182,34 @@ public:
       }
 
       if (reuse_mm) {
-        // Reuse multimodal KV cache: trim old gen prompt + generated tokens, prefill suffix.
+        // Try KV cache reuse: trim old gen prompt + generated tokens, decode suffix.
         n_cached_tokens = prev_eval_n_tokens_;
-        llama_memory_seq_rm(llama_get_memory(ctx_), 0, prev_eval_n_tokens_, -1);
-        auto suffix_toks = common_tokenize(ctx_, suffix, false, false);
-        if (decode_batched(suffix_toks, prev_eval_n_tokens_, true) != 0) return "";
-        cur_pos_ = prev_eval_n_tokens_ + (int)suffix_toks.size();
-        n_prompt_tokens = cur_pos_;
-        // Image tokens are in the cached prefix.
-        auto conv_text_toks = common_tokenize(ctx_, prev_eval_prompt_, true, true);
-        n_image_tokens = prev_eval_n_tokens_ - (int)conv_text_toks.size();
-        if (n_image_tokens < 0) n_image_tokens = 0;
-        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-            "Multimodal KV cache reuse: %d cached, %d new text tokens",
-            prev_eval_n_tokens_, (int)suffix_toks.size());
-      } else {
+        bool trimmed = llama_memory_seq_rm(llama_get_memory(ctx_), 0, prev_eval_n_tokens_, -1);
+        if (trimmed) {
+          auto suffix_toks = common_tokenize(ctx_, suffix, false, false);
+          if (decode_batched(suffix_toks, prev_eval_n_tokens_, true) != 0) {
+            reuse_mm = false;
+            n_cached_tokens = 0;
+          } else {
+            cur_pos_ = prev_eval_n_tokens_ + (int)suffix_toks.size();
+            n_prompt_tokens = cur_pos_;
+            auto conv_text_toks = common_tokenize(ctx_, prev_eval_prompt_, true, true);
+            n_image_tokens = prev_eval_n_tokens_ - (int)conv_text_toks.size();
+            if (n_image_tokens < 0) n_image_tokens = 0;
+            __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+                "Multimodal KV cache reuse: %d cached, %d new text tokens",
+                prev_eval_n_tokens_, (int)suffix_toks.size());
+          }
+        } else {
+          // seq_rm failed (SWA/hybrid models): fall through to full multimodal eval.
+          reuse_mm = false;
+          n_cached_tokens = 0;
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "Multimodal KV cache: seq_rm failed (SWA model), full re-eval");
+        }
+      }
+
+      if (!reuse_mm) {
         // Full multimodal eval (first request or new image).
         cur_pos_ = 0;
         llama_memory_clear(llama_get_memory(ctx_), false);
@@ -265,6 +279,8 @@ public:
         // Exact match: trim generated tokens + last prompt token, re-decode 1 token for logits.
         n_cached_tokens = common_prefix - 1;
         if (!llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix - 1, -1)) {
+          // SWA model: can't trim tail. Full re-decode.
+          n_cached_tokens = 0;
           goto full_prefill;
         }
         cur_pos_ = common_prefix - 1;
@@ -278,23 +294,33 @@ public:
             "KV cache reuse: %d/%d tokens cached (exact, 1 re-decoded)",
             common_prefix - 1, (int)prompt_toks.size());
       } else if (common_prefix > 0) {
-        // Partial prefix match: trim KV after common prefix, decode only suffix.
+        // Partial prefix match: remove old entries after common prefix, decode suffix.
         n_cached_tokens = common_prefix;
-        if (!llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1)) {
+        bool trimmed = llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1);
+        if (!trimmed) {
+          // SWA/hybrid model: can't trim tail. Full clear + re-decode.
           n_cached_tokens = 0;
-          goto full_prefill;
+          llama_memory_clear(llama_get_memory(ctx_), false);
+          cur_pos_ = 0;
+          if (decode_batched(prompt_toks, 0, true) != 0) goto full_prefill;
+          cur_pos_ = (int)prompt_toks.size();
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "KV cache: seq_rm failed (SWA model), full re-decode %d tokens",
+              (int)prompt_toks.size());
+        } else {
+          // seq_rm succeeded: decode only suffix.
+          cur_pos_ = common_prefix;
+          std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
+          if (decode_batched(suffix, common_prefix, true) != 0) {
+            n_cached_tokens = 0;
+            goto full_prefill;
+          }
+          cur_pos_ = (int)prompt_toks.size();
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "KV cache reuse: %d/%d tokens cached, %d new",
+              common_prefix, (int)prompt_toks.size(),
+              (int)prompt_toks.size() - common_prefix);
         }
-        cur_pos_ = common_prefix;
-        std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
-        if (decode_batched(suffix, common_prefix, true) != 0) {
-          n_cached_tokens = 0;
-          goto full_prefill;
-        }
-        cur_pos_ = (int)prompt_toks.size();
-        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-            "KV cache reuse: %d/%d tokens cached, %d new",
-            common_prefix, (int)prompt_toks.size(),
-            (int)prompt_toks.size() - common_prefix);
       } else {
 full_prefill:
         // No cache match (or fallback from failed seq_rm/decode): full clear + full prefill.
@@ -348,6 +374,7 @@ full_prefill:
 
     auto t_decode_start = std::chrono::steady_clock::now();
 
+    std::vector<llama_token> generated_toks;
     int n_generated = 0;
     while (!cancelled.load()) {
       if (n_generated >= eff_max_tokens) break;
@@ -365,6 +392,7 @@ full_prefill:
       }
 
       n_generated++;
+      generated_toks.push_back(tok);
       if (counting_reasoning) n_reasoning_tokens++;
 
       common_batch_clear(batch_);
@@ -383,6 +411,26 @@ full_prefill:
           counting_reasoning = false;
         }
       }
+    }
+
+    // Hard cancel (client disconnect): invalidate cache for clean state.
+    if (cancelled.load() && !graceful_stop.load()) {
+      cur_pos_ = 0;
+      llama_memory_clear(llama_get_memory(ctx_), false);
+      has_cache_ = false;
+      prev_prompt_tokens_.clear();
+      prev_eval_prompt_.clear();
+      prev_eval_n_tokens_ = 0;
+    }
+
+    // Append generated tokens to tracking for next request's prefix matching.
+    // This matches llama-server's slot behavior: input + generated tokens are
+    // stored together, so the next turn can prefix-match across the boundary
+    // (e.g. assistant response re-encoded through template still shares most
+    // tokens with the raw generation). Skipped when hard cancel cleared above.
+    if (!generated_toks.empty() && has_cache_) {
+      prev_prompt_tokens_.insert(prev_prompt_tokens_.end(),
+          generated_toks.begin(), generated_toks.end());
     }
 
     // Flush thinking normalizer buffer.

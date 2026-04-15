@@ -79,6 +79,7 @@ object OmniInferBridge {
 
     fun reset(handle: Long) { if (isNativeLibraryLoaded) nativeReset(handle) }
     fun cancel(handle: Long) { if (isNativeLibraryLoaded) nativeCancel(handle) }
+    fun gracefulStop(handle: Long) { if (isNativeLibraryLoaded) nativeGracefulStop(handle) }
 
     fun free(handle: Long) {
         if (!isNativeLibraryLoaded) return
@@ -99,6 +100,7 @@ object OmniInferBridge {
     private external fun nativeSetThinkMode(handle: Long, enabled: Boolean)
     private external fun nativeReset(handle: Long)
     private external fun nativeCancel(handle: Long)
+    private external fun nativeGracefulStop(handle: Long)
     private external fun nativeFree(handle: Long)
     private external fun nativeCollectDiagnosticsJson(handle: Long): String
 }

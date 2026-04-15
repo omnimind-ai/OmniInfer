@@ -110,6 +110,17 @@ class OmniInferService : Service() {
                                 )
                             }
                         }
+
+                        post("/v1/cancel") {
+                            val handle = OmniInferServer.currentHandle
+                            if (handle != 0L) {
+                                OmniInferBridge.gracefulStop(handle)
+                                call.respondText("""{"status":"ok"}""", ContentType.Application.Json)
+                            } else {
+                                call.respondText("""{"error":"no model loaded"}""",
+                                    ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
+                            }
+                        }
                     }
                 }
             }
