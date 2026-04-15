@@ -37,13 +37,32 @@ function Test-Command {
 }
 
 # Arrow-key menu selector. Returns 0-based index.
+# Falls back to numbered list when console is not interactive (e.g. irm | iex).
 function Select-Menu {
     param([int]$Default, [string[]]$Options)
     if ($NonInteractive) { return $Default }
 
-    $cur = $Default
     $count = $Options.Count
 
+    # Detect if interactive console is available
+    $hasConsole = $true
+    try { [void][Console]::CursorVisible } catch { $hasConsole = $false }
+    if (-not $hasConsole -or -not [Environment]::UserInteractive) {
+        # Fallback: numbered list
+        for ($i = 0; $i -lt $count; $i++) {
+            $marker = if ($i -eq $Default) { "*" } else { " " }
+            Write-Host "  $marker $($i + 1). $($Options[$i])"
+        }
+        Write-Host ""
+        $choice = Read-Host "  Enter number (default: $($Default + 1))"
+        if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $count) {
+            return ([int]$choice - 1)
+        }
+        return $Default
+    }
+
+    # Interactive: arrow-key selector
+    $cur = $Default
     [Console]::CursorVisible = $false
 
     function Draw-Menu {
