@@ -47,8 +47,15 @@ function Find-Msys2Ucrt64Toolchain {
         }
     }
 
-    # 4. Common default location
-    $candidates += "C:\msys64"
+    # 4. Scan all drive roots for common MSYS2 install locations
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $root = $drive.Root  # e.g. "C:\"
+        $candidates += Join-Path $root "msys64"
+        $candidates += Join-Path $root "msys2"
+    }
+    # Also check well-known non-root paths (chocolatey, scoop, custom)
+    if ($env:ChocolateyInstall) { $candidates += Join-Path $env:ChocolateyInstall "lib\msys2\msys64" }
+    if ($env:SCOOP) { $candidates += Join-Path $env:SCOOP "apps\msys2\current" }
 
     foreach ($msys2Root in $candidates) {
         $ucrt64Bin = Join-Path $msys2Root "ucrt64\bin"
@@ -118,7 +125,18 @@ if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -Erro
 
         $threadModel = Get-GppThreadModel -Compiler "g++"
         if ($threadModel -eq "win32") {
-            throw "The detected MinGW toolchain uses the 'win32' thread model and cannot build llama-server reliably."
+            $gccPath = (Get-Command g++.exe).Source
+            throw @"
+The MinGW g++ found at '$gccPath' uses the 'win32' thread model, which cannot build llama-server.
+
+Fix (pick one):
+  1. Install MSYS2 (https://www.msys2.org/) then run in MSYS2 terminal:
+       pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake
+     Then add C:\msys64\ucrt64\bin to PATH (or set `$env:MSYS2_ROOT`).
+
+  2. Install Visual Studio Build Tools (https://visualstudio.microsoft.com/downloads/#build-tools)
+     and run this script from a Developer PowerShell.
+"@
         }
 
         $generator = "MinGW Makefiles"

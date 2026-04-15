@@ -287,19 +287,56 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     BACKEND_IDS+=("llama.cpp-llama");  BACKEND_DESCS+=("llama.cpp-llama  —  Text chat")
     BACKEND_IDS+=("llama.cpp-mtmd");   BACKEND_DESCS+=("llama.cpp-mtmd  —  Multimodal (text + vision)")
 else
-    # Desktop: query CLI (service auto-starts)
-    while IFS= read -r line; do
-        id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
-        if [[ -n "${id}" ]]; then
-            BACKEND_IDS+=("${id}")
-            BACKEND_DESCS+=("${id}")
+    # Desktop: query gateway API for compatible backends (hardware-matched)
+    # First ensure the service is running
+    "${INSTALL_DIR}/omniinfer" status >/dev/null 2>&1 || true
+
+    _backends_json=$(curl -sS "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
+    _recommended=$(echo "${_backends_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('recommended',''))" 2>/dev/null) || _recommended=""
+
+    if echo "${_backends_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for b in d.get('data', []):
+    print(b['id'] + '|' + b.get('description', ''))
+" 2>/dev/null | while IFS='|' read -r bid bdesc; do
+        BACKEND_IDS+=("${bid}")
+        if [[ -n "${bdesc}" ]]; then
+            BACKEND_DESCS+=("${bid}  —  ${bdesc}")
+        else
+            BACKEND_DESCS+=("${bid}")
         fi
-        desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
-        if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
-            last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
-            BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
+    done; [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
+        # Move recommended backend to top
+        if [[ -n "${_recommended}" ]]; then
+            for i in "${!BACKEND_IDS[@]}"; do
+                if [[ "${BACKEND_IDS[$i]}" == "${_recommended}" ]] && [[ "$i" -gt 0 ]]; then
+                    rec_id="${BACKEND_IDS[$i]}"; rec_desc="${BACKEND_DESCS[$i]}"
+                    unset 'BACKEND_IDS[$i]'; unset 'BACKEND_DESCS[$i]'
+                    BACKEND_IDS=("${rec_id}" "${BACKEND_IDS[@]}")
+                    BACKEND_DESCS=("${rec_desc}  (recommended)" "${BACKEND_DESCS[@]}")
+                    break
+                elif [[ "${BACKEND_IDS[$i]}" == "${_recommended}" ]] && [[ "$i" -eq 0 ]]; then
+                    BACKEND_DESCS[0]="${BACKEND_DESCS[0]}  (recommended)"
+                    break
+                fi
+            done
         fi
-    done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+    else
+        # Fallback: parse CLI text output
+        while IFS= read -r line; do
+            id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
+            if [[ -n "${id}" ]]; then
+                BACKEND_IDS+=("${id}")
+                BACKEND_DESCS+=("${id}")
+            fi
+            desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
+            if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
+                last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
+                BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
+            fi
+        done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+    fi
 fi
 
 if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then

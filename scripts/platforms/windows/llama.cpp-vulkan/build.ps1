@@ -26,7 +26,11 @@ function Find-Msys2Ucrt64Toolchain {
     }
     $gccInPath = Get-Command gcc.exe -ErrorAction SilentlyContinue
     if ($gccInPath) { $binDir = Split-Path $gccInPath.Source; if ($binDir -match 'ucrt64\\bin$') { $candidates += (Split-Path (Split-Path $binDir)) } }
-    $candidates += "C:\msys64"
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $candidates += Join-Path $drive.Root "msys64"; $candidates += Join-Path $drive.Root "msys2"
+    }
+    if ($env:ChocolateyInstall) { $candidates += Join-Path $env:ChocolateyInstall "lib\msys2\msys64" }
+    if ($env:SCOOP) { $candidates += Join-Path $env:SCOOP "apps\msys2\current" }
 
     foreach ($msys2Root in $candidates) {
         $ucrt64Bin = Join-Path $msys2Root "ucrt64\bin"
