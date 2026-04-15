@@ -16,7 +16,8 @@ MODEL_PATH=""
 SKIP_BUILD=0
 BACKEND_OVERRIDE=""
 NON_INTERACTIVE=0
-REPO_URL="https://github.com/omnimind-ai/OmniInfer.git"
+REPO_SSH="git@github.com:omnimind-ai/OmniInfer.git"
+REPO_HTTPS="https://github.com/omnimind-ai/OmniInfer.git"
 
 # ── Parse args ──────────────────────────────────────────────
 
@@ -189,10 +190,31 @@ fi
 info "Step 1/6: Checking prerequisites ..."
 need_cmd git    "Install from https://git-scm.com/"
 need_cmd cmake  "Termux: pkg install cmake  |  macOS: brew install cmake  |  Linux: apt install cmake"
+PYTHON_CMD=""
 if [[ "${IS_ANDROID}" -eq 0 ]]; then
-    need_cmd python3 "Install Python 3 from https://python.org/"
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_CMD="python3"
+        ok "python3"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_CMD="python"
+        ok "python"
+    elif command -v uv >/dev/null 2>&1 && uv run python3 --version >/dev/null 2>&1; then
+        PYTHON_CMD="uv run python3"
+        ok "python3 (via uv)"
+    else
+        fatal "'python3' is required but not found. Install from https://python.org/ or use uv: https://docs.astral.sh/uv/"
+    fi
 fi
 need_cmd curl   "Install curl for your platform"
+# C/C++ compiler (needed for building backends)
+if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1; then
+    ok "C++ compiler"
+else
+    fatal "No C/C++ compiler found. Install one of:
+  macOS:   xcode-select --install
+  Ubuntu:  sudo apt install build-essential
+  Termux:  pkg install clang"
+fi
 echo ""
 
 # ── Step 2: Clone or update repo ────────────────────────────
@@ -203,7 +225,31 @@ if [ -d "${INSTALL_DIR}/.git" ]; then
     git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || warn "Pull failed, continuing with existing code"
 else
     info "Cloning OmniInfer to ${INSTALL_DIR} ..."
-    git clone --depth 1 "${REPO_URL}" "${INSTALL_DIR}"
+    CLONED_VIA_HTTPS=0
+    info "Trying SSH (timeout 15s) ..."
+    _ssh_ok=0
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 15 git clone --depth 1 "${REPO_SSH}" "${INSTALL_DIR}" 2>/dev/null && _ssh_ok=1
+    else
+        # macOS/BSD: no timeout command, use GIT_SSH_COMMAND with ConnectTimeout
+        GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no" \
+            git clone --depth 1 "${REPO_SSH}" "${INSTALL_DIR}" 2>/dev/null && _ssh_ok=1
+    fi
+    if [[ "${_ssh_ok}" -eq 0 ]]; then
+        warn "SSH clone failed, falling back to HTTPS ..."
+        rm -rf "${INSTALL_DIR}" 2>/dev/null || true
+        if ! git clone --depth 1 "${REPO_HTTPS}" "${INSTALL_DIR}"; then
+            fatal "git clone failed via both SSH and HTTPS. Check your network connection and try again."
+        fi
+        CLONED_VIA_HTTPS=1
+    fi
+    # If cloned via HTTPS, rewrite SSH submodule URLs to HTTPS so submodule init works
+    if [[ "${CLONED_VIA_HTTPS}" -eq 1 ]]; then
+        git -C "${INSTALL_DIR}" config --local url."https://github.com/".insteadOf "git@github.com:"
+    fi
+fi
+if [[ ! -f "${INSTALL_DIR}/omniinfer.py" ]]; then
+    fatal "Repository clone appears incomplete — omniinfer.py not found in ${INSTALL_DIR}"
 fi
 ok "Repository ready at ${INSTALL_DIR}"
 
@@ -247,6 +293,12 @@ PORTCFG
 fi
 echo ""
 
+# ── Cleanup: shut down any gateway started by the CLI on exit ──
+_cleanup_gateway() {
+    curl -sS -X POST "http://127.0.0.1:${OMNI_PORT}/omni/shutdown" >/dev/null 2>&1 || true
+}
+trap _cleanup_gateway EXIT
+
 # ── Step 3: Detect platform & choose backend ────────────────
 
 info "Step 3/6: Detecting platform and hardware ..."
@@ -272,19 +324,56 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     BACKEND_IDS+=("llama.cpp-llama");  BACKEND_DESCS+=("llama.cpp-llama  —  Text chat")
     BACKEND_IDS+=("llama.cpp-mtmd");   BACKEND_DESCS+=("llama.cpp-mtmd  —  Multimodal (text + vision)")
 else
-    # Desktop: query CLI (service auto-starts)
-    while IFS= read -r line; do
-        id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
-        if [[ -n "${id}" ]]; then
-            BACKEND_IDS+=("${id}")
-            BACKEND_DESCS+=("${id}")
+    # Desktop: query gateway API for compatible backends (hardware-matched)
+    # First ensure the service is running
+    "${INSTALL_DIR}/omniinfer" status >/dev/null 2>&1 || true
+
+    _backends_json=$(curl -sS "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
+    _recommended=$(echo "${_backends_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('recommended',''))" 2>/dev/null) || _recommended=""
+
+    if echo "${_backends_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for b in d.get('data', []):
+    print(b['id'] + '|' + b.get('description', ''))
+" 2>/dev/null | while IFS='|' read -r bid bdesc; do
+        BACKEND_IDS+=("${bid}")
+        if [[ -n "${bdesc}" ]]; then
+            BACKEND_DESCS+=("${bid}  —  ${bdesc}")
+        else
+            BACKEND_DESCS+=("${bid}")
         fi
-        desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
-        if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
-            last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
-            BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
+    done; [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
+        # Move recommended backend to top
+        if [[ -n "${_recommended}" ]]; then
+            for i in "${!BACKEND_IDS[@]}"; do
+                if [[ "${BACKEND_IDS[$i]}" == "${_recommended}" ]] && [[ "$i" -gt 0 ]]; then
+                    rec_id="${BACKEND_IDS[$i]}"; rec_desc="${BACKEND_DESCS[$i]}"
+                    unset 'BACKEND_IDS[$i]'; unset 'BACKEND_DESCS[$i]'
+                    BACKEND_IDS=("${rec_id}" "${BACKEND_IDS[@]}")
+                    BACKEND_DESCS=("${rec_desc}  (recommended)" "${BACKEND_DESCS[@]}")
+                    break
+                elif [[ "${BACKEND_IDS[$i]}" == "${_recommended}" ]] && [[ "$i" -eq 0 ]]; then
+                    BACKEND_DESCS[0]="${BACKEND_DESCS[0]}  (recommended)"
+                    break
+                fi
+            done
         fi
-    done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+    else
+        # Fallback: parse CLI text output
+        while IFS= read -r line; do
+            id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
+            if [[ -n "${id}" ]]; then
+                BACKEND_IDS+=("${id}")
+                BACKEND_DESCS+=("${id}")
+            fi
+            desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
+            if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
+                last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
+                BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
+            fi
+        done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+    fi
 fi
 
 if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
@@ -394,7 +483,10 @@ else
             ok "Backend ${SELECTED_BACKEND} already built, skipping"
         else
             info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
-            bash "${FULL_BUILD_SCRIPT}"
+            if ! bash "${FULL_BUILD_SCRIPT}"; then
+                echo ""
+                fatal "Build failed (exit code $?). See the messages above for details."
+            fi
             ok "Build complete"
         fi
     fi

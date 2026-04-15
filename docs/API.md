@@ -82,15 +82,22 @@ Example response:
 
 ## 3. List backends
 
-### `GET /omni/backends`
+### `GET /omni/backends[?scope=installed|compatible|all]`
 
-Returns all local backends.
+Returns backends filtered by scope.
 
-Depending on the current host and which runtime folders are present locally, the list may include backends such as:
+| Scope | Description |
+|-------|-------------|
+| `installed` (default) | Backends with runtime binaries present, ready to use |
+| `compatible` | Backends whose required hardware is detected on this machine |
+| `all` | All platform-declared backends |
 
-- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, `llama.cpp-hip`
-- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, `llama.cpp-linux-openvino`
-- macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, `mlx-mac`
+Example:
+
+```bash
+curl -s http://127.0.0.1:9000/omni/backends
+curl -s "http://127.0.0.1:9000/omni/backends?scope=all"
+```
 
 Example response:
 
@@ -99,18 +106,28 @@ Example response:
   "object": "list",
   "data": [
     {
-      "id": "llama.cpp-cpu",
-      "label": "llama.cpp cpu",
+      "id": "llama.cpp-cuda",
+      "label": "llama.cpp CUDA",
+      "family": "llama.cpp",
       "selected": true,
       "binary_exists": true,
       "models_dir": "models",
-      "capabilities": ["chat", "vision", "stream", "cpu"],
+      "capabilities": ["chat", "vision", "stream", "gpu", "cuda"],
       "description": "...",
-      "loaded_model": null
+      "loaded_model": null,
+      "compatibility": "installed",
+      "priority": 0
     }
-  ]
+  ],
+  "recommended": "llama.cpp-cuda"
 }
 ```
+
+Response fields:
+
+- `compatibility` — backend tier: `"installed"`, `"compatible"`, or `"unavailable"`
+- `priority` — ranking (0 = GPU/specialized best, 1 = CPU fallback)
+- `recommended` — top-level field, ID of the best installed backend (or `null` if none installed)
 
 ## 4. Supported models
 
@@ -231,7 +248,47 @@ Example response:
 }
 ```
 
-## 8. Chat completions
+## 8. List models
+
+### `GET /v1/models`
+
+Returns the currently loaded model in OpenAI-compatible list format. If no model is loaded, the `data` array is empty.
+
+Example:
+
+```bash
+curl -s http://127.0.0.1:9000/v1/models
+```
+
+Example response (model loaded):
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "object": "model",
+      "created": 0,
+      "owned_by": "omniinfer",
+      "permission": [],
+      "root": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "parent": null
+    }
+  ]
+}
+```
+
+Example response (no model loaded):
+
+```json
+{
+  "object": "list",
+  "data": []
+}
+```
+
+## 9. Chat completions
 
 ### `POST /v1/chat/completions`
 
@@ -308,7 +365,7 @@ data: {"usage":{"prompt_tokens":13,"completion_tokens":12,"total_tokens":25}}
 data: [DONE]
 ```
 
-## 9. Shutdown
+## 10. Shutdown
 
 ### `POST /omni/shutdown`
 
@@ -323,7 +380,7 @@ Example response:
 }
 ```
 
-## 10. Error format
+## 11. Error format
 
 Errors are returned as JSON:
 

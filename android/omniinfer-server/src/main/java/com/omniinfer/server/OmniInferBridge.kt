@@ -43,7 +43,7 @@ object OmniInferBridge {
     fun generate(
         handle: Long,
         messagesJson: String,
-        imageData: ByteArray? = null,
+        imageDataArray: Array<ByteArray>? = null,
         thinkEnabled: Boolean = false,
         toolsJson: String? = null,
         toolChoice: String? = null,
@@ -63,7 +63,7 @@ object OmniInferBridge {
         }
         if (maxTokens != null && maxTokens > 0) sb.append(",\"max_tokens\":").append(maxTokens)
         sb.append("}")
-        return nativeGenerate(handle, "", "", sb.toString(), imageData, callback)
+        return nativeGenerate(handle, "", "", sb.toString(), imageDataArray, callback)
     }
 
     fun loadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean {
@@ -79,6 +79,7 @@ object OmniInferBridge {
 
     fun reset(handle: Long) { if (isNativeLibraryLoaded) nativeReset(handle) }
     fun cancel(handle: Long) { if (isNativeLibraryLoaded) nativeCancel(handle) }
+    fun gracefulStop(handle: Long) { if (isNativeLibraryLoaded) nativeGracefulStop(handle) }
 
     fun free(handle: Long) {
         if (!isNativeLibraryLoaded) return
@@ -93,12 +94,13 @@ object OmniInferBridge {
     }
 
     private external fun nativeInit(configJson: String): Long
-    private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageData: ByteArray?, callback: OmniInferStreamCallback?): String
+    private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageDataArray: Array<ByteArray>?, callback: OmniInferStreamCallback?): String
     private external fun nativeLoadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean
     private external fun nativePrewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int): Boolean
     private external fun nativeSetThinkMode(handle: Long, enabled: Boolean)
     private external fun nativeReset(handle: Long)
     private external fun nativeCancel(handle: Long)
+    private external fun nativeGracefulStop(handle: Long)
     private external fun nativeFree(handle: Long)
     private external fun nativeCollectDiagnosticsJson(handle: Long): String
 }

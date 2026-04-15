@@ -1,6 +1,8 @@
 #pragma once
 
 #include "inference_backend.h"
+#include "thinking_tags.h"
+#include "tool_call_parser.h"
 
 #include "llama.h"
 #include "common.h"
@@ -82,12 +84,12 @@ public:
       bool thinking_enabled,
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token,
-      const std::string& tools_json = "",
-      const std::string& tool_choice = "",
-      const std::string& messages_json = "",
-      const uint8_t* image_data = nullptr,
-      size_t image_size = 0,
-      int max_tokens = 0) override {
+      const std::string& tools_json,
+      const std::string& tool_choice,
+      const std::string& messages_json,
+      const std::vector<std::vector<uint8_t>>& images,
+      int max_tokens,
+      std::atomic<bool>& graceful_stop) override {
 
     common_sampler_reset(sampler_);
 
@@ -110,14 +112,16 @@ public:
       }
     }
 
-    bool is_multimodal = image_data && image_size > 0 && mtmd_ctx_;
+    bool is_multimodal = !images.empty() && mtmd_ctx_;
 
     if (is_multimodal) {
-      // Insert media marker into the first user message (matching Kotlin's image extraction order).
+      // Replace <image> placeholders with media markers for mtmd.
+      // Kotlin inserts <image> at the exact position of each image_url in the content.
       for (auto& msg : messages) {
-        if (msg.role == "user") {
-          msg.content = media_marker_ + "\n" + msg.content;
-          break;
+        size_t pos = 0;
+        while ((pos = msg.content.find("<image>", pos)) != std::string::npos) {
+          msg.content.replace(pos, 7, media_marker_ + "\n");
+          pos += media_marker_.size() + 1;
         }
       }
     }
@@ -157,6 +161,15 @@ public:
     int n_image_tokens = 0;
 
     if (is_multimodal) {
+      // Quick check: text tokens alone (excluding image) must fit in context.
+      auto text_check = common_tokenize(ctx_, params.prompt, true, true);
+      if ((int)text_check.size() > n_ctx_ - 4) {
+        std::ostringstream err;
+        err << R"({"error":"prompt_too_long","prompt_tokens":)" << (int)text_check.size()
+            << R"(,"max_context":)" << n_ctx_ << "}";
+        return err.str();
+      }
+
       // Compare conversation history (without generation prompt) for KV cache reuse.
       std::string conv_history = strip_generation_prompt(params.prompt);
       bool reuse_mm = has_cache_ && !prev_eval_prompt_.empty() &&
@@ -169,40 +182,58 @@ public:
       }
 
       if (reuse_mm) {
-        // Reuse multimodal KV cache: trim old gen prompt + generated tokens, prefill suffix.
+        // Try KV cache reuse: trim old gen prompt + generated tokens, decode suffix.
         n_cached_tokens = prev_eval_n_tokens_;
-        llama_memory_seq_rm(llama_get_memory(ctx_), 0, prev_eval_n_tokens_, -1);
-        auto suffix_toks = common_tokenize(ctx_, suffix, false, false);
-        if (decode_batched(suffix_toks, prev_eval_n_tokens_, true) != 0) return "";
-        cur_pos_ = prev_eval_n_tokens_ + (int)suffix_toks.size();
-        n_prompt_tokens = cur_pos_;
-        // Image tokens are in the cached prefix.
-        auto conv_text_toks = common_tokenize(ctx_, prev_eval_prompt_, true, true);
-        n_image_tokens = prev_eval_n_tokens_ - (int)conv_text_toks.size();
-        if (n_image_tokens < 0) n_image_tokens = 0;
-        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-            "Multimodal KV cache reuse: %d cached, %d new text tokens",
-            prev_eval_n_tokens_, (int)suffix_toks.size());
-      } else {
+        bool trimmed = llama_memory_seq_rm(llama_get_memory(ctx_), 0, prev_eval_n_tokens_, -1);
+        if (trimmed) {
+          auto suffix_toks = common_tokenize(ctx_, suffix, false, false);
+          if (decode_batched(suffix_toks, prev_eval_n_tokens_, true) != 0) {
+            reuse_mm = false;
+            n_cached_tokens = 0;
+          } else {
+            cur_pos_ = prev_eval_n_tokens_ + (int)suffix_toks.size();
+            n_prompt_tokens = cur_pos_;
+            auto conv_text_toks = common_tokenize(ctx_, prev_eval_prompt_, true, true);
+            n_image_tokens = prev_eval_n_tokens_ - (int)conv_text_toks.size();
+            if (n_image_tokens < 0) n_image_tokens = 0;
+            __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+                "Multimodal KV cache reuse: %d cached, %d new text tokens",
+                prev_eval_n_tokens_, (int)suffix_toks.size());
+          }
+        } else {
+          // seq_rm failed (SWA/hybrid models): fall through to full multimodal eval.
+          reuse_mm = false;
+          n_cached_tokens = 0;
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "Multimodal KV cache: seq_rm failed (SWA model), full re-eval");
+        }
+      }
+
+      if (!reuse_mm) {
         // Full multimodal eval (first request or new image).
         cur_pos_ = 0;
         llama_memory_clear(llama_get_memory(ctx_), false);
 
-        mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, image_data, image_size);
-        if (!bmp) return "";
+        // Create bitmaps for all images.
+        std::vector<mtmd_bitmap*> bmps;
+        for (const auto& img : images) {
+          auto* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, img.data(), img.size());
+          if (bmp) bmps.push_back(bmp);
+        }
+        if (bmps.empty()) return "";
 
         mtmd_input_text text{params.prompt.c_str(), true, true};
         mtmd_input_chunks* chunks = mtmd_input_chunks_init();
-        const mtmd_bitmap* bitmaps[] = {bmp};
-        if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bitmaps, 1) != 0) {
-          mtmd_bitmap_free(bmp);
+        std::vector<const mtmd_bitmap*> bmp_ptrs(bmps.begin(), bmps.end());
+        if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bmp_ptrs.data(), bmp_ptrs.size()) != 0) {
+          for (auto* b : bmps) mtmd_bitmap_free(b);
           mtmd_input_chunks_free(chunks);
           return "";
         }
 
         llama_pos n_past = 0;
         if (mtmd_helper_eval_chunks(mtmd_ctx_, ctx_, chunks, 0, 0, 512, true, &n_past) != 0) {
-          mtmd_bitmap_free(bmp);
+          for (auto* b : bmps) mtmd_bitmap_free(b);
           mtmd_input_chunks_free(chunks);
           return "";
         }
@@ -212,7 +243,7 @@ public:
         auto text_toks = common_tokenize(ctx_, params.prompt, true, true);
         n_image_tokens = n_prompt_tokens - (int)text_toks.size();
         if (n_image_tokens < 0) n_image_tokens = 0;
-        mtmd_bitmap_free(bmp);
+        for (auto* b : bmps) mtmd_bitmap_free(b);
         mtmd_input_chunks_free(chunks);
       }
 
@@ -226,6 +257,13 @@ public:
       // Text-only path with KV cache prefix reuse.
       auto prompt_toks = common_tokenize(ctx_, params.prompt, true, true);
       n_prompt_tokens = (int)prompt_toks.size();
+
+      if (n_prompt_tokens > n_ctx_ - 4) {
+        std::ostringstream err;
+        err << R"({"error":"prompt_too_long","prompt_tokens":)" << n_prompt_tokens
+            << R"(,"max_context":)" << n_ctx_ << "}";
+        return err.str();
+      }
 
       // Find common prefix length with previous prompt tokens.
       int common_prefix = 0;
@@ -241,6 +279,8 @@ public:
         // Exact match: trim generated tokens + last prompt token, re-decode 1 token for logits.
         n_cached_tokens = common_prefix - 1;
         if (!llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix - 1, -1)) {
+          // SWA model: can't trim tail. Full re-decode.
+          n_cached_tokens = 0;
           goto full_prefill;
         }
         cur_pos_ = common_prefix - 1;
@@ -254,23 +294,33 @@ public:
             "KV cache reuse: %d/%d tokens cached (exact, 1 re-decoded)",
             common_prefix - 1, (int)prompt_toks.size());
       } else if (common_prefix > 0) {
-        // Partial prefix match: trim KV after common prefix, decode only suffix.
+        // Partial prefix match: remove old entries after common prefix, decode suffix.
         n_cached_tokens = common_prefix;
-        if (!llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1)) {
+        bool trimmed = llama_memory_seq_rm(llama_get_memory(ctx_), 0, common_prefix, -1);
+        if (!trimmed) {
+          // SWA/hybrid model: can't trim tail. Full clear + re-decode.
           n_cached_tokens = 0;
-          goto full_prefill;
+          llama_memory_clear(llama_get_memory(ctx_), false);
+          cur_pos_ = 0;
+          if (decode_batched(prompt_toks, 0, true) != 0) goto full_prefill;
+          cur_pos_ = (int)prompt_toks.size();
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "KV cache: seq_rm failed (SWA model), full re-decode %d tokens",
+              (int)prompt_toks.size());
+        } else {
+          // seq_rm succeeded: decode only suffix.
+          cur_pos_ = common_prefix;
+          std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
+          if (decode_batched(suffix, common_prefix, true) != 0) {
+            n_cached_tokens = 0;
+            goto full_prefill;
+          }
+          cur_pos_ = (int)prompt_toks.size();
+          __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+              "KV cache reuse: %d/%d tokens cached, %d new",
+              common_prefix, (int)prompt_toks.size(),
+              (int)prompt_toks.size() - common_prefix);
         }
-        cur_pos_ = common_prefix;
-        std::vector<llama_token> suffix(prompt_toks.begin() + common_prefix, prompt_toks.end());
-        if (decode_batched(suffix, common_prefix, true) != 0) {
-          n_cached_tokens = 0;
-          goto full_prefill;
-        }
-        cur_pos_ = (int)prompt_toks.size();
-        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-            "KV cache reuse: %d/%d tokens cached, %d new",
-            common_prefix, (int)prompt_toks.size(),
-            (int)prompt_toks.size() - common_prefix);
       } else {
 full_prefill:
         // No cache match (or fallback from failed seq_rm/decode): full clear + full prefill.
@@ -297,52 +347,24 @@ full_prefill:
     bool counting_reasoning = thinking_enabled && params.supports_thinking;
     std::string utf8_buf;
 
-    // Set up thinking tag handling.
-    // Models with standard tags (e.g. <think>): prepend start tag, stream as-is.
-    // Models with non-standard tags (e.g. Gemma 4): normalize to <think>/<​/think> on the fly.
-    std::string native_think_start, native_think_end;
-    bool normalize_thinking = false;
+    // Set up thinking tag normalization.
+    // All non-standard thinking tags (e.g. Gemma 4's <|channel>thought) are
+    // normalized to <think>/<​/think> so Kotlin only handles one format.
+    std::optional<thinking_tags::Normalizer> think_norm;
 
     if (thinking_enabled && params.supports_thinking) {
-      if (!params.thinking_start_tag.empty()) {
-        // Standard format — prepend start tag, model outputs </think> natively.
+      auto* non_std = thinking_tags::find_non_standard(params.thinking_start_tag);
+      if (non_std) {
+        think_norm.emplace(*non_std);
+        if (on_token) on_token("<think>\n");
+      } else if (!params.thinking_start_tag.empty()) {
         if (on_token) on_token(params.thinking_start_tag);
-      } else {
-        // Non-standard format — look up native tags for on-the-fly normalization.
-        auto tags = get_native_thinking_tags(params.format);
-        native_think_start = tags.first;
-        native_think_end = tags.second;
-        normalize_thinking = !native_think_start.empty();
       }
     }
 
-    // Emit helper: normalizes thinking tags when needed, otherwise passes through.
-    std::string norm_buf;
+    // Emit helper: passes through normalizer when active, otherwise direct.
     auto emit = [&](const std::string& text) -> bool {
-      if (!normalize_thinking) {
-        full_response += text;
-        return !on_token || on_token(text);
-      }
-      norm_buf += text;
-      std::string out;
-      // Replace native start tag with <think>\n
-      auto sp = norm_buf.find(native_think_start);
-      if (sp != std::string::npos) {
-        out += norm_buf.substr(0, sp) + "<think>\n";
-        norm_buf = norm_buf.substr(sp + native_think_start.size());
-      }
-      // Replace native end tag with </think>
-      auto ep = norm_buf.find(native_think_end);
-      if (ep != std::string::npos) {
-        out += norm_buf.substr(0, ep) + "</think>";
-        norm_buf = norm_buf.substr(ep + native_think_end.size());
-      }
-      // Flush safe content, keep tail for partial tag matching.
-      size_t keep = std::max(native_think_start.size(), native_think_end.size());
-      if (norm_buf.size() > keep) {
-        out += norm_buf.substr(0, norm_buf.size() - keep);
-        norm_buf = norm_buf.substr(norm_buf.size() - keep);
-      }
+      std::string out = think_norm ? think_norm->process(text) : text;
       if (!out.empty()) {
         full_response += out;
         if (on_token && !on_token(out)) return false;
@@ -352,6 +374,7 @@ full_prefill:
 
     auto t_decode_start = std::chrono::steady_clock::now();
 
+    std::vector<llama_token> generated_toks;
     int n_generated = 0;
     while (!cancelled.load()) {
       if (n_generated >= eff_max_tokens) break;
@@ -369,6 +392,7 @@ full_prefill:
       }
 
       n_generated++;
+      generated_toks.push_back(tok);
       if (counting_reasoning) n_reasoning_tokens++;
 
       common_batch_clear(batch_);
@@ -389,11 +413,33 @@ full_prefill:
       }
     }
 
-    // Flush normalizer buffer.
-    if (!norm_buf.empty()) {
-      full_response += norm_buf;
-      if (on_token) on_token(norm_buf);
-      norm_buf.clear();
+    // Hard cancel (client disconnect): invalidate cache for clean state.
+    if (cancelled.load() && !graceful_stop.load()) {
+      cur_pos_ = 0;
+      llama_memory_clear(llama_get_memory(ctx_), false);
+      has_cache_ = false;
+      prev_prompt_tokens_.clear();
+      prev_eval_prompt_.clear();
+      prev_eval_n_tokens_ = 0;
+    }
+
+    // Append generated tokens to tracking for next request's prefix matching.
+    // This matches llama-server's slot behavior: input + generated tokens are
+    // stored together, so the next turn can prefix-match across the boundary
+    // (e.g. assistant response re-encoded through template still shares most
+    // tokens with the raw generation). Skipped when hard cancel cleared above.
+    if (!generated_toks.empty() && has_cache_) {
+      prev_prompt_tokens_.insert(prev_prompt_tokens_.end(),
+          generated_toks.begin(), generated_toks.end());
+    }
+
+    // Flush thinking normalizer buffer.
+    if (think_norm) {
+      auto remaining = think_norm->flush();
+      if (!remaining.empty()) {
+        full_response += remaining;
+        if (on_token) on_token(remaining);
+      }
     }
 
     // Strip template-specific stop sequences from output.
@@ -405,11 +451,25 @@ full_prefill:
     }
 
     // If tools were provided, parse output for tool calls.
+    // Wrapped in try-catch: llama.cpp's PEG parser throws std::runtime_error
+    // on certain multi-tool-call outputs that don't match its grammar.
     if (has_tools && parser_params.format != COMMON_CHAT_FORMAT_CONTENT_ONLY) {
-      common_chat_msg parsed = common_chat_parse(full_response, false, parser_params);
-      if (!parsed.tool_calls.empty()) {
-        // Return structured JSON so the HTTP layer can format tool_calls response.
-        full_response = format_tool_calls_json(parsed);
+      try {
+        common_chat_msg parsed = common_chat_parse(full_response, false, parser_params);
+        if (!parsed.tool_calls.empty()) {
+          full_response = format_tool_calls_json(parsed);
+        }
+      } catch (const std::exception& e) {
+        __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+            "PEG tool call parse failed, trying fallback parser: %s", e.what());
+        std::string fallback = tool_parser::parse_tool_calls(full_response);
+        if (!fallback.empty()) {
+          full_response = fallback;
+        } else {
+          __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+              "Both PEG and fallback parser failed. Raw output (first 200): %.200s",
+              full_response.c_str());
+        }
       }
     }
 
@@ -603,18 +663,6 @@ private:
       if (pos != std::string::npos && (cut == std::string::npos || pos > cut)) cut = pos;
     }
     return (cut != std::string::npos) ? formatted.substr(0, cut) : formatted;
-  }
-
-  // Return native thinking start/end tags for models that don't use <think>/<​/think>.
-  // The streaming loop normalizes these to <think>/<​/think> so the Kotlin SSE layer
-  // only needs to handle one format.
-  static std::pair<std::string, std::string> get_native_thinking_tags(common_chat_format fmt) {
-    switch (fmt) {
-      case COMMON_CHAT_FORMAT_PEG_GEMMA4:
-        return {"<|channel>thought\n", "<channel|>"};
-      default:
-        return {"", ""};
-    }
   }
 
   // Format parsed tool calls as JSON for the HTTP layer.

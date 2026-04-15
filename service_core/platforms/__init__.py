@@ -1,5 +1,6 @@
 from service_core.platforms.android import AndroidPlatform
 from service_core.platforms.base import HostPlatform
+from service_core.platforms.ios import IOSPlatform
 from service_core.platforms.common import (
     SYSTEM_MODEL_LIST_URLS,
     current_system_name,
@@ -25,6 +26,7 @@ from service_core.platforms.windows import WindowsPlatform
 __all__ = [
     "HostPlatform",
     "AndroidPlatform",
+    "IOSPlatform",
     "LinuxPlatform",
     "MacPlatform",
     "SYSTEM_MODEL_LIST_URLS",

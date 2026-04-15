@@ -23,6 +23,8 @@ BACKEND_PRIORITY: dict[str, int] = {
     "llama.cpp-linux-s390x": 1,
     "llama.cpp-cpu": 1,
     "llama.cpp-windows-arm64": 1,
+    "llama.cpp-ios": 0,
+    "mlx-ios": 0,
 }
 
 
@@ -86,8 +88,14 @@ class BackendSpec:
     def runtime_path(self) -> Path:
         return Path(self.runtime_dir)
 
-    def to_api_payload(self, selected: bool, loaded_model: str | None) -> dict[str, Any]:
-        return {
+    def to_api_payload(
+        self,
+        selected: bool,
+        loaded_model: str | None,
+        compatibility: str | None = None,
+        priority: int | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "id": self.id,
             "label": self.label,
             "family": self.family,
@@ -98,3 +106,8 @@ class BackendSpec:
             "description": self.description,
             "loaded_model": loaded_model if selected else None,
         }
+        if compatibility is not None:
+            payload["compatibility"] = compatibility
+        if priority is not None:
+            payload["priority"] = priority
+        return payload

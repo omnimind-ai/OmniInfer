@@ -20,25 +20,29 @@ function Require-Command {
 }
 
 function Find-Msys2Ucrt64Toolchain {
-    $roots = @(
-        "E:\Coding\Tools\MSYS2\ucrt64\bin",
-        "C:\msys64\ucrt64\bin"
-    )
+    $candidates = @()
+    if ($env:MSYS2_ROOT) { $candidates += $env:MSYS2_ROOT }
+    foreach ($key in @("HKLM:\SOFTWARE\MSYS2","HKCU:\SOFTWARE\MSYS2","HKLM:\SOFTWARE\WOW6432Node\MSYS2")) {
+        try { $loc = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation; if ($loc) { $candidates += $loc } } catch {}
+    }
+    $gccInPath = Get-Command gcc.exe -ErrorAction SilentlyContinue
+    if ($gccInPath) { $binDir = Split-Path $gccInPath.Source; if ($binDir -match 'ucrt64\\bin$') { $candidates += (Split-Path (Split-Path $binDir)) } }
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $candidates += Join-Path $drive.Root "msys64"; $candidates += Join-Path $drive.Root "msys2"
+    }
+    if ($env:ChocolateyInstall) { $candidates += Join-Path $env:ChocolateyInstall "lib\msys2\msys64" }
+    if ($env:SCOOP) { $candidates += Join-Path $env:SCOOP "apps\msys2\current" }
 
-    foreach ($root in $roots) {
-        $gcc = Join-Path $root "gcc.exe"
-        $gpp = Join-Path $root "g++.exe"
-        $ninja = Join-Path $root "ninja.exe"
+    foreach ($msys2Root in $candidates) {
+        $ucrt64Bin = Join-Path $msys2Root "ucrt64\bin"
+        if (-not (Test-Path $ucrt64Bin)) { continue }
+        $gcc   = Join-Path $ucrt64Bin "gcc.exe"
+        $gpp   = Join-Path $ucrt64Bin "g++.exe"
+        $ninja = Join-Path $ucrt64Bin "ninja.exe"
         if ((Test-Path $gcc) -and (Test-Path $gpp) -and (Test-Path $ninja)) {
-            return @{
-                Root = $root
-                Gcc = $gcc
-                Gpp = $gpp
-                Ninja = $ninja
-            }
+            return @{ Root = $ucrt64Bin; Gcc = $gcc; Gpp = $gpp; Ninja = $ninja }
         }
     }
-
     return $null
 }
 

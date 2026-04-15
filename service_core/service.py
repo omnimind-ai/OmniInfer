@@ -352,13 +352,18 @@ class OmniHandler(BaseHTTPRequestHandler):
 
         if path == "/omni/state":
             payload = self.manager.snapshot()
-            payload["available_backends"] = self.manager.list_backends()
+            payload["available_backends"] = self.manager.list_backends(scope="all")[0]
             payload["thinking"] = {"default_enabled": self.default_thinking}
             self._send_json(200, payload)
             return
 
         if path == "/omni/backends":
-            self._send_json(200, {"object": "list", "data": self.manager.list_backends()})
+            scope = query.get("scope", ["installed"])[0]
+            if scope not in ("installed", "compatible", "all"):
+                self._send_json(400, {"error": {"message": f"invalid scope: {scope}. Must be one of: installed, compatible, all"}})
+                return
+            backends_data, recommended = self.manager.list_backends(scope=scope)
+            self._send_json(200, {"object": "list", "data": backends_data, "recommended": recommended})
             return
 
         if path == "/omni/thinking":
@@ -678,7 +683,7 @@ def main() -> int:
 
     log_session_header(
         config=config,
-        backends=[b["id"] for b in manager.list_backends()],
+        backends=[b["id"] for b in manager.list_backends(scope="all")[0]],
     )
 
     httpd = ThreadingHTTPServer((args.host, args.port), OmniHandler)

@@ -21,20 +21,53 @@ function Require-Command {
 Require-Command cmake
 
 function Find-Msys2Ucrt64Toolchain {
-    $roots = @(
-        "E:\Coding\Tools\MSYS2\ucrt64\bin",
-        "C:\msys64\ucrt64\bin"
-    )
+    $candidates = @()
 
-    foreach ($root in $roots) {
-        $gcc = Join-Path $root "gcc.exe"
-        $gpp = Join-Path $root "g++.exe"
-        $ninja = Join-Path $root "ninja.exe"
+    # 1. Environment variable (highest priority)
+    if ($env:MSYS2_ROOT) { $candidates += $env:MSYS2_ROOT }
+
+    # 2. Windows registry (MSYS2 installer writes InstallLocation here)
+    foreach ($key in @(
+        "HKLM:\SOFTWARE\MSYS2",
+        "HKCU:\SOFTWARE\MSYS2",
+        "HKLM:\SOFTWARE\WOW6432Node\MSYS2"
+    )) {
+        try {
+            $loc = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation
+            if ($loc) { $candidates += $loc }
+        } catch {}
+    }
+
+    # 3. PATH: if gcc.exe is already in PATH, derive MSYS2 root from it
+    $gccInPath = Get-Command gcc.exe -ErrorAction SilentlyContinue
+    if ($gccInPath) {
+        $binDir = Split-Path $gccInPath.Source
+        if ($binDir -match 'ucrt64\\bin$') {
+            $candidates += (Split-Path (Split-Path $binDir))  # msys64 root
+        }
+    }
+
+    # 4. Scan all drive roots for common MSYS2 install locations
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $root = $drive.Root  # e.g. "C:\"
+        $candidates += Join-Path $root "msys64"
+        $candidates += Join-Path $root "msys2"
+    }
+    # Also check well-known non-root paths (chocolatey, scoop, custom)
+    if ($env:ChocolateyInstall) { $candidates += Join-Path $env:ChocolateyInstall "lib\msys2\msys64" }
+    if ($env:SCOOP) { $candidates += Join-Path $env:SCOOP "apps\msys2\current" }
+
+    foreach ($msys2Root in $candidates) {
+        $ucrt64Bin = Join-Path $msys2Root "ucrt64\bin"
+        if (-not (Test-Path $ucrt64Bin)) { continue }
+        $gcc   = Join-Path $ucrt64Bin "gcc.exe"
+        $gpp   = Join-Path $ucrt64Bin "g++.exe"
+        $ninja = Join-Path $ucrt64Bin "ninja.exe"
         if ((Test-Path $gcc) -and (Test-Path $gpp) -and (Test-Path $ninja)) {
             return @{
-                Root = $root
-                Gcc = $gcc
-                Gpp = $gpp
+                Root  = $ucrt64Bin
+                Gcc   = $gcc
+                Gpp   = $gpp
                 Ninja = $ninja
             }
         }
@@ -92,7 +125,26 @@ if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -Erro
 
         $threadModel = Get-GppThreadModel -Compiler "g++"
         if ($threadModel -eq "win32") {
-            throw "The detected MinGW toolchain uses the 'win32' thread model and cannot build llama-server reliably."
+            $gccPath = (Get-Command g++.exe).Source
+            Write-Host ""
+            Write-Host "  Problem: " -ForegroundColor Red -NoNewline
+            Write-Host "The g++ at '$gccPath' uses the 'win32' thread model."
+            Write-Host "           This cannot build llama-server (requires posix thread model)."
+            Write-Host ""
+            Write-Host "  Fix (pick one):" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "    1. " -ForegroundColor Cyan -NoNewline
+            Write-Host "Install MSYS2 ucrt64 toolchain"
+            Write-Host "       Download:  https://www.msys2.org/"
+            Write-Host "       Then run:  pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake"
+            Write-Host '       Then set:  $env:MSYS2_ROOT = "C:\msys64"  (or your install path)'
+            Write-Host ""
+            Write-Host "    2. " -ForegroundColor Cyan -NoNewline
+            Write-Host "Install Visual Studio Build Tools"
+            Write-Host "       Download:  https://visualstudio.microsoft.com/downloads/#build-tools"
+            Write-Host "       Then run this script from a Developer PowerShell."
+            Write-Host ""
+            exit 1
         }
 
         $generator = "MinGW Makefiles"

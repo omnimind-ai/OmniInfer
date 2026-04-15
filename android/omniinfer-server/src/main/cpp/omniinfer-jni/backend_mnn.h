@@ -1,6 +1,8 @@
 #pragma once
 
 #include "inference_backend.h"
+#include "thinking_tags.h"
+#include "tool_call_parser.h"
 
 #include <llm/llm.hpp>
 
@@ -27,6 +29,7 @@ public:
 
     int eff_threads = n_threads > 0 ? n_threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
     n_threads_ = eff_threads;
+    n_ctx_ = n_ctx > 0 ? n_ctx : 16384;
     std::ostringstream cfg;
     cfg << "{\"thread_num\":" << eff_threads;
     cfg << ",\"attention_mode\":9";  // Mixed int8 QK + flash attention
@@ -58,12 +61,12 @@ public:
       bool thinking_enabled,
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token,
-      const std::string& /*tools_json*/ = "",
-      const std::string& /*tool_choice*/ = "",
-      const std::string& messages_json = "",
-      const uint8_t* image_data = nullptr,
-      size_t image_size = 0,
-      int max_tokens = 0) override {
+      const std::string& tools_json,
+      const std::string& /*tool_choice*/,
+      const std::string& messages_json,
+      const std::vector<std::vector<uint8_t>>& images,
+      int max_tokens,
+      std::atomic<bool>& graceful_stop) override {
 
     using ChatMessages = MNN::Transformer::ChatMessages;
     ChatMessages msgs;
@@ -76,13 +79,16 @@ public:
       if (!user_prompt.empty()) msgs.push_back({"user", user_prompt});
     }
 
-    // Handle multimodal: save image to temp file in model directory (writable).
-    std::string tmp_image_path;
-    bool is_multimodal = image_data && image_size > 0;
+    // Handle multimodal: write each image to a temp file.
+    std::vector<std::string> tmp_image_paths;
+    bool is_multimodal = !images.empty();
     if (is_multimodal) {
-      tmp_image_path = cache_dir_ + "/.omniinfer_vlm_tmp";
-      FILE* f = fopen(tmp_image_path.c_str(), "wb");
-      if (f) { fwrite(image_data, 1, image_size, f); fclose(f); }
+      for (size_t i = 0; i < images.size(); i++) {
+        std::string path = cache_dir_ + "/.omniinfer_vlm_tmp_" + std::to_string(i);
+        FILE* f = fopen(path.c_str(), "wb");
+        if (f) { fwrite(images[i].data(), 1, images[i].size(), f); fclose(f); }
+        tmp_image_paths.push_back(path);
+      }
     }
 
     // Thinking control via jinja context variable (must be set before apply_chat_template).
@@ -92,6 +98,12 @@ public:
       llm_->set_config(R"({"jinja":{"context":{"enable_thinking":false}}})");
     }
 
+    // Tool calling: inject tools into jinja context for template rendering.
+    bool has_tools = !tools_json.empty();
+    if (has_tools) {
+      llm_->set_config("{\"jinja\":{\"context\":{\"tools\":" + tools_json + "}}}");
+    }
+
     // Apply chat template and tokenize.
     std::string formatted = llm_->apply_chat_template(msgs);
     // Save original formatted (before image insertion) for multimodal KV cache comparison.
@@ -99,13 +111,16 @@ public:
 
     std::vector<int> input_ids;
     int n_image_tokens = 0;
-    if (!tmp_image_path.empty()) {
+    if (!tmp_image_paths.empty()) {
       auto text_ids = llm_->tokenizer_encode(formatted);
-      std::string user_marker = "user\n";
-      auto pos = formatted.find(user_marker);
-      if (pos != std::string::npos) {
-        std::string img_tag = "<img>" + tmp_image_path + "</img>\n";
-        formatted.insert(pos + user_marker.size(), img_tag);
+      // Replace each <image> placeholder with <img>path</img> tag.
+      size_t img_idx = 0;
+      size_t pos = 0;
+      while ((pos = formatted.find("<image>", pos)) != std::string::npos && img_idx < tmp_image_paths.size()) {
+        std::string img_tag = "<img>" + tmp_image_paths[img_idx] + "</img>";
+        formatted.replace(pos, 7, img_tag);
+        pos += img_tag.size();
+        img_idx++;
       }
       MNN::Transformer::MultimodalPrompt mprompt;
       mprompt.prompt_template = formatted;
@@ -114,6 +129,15 @@ public:
       if (n_image_tokens < 0) n_image_tokens = 0;
     } else {
       input_ids = llm_->tokenizer_encode(formatted);
+    }
+
+    // Check prompt fits in context window.
+    if ((int)input_ids.size() > n_ctx_ - 4) {
+      std::ostringstream err;
+      err << R"({"error":"prompt_too_long","prompt_tokens":)" << (int)input_ids.size()
+          << R"(,"max_context":)" << n_ctx_ << "}";
+      for (const auto& p : tmp_image_paths) remove(p.c_str());
+      return err.str();
     }
 
     // KV cache prefix reuse.
@@ -209,16 +233,32 @@ public:
     int eff_max_tokens = max_tokens > 0 ? max_tokens : 2048;
     size_t prev_len = 0;
     int n_reasoning_tokens = 0;
-    bool counting_reasoning = thinking_enabled && !detect_trailing_tag(formatted).empty();
 
-    // MNN's generate_str doesn't include text consumed during prefill. When
-    // thinking is enabled, the chat template appends a thinking start tag
-    // (e.g. <think>) that gets consumed. Detect and re-emit it so the Kotlin
-    // SSE layer can parse reasoning_content vs content.
+    // Detect thinking tag from formatted prompt and set up normalization.
+    // Try standard detection first, then fall back to the shared registry
+    // for non-standard tags (e.g. Gemma 4's <|channel>thought contains |
+    // which detect_trailing_tag() filters out).
     std::string thinking_tag = detect_trailing_tag(formatted);
-    if (!thinking_tag.empty() && thinking_enabled) {
-      full_response += thinking_tag + "\n";
-      if (on_token) on_token(thinking_tag + "\n");
+    const thinking_tags::NativeTagPair* think_non_std = nullptr;
+    if (thinking_tag.empty() && thinking_enabled) {
+      think_non_std = thinking_tags::detect_in_prompt(formatted);
+    }
+    if (!think_non_std && !thinking_tag.empty()) {
+      think_non_std = thinking_tags::find_non_standard(thinking_tag);
+    }
+
+    std::optional<thinking_tags::Normalizer> think_norm;
+    bool counting_reasoning = false;
+    if (thinking_enabled && (think_non_std || !thinking_tag.empty())) {
+      counting_reasoning = true;
+      if (think_non_std) {
+        think_norm.emplace(*think_non_std);
+        full_response += "<think>\n";
+        if (on_token) on_token("<think>\n");
+      } else {
+        full_response += thinking_tag + "\n";
+        if (on_token) on_token(thinking_tag + "\n");
+      }
     }
 
     // Buffer for incomplete multi-byte UTF-8 sequences (e.g. emoji split across tokens).
@@ -238,9 +278,10 @@ public:
 
         utf8_buf += delta;
         if (is_valid_utf8(utf8_buf)) {
-          full_response += utf8_buf;
-          if (on_token && !utf8_buf.empty()) {
-            if (!on_token(utf8_buf)) { cancelled.store(true); break; }
+          std::string to_emit = think_norm ? think_norm->process(utf8_buf) : utf8_buf;
+          if (!to_emit.empty()) {
+            full_response += to_emit;
+            if (on_token && !on_token(to_emit)) { cancelled.store(true); break; }
           }
           if (counting_reasoning && full_response.find("</think>") != std::string::npos) {
             counting_reasoning = false;
@@ -250,11 +291,35 @@ public:
       }
     }
 
-    // Flush any remaining buffered bytes.
+    if (cancelled.load()) {
+      if (graceful_stop.load()) {
+        // Graceful stop (/v1/cancel): keep KV cache for prefix matching.
+        // Re-tokenize prompt + generated text to update tracking.
+        // Multimodal tracking (prev_eval_prompt_, prev_eval_n_tokens_)
+        // was already set during prefill and remains valid.
+        if (!is_multimodal && !full_response.empty()) {
+          prev_input_ids_ = llm_->tokenizer_encode(formatted + full_response);
+        }
+        // has_cache_ stays true, no llm_->reset().
+      } else {
+        // Hard cancel (client disconnect): invalidate cache for clean state.
+        llm_->reset();
+        has_cache_ = false;
+        prev_input_ids_.clear();
+        prev_eval_prompt_.clear();
+        prev_eval_n_tokens_ = 0;
+      }
+    }
+
+    // Flush any remaining buffered bytes (through normalizer if active).
     if (!utf8_buf.empty()) {
-      full_response += utf8_buf;
-      if (on_token) on_token(utf8_buf);
+      std::string to_emit = think_norm ? think_norm->process(utf8_buf) : utf8_buf;
+      if (!to_emit.empty()) { full_response += to_emit; if (on_token) on_token(to_emit); }
       utf8_buf.clear();
+    }
+    if (think_norm) {
+      auto remaining = think_norm->flush();
+      if (!remaining.empty()) { full_response += remaining; if (on_token) on_token(remaining); }
     }
 
     // Collect metrics. prompt_tokens = cached + actually prefilled.
@@ -264,8 +329,15 @@ public:
                        n_reasoning_tokens, n_image_tokens, n_cached_tokens};
     }
 
-    // Clean up temp image file.
-    if (!tmp_image_path.empty()) remove(tmp_image_path.c_str());
+    // Tool calling: parse output and clear tools context.
+    if (has_tools) {
+      llm_->set_config(R"({"jinja":{"context":{"tools":null}}})");
+      std::string tool_result = tool_parser::parse_tool_calls(full_response);
+      if (!tool_result.empty()) full_response = tool_result;
+    }
+
+    // Clean up temp image files.
+    for (const auto& path : tmp_image_paths) remove(path.c_str());
 
     return full_response;
   }
@@ -313,7 +385,14 @@ private:
       std::string obj = json.substr(obj_start, obj_end - obj_start + 1);
       std::string role = extract_string(obj, "role");
       std::string content = extract_string(obj, "content");
-      if (!role.empty()) msgs.push_back({role, content});
+      // Multi-turn tool use: pass full message object via "json" role for
+      // assistant messages with tool_calls and tool-result messages.
+      if (role == "tool" ||
+          (role == "assistant" && obj.find("\"tool_calls\"") != std::string::npos)) {
+        msgs.push_back({"json", obj});
+      } else if (!role.empty()) {
+        msgs.push_back({role, content});
+      }
       pos = obj_end + 1;
     }
     return msgs;
@@ -427,6 +506,7 @@ private:
   MNN::Transformer::Llm* llm_ = nullptr;
   std::string cache_dir_;
   int n_threads_ = 0;
+  int n_ctx_ = 16384;
   InferenceMetrics last_metrics_;
   // KV cache prefix reuse state.
   std::vector<int> prev_input_ids_;     // text-only token comparison

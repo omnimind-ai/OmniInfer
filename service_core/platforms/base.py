@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform as _platform
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -95,6 +96,42 @@ class HostPlatform(ABC):
         if backend_name in self.gpu_backend_ids:
             return 0.5
         return 1.0
+
+    def is_hardware_compatible(self, backend: BackendSpec) -> bool:
+        """Check if the current machine has hardware suitable for this backend."""
+        caps = set(backend.capabilities)
+
+        # Architecture-gated backends
+        machine = _platform.machine().lower()
+        if "arm64" in caps and machine not in {"arm64", "aarch64"}:
+            return False
+        if "s390x" in caps and machine != "s390x":
+            return False
+
+        # Non-GPU backends are always compatible (after arch check)
+        if backend.id not in self.gpu_backend_ids:
+            return True
+
+        # GPU backends: probe actual hardware
+        if "cuda" in caps:
+            return self._is_cuda_detected()
+        if "rocm" in caps or "hip" in caps:
+            return self._is_rocm_detected()
+        if "metal" in caps:
+            return True  # Metal is always present on macOS Apple Silicon
+
+        # Vulkan, SYCL, OpenVINO: treat as compatible if user installed the runtime
+        return backend.binary_exists
+
+    def _is_cuda_detected(self) -> bool:
+        if not hasattr(self, "_cuda_detected_cache"):
+            self._cuda_detected_cache = get_available_cuda_memory_bytes() is not None
+        return self._cuda_detected_cache
+
+    def _is_rocm_detected(self) -> bool:
+        if not hasattr(self, "_rocm_detected_cache"):
+            self._rocm_detected_cache = get_available_rocm_memory_bytes() is not None
+        return self._rocm_detected_cache
 
     def prepare_runtime_env(self, env: dict[str, str], backend: BackendSpec) -> dict[str, str]:
         if self.system_name != "windows" and backend.launcher_path:

@@ -15,7 +15,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$RepoUrl = "https://github.com/omnimind-ai/OmniInfer.git"
+$RepoSsh   = "git@github.com:omnimind-ai/OmniInfer.git"
+$RepoHttps = "https://github.com/omnimind-ai/OmniInfer.git"
 $CatalogUrl = "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/windows/model_list.json"
 
 # ── Helpers ─────────────────────────────────────────────────
@@ -24,7 +25,14 @@ function Write-Info  { param([string]$Msg) Write-Host "[INFO] $Msg" -ForegroundC
 function Write-Ok    { param([string]$Msg) Write-Host "[ OK ] $Msg" -ForegroundColor Green }
 function Write-Warn  { param([string]$Msg) Write-Host "[WARN] $Msg" -ForegroundColor Yellow }
 function Write-Err   { param([string]$Msg) Write-Host "[ERR ] $Msg" -ForegroundColor Red }
-function Stop-Fatal  { param([string]$Msg) Write-Err $Msg; exit 1 }
+function Stop-Fatal  {
+    param([string]$Msg)
+    Write-Err $Msg
+    Write-Host ""
+    Write-Host "Press any key to exit ..." -ForegroundColor DarkGray
+    try { [void][Console]::ReadKey($true) } catch { Start-Sleep -Seconds 10 }
+    exit 1
+}
 
 function Test-Command {
     param([string]$Name, [string]$Hint)
@@ -36,13 +44,32 @@ function Test-Command {
 }
 
 # Arrow-key menu selector. Returns 0-based index.
+# Falls back to numbered list when console is not interactive (e.g. irm | iex).
 function Select-Menu {
     param([int]$Default, [string[]]$Options)
     if ($NonInteractive) { return $Default }
 
-    $cur = $Default
     $count = $Options.Count
 
+    # Detect if interactive console is available
+    $hasConsole = $true
+    try { [void][Console]::CursorVisible } catch { $hasConsole = $false }
+    if (-not $hasConsole -or -not [Environment]::UserInteractive) {
+        # Fallback: numbered list
+        for ($i = 0; $i -lt $count; $i++) {
+            $marker = if ($i -eq $Default) { "*" } else { " " }
+            Write-Host "  $marker $($i + 1). $($Options[$i])"
+        }
+        Write-Host ""
+        $choice = Read-Host "  Enter number (default: $($Default + 1))"
+        if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $count) {
+            return ([int]$choice - 1)
+        }
+        return $Default
+    }
+
+    # Interactive: arrow-key selector
+    $cur = $Default
     [Console]::CursorVisible = $false
 
     function Draw-Menu {
@@ -86,7 +113,123 @@ Write-Host ""
 Write-Info "Step 1/6: Checking prerequisites ..."
 Test-Command "git"    "Install from https://git-scm.com/"
 Test-Command "cmake"  "Install from https://cmake.org/download/"
-Test-Command "python" "Install from https://python.org/"
+
+# Python: try python, python3, then uv run python
+$script:PythonCmd = $null
+foreach ($candidate in @("python", "python3")) {
+    if (Get-Command $candidate -ErrorAction SilentlyContinue) {
+        $script:PythonCmd = $candidate
+        break
+    }
+}
+if (-not $script:PythonCmd -and (Get-Command "uv" -ErrorAction SilentlyContinue)) {
+    # uv is available — use "uv run python" as the python command
+    try {
+        $uvCheck = & uv run python --version 2>$null
+        if ($LASTEXITCODE -eq 0) { $script:PythonCmd = "__uv__" }
+    } catch {}
+}
+if ($script:PythonCmd) {
+    if ($script:PythonCmd -eq "__uv__") { Write-Ok "python (via uv)" } else { Write-Ok $script:PythonCmd }
+} else {
+    Stop-Fatal "'python' is required but not found. Install from https://python.org/ or use uv: https://docs.astral.sh/uv/"
+}
+
+# C/C++ toolchain (needed for building backends)
+# Check PATH first, then MSYS2_ROOT, then registry, then scan drives
+$hasMsvc = [bool](Get-Command cl.exe -ErrorAction SilentlyContinue)
+$hasMsys2Gcc = [bool](Get-Command gcc.exe -ErrorAction SilentlyContinue)
+$msys2Ucrt64Bin = $null
+if (-not $hasMsvc -and -not $hasMsys2Gcc) {
+    # Try to find MSYS2 ucrt64 even if not in PATH
+    $msys2Candidates = @()
+    # Read MSYS2_ROOT from process env, then directly from registry (conda/venv may not inherit new system vars)
+    if ($env:MSYS2_ROOT) { $msys2Candidates += $env:MSYS2_ROOT }
+    foreach ($scope in @("Machine", "User")) {
+        $regVal = [System.Environment]::GetEnvironmentVariable("MSYS2_ROOT", $scope)
+        if ($regVal -and ($regVal -notin $msys2Candidates)) { $msys2Candidates += $regVal }
+    }
+    foreach ($key in @("HKLM:\SOFTWARE\MSYS2","HKCU:\SOFTWARE\MSYS2","HKLM:\SOFTWARE\WOW6432Node\MSYS2")) {
+        try { $loc = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation; if ($loc) { $msys2Candidates += $loc } } catch {}
+    }
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $msys2Candidates += Join-Path $drive.Root "msys64"
+    }
+    foreach ($root in $msys2Candidates) {
+        $ucrt = Join-Path $root "ucrt64\bin"
+        if ((Test-Path (Join-Path $ucrt "gcc.exe")) -and (Test-Path (Join-Path $ucrt "g++.exe"))) {
+            $msys2Ucrt64Bin = $ucrt
+            break
+        }
+    }
+    if ($msys2Ucrt64Bin) {
+        # Auto-add to PATH for this session so build scripts can find it
+        Write-Info "Found MSYS2 ucrt64 at $msys2Ucrt64Bin, adding to PATH"
+        $env:PATH = "$msys2Ucrt64Bin;$env:PATH"
+        $hasMsys2Gcc = $true
+    }
+}
+if (-not $hasMsvc -and -not $hasMsys2Gcc) {
+    # Diagnostic: show what we searched
+    Write-Host ""
+    Write-Host "  Diagnosis:" -ForegroundColor Yellow
+    Write-Host "    cl.exe (MSVC):  not found in PATH"
+    Write-Host "    gcc.exe:        not found in PATH"
+    $envVal = $env:MSYS2_ROOT
+    $regVal = [System.Environment]::GetEnvironmentVariable("MSYS2_ROOT", "Machine")
+    if ($envVal) {
+        Write-Host "    `$env:MSYS2_ROOT = $envVal"
+        $ucrtPath = Join-Path $envVal "ucrt64\bin\gcc.exe"
+        if (Test-Path $ucrtPath) {
+            Write-Host "    gcc.exe found at $ucrtPath" -ForegroundColor Green
+            Write-Host "    But it was not detected — this is a bug, please report it." -ForegroundColor Red
+        } else {
+            Write-Host "    $ucrtPath does NOT exist" -ForegroundColor Red
+            Write-Host "    -> MSYS2 ucrt64 toolchain is not installed."
+        }
+    } elseif ($regVal) {
+        Write-Host "    MSYS2_ROOT (from registry) = $regVal"
+        $ucrtPath = Join-Path $regVal "ucrt64\bin\gcc.exe"
+        if (Test-Path $ucrtPath) {
+            Write-Host "    gcc.exe found at $ucrtPath" -ForegroundColor Green
+            Write-Host "    But it was not detected — this is a bug, please report it." -ForegroundColor Red
+        } else {
+            Write-Host "    $ucrtPath does NOT exist" -ForegroundColor Red
+            Write-Host "    -> MSYS2 ucrt64 toolchain is not installed."
+        }
+    } else {
+        Write-Host "    `$env:MSYS2_ROOT:  not set"
+        Write-Host "    Registry MSYS2_ROOT:  not set"
+        Write-Host "    Scanned drives for msys64/:  not found"
+    }
+    Write-Host ""
+    Write-Err "No C/C++ compiler found."
+    Write-Host ""
+    Write-Host "  Fix (pick one):" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "    Option A: " -ForegroundColor Cyan -NoNewline
+    Write-Host "Install MSYS2 + ucrt64 toolchain"
+    Write-Host "      1. Download and install MSYS2: https://www.msys2.org/"
+    Write-Host "      2. Open MSYS2 UCRT64 terminal and run:"
+    Write-Host "           pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake" -ForegroundColor White
+    Write-Host "      3. Set system environment variable:"
+    Write-Host '           MSYS2_ROOT = C:\msys64  (or your install path)' -ForegroundColor White
+    Write-Host "      4. Re-run this script."
+    Write-Host ""
+    Write-Host "    Option B: " -ForegroundColor Cyan -NoNewline
+    Write-Host "Install Visual Studio Build Tools"
+    Write-Host "      1. Download: https://visualstudio.microsoft.com/downloads/#build-tools"
+    Write-Host "      2. Install the 'Desktop development with C++' workload."
+    Write-Host "      3. Open 'Developer PowerShell for VS' and re-run this script."
+    Write-Host ""
+    Write-Host "Press any key to exit ..." -ForegroundColor DarkGray
+    try { [void][Console]::ReadKey($true) } catch { Start-Sleep -Seconds 10 }
+    exit 1
+} elseif ($hasMsvc) {
+    Write-Ok "C++ toolchain: MSVC (cl.exe)"
+} else {
+    Write-Ok "C++ toolchain: MSYS2 (gcc.exe)"
+}
 Write-Host ""
 
 # ── Step 2: Clone or update repo ────────────────────────────
@@ -97,7 +240,30 @@ if (Test-Path "$InstallDir\.git") {
     try { git -C $InstallDir pull --ff-only 2>&1 | Out-Null } catch { Write-Warn "Pull failed, continuing with existing code" }
 } else {
     Write-Info "Cloning OmniInfer to $InstallDir ..."
-    git clone --depth 1 $RepoUrl $InstallDir
+    $clonedViaHttps = $false
+    Write-Info "Trying SSH (timeout 15s) ..."
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $env:GIT_SSH_COMMAND = "ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no"
+    git clone --depth 1 $RepoSsh $InstallDir *>&1 | Out-Null
+    $sshExit = $LASTEXITCODE
+    Remove-Item Env:GIT_SSH_COMMAND -ErrorAction SilentlyContinue
+    $ErrorActionPreference = $prevEAP
+    if ($sshExit -ne 0) {
+        Write-Warn "SSH clone failed, falling back to HTTPS ..."
+        if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue }
+        git clone --depth 1 $RepoHttps $InstallDir
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Fatal "git clone failed via both SSH and HTTPS. Check your network connection and try again."
+        }
+        $clonedViaHttps = $true
+    }
+    # If cloned via HTTPS, rewrite SSH submodule URLs to HTTPS so submodule init works
+    if ($clonedViaHttps) {
+        git -C $InstallDir config --local url."https://github.com/".insteadOf "git@github.com:"
+    }
+}
+if (-not (Test-Path (Join-Path $InstallDir "omniinfer.py"))) {
+    Stop-Fatal "Repository clone appears incomplete — omniinfer.py not found in $InstallDir"
 }
 Write-Ok "Repository ready at $InstallDir"
 
@@ -149,24 +315,62 @@ Write-Info "Step 3/6: Detecting platform and hardware ..."
 $cmdPath = Join-Path $InstallDir "omniinfer.cmd"
 $pyScript = Join-Path $InstallDir "omniinfer.py"
 
-# Helper: invoke omniinfer CLI via python directly (avoids cmd /c path issues)
+# Helper: invoke omniinfer CLI via the detected python
 function Invoke-OmniInfer {
-    & python $pyScript @args
+    if ($script:PythonCmd -eq "__uv__") {
+        & uv run python $pyScript @args
+    } else {
+        & $script:PythonCmd $pyScript @args
+    }
 }
+
+# Cleanup: shut down any gateway service started by the CLI on script exit
+$_gatewayPort = 9000
+try { $_gatewayPort = [int](Get-Content (Join-Path $InstallDir "release\config\omniinfer.json") | ConvertFrom-Json).port } catch {}
+Register-EngineEvent PowerShell.Exiting -Action {
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:$($_gatewayPort)/omni/shutdown" -Method POST -TimeoutSec 3 2>$null } catch {}
+} | Out-Null
 
 $BackendIds   = @()
 $BackendDescs = @()
-$rawOutput = Invoke-OmniInfer backend list 2>$null
-$currentId = ""
-foreach ($line in $rawOutput -split "`n") {
-    $line = $line.Trim()
-    if ($line -match '^[*\s]*([a-zA-Z0-9._-]+)$') {
-        $currentId = $Matches[1]
-        $BackendIds += $currentId
-        $BackendDescs += $currentId
+# Query the gateway API for compatible backends (hardware-matched)
+$_backendsJson = $null
+try {
+    Invoke-OmniInfer status 2>$null | Out-Null  # ensure gateway is running
+    $_backendsJson = Invoke-RestMethod -Uri "http://127.0.0.1:$_gatewayPort/omni/backends?scope=compatible" -TimeoutSec 15 -ErrorAction Stop
+} catch {}
+
+if ($_backendsJson -and $_backendsJson.data) {
+    foreach ($b in $_backendsJson.data) {
+        $BackendIds   += $b.id
+        $desc = $b.description
+        if ($desc) { $BackendDescs += "$($b.id)  -  $desc" } else { $BackendDescs += $b.id }
     }
-    if ($line -match '^Description:\s*(.+)$' -and $currentId) {
-        $BackendDescs[$BackendDescs.Count - 1] = "$currentId  -  $($Matches[1])"
+    if ($_backendsJson.recommended) {
+        # Move recommended backend to the top of the list
+        $recIdx = [Array]::IndexOf($BackendIds, $_backendsJson.recommended)
+        if ($recIdx -gt 0) {
+            $recId   = $BackendIds[$recIdx];   $recDesc = $BackendDescs[$recIdx]
+            $BackendIds   = @($recId)   + ($BackendIds   | Where-Object { $_ -ne $recId })
+            $BackendDescs = @("$recDesc  (recommended)") + ($BackendDescs | Where-Object { $_ -ne $recDesc })
+        } elseif ($recIdx -eq 0) {
+            $BackendDescs[0] = "$($BackendDescs[0])  (recommended)"
+        }
+    }
+} else {
+    # Fallback: parse CLI text output
+    $rawOutput = Invoke-OmniInfer backend list 2>$null
+    $currentId = ""
+    foreach ($line in $rawOutput -split "`n") {
+        $line = $line.Trim()
+        if ($line -match '^[*\s]*([a-zA-Z0-9._-]+)$') {
+            $currentId = $Matches[1]
+            $BackendIds += $currentId
+            $BackendDescs += $currentId
+        }
+        if ($line -match '^Description:\s*(.+)$' -and $currentId) {
+            $BackendDescs[$BackendDescs.Count - 1] = "$currentId  -  $($Matches[1])"
+        }
     }
 }
 
@@ -222,14 +426,15 @@ if ($SkipBuild) {
     } else {
         Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
         powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ""
+            Write-Err "Build failed (exit code $LASTEXITCODE). See the messages above for details."
+            exit 1
+        }
         # Verify build produced the expected binary
         $binDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
         if (-not (Test-Path $binDir) -or (Get-ChildItem $binDir -File -ErrorAction SilentlyContinue).Count -eq 0) {
-            Write-Err "Build failed — no binaries produced."
-            Write-Host ""
-            Write-Host "  Common fix: run from a Visual Studio Developer PowerShell"
-            Write-Host "  so that cl.exe, link.exe, and rc.exe are in PATH."
-            Write-Host ""
+            Write-Err "Build completed but no binaries found in $binDir"
             exit 1
         }
         Write-Ok "Build complete"

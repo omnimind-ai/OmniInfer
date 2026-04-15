@@ -14,7 +14,7 @@ from typing import Any
 
 logger = logging.getLogger("runtime")
 
-from service_core.backends import BackendSpec
+from service_core.backends import BACKEND_PRIORITY, BackendSpec
 from service_core.drivers import EmbeddedBackendDriver, get_embedded_backend_driver
 from service_core.model_catalog import SupportedModelCatalog
 from service_core.platforms import (
@@ -277,6 +277,15 @@ class RuntimeManager:
                     proc.kill()
                 except OSError:
                     pass
+
+        job = getattr(self, "_backend_job_handle", None)
+        if job is not None:
+            try:
+                ctypes.windll.kernel32.CloseHandle(job)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            self._backend_job_handle = None
+
         logger.info("External runtime stopped (backend=%s)", runtime.backend_id)
 
         job = getattr(self, "_backend_job_handle", None)
@@ -432,6 +441,7 @@ class RuntimeManager:
         if not backend.binary_exists or not backend.launcher_path:
             logger.error("Backend launcher not found: %s (path=%s)", backend.id, backend.launcher_path or "(unset)")
             raise FileNotFoundError(f"backend launcher not found: {backend.launcher_path or '(unset)'}")
+
         logger.info("Starting external backend %s", backend.id)
         effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
         self._validate_launch_args(effective_launch_args)
@@ -579,16 +589,46 @@ class RuntimeManager:
             log_file_name=backend.log_file_name or "runtime.log",
         )
 
-    def list_backends(self) -> list[dict[str, Any]]:
+    def _classify_backend(self, backend: BackendSpec) -> str:
+        if backend.binary_exists:
+            return "installed"
+        if self.platform.is_hardware_compatible(backend):
+            return "compatible"
+        return "unavailable"
+
+    def list_backends(self, scope: str = "installed") -> tuple[list[dict[str, Any]], str | None]:
         with self.lock:
             loaded_model = self.loaded_runtime.model_ref if self._is_runtime_running_locked() and self.loaded_runtime else None
-            return [
+
+            classified: list[tuple[BackendSpec, str]] = [
+                (backend, self._classify_backend(backend))
+                for backend in self.backends.values()
+            ]
+
+            # Filter by scope
+            if scope == "installed":
+                filtered = [(b, c) for b, c in classified if c == "installed"]
+            elif scope == "compatible":
+                filtered = [(b, c) for b, c in classified if c in ("installed", "compatible")]
+            else:  # "all"
+                filtered = classified
+
+            # Recommended: best compatible (installed or compatible) backend by BACKEND_PRIORITY
+            recommended: str | None = None
+            compatible_backends = [(b, c) for b, c in classified if c in ("installed", "compatible")]
+            if compatible_backends:
+                recommended = min(compatible_backends, key=lambda pair: BACKEND_PRIORITY.get(pair[0].id, 99))[0].id
+
+            data = [
                 backend.to_api_payload(
                     selected=backend.id == self.selected_backend_id,
                     loaded_model=loaded_model if backend.id == self.selected_backend_id else None,
+                    compatibility=compat,
+                    priority=BACKEND_PRIORITY.get(backend.id, 99),
                 )
-                for backend in self.backends.values()
+                for backend, compat in filtered
             ]
+            return data, recommended
 
     def select_backend(self, backend_id: str) -> dict[str, Any]:
         with self.lock:
@@ -686,6 +726,7 @@ class RuntimeManager:
                 logger.info("Available memory before load: %.2f GiB", bytes_to_gib(get_available_memory_bytes()))
             except Exception:
                 pass
+
 
             mmproj_path = self._resolve_mmproj_path(
                 preferred_backend,

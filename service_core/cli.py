@@ -360,11 +360,11 @@ def format_bool(value: bool | None) -> str:
     return "unknown"
 
 
-def print_backend_list() -> int:
+def print_backend_list(scope: str = "all") -> int:
     ensure_service_running()
     state = load_cli_state()
     saved_backend = state.get("selected_backend")
-    _status, payload, _ = request_json("GET", "/omni/backends", timeout=10.0)
+    _status, payload, _ = request_json("GET", f"/omni/backends?scope={scope}", timeout=10.0)
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows:
         raise SystemExit("No backends are available on this system.")
@@ -1046,7 +1046,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     backend = sub.add_parser("backend", help="Backend commands")
     backend_sub = backend.add_subparsers(dest="backend_command")
-    backend_sub.add_parser("list", help="List backends available on this system")
+    backend_list = backend_sub.add_parser("list", help="List backends available on this system")
+    backend_list.add_argument("--scope", choices=("installed", "compatible", "all"), default="all", help="Filter backends by scope (default: all)")
     backend_select = backend_sub.add_parser("select", help="Select a backend")
     backend_select.add_argument("backend_name", help="Backend name")
     backend_sub.add_parser("stop", help="Stop the current backend process")
@@ -1132,7 +1133,7 @@ def main(argv: list[str] | None = None) -> int:
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
         if args.backend_command == "list":
-            return print_backend_list()
+            return print_backend_list(scope=args.scope)
         if args.backend_command == "select":
             return select_backend(args.backend_name)
         if args.backend_command == "stop":
