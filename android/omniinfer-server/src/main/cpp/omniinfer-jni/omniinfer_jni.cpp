@@ -40,6 +40,7 @@ struct Session {
   int64_t handle = 0;
   std::unique_ptr<omniinfer::InferenceBackend> backend;
   std::atomic<bool> cancelled{false};
+  std::atomic<bool> graceful_stop{false};  // true = /v1/cancel, false = hard cancel (disconnect)
   bool thinking_enabled = false;
 };
 
@@ -255,6 +256,7 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
   }
 
   session->cancelled.store(false);
+  session->graceful_stop.store(false);
   const std::string req = JStringToStdString(env, request_json);
 
   const bool thinking = ExtractJsonBool(req, "thinking_enabled").value_or(session->thinking_enabled);
@@ -291,7 +293,7 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
 
   std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token,
       tools_json.value_or(""), tool_choice.value_or(""), messages_json.value_or(""),
-      images, max_tokens);
+      images, max_tokens, session->graceful_stop);
 
   // Report metrics.
   auto m = session->backend->get_metrics();
@@ -347,6 +349,15 @@ void NativeCancel(JNIEnv*, jobject, jlong handle) {
   if (it != g_sessions.end()) it->second->cancelled.store(true);
 }
 
+void NativeGracefulStop(JNIEnv*, jobject, jlong handle) {
+  std::lock_guard<std::mutex> guard(g_sessions_mutex);
+  auto it = g_sessions.find(static_cast<int64_t>(handle));
+  if (it != g_sessions.end()) {
+    it->second->graceful_stop.store(true);
+    it->second->cancelled.store(true);
+  }
+}
+
 void NativeFree(JNIEnv*, jobject, jlong handle) {
   Session* session = nullptr;
   {
@@ -392,6 +403,7 @@ JNINativeMethod kMethods[] = {
     {"nativeSetThinkMode", "(JZ)V", reinterpret_cast<void*>(NativeSetThinkMode)},
     {"nativeReset", "(J)V", reinterpret_cast<void*>(NativeReset)},
     {"nativeCancel", "(J)V", reinterpret_cast<void*>(NativeCancel)},
+    {"nativeGracefulStop", "(J)V", reinterpret_cast<void*>(NativeGracefulStop)},
     {"nativeFree", "(J)V", reinterpret_cast<void*>(NativeFree)},
     {"nativeCollectDiagnosticsJson", "(J)Ljava/lang/String;", reinterpret_cast<void*>(NativeCollectDiagnosticsJson)},
 };

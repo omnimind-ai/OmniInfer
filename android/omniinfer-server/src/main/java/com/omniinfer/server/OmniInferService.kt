@@ -114,7 +114,7 @@ class OmniInferService : Service() {
                         post("/v1/cancel") {
                             val handle = OmniInferServer.currentHandle
                             if (handle != 0L) {
-                                OmniInferBridge.cancel(handle)
+                                OmniInferBridge.gracefulStop(handle)
                                 call.respondText("""{"status":"ok"}""", ContentType.Application.Json)
                             } else {
                                 call.respondText("""{"error":"no model loaded"}""",
@@ -352,12 +352,7 @@ class OmniInferService : Service() {
                     ""
                 }
 
-                if (!connectionAlive) {
-                    // Hard cancel (client disconnect): invalidate KV cache so
-                    // next request does a clean full prefill.
-                    OmniInferBridge.reset(handle)
-                    return@respondTextWriter
-                }
+                if (!connectionAlive) return@respondTextWriter
 
                 // Check for backend error (e.g. prompt too long).
                 if (result.startsWith("{\"error\":")) {

@@ -61,11 +61,12 @@ public:
       bool thinking_enabled,
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token,
-      const std::string& tools_json = "",
-      const std::string& /*tool_choice*/ = "",
-      const std::string& messages_json = "",
-      const std::vector<std::vector<uint8_t>>& images = {},
-      int max_tokens = 0) override {
+      const std::string& tools_json,
+      const std::string& /*tool_choice*/,
+      const std::string& messages_json,
+      const std::vector<std::vector<uint8_t>>& images,
+      int max_tokens,
+      std::atomic<bool>& graceful_stop) override {
 
     using ChatMessages = MNN::Transformer::ChatMessages;
     ChatMessages msgs;
@@ -290,15 +291,24 @@ public:
       }
     }
 
-    // Cancel: keep KV cache intact for next request's prefix matching.
-    // Re-tokenize prompt + generated text to update tracking.
-    // Multimodal tracking (prev_eval_prompt_, prev_eval_n_tokens_)
-    // was already set during prefill and remains valid.
     if (cancelled.load()) {
-      if (!is_multimodal && !full_response.empty()) {
-        prev_input_ids_ = llm_->tokenizer_encode(formatted + full_response);
+      if (graceful_stop.load()) {
+        // Graceful stop (/v1/cancel): keep KV cache for prefix matching.
+        // Re-tokenize prompt + generated text to update tracking.
+        // Multimodal tracking (prev_eval_prompt_, prev_eval_n_tokens_)
+        // was already set during prefill and remains valid.
+        if (!is_multimodal && !full_response.empty()) {
+          prev_input_ids_ = llm_->tokenizer_encode(formatted + full_response);
+        }
+        // has_cache_ stays true, no llm_->reset().
+      } else {
+        // Hard cancel (client disconnect): invalidate cache for clean state.
+        llm_->reset();
+        has_cache_ = false;
+        prev_input_ids_.clear();
+        prev_eval_prompt_.clear();
+        prev_eval_n_tokens_ = 0;
       }
-      // has_cache_ stays true, no llm_->reset().
     }
 
     // Flush any remaining buffered bytes (through normalizer if active).

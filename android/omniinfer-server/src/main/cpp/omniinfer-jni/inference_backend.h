@@ -26,17 +26,20 @@ public:
                     const std::string& native_lib_dir, int n_threads, int n_ctx) = 0;
 
   // on_token returns false to stop generation.
+  // graceful_stop: true when stopped via /v1/cancel (preserve KV cache),
+  //                false when stopped via client disconnect (invalidate cache).
   virtual std::string generate(
       const std::string& system_prompt,
       const std::string& user_prompt,
       bool thinking_enabled,
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token,
-      const std::string& tools_json = "",
-      const std::string& tool_choice = "",
-      const std::string& messages_json = "",
-      const std::vector<std::vector<uint8_t>>& images = {},
-      int max_tokens = 0) = 0;
+      const std::string& tools_json,
+      const std::string& tool_choice,
+      const std::string& messages_json,
+      const std::vector<std::vector<uint8_t>>& images,
+      int max_tokens,
+      std::atomic<bool>& graceful_stop) = 0;
 
   virtual bool load_history(
       const std::vector<std::pair<std::string, std::string>>& messages) = 0;

@@ -84,11 +84,12 @@ public:
       bool thinking_enabled,
       std::atomic<bool>& cancelled,
       std::function<bool(const std::string& token)> on_token,
-      const std::string& tools_json = "",
-      const std::string& tool_choice = "",
-      const std::string& messages_json = "",
-      const std::vector<std::vector<uint8_t>>& images = {},
-      int max_tokens = 0) override {
+      const std::string& tools_json,
+      const std::string& tool_choice,
+      const std::string& messages_json,
+      const std::vector<std::vector<uint8_t>>& images,
+      int max_tokens,
+      std::atomic<bool>& graceful_stop) override {
 
     common_sampler_reset(sampler_);
 
@@ -398,14 +399,23 @@ full_prefill:
       }
     }
 
-    // Cancel: keep KV cache intact for next request's prefix matching.
-    // Append generated tokens to the text-only tracking vector so
-    // prompt + partial response can be matched on the next turn.
-    // Multimodal tracking (prev_eval_prompt_, prev_eval_n_tokens_)
-    // was already set during prefill and remains valid.
     if (cancelled.load()) {
-      prev_prompt_tokens_.insert(prev_prompt_tokens_.end(),
-          generated_toks.begin(), generated_toks.end());
+      if (graceful_stop.load()) {
+        // Graceful stop (/v1/cancel): keep KV cache for prefix matching.
+        // Append generated tokens to text-only tracking vector.
+        // Multimodal tracking (prev_eval_prompt_, prev_eval_n_tokens_)
+        // was already set during prefill and remains valid.
+        prev_prompt_tokens_.insert(prev_prompt_tokens_.end(),
+            generated_toks.begin(), generated_toks.end());
+      } else {
+        // Hard cancel (client disconnect): invalidate cache for clean state.
+        cur_pos_ = 0;
+        llama_memory_clear(llama_get_memory(ctx_), false);
+        has_cache_ = false;
+        prev_prompt_tokens_.clear();
+        prev_eval_prompt_.clear();
+        prev_eval_n_tokens_ = 0;
+      }
     }
 
     // Flush thinking normalizer buffer.
