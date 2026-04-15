@@ -213,6 +213,28 @@ if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
     Write-Host ""
 }
 
+# Check for a C/C++ toolchain before attempting to build
+$hasMsvc = [bool](Get-Command cl.exe -ErrorAction SilentlyContinue)
+$hasMsys2Gcc = [bool](Get-Command gcc.exe -ErrorAction SilentlyContinue)
+if (-not $hasMsvc -and -not $hasMsys2Gcc) {
+    # Try registry detection for MSYS2 (not in PATH but installed)
+    $msys2Found = $false
+    foreach ($key in @("HKLM:\SOFTWARE\MSYS2","HKCU:\SOFTWARE\MSYS2","HKLM:\SOFTWARE\WOW6432Node\MSYS2")) {
+        try { if ((Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation) { $msys2Found = $true; break } } catch {}
+    }
+    if ($msys2Found) {
+        Write-Warn "MSYS2 is installed but its ucrt64\bin is not in PATH."
+        Write-Host "  Add it to PATH and retry, e.g.:"
+        Write-Host '    $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"'
+        Write-Host ""
+    }
+    Stop-Fatal "No C/C++ compiler found. Install one of:`n  - Visual Studio Build Tools (cl.exe): https://visualstudio.microsoft.com/downloads/#build-tools`n  - MSYS2 with ucrt64 toolchain (gcc.exe): https://www.msys2.org/`n    Then: pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-cmake"
+} elseif ($hasMsvc) {
+    Write-Ok "C++ toolchain: MSVC (cl.exe)"
+} else {
+    Write-Ok "C++ toolchain: MSYS2 (gcc.exe)"
+}
+
 # Discover build script by convention: scripts/platforms/windows/<backend_id>/build.ps1
 $fullScript = Join-Path $InstallDir "scripts\platforms\windows\$SelectedBackend\build.ps1"
 if (-not (Test-Path $fullScript)) {
