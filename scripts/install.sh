@@ -463,7 +463,10 @@ else
             ok "Backend ${SELECTED_BACKEND} already built, skipping"
         else
             info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
-            bash "${FULL_BUILD_SCRIPT}"
+            if ! bash "${FULL_BUILD_SCRIPT}"; then
+                echo ""
+                fatal "Build failed (exit code $?). See the messages above for details."
+            fi
             ok "Build complete"
         fi
     fi
