@@ -100,8 +100,11 @@ if (Test-Path "$InstallDir\.git") {
     Write-Info "Cloning OmniInfer to $InstallDir ..."
     $clonedViaHttps = $false
     Write-Info "Trying SSH ..."
-    git clone --depth 1 $RepoSsh $InstallDir 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    git clone --depth 1 $RepoSsh $InstallDir *>&1 | Out-Null
+    $sshExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEAP
+    if ($sshExit -ne 0) {
         Write-Warn "SSH clone failed, falling back to HTTPS ..."
         if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue }
         git clone --depth 1 $RepoHttps $InstallDir
