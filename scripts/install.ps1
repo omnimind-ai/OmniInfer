@@ -154,6 +154,13 @@ function Invoke-OmniInfer {
     & python $pyScript @args
 }
 
+# Cleanup: shut down any gateway service started by the CLI on script exit
+$_gatewayPort = 9000
+try { $_gatewayPort = [int](Get-Content (Join-Path $InstallDir "release\config\omniinfer.json") | ConvertFrom-Json).port } catch {}
+Register-EngineEvent PowerShell.Exiting -Action {
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:$($_gatewayPort)/omni/shutdown" -Method POST -TimeoutSec 3 2>$null } catch {}
+} | Out-Null
+
 $BackendIds   = @()
 $BackendDescs = @()
 $rawOutput = Invoke-OmniInfer backend list 2>$null
