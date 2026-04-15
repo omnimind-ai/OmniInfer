@@ -226,8 +226,16 @@ if [ -d "${INSTALL_DIR}/.git" ]; then
 else
     info "Cloning OmniInfer to ${INSTALL_DIR} ..."
     CLONED_VIA_HTTPS=0
-    info "Trying SSH ..."
-    if ! git clone --depth 1 "${REPO_SSH}" "${INSTALL_DIR}" 2>/dev/null; then
+    info "Trying SSH (timeout 15s) ..."
+    _ssh_ok=0
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 15 git clone --depth 1 "${REPO_SSH}" "${INSTALL_DIR}" 2>/dev/null && _ssh_ok=1
+    else
+        # macOS/BSD: no timeout command, use GIT_SSH_COMMAND with ConnectTimeout
+        GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no" \
+            git clone --depth 1 "${REPO_SSH}" "${INSTALL_DIR}" 2>/dev/null && _ssh_ok=1
+    fi
+    if [[ "${_ssh_ok}" -eq 0 ]]; then
         warn "SSH clone failed, falling back to HTTPS ..."
         rm -rf "${INSTALL_DIR}" 2>/dev/null || true
         if ! git clone --depth 1 "${REPO_HTTPS}" "${INSTALL_DIR}"; then

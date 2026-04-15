@@ -241,10 +241,12 @@ if (Test-Path "$InstallDir\.git") {
 } else {
     Write-Info "Cloning OmniInfer to $InstallDir ..."
     $clonedViaHttps = $false
-    Write-Info "Trying SSH ..."
+    Write-Info "Trying SSH (timeout 15s) ..."
     $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+    $env:GIT_SSH_COMMAND = "ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no"
     git clone --depth 1 $RepoSsh $InstallDir *>&1 | Out-Null
     $sshExit = $LASTEXITCODE
+    Remove-Item Env:GIT_SSH_COMMAND -ErrorAction SilentlyContinue
     $ErrorActionPreference = $prevEAP
     if ($sshExit -ne 0) {
         Write-Warn "SSH clone failed, falling back to HTTPS ..."
