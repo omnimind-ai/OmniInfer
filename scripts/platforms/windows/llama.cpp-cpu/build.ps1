@@ -21,20 +21,46 @@ function Require-Command {
 Require-Command cmake
 
 function Find-Msys2Ucrt64Toolchain {
-    $roots = @(
-        "E:\Coding\Tools\MSYS2\ucrt64\bin",
-        "C:\msys64\ucrt64\bin"
-    )
+    $candidates = @()
 
-    foreach ($root in $roots) {
-        $gcc = Join-Path $root "gcc.exe"
-        $gpp = Join-Path $root "g++.exe"
-        $ninja = Join-Path $root "ninja.exe"
+    # 1. Environment variable (highest priority)
+    if ($env:MSYS2_ROOT) { $candidates += $env:MSYS2_ROOT }
+
+    # 2. Windows registry (MSYS2 installer writes InstallLocation here)
+    foreach ($key in @(
+        "HKLM:\SOFTWARE\MSYS2",
+        "HKCU:\SOFTWARE\MSYS2",
+        "HKLM:\SOFTWARE\WOW6432Node\MSYS2"
+    )) {
+        try {
+            $loc = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).InstallLocation
+            if ($loc) { $candidates += $loc }
+        } catch {}
+    }
+
+    # 3. PATH: if gcc.exe is already in PATH, derive MSYS2 root from it
+    $gccInPath = Get-Command gcc.exe -ErrorAction SilentlyContinue
+    if ($gccInPath) {
+        $binDir = Split-Path $gccInPath.Source
+        if ($binDir -match 'ucrt64\\bin$') {
+            $candidates += (Split-Path (Split-Path $binDir))  # msys64 root
+        }
+    }
+
+    # 4. Common default location
+    $candidates += "C:\msys64"
+
+    foreach ($msys2Root in $candidates) {
+        $ucrt64Bin = Join-Path $msys2Root "ucrt64\bin"
+        if (-not (Test-Path $ucrt64Bin)) { continue }
+        $gcc   = Join-Path $ucrt64Bin "gcc.exe"
+        $gpp   = Join-Path $ucrt64Bin "g++.exe"
+        $ninja = Join-Path $ucrt64Bin "ninja.exe"
         if ((Test-Path $gcc) -and (Test-Path $gpp) -and (Test-Path $ninja)) {
             return @{
-                Root = $root
-                Gcc = $gcc
-                Gpp = $gpp
+                Root  = $ucrt64Bin
+                Gcc   = $gcc
+                Gpp   = $gpp
                 Ninja = $ninja
             }
         }

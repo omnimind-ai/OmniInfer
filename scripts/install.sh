@@ -193,6 +193,15 @@ if [[ "${IS_ANDROID}" -eq 0 ]]; then
     need_cmd python3 "Install Python 3 from https://python.org/"
 fi
 need_cmd curl   "Install curl for your platform"
+# C/C++ compiler (needed for building backends)
+if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1; then
+    ok "C++ compiler"
+else
+    fatal "No C/C++ compiler found. Install one of:
+  macOS:   xcode-select --install
+  Ubuntu:  sudo apt install build-essential
+  Termux:  pkg install clang"
+fi
 echo ""
 
 # ── Step 2: Clone or update repo ────────────────────────────
@@ -246,6 +255,12 @@ PORTCFG
     ok "Config written: ${CONFIG_DIR}/omniinfer.json (port ${OMNI_PORT})"
 fi
 echo ""
+
+# ── Cleanup: shut down any gateway started by the CLI on exit ──
+_cleanup_gateway() {
+    curl -sS -X POST "http://127.0.0.1:${OMNI_PORT}/omni/shutdown" >/dev/null 2>&1 || true
+}
+trap _cleanup_gateway EXIT
 
 # ── Step 3: Detect platform & choose backend ────────────────
 
