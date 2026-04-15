@@ -28,6 +28,7 @@ class LinuxPlatform(HostPlatform):
     @property
     def catalog_backend_aliases(self) -> dict[str, str]:
         aliases = {
+            "llama.cpp-cuda": "llama.cpp-linux-cuda",
             "llama.cpp-vulkan": "llama.cpp-linux-vulkan",
             "llama.cpp-openvino": "llama.cpp-linux-openvino",
         }
@@ -37,4 +38,4 @@ class LinuxPlatform(HostPlatform):
 
     @property
     def gpu_backend_ids(self) -> frozenset[str]:
-        return frozenset({"llama.cpp-linux-rocm", "llama.cpp-linux-vulkan", "omniinfer-native-linux"})
+        return frozenset({"llama.cpp-linux-cuda", "llama.cpp-linux-rocm", "llama.cpp-linux-vulkan", "omniinfer-native-linux"})

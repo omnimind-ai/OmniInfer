@@ -108,6 +108,12 @@ class HostPlatform(ABC):
         if "s390x" in caps and machine != "s390x":
             return False
 
+        # Specialized backends that require specific hardware/software
+        if "openvino" in caps:
+            return backend.binary_exists  # only compatible if user installed OpenVINO runtime
+        if "eagle3" in caps:
+            return backend.binary_exists  # only compatible if user built the EAGLE3 runtime
+
         # Non-GPU backends are always compatible (after arch check)
         if backend.id not in self.gpu_backend_ids:
             return True
@@ -120,7 +126,7 @@ class HostPlatform(ABC):
         if "metal" in caps:
             return True  # Metal is always present on macOS Apple Silicon
 
-        # Vulkan, SYCL, OpenVINO: treat as compatible if user installed the runtime
+        # Vulkan, SYCL: treat as compatible if user installed the runtime
         return backend.binary_exists
 
     def _is_cuda_detected(self) -> bool:
