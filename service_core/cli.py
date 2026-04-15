@@ -364,7 +364,7 @@ def print_backend_list() -> int:
     ensure_service_running()
     state = load_cli_state()
     saved_backend = state.get("selected_backend")
-    _status, payload, _ = request_json("GET", "/omni/backends", timeout=10.0)
+    _status, payload, _ = request_json("GET", "/omni/backends?scope=all", timeout=10.0)
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows:
         raise SystemExit("No backends are available on this system.")
