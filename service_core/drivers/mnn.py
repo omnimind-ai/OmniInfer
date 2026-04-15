@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-import imghdr
+import struct
 import io
 import json
 import logging
@@ -214,7 +214,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
             raw = base64.b64decode(encoded, validate=True)
         except (ValueError, binascii.Error) as exc:
             raise ValueError("invalid data URL image payload") from exc
-        image_type = imghdr.what(None, raw) or "png"
+        image_type = _detect_image_type(raw) or "png"
         with tempfile.NamedTemporaryFile(prefix="omniinfer-mnn-", suffix=f".{image_type}", delete=False) as handle:
             handle.write(raw)
             temp_files.append(handle.name)
@@ -350,3 +350,19 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         import importlib
 
         return importlib.import_module(module_name)
+
+
+def _detect_image_type(data: bytes) -> str | None:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    if data[:2] in (b"BM",):
+        return "bmp"
+    if data[:4] in (b"II\x2a\x00", b"MM\x00\x2a"):
+        return "tiff"
+    return None
