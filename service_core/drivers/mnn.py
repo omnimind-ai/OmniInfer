@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import imghdr
 import io
 import json
 import logging
@@ -18,6 +17,23 @@ from urllib.parse import urlparse
 logger = logging.getLogger("driver.mnn")
 
 from service_core.drivers.base import EmbeddedBackendDriver
+
+_IMAGE_SIGNATURES = [
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"\xff\xd8\xff",       "jpeg"),
+    (b"GIF87a",             "gif"),
+    (b"GIF89a",             "gif"),
+    (b"RIFF",               "webp"),  # RIFF....WEBP
+    (b"BM",                 "bmp"),
+]
+
+
+def _detect_image_type(data: bytes) -> str:
+    """Detect image format from magic bytes. Returns extension string."""
+    for sig, fmt in _IMAGE_SIGNATURES:
+        if data[:len(sig)] == sig:
+            return fmt
+    return "png"
 
 
 @dataclass
@@ -214,7 +230,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
             raw = base64.b64decode(encoded, validate=True)
         except (ValueError, binascii.Error) as exc:
             raise ValueError("invalid data URL image payload") from exc
-        image_type = imghdr.what(None, raw) or "png"
+        image_type = _detect_image_type(raw)
         with tempfile.NamedTemporaryFile(prefix="omniinfer-mnn-", suffix=f".{image_type}", delete=False) as handle:
             handle.write(raw)
             temp_files.append(handle.name)
