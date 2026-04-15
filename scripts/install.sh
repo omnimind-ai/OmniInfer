@@ -212,7 +212,12 @@ if [ -d "${INSTALL_DIR}/.git" ]; then
     git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || warn "Pull failed, continuing with existing code"
 else
     info "Cloning OmniInfer to ${INSTALL_DIR} ..."
-    git clone --depth 1 "${REPO_URL}" "${INSTALL_DIR}"
+    if ! git clone --depth 1 "${REPO_URL}" "${INSTALL_DIR}"; then
+        fatal "git clone failed. Check your network connection and try again."
+    fi
+fi
+if [[ ! -f "${INSTALL_DIR}/omniinfer.py" ]]; then
+    fatal "Repository clone appears incomplete — omniinfer.py not found in ${INSTALL_DIR}"
 fi
 ok "Repository ready at ${INSTALL_DIR}"
 

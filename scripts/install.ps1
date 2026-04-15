@@ -98,6 +98,12 @@ if (Test-Path "$InstallDir\.git") {
 } else {
     Write-Info "Cloning OmniInfer to $InstallDir ..."
     git clone --depth 1 $RepoUrl $InstallDir
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Fatal "git clone failed (exit code $LASTEXITCODE). Check your network connection and try again."
+    }
+}
+if (-not (Test-Path (Join-Path $InstallDir "omniinfer.py"))) {
+    Stop-Fatal "Repository clone appears incomplete — omniinfer.py not found in $InstallDir"
 }
 Write-Ok "Repository ready at $InstallDir"
 
