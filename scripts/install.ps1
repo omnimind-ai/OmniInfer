@@ -25,7 +25,14 @@ function Write-Info  { param([string]$Msg) Write-Host "[INFO] $Msg" -ForegroundC
 function Write-Ok    { param([string]$Msg) Write-Host "[ OK ] $Msg" -ForegroundColor Green }
 function Write-Warn  { param([string]$Msg) Write-Host "[WARN] $Msg" -ForegroundColor Yellow }
 function Write-Err   { param([string]$Msg) Write-Host "[ERR ] $Msg" -ForegroundColor Red }
-function Stop-Fatal  { param([string]$Msg) Write-Err $Msg; exit 1 }
+function Stop-Fatal  {
+    param([string]$Msg)
+    Write-Err $Msg
+    Write-Host ""
+    Write-Host "Press any key to exit ..." -ForegroundColor DarkGray
+    try { [void][Console]::ReadKey($true) } catch { Start-Sleep -Seconds 10 }
+    exit 1
+}
 
 function Test-Command {
     param([string]$Name, [string]$Hint)
@@ -106,7 +113,27 @@ Write-Host ""
 Write-Info "Step 1/6: Checking prerequisites ..."
 Test-Command "git"    "Install from https://git-scm.com/"
 Test-Command "cmake"  "Install from https://cmake.org/download/"
-Test-Command "python" "Install from https://python.org/"
+
+# Python: try python, python3, then uv run python
+$script:PythonCmd = $null
+foreach ($candidate in @("python", "python3")) {
+    if (Get-Command $candidate -ErrorAction SilentlyContinue) {
+        $script:PythonCmd = $candidate
+        break
+    }
+}
+if (-not $script:PythonCmd -and (Get-Command "uv" -ErrorAction SilentlyContinue)) {
+    # uv is available — use "uv run python" as the python command
+    try {
+        $uvCheck = & uv run python --version 2>$null
+        if ($LASTEXITCODE -eq 0) { $script:PythonCmd = "__uv__" }
+    } catch {}
+}
+if ($script:PythonCmd) {
+    if ($script:PythonCmd -eq "__uv__") { Write-Ok "python (via uv)" } else { Write-Ok $script:PythonCmd }
+} else {
+    Stop-Fatal "'python' is required but not found. Install from https://python.org/ or use uv: https://docs.astral.sh/uv/"
+}
 Write-Host ""
 
 # ── Step 2: Clone or update repo ────────────────────────────
@@ -190,9 +217,13 @@ Write-Info "Step 3/6: Detecting platform and hardware ..."
 $cmdPath = Join-Path $InstallDir "omniinfer.cmd"
 $pyScript = Join-Path $InstallDir "omniinfer.py"
 
-# Helper: invoke omniinfer CLI via python directly (avoids cmd /c path issues)
+# Helper: invoke omniinfer CLI via the detected python
 function Invoke-OmniInfer {
-    & python $pyScript @args
+    if ($script:PythonCmd -eq "__uv__") {
+        & uv run python $pyScript @args
+    } else {
+        & $script:PythonCmd $pyScript @args
+    }
 }
 
 # Cleanup: shut down any gateway service started by the CLI on script exit
