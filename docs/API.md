@@ -10,6 +10,8 @@ http://127.0.0.1:9000
 
 All requests use JSON unless noted otherwise.
 
+> **Windows note:** `omniinfer_gateway.py` auto-hides its console window by default. To run in the foreground with visible log output, use `python omniinfer_gateway.py --window-mode visible`.
+
 ## 1. Health check
 
 ### `GET /health`
