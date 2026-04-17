@@ -624,26 +624,11 @@ class OmniHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             _original_request_json = json.dumps(payload, ensure_ascii=False)
             _n_messages = len(payload.get("messages", []))
-            try:
-                from service_core.platforms.common import (
-                    bytes_to_gib,
-                    get_available_cuda_memory_bytes,
-                    get_available_memory_bytes,
-                    get_available_rocm_memory_bytes,
-                )
-                gpu_mem = get_available_cuda_memory_bytes() or get_available_rocm_memory_bytes()
-                if gpu_mem is not None:
-                    mem_str = f" vram={bytes_to_gib(gpu_mem):.2f}GiB"
-                else:
-                    mem_str = f" ram={bytes_to_gib(get_available_memory_bytes()):.2f}GiB"
-            except Exception:
-                mem_str = ""
             logger.info(
-                "POST /v1/chat/completions model=%s messages=%d stream=%s%s",
+                "POST /v1/chat/completions model=%s messages=%d stream=%s",
                 payload.get("model", ""),
-                len(payload.get("messages", [])),
+                _n_messages,
                 payload.get("stream", False),
-                mem_str,
             )
             requested_backend = self.forced_backend or (str(payload.pop("backend", "")).strip() or None)
             requested_model = str(payload.get("model", "")).strip() or None
