@@ -140,6 +140,43 @@ def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
         payload["reasoning_format"] = "none"
 
 
+def _log_completion(status: int, body: bytes | None, elapsed: float, mode: str) -> None:
+    """Log chat completion result with usage metrics when available."""
+    parts = [f"POST /v1/chat/completions -> {status} ({elapsed:.2f}s, {mode})"]
+    if status == 200 and body:
+        try:
+            data = json.loads(body) if isinstance(body, (bytes, bytearray)) else body
+            if not isinstance(data, dict):
+                raise ValueError
+            segs: list[str] = []
+            usage = data.get("usage")
+            timings = data.get("timings")
+            if isinstance(usage, dict):
+                segs.append(f"prompt={usage.get('prompt_tokens', 0)}")
+                segs.append(f"completion={usage.get('completion_tokens', 0)}")
+                ptd = usage.get("prompt_tokens_details", {})
+                if isinstance(ptd, dict) and ptd.get("cached_tokens") is not None:
+                    segs.append(f"cached={ptd['cached_tokens']}")
+            elif isinstance(timings, dict):
+                # Stream mode: timings has prompt_n / predicted_n instead of usage
+                segs.append(f"prompt={timings.get('prompt_n', 0)}")
+                segs.append(f"completion={timings.get('predicted_n', 0)}")
+                if timings.get("cache_n"):
+                    segs.append(f"cached={timings['cache_n']}")
+            if isinstance(timings, dict):
+                pps = timings.get("prompt_per_second")
+                dps = timings.get("predicted_per_second")
+                if pps is not None:
+                    segs.append(f"prefill={pps:.1f}t/s")
+                if dps is not None:
+                    segs.append(f"decode={dps:.1f}t/s")
+            if segs:
+                parts.append(" ".join(segs))
+        except Exception:
+            pass
+    logger.info("  ".join(parts))
+
+
 def http_json(
     method: str,
     url: str,
@@ -168,13 +205,15 @@ def stream_http_request(
     url: str,
     payload: dict[str, Any] | None = None,
     timeout: float = 600.0,
-) -> None:
+) -> bytes | None:
+    """Stream an HTTP request to the client, returning the last SSE data line (for usage extraction)."""
     headers = {"Accept": "text/event-stream, application/json"}
     body = None
     if payload is not None:
         headers["Content-Type"] = "application/json; charset=utf-8"
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
+    tail_buf = b""
     req = urllib.request.Request(url=url, data=body, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -195,6 +234,7 @@ def stream_http_request(
                 chunk = resp.read(4096)
                 if not chunk:
                     break
+                tail_buf = (tail_buf + chunk)[-4096:]
                 handler.wfile.write(chunk)
                 handler.wfile.flush()
     except urllib.error.HTTPError as e:
@@ -223,7 +263,13 @@ def stream_http_request(
         handler.wfile.write(body)
         handler.wfile.flush()
     except (BrokenPipeError, ConnectionResetError):
-        return
+        pass  # client disconnected, but tail_buf may still have usage data
+
+    # Extract last SSE data line containing usage/timings info
+    for line in reversed(tail_buf.decode("utf-8", errors="replace").splitlines()):
+        if line.startswith("data: {") and ('"usage"' in line or '"timings"' in line):
+            return line[6:].encode("utf-8")
+    return None
 
 
 def stream_embedded_events(
@@ -569,7 +615,8 @@ class OmniHandler(BaseHTTPRequestHandler):
                     if payload.get("stream") is True:
                         events = self.manager.stream_chat_completion(payload)
                         stream_embedded_events(self, events)
-                        logger.info("POST /v1/chat/completions -> 200 (%.2fs, embedded stream)", time.perf_counter() - _req_start)
+                        usage_event = next((e for e in reversed(events) if "usage" in e), None)
+                        _log_completion(200, json_dumps(usage_event) if usage_event else None, time.perf_counter() - _req_start, "embedded stream")
                         return
                     response = self.manager.chat_completion(payload)
                 except ValueError as e:
@@ -578,7 +625,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 except RuntimeError as e:
                     self._send_json(409, {"error": {"message": str(e)}})
                     return
-                logger.info("POST /v1/chat/completions -> 200 (%.2fs, embedded)", time.perf_counter() - _req_start)
+                _log_completion(200, json_dumps(response), time.perf_counter() - _req_start, "embedded")
                 self._send_json(200, response)
                 return
 
@@ -590,14 +637,14 @@ class OmniHandler(BaseHTTPRequestHandler):
 
             if payload.get("stream") is True:
                 self._debug(f"proxy stream -> http://{host}:{port}/v1/chat/completions")
-                stream_http_request(
+                last_data = stream_http_request(
                     self,
                     "POST",
                     f"http://{host}:{port}/v1/chat/completions",
                     payload=payload,
                     timeout=3600,
                 )
-                logger.info("POST /v1/chat/completions -> stream done (%.2fs, proxy)", time.perf_counter() - _req_start)
+                _log_completion(200, last_data, time.perf_counter() - _req_start, "proxy stream")
                 return
 
             code, body = http_json(
@@ -606,7 +653,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 payload=payload,
                 timeout=600,
             )
-            logger.info("POST /v1/chat/completions -> %d (%.2fs, proxy)", code, time.perf_counter() - _req_start)
+            _log_completion(code, body, time.perf_counter() - _req_start, "proxy")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")

@@ -160,10 +160,12 @@ class RuntimeManager:
         )
         installed_backend_ids = [bid for bid, spec in self.backends.items() if spec.binary_exists]
         self.catalog = SupportedModelCatalog(self.platform, installed_backend_ids)
-        resolved_default_backend = self._normalize_backend_id(default_backend_id)
-        self.selected_backend_id = (
-            resolved_default_backend if resolved_default_backend in self.backends else next(iter(self.backends))
+        best_installed = (
+            min(installed_backend_ids, key=lambda bid: BACKEND_PRIORITY.get(bid, 999))
+            if installed_backend_ids else None
         )
+        resolved_default_backend = self._normalize_backend_id(default_backend_id)
+        self.selected_backend_id = best_installed or resolved_default_backend or next(iter(self.backends))
         self.loaded_runtime: LoadedRuntime | None = None
         logger.info("RuntimeManager initialized: platform=%s runtime_root=%s", self.platform.system_name, self.runtime_root)
         logger.info("Installed backends: %s", ", ".join(installed_backend_ids) or "(none)")
