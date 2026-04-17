@@ -692,7 +692,7 @@ def main() -> int:
 
     log_session_header(
         config=config,
-        backends=[b["id"] for b in manager.list_backends(scope="all")[0]],
+        backends=[b["id"] for b in manager.list_backends(scope="installed")[0]],
     )
 
     httpd = ThreadingHTTPServer((args.host, args.port), OmniHandler)

@@ -166,7 +166,7 @@ class RuntimeManager:
         )
         self.loaded_runtime: LoadedRuntime | None = None
         logger.info("RuntimeManager initialized: platform=%s runtime_root=%s", self.platform.system_name, self.runtime_root)
-        logger.info("Backends discovered: %s", ", ".join(self.backends.keys()))
+        logger.info("Installed backends: %s", ", ".join(installed_backend_ids) or "(none)")
         logger.info("Default backend: %s", self.selected_backend_id)
 
     def _normalize_backend_id(self, backend_id: str | None) -> str | None:
