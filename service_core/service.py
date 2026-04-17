@@ -180,6 +180,30 @@ def _save_request_response(
         logger.debug("Failed to save request/response log", exc_info=True)
 
 
+def _enrich_context_overflow_error(body: bytes, n_messages: int) -> bytes:
+    """Enrich a context-overflow 400 error with actionable detail."""
+    try:
+        data = json.loads(body)
+        err = data.get("error", {})
+        if err.get("type") != "exceed_context_size_error":
+            return body
+        n_prompt = err.get("n_prompt_tokens", 0)
+        n_ctx = err.get("n_ctx", 0)
+        overflow = n_prompt - n_ctx
+        err["message"] = (
+            f"Prompt ({n_prompt} tokens) exceeds context window ({n_ctx} tokens) "
+            f"by {overflow} tokens. "
+            f"The request contains {n_messages} messages. "
+            f"To fix: trim older messages from the conversation history, "
+            f"reduce max_tokens, or reload the model with a larger ctx_size."
+        )
+        err["overflow_tokens"] = overflow
+        err["n_messages"] = n_messages
+        return json.dumps(data, ensure_ascii=False).encode("utf-8")
+    except Exception:
+        return body
+
+
 def _log_completion(status: int, body: bytes | None, elapsed: float, mode: str) -> None:
     """Log chat completion result with usage metrics when available."""
     parts = [f"POST /v1/chat/completions -> {status} ({elapsed:.2f}s, {mode})"]
@@ -599,6 +623,7 @@ class OmniHandler(BaseHTTPRequestHandler):
             _req_start = time.perf_counter()
             payload = self._read_json()
             _original_request_json = json.dumps(payload, ensure_ascii=False)
+            _n_messages = len(payload.get("messages", []))
             try:
                 from service_core.platforms.common import (
                     bytes_to_gib,
@@ -717,6 +742,8 @@ class OmniHandler(BaseHTTPRequestHandler):
                 payload=payload,
                 timeout=600,
             )
+            if code == 400:
+                body = _enrich_context_overflow_error(body, _n_messages)
             _elapsed = time.perf_counter() - _req_start
             _log_completion(code, body, _elapsed, "proxy")
             _save_request_response(_original_request_json, body, code, _elapsed, "proxy")
