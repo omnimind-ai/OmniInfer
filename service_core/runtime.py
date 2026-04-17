@@ -772,17 +772,22 @@ class RuntimeManager:
             elif preferred_backend.runtime_mode == "embedded":
                 resolved_backend_id = preferred_backend.id
             else:
-                try:
-                    resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
-                except Exception:
-                    fallback = self._best_installed_backend_id()
-                    if fallback is None:
-                        raise RuntimeError("no installed backend available")
-                    logger.warning(
-                        "Catalog auto-select failed; falling back to best installed backend: %s",
-                        fallback,
-                    )
-                    resolved_backend_id = fallback
+                # If the same model is already running, keep the current backend
+                current_rt = self.loaded_runtime if self._is_runtime_running_locked() else None
+                if current_rt and Path(current_rt.model_path).resolve() == Path(model_path).resolve():
+                    resolved_backend_id = current_rt.backend_id
+                else:
+                    try:
+                        resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
+                    except Exception:
+                        fallback = self._best_installed_backend_id()
+                        if fallback is None:
+                            raise RuntimeError("no installed backend available")
+                        logger.warning(
+                            "Catalog auto-select failed; falling back to best installed backend: %s",
+                            fallback,
+                        )
+                        resolved_backend_id = fallback
             backend = self._get_backend(resolved_backend_id)
             if ctx_size is not None and not backend.supports_ctx_size:
                 raise ValueError(f"{backend.id} does not support ctx_size overrides")
