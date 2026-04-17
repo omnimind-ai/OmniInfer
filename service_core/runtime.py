@@ -798,8 +798,11 @@ class RuntimeManager:
             # Check if the requested configuration matches the already-running runtime
             current = self.loaded_runtime if self._is_runtime_running_locked() else None
             if current:
-                current_mmproj = current.mmproj_path or ""
-                wanted_mmproj = mmproj_path or ""
+                # If mmproj was not explicitly requested, don't let auto-discovery override the loaded one
+                mmproj_matches = (
+                    mmproj is None  # not explicitly specified → accept whatever is loaded
+                    or (current.mmproj_path or "") == (mmproj_path or "")
+                )
                 compare_current_launch_args = list(current.launch_args)
                 compare_wanted_launch_args = list(effective_launch_args)
                 if ctx_size is None:
@@ -811,10 +814,13 @@ class RuntimeManager:
                         compare_wanted_launch_args,
                         ("-c", "--ctx-size"),
                     )
+                if launch_args is None:
+                    compare_current_launch_args = []
+                    compare_wanted_launch_args = []
                 if (
                     current.backend_id == backend.id
                     and Path(current.model_path).resolve() == Path(model_path).resolve()
-                    and current_mmproj == wanted_mmproj
+                    and mmproj_matches
                     and (ctx_size is None or current.ctx_size == ctx_size)
                     and compare_current_launch_args == compare_wanted_launch_args
                 ):
