@@ -1,5 +1,6 @@
 param(
     [string]$PackageName = "OmniInfer",
+    [string[]]$Backends = @(),
     [switch]$BuildCpuBackend,
     [switch]$BuildCudaBackend,
     [switch]$BuildVulkanBackend,
@@ -159,20 +160,20 @@ if ($BuildHipBackend) {
 
 Stop-RunningPortableRelease
 
-$releaseArgs = @(
-    "-NoProfile",
-    "-ExecutionPolicy", "Bypass",
-    "-File", $ReleaseScript,
-    "-PackageName", $PackageName
-)
+$releaseParams = @{
+    PackageName = $PackageName
+}
+if ($Backends.Count -gt 0) {
+    $releaseParams["Backends"] = $Backends
+}
 
 Write-Host "Running Windows portable release build:"
-Write-Host "  powershell $($releaseArgs -join ' ')"
+Write-Host "  & $ReleaseScript @releaseParams"
 
 if ($DryRun) {
     Write-Host "Dry run enabled. Release packaging was not executed."
     exit 0
 }
 
-powershell @releaseArgs
+& $ReleaseScript @releaseParams
 exit $LASTEXITCODE
