@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
+import os
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -138,6 +141,47 @@ def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
     final_enabled = chat_template_kwargs.get("enable_thinking")
     if isinstance(final_enabled, bool) and final_enabled is False and "reasoning_format" not in payload:
         payload["reasoning_format"] = "none"
+
+
+_request_log_counter = 0
+_request_log_lock = threading.Lock()
+
+
+def _save_request_response(
+    request_payload: dict[str, Any],
+    response_body: bytes | None,
+    status: int,
+    elapsed: float,
+    mode: str,
+) -> None:
+    """Save request/response pair to .local/logs/requests/{date}/{seq}-chat.json."""
+    global _request_log_counter
+    try:
+        now = datetime.now()
+        log_dir = APP_ROOT / ".local" / "logs" / "requests" / now.strftime("%Y-%m-%d")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with _request_log_lock:
+            _request_log_counter += 1
+            seq = _request_log_counter
+        filename = f"{now.strftime('%H%M%S')}-{seq:04d}-chat.json"
+        response_data = None
+        if response_body:
+            try:
+                response_data = json.loads(response_body)
+            except Exception:
+                response_data = response_body.decode("utf-8", errors="replace")
+        record = {
+            "timestamp": now.isoformat(),
+            "status": status,
+            "mode": mode,
+            "elapsed_s": round(elapsed, 3),
+            "request": request_payload,
+            "response": response_data,
+        }
+        with open(log_dir / filename, "w", encoding="utf-8") as f:
+            json.dump(record, f, ensure_ascii=False, indent=2)
+    except Exception:
+        logger.debug("Failed to save request/response log", exc_info=True)
 
 
 def _log_completion(status: int, body: bytes | None, elapsed: float, mode: str) -> None:
@@ -558,11 +602,18 @@ class OmniHandler(BaseHTTPRequestHandler):
         if path == "/v1/chat/completions":
             _req_start = time.perf_counter()
             payload = self._read_json()
+            _original_payload = copy.deepcopy(payload)
+            try:
+                from service_core.platforms.common import bytes_to_gib, get_available_memory_bytes
+                mem_str = f" mem={bytes_to_gib(get_available_memory_bytes()):.2f}GiB"
+            except Exception:
+                mem_str = ""
             logger.info(
-                "POST /v1/chat/completions model=%s messages=%d stream=%s",
+                "POST /v1/chat/completions model=%s messages=%d stream=%s%s",
                 payload.get("model", ""),
                 len(payload.get("messages", [])),
                 payload.get("stream", False),
+                mem_str,
             )
             requested_backend = self.forced_backend or (str(payload.pop("backend", "")).strip() or None)
             requested_model = str(payload.get("model", "")).strip() or None
@@ -616,7 +667,10 @@ class OmniHandler(BaseHTTPRequestHandler):
                         events = self.manager.stream_chat_completion(payload)
                         stream_embedded_events(self, events)
                         usage_event = next((e for e in reversed(events) if "usage" in e), None)
-                        _log_completion(200, json_dumps(usage_event) if usage_event else None, time.perf_counter() - _req_start, "embedded stream")
+                        _elapsed = time.perf_counter() - _req_start
+                        _resp_body = json_dumps(usage_event) if usage_event else None
+                        _log_completion(200, _resp_body, _elapsed, "embedded stream")
+                        _save_request_response(_original_payload, _resp_body, 200, _elapsed, "embedded stream")
                         return
                     response = self.manager.chat_completion(payload)
                 except ValueError as e:
@@ -625,7 +679,10 @@ class OmniHandler(BaseHTTPRequestHandler):
                 except RuntimeError as e:
                     self._send_json(409, {"error": {"message": str(e)}})
                     return
-                _log_completion(200, json_dumps(response), time.perf_counter() - _req_start, "embedded")
+                _elapsed = time.perf_counter() - _req_start
+                _resp_body = json_dumps(response)
+                _log_completion(200, _resp_body, _elapsed, "embedded")
+                _save_request_response(_original_payload, _resp_body, 200, _elapsed, "embedded")
                 self._send_json(200, response)
                 return
 
@@ -644,7 +701,9 @@ class OmniHandler(BaseHTTPRequestHandler):
                     payload=payload,
                     timeout=3600,
                 )
-                _log_completion(200, last_data, time.perf_counter() - _req_start, "proxy stream")
+                _elapsed = time.perf_counter() - _req_start
+                _log_completion(200, last_data, _elapsed, "proxy stream")
+                _save_request_response(_original_payload, last_data, 200, _elapsed, "proxy stream")
                 return
 
             code, body = http_json(
@@ -653,7 +712,9 @@ class OmniHandler(BaseHTTPRequestHandler):
                 payload=payload,
                 timeout=600,
             )
-            _log_completion(code, body, time.perf_counter() - _req_start, "proxy")
+            _elapsed = time.perf_counter() - _req_start
+            _log_completion(code, body, _elapsed, "proxy")
+            _save_request_response(_original_payload, body, code, _elapsed, "proxy")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -717,6 +778,19 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
     return p.parse_args()
 
 
+def _shutdown_existing_gateway(host: str, port: int) -> None:
+    """Try to shut down an already-running gateway on the same address."""
+    url = f"http://{host}:{port}/omni/shutdown"
+    req = urllib.request.Request(url=url, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    except Exception:
+        return
+    logger.info("Shut down existing gateway on %s:%d", host, port)
+    time.sleep(2)
+
+
 def main() -> int:
     config = load_app_config(APP_ROOT)
     args = parse_args(config)
@@ -724,6 +798,9 @@ def main() -> int:
     # --- Initialize logging ---
     level = args.log_level or resolve_log_level(verbose=args.verbose, debug_body=args.debug_body)
     log_file = setup_logging(level=level, console=True, log_to_file=True)
+
+    # Shut down any existing gateway on the same port to avoid orphan processes
+    _shutdown_existing_gateway(args.host, args.port)
 
     manager = RuntimeManager(
         repo_root=str(REPO_ROOT),
