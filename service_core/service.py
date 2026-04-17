@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import logging
 import os
@@ -148,7 +147,7 @@ _request_log_lock = threading.Lock()
 
 
 def _save_request_response(
-    request_payload: dict[str, Any],
+    request_json: str,
     response_body: bytes | None,
     status: int,
     elapsed: float,
@@ -164,22 +163,19 @@ def _save_request_response(
             _request_log_counter += 1
             seq = _request_log_counter
         filename = f"{now.strftime('%H%M%S')}-{seq:04d}-chat.json"
-        response_data = None
+        resp_str = ""
         if response_body:
-            try:
-                response_data = json.loads(response_body)
-            except Exception:
-                response_data = response_body.decode("utf-8", errors="replace")
-        record = {
-            "timestamp": now.isoformat(),
-            "status": status,
-            "mode": mode,
-            "elapsed_s": round(elapsed, 3),
-            "request": request_payload,
-            "response": response_data,
-        }
+            resp_str = response_body.decode("utf-8", errors="replace")
+        # Assemble JSON manually to avoid re-parsing request_json
         with open(log_dir / filename, "w", encoding="utf-8") as f:
-            json.dump(record, f, ensure_ascii=False, indent=2)
+            f.write('{\n')
+            f.write(f'  "timestamp": {json.dumps(now.isoformat())},\n')
+            f.write(f'  "status": {status},\n')
+            f.write(f'  "mode": {json.dumps(mode)},\n')
+            f.write(f'  "elapsed_s": {round(elapsed, 3)},\n')
+            f.write(f'  "request": {request_json},\n')
+            f.write(f'  "response": {resp_str if resp_str.startswith("{") else json.dumps(resp_str)}\n')
+            f.write('}\n')
     except Exception:
         logger.debug("Failed to save request/response log", exc_info=True)
 
@@ -602,7 +598,7 @@ class OmniHandler(BaseHTTPRequestHandler):
         if path == "/v1/chat/completions":
             _req_start = time.perf_counter()
             payload = self._read_json()
-            _original_payload = copy.deepcopy(payload)
+            _original_request_json = json.dumps(payload, ensure_ascii=False)
             try:
                 from service_core.platforms.common import (
                     bytes_to_gib,
@@ -679,7 +675,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                         _elapsed = time.perf_counter() - _req_start
                         _resp_body = json_dumps(usage_event) if usage_event else None
                         _log_completion(200, _resp_body, _elapsed, "embedded stream")
-                        _save_request_response(_original_payload, _resp_body, 200, _elapsed, "embedded stream")
+                        _save_request_response(_original_request_json, _resp_body, 200, _elapsed, "embedded stream")
                         return
                     response = self.manager.chat_completion(payload)
                 except ValueError as e:
@@ -691,7 +687,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 _elapsed = time.perf_counter() - _req_start
                 _resp_body = json_dumps(response)
                 _log_completion(200, _resp_body, _elapsed, "embedded")
-                _save_request_response(_original_payload, _resp_body, 200, _elapsed, "embedded")
+                _save_request_response(_original_request_json, _resp_body, 200, _elapsed, "embedded")
                 self._send_json(200, response)
                 return
 
@@ -712,7 +708,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 )
                 _elapsed = time.perf_counter() - _req_start
                 _log_completion(200, last_data, _elapsed, "proxy stream")
-                _save_request_response(_original_payload, last_data, 200, _elapsed, "proxy stream")
+                _save_request_response(_original_request_json, last_data, 200, _elapsed, "proxy stream")
                 return
 
             code, body = http_json(
@@ -723,7 +719,7 @@ class OmniHandler(BaseHTTPRequestHandler):
             )
             _elapsed = time.perf_counter() - _req_start
             _log_completion(code, body, _elapsed, "proxy")
-            _save_request_response(_original_payload, body, code, _elapsed, "proxy")
+            _save_request_response(_original_request_json, body, code, _elapsed, "proxy")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
