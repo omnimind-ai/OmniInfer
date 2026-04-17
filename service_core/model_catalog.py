@@ -35,7 +35,8 @@ class SupportedModelCatalog:
         ]
         if not candidates:
             raise ValueError(
-                f"model is not present in the current {system_name} supported-model catalog: {Path(model_path).name}"
+                f"model not found in the {system_name} catalog for any installed backend: "
+                f"{Path(model_path).name}"
             )
 
         best_candidate = min(candidates, key=self._candidate_rank)

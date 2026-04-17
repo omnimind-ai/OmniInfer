@@ -156,7 +156,8 @@ class RuntimeManager:
             runtime_root=self.runtime_root,
             backend_overrides=self.backend_overrides,
         )
-        self.catalog = SupportedModelCatalog(self.platform, self.backends.keys())
+        installed_backend_ids = [bid for bid, spec in self.backends.items() if spec.binary_exists]
+        self.catalog = SupportedModelCatalog(self.platform, installed_backend_ids)
         resolved_default_backend = self._normalize_backend_id(default_backend_id)
         self.selected_backend_id = (
             resolved_default_backend if resolved_default_backend in self.backends else next(iter(self.backends))
@@ -589,6 +590,15 @@ class RuntimeManager:
             log_file_name=backend.log_file_name or "runtime.log",
         )
 
+    def _best_installed_backend_id(self) -> str | None:
+        """Return the installed backend with the lowest BACKEND_PRIORITY, or None."""
+        installed = [
+            (bid, spec) for bid, spec in self.backends.items() if spec.binary_exists
+        ]
+        if not installed:
+            return None
+        return min(installed, key=lambda pair: BACKEND_PRIORITY.get(pair[0], 999))[0]
+
     def _classify_backend(self, backend: BackendSpec) -> str:
         if backend.binary_exists:
             return "installed"
@@ -708,26 +718,11 @@ class RuntimeManager:
                 logger.warning("No model loaded and no model specified in request")
                 raise RuntimeError("no backend model loaded; call /omni/model/select first or provide 'model'")
 
-            logger.info("Loading model: model=%s backend=%s ctx_size=%s", model, backend_id or "(auto)", ctx_size)
             preferred_backend = self._get_backend(requested_backend_id) if requested_backend_id else self._get_backend()
             if ctx_size is not None and not preferred_backend.supports_ctx_size:
                 raise ValueError(f"{preferred_backend.id} does not support ctx_size overrides")
             model_path, auto_mmproj_path = self._resolve_model_path(preferred_backend, model)
             self._ensure_supported_model_artifact(preferred_backend, model_path)
-
-            # Log model file size and available memory for OOM diagnosis
-            try:
-                model_size = Path(model_path).stat().st_size
-                logger.info("Model file: %s (%.2f GiB)", model_path, model_size / (1024**3))
-            except OSError:
-                logger.info("Model path: %s (size unknown)", model_path)
-            try:
-                from service_core.platforms.common import bytes_to_gib, get_available_memory_bytes
-                logger.info("Available memory before load: %.2f GiB", bytes_to_gib(get_available_memory_bytes()))
-            except Exception:
-                pass
-
-
             mmproj_path = self._resolve_mmproj_path(
                 preferred_backend,
                 mmproj,
@@ -739,7 +734,17 @@ class RuntimeManager:
             elif preferred_backend.runtime_mode == "embedded":
                 resolved_backend_id = preferred_backend.id
             else:
-                resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
+                try:
+                    resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
+                except Exception:
+                    fallback = self._best_installed_backend_id()
+                    if fallback is None:
+                        raise RuntimeError("no installed backend available")
+                    logger.warning(
+                        "Catalog auto-select failed; falling back to best installed backend: %s",
+                        fallback,
+                    )
+                    resolved_backend_id = fallback
             backend = self._get_backend(resolved_backend_id)
             if ctx_size is not None and not backend.supports_ctx_size:
                 raise ValueError(f"{backend.id} does not support ctx_size overrides")
@@ -747,6 +752,7 @@ class RuntimeManager:
             effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
             effective_request_defaults = dict(request_defaults or {})
 
+            # Check if the requested configuration matches the already-running runtime
             current = self.loaded_runtime if self._is_runtime_running_locked() else None
             if current:
                 current_mmproj = current.mmproj_path or ""
@@ -771,6 +777,19 @@ class RuntimeManager:
                 ):
                     current.request_defaults = effective_request_defaults
                     return current
+
+            # Actually loading — log diagnostic info
+            logger.info("Loading model: model=%s backend=%s ctx_size=%s", model, backend_id or "(auto)", ctx_size)
+            try:
+                model_size = Path(model_path).stat().st_size
+                logger.info("Model file: %s (%.2f GiB)", model_path, model_size / (1024**3))
+            except OSError:
+                logger.info("Model path: %s (size unknown)", model_path)
+            try:
+                from service_core.platforms.common import bytes_to_gib, get_available_memory_bytes
+                logger.info("Available memory before load: %.2f GiB", bytes_to_gib(get_available_memory_bytes()))
+            except Exception:
+                pass
 
             self._stop_runtime_locked()
             return self._start_runtime_locked(
