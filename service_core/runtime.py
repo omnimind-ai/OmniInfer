@@ -7,6 +7,8 @@ import signal
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from io import TextIOWrapper
 from pathlib import Path
@@ -658,6 +660,25 @@ class RuntimeManager:
         with self.lock:
             self._stop_runtime_locked()
             return {"ok": True, "stopped": True, "selected_backend": self.selected_backend_id}
+
+    def clear_kv_cache(self) -> dict[str, Any]:
+        with self.lock:
+            target = self.current_proxy_target()
+            if target is None:
+                raise RuntimeError("no external backend is running")
+            host, port = target
+            # llama.cpp server slot erase API (slot 0, --parallel 1)
+            url = f"http://{host}:{port}/slots/0?action=erase"
+            req = urllib.request.Request(url=url, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    resp.read()
+            except urllib.error.HTTPError as e:
+                raise RuntimeError(f"backend slot erase failed: HTTP {e.code}") from e
+            except urllib.error.URLError as e:
+                raise RuntimeError(f"backend unreachable: {e}") from e
+            logger.info("KV cache cleared (slot 0 erased)")
+            return {"ok": True, "message": "KV cache cleared"}
 
     def list_supported_models(self, system_name: str) -> dict[str, Any]:
         return self.catalog.list_supported_models(system_name)

@@ -449,6 +449,15 @@ class OmniHandler(BaseHTTPRequestHandler):
             self._send_json(200, self.manager.stop_runtime())
             return
 
+        if path == "/omni/cache/clear":
+            try:
+                result = self.manager.clear_kv_cache()
+            except RuntimeError as e:
+                self._send_json(409, {"error": {"message": str(e)}})
+                return
+            self._send_json(200, result)
+            return
+
         if path == "/omni/shutdown":
             self._send_json(200, {"ok": True, "message": "shutdown requested"})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
