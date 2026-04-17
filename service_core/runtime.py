@@ -573,6 +573,8 @@ class RuntimeManager:
         if not backend.launcher_path:
             raise FileNotFoundError(f"backend launcher not found: {backend.id}")
 
+        log_dir = Path(backend.runtime_dir) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         cmd = [
             backend.launcher_path,
             "-m",
@@ -582,6 +584,8 @@ class RuntimeManager:
             "--port",
             str(target_port),
             "--no-webui",
+            "--slot-save-path",
+            str(log_dir),
             *server_args,
         ]
         if mmproj_path:
