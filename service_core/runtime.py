@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
 import os
 import signal
@@ -680,7 +681,17 @@ class RuntimeManager:
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     resp.read()
             except urllib.error.HTTPError as e:
-                raise RuntimeError(f"backend slot erase failed: HTTP {e.code}") from e
+                body = e.read().decode("utf-8", errors="replace")
+                try:
+                    detail = json.loads(body).get("error", {}).get("message", "")
+                except Exception:
+                    detail = ""
+                if "multimodal" in detail.lower():
+                    raise RuntimeError(
+                        "KV cache clear is not supported for multimodal models by llama.cpp; "
+                        "use /omni/backend/stop + /omni/model/select to reload instead"
+                    ) from e
+                raise RuntimeError(f"backend slot erase failed: HTTP {e.code} — {detail}") from e
             except urllib.error.URLError as e:
                 raise RuntimeError(f"backend unreachable: {e}") from e
             logger.info("KV cache cleared (slot 0 erased)")
