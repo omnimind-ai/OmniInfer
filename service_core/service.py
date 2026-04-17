@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -140,6 +142,105 @@ def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
         payload["reasoning_format"] = "none"
 
 
+_request_log_counter = 0
+_request_log_lock = threading.Lock()
+
+
+def _save_request_response(
+    request_json: str,
+    response_body: bytes | None,
+    status: int,
+    elapsed: float,
+    mode: str,
+) -> None:
+    """Save request/response pair to .local/logs/requests/{date}/{seq}-chat.json."""
+    global _request_log_counter
+    try:
+        now = datetime.now()
+        log_dir = APP_ROOT / ".local" / "logs" / "requests" / now.strftime("%Y-%m-%d")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with _request_log_lock:
+            _request_log_counter += 1
+            seq = _request_log_counter
+        filename = f"{now.strftime('%H%M%S')}-{seq:04d}-chat.json"
+        resp_str = ""
+        if response_body:
+            resp_str = response_body.decode("utf-8", errors="replace")
+        # Assemble JSON manually to avoid re-parsing request_json
+        with open(log_dir / filename, "w", encoding="utf-8") as f:
+            f.write('{\n')
+            f.write(f'  "timestamp": {json.dumps(now.isoformat())},\n')
+            f.write(f'  "status": {status},\n')
+            f.write(f'  "mode": {json.dumps(mode)},\n')
+            f.write(f'  "elapsed_s": {round(elapsed, 3)},\n')
+            f.write(f'  "request": {request_json},\n')
+            f.write(f'  "response": {resp_str if resp_str.startswith("{") else json.dumps(resp_str)}\n')
+            f.write('}\n')
+    except Exception:
+        logger.debug("Failed to save request/response log", exc_info=True)
+
+
+def _enrich_context_overflow_error(body: bytes, n_messages: int) -> bytes:
+    """Enrich a context-overflow 400 error with actionable detail."""
+    try:
+        data = json.loads(body)
+        err = data.get("error", {})
+        if err.get("type") != "exceed_context_size_error":
+            return body
+        n_prompt = err.get("n_prompt_tokens", 0)
+        n_ctx = err.get("n_ctx", 0)
+        overflow = n_prompt - n_ctx
+        err["message"] = (
+            f"Prompt ({n_prompt} tokens) exceeds context window ({n_ctx} tokens) "
+            f"by {overflow} tokens. "
+            f"The request contains {n_messages} messages. "
+            f"To fix: trim older messages from the conversation history, "
+            f"reduce max_tokens, or reload the model with a larger ctx_size."
+        )
+        err["overflow_tokens"] = overflow
+        err["n_messages"] = n_messages
+        return json.dumps(data, ensure_ascii=False).encode("utf-8")
+    except Exception:
+        return body
+
+
+def _log_completion(status: int, body: bytes | None, elapsed: float, mode: str) -> None:
+    """Log chat completion result with usage metrics when available."""
+    parts = [f"POST /v1/chat/completions -> {status} ({elapsed:.2f}s, {mode})"]
+    if status == 200 and body:
+        try:
+            data = json.loads(body) if isinstance(body, (bytes, bytearray)) else body
+            if not isinstance(data, dict):
+                raise ValueError
+            segs: list[str] = []
+            usage = data.get("usage")
+            timings = data.get("timings")
+            if isinstance(usage, dict):
+                segs.append(f"prompt={usage.get('prompt_tokens', 0)}")
+                segs.append(f"completion={usage.get('completion_tokens', 0)}")
+                ptd = usage.get("prompt_tokens_details", {})
+                if isinstance(ptd, dict) and ptd.get("cached_tokens") is not None:
+                    segs.append(f"cached={ptd['cached_tokens']}")
+            elif isinstance(timings, dict):
+                # Stream mode: timings has prompt_n / predicted_n instead of usage
+                segs.append(f"prompt={timings.get('prompt_n', 0)}")
+                segs.append(f"completion={timings.get('predicted_n', 0)}")
+                if timings.get("cache_n"):
+                    segs.append(f"cached={timings['cache_n']}")
+            if isinstance(timings, dict):
+                pps = timings.get("prompt_per_second")
+                dps = timings.get("predicted_per_second")
+                if pps is not None:
+                    segs.append(f"prefill={pps:.1f}t/s")
+                if dps is not None:
+                    segs.append(f"decode={dps:.1f}t/s")
+            if segs:
+                parts.append(" ".join(segs))
+        except Exception:
+            pass
+    logger.info("  ".join(parts))
+
+
 def http_json(
     method: str,
     url: str,
@@ -168,13 +269,15 @@ def stream_http_request(
     url: str,
     payload: dict[str, Any] | None = None,
     timeout: float = 600.0,
-) -> None:
+) -> bytes | None:
+    """Stream an HTTP request to the client, returning the last SSE data line (for usage extraction)."""
     headers = {"Accept": "text/event-stream, application/json"}
     body = None
     if payload is not None:
         headers["Content-Type"] = "application/json; charset=utf-8"
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
+    tail_buf = b""
     req = urllib.request.Request(url=url, data=body, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -195,6 +298,7 @@ def stream_http_request(
                 chunk = resp.read(4096)
                 if not chunk:
                     break
+                tail_buf = (tail_buf + chunk)[-4096:]
                 handler.wfile.write(chunk)
                 handler.wfile.flush()
     except urllib.error.HTTPError as e:
@@ -223,7 +327,13 @@ def stream_http_request(
         handler.wfile.write(body)
         handler.wfile.flush()
     except (BrokenPipeError, ConnectionResetError):
-        return
+        pass  # client disconnected, but tail_buf may still have usage data
+
+    # Extract last SSE data line containing usage/timings info
+    for line in reversed(tail_buf.decode("utf-8", errors="replace").splitlines()):
+        if line.startswith("data: {") and ('"usage"' in line or '"timings"' in line):
+            return line[6:].encode("utf-8")
+    return None
 
 
 def stream_embedded_events(
@@ -449,6 +559,15 @@ class OmniHandler(BaseHTTPRequestHandler):
             self._send_json(200, self.manager.stop_runtime())
             return
 
+        if path == "/omni/cache/clear":
+            try:
+                result = self.manager.clear_kv_cache()
+            except RuntimeError as e:
+                self._send_json(409, {"error": {"message": str(e)}})
+                return
+            self._send_json(200, result)
+            return
+
         if path == "/omni/shutdown":
             self._send_json(200, {"ok": True, "message": "shutdown requested"})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -503,11 +622,28 @@ class OmniHandler(BaseHTTPRequestHandler):
         if path == "/v1/chat/completions":
             _req_start = time.perf_counter()
             payload = self._read_json()
+            _original_request_json = json.dumps(payload, ensure_ascii=False)
+            _n_messages = len(payload.get("messages", []))
+            try:
+                from service_core.platforms.common import (
+                    bytes_to_gib,
+                    get_available_cuda_memory_bytes,
+                    get_available_memory_bytes,
+                    get_available_rocm_memory_bytes,
+                )
+                gpu_mem = get_available_cuda_memory_bytes() or get_available_rocm_memory_bytes()
+                if gpu_mem is not None:
+                    mem_str = f" vram={bytes_to_gib(gpu_mem):.2f}GiB"
+                else:
+                    mem_str = f" ram={bytes_to_gib(get_available_memory_bytes()):.2f}GiB"
+            except Exception:
+                mem_str = ""
             logger.info(
-                "POST /v1/chat/completions model=%s messages=%d stream=%s",
+                "POST /v1/chat/completions model=%s messages=%d stream=%s%s",
                 payload.get("model", ""),
                 len(payload.get("messages", [])),
                 payload.get("stream", False),
+                mem_str,
             )
             requested_backend = self.forced_backend or (str(payload.pop("backend", "")).strip() or None)
             requested_model = str(payload.get("model", "")).strip() or None
@@ -560,7 +696,11 @@ class OmniHandler(BaseHTTPRequestHandler):
                     if payload.get("stream") is True:
                         events = self.manager.stream_chat_completion(payload)
                         stream_embedded_events(self, events)
-                        logger.info("POST /v1/chat/completions -> 200 (%.2fs, embedded stream)", time.perf_counter() - _req_start)
+                        usage_event = next((e for e in reversed(events) if "usage" in e), None)
+                        _elapsed = time.perf_counter() - _req_start
+                        _resp_body = json_dumps(usage_event) if usage_event else None
+                        _log_completion(200, _resp_body, _elapsed, "embedded stream")
+                        _save_request_response(_original_request_json, _resp_body, 200, _elapsed, "embedded stream")
                         return
                     response = self.manager.chat_completion(payload)
                 except ValueError as e:
@@ -569,7 +709,10 @@ class OmniHandler(BaseHTTPRequestHandler):
                 except RuntimeError as e:
                     self._send_json(409, {"error": {"message": str(e)}})
                     return
-                logger.info("POST /v1/chat/completions -> 200 (%.2fs, embedded)", time.perf_counter() - _req_start)
+                _elapsed = time.perf_counter() - _req_start
+                _resp_body = json_dumps(response)
+                _log_completion(200, _resp_body, _elapsed, "embedded")
+                _save_request_response(_original_request_json, _resp_body, 200, _elapsed, "embedded")
                 self._send_json(200, response)
                 return
 
@@ -581,14 +724,16 @@ class OmniHandler(BaseHTTPRequestHandler):
 
             if payload.get("stream") is True:
                 self._debug(f"proxy stream -> http://{host}:{port}/v1/chat/completions")
-                stream_http_request(
+                last_data = stream_http_request(
                     self,
                     "POST",
                     f"http://{host}:{port}/v1/chat/completions",
                     payload=payload,
                     timeout=3600,
                 )
-                logger.info("POST /v1/chat/completions -> stream done (%.2fs, proxy)", time.perf_counter() - _req_start)
+                _elapsed = time.perf_counter() - _req_start
+                _log_completion(200, last_data, _elapsed, "proxy stream")
+                _save_request_response(_original_request_json, last_data, 200, _elapsed, "proxy stream")
                 return
 
             code, body = http_json(
@@ -597,7 +742,11 @@ class OmniHandler(BaseHTTPRequestHandler):
                 payload=payload,
                 timeout=600,
             )
-            logger.info("POST /v1/chat/completions -> %d (%.2fs, proxy)", code, time.perf_counter() - _req_start)
+            if code == 400:
+                body = _enrich_context_overflow_error(body, _n_messages)
+            _elapsed = time.perf_counter() - _req_start
+            _log_completion(code, body, _elapsed, "proxy")
+            _save_request_response(_original_request_json, body, code, _elapsed, "proxy")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -661,6 +810,19 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
     return p.parse_args()
 
 
+def _shutdown_existing_gateway(host: str, port: int) -> None:
+    """Try to shut down an already-running gateway on the same address."""
+    url = f"http://{host}:{port}/omni/shutdown"
+    req = urllib.request.Request(url=url, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    except Exception:
+        return
+    logger.info("Shut down existing gateway on %s:%d", host, port)
+    time.sleep(2)
+
+
 def main() -> int:
     config = load_app_config(APP_ROOT)
     args = parse_args(config)
@@ -668,6 +830,9 @@ def main() -> int:
     # --- Initialize logging ---
     level = args.log_level or resolve_log_level(verbose=args.verbose, debug_body=args.debug_body)
     log_file = setup_logging(level=level, console=True, log_to_file=True)
+
+    # Shut down any existing gateway on the same port to avoid orphan processes
+    _shutdown_existing_gateway(args.host, args.port)
 
     manager = RuntimeManager(
         repo_root=str(REPO_ROOT),
@@ -683,7 +848,7 @@ def main() -> int:
 
     log_session_header(
         config=config,
-        backends=[b["id"] for b in manager.list_backends(scope="all")[0]],
+        backends=[b["id"] for b in manager.list_backends(scope="installed")[0]],
     )
 
     httpd = ThreadingHTTPServer((args.host, args.port), OmniHandler)

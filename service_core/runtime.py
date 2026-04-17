@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
 import os
 import signal
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from io import TextIOWrapper
 from pathlib import Path
@@ -156,14 +159,17 @@ class RuntimeManager:
             runtime_root=self.runtime_root,
             backend_overrides=self.backend_overrides,
         )
-        self.catalog = SupportedModelCatalog(self.platform, self.backends.keys())
-        resolved_default_backend = self._normalize_backend_id(default_backend_id)
-        self.selected_backend_id = (
-            resolved_default_backend if resolved_default_backend in self.backends else next(iter(self.backends))
+        installed_backend_ids = [bid for bid, spec in self.backends.items() if spec.binary_exists]
+        self.catalog = SupportedModelCatalog(self.platform, installed_backend_ids)
+        best_installed = (
+            min(installed_backend_ids, key=lambda bid: BACKEND_PRIORITY.get(bid, 999))
+            if installed_backend_ids else None
         )
+        resolved_default_backend = self._normalize_backend_id(default_backend_id)
+        self.selected_backend_id = best_installed or resolved_default_backend or next(iter(self.backends))
         self.loaded_runtime: LoadedRuntime | None = None
         logger.info("RuntimeManager initialized: platform=%s runtime_root=%s", self.platform.system_name, self.runtime_root)
-        logger.info("Backends discovered: %s", ", ".join(self.backends.keys()))
+        logger.info("Installed backends: %s", ", ".join(installed_backend_ids) or "(none)")
         logger.info("Default backend: %s", self.selected_backend_id)
 
     def _normalize_backend_id(self, backend_id: str | None) -> str | None:
@@ -568,6 +574,8 @@ class RuntimeManager:
         if not backend.launcher_path:
             raise FileNotFoundError(f"backend launcher not found: {backend.id}")
 
+        log_dir = Path(backend.runtime_dir) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         cmd = [
             backend.launcher_path,
             "-m",
@@ -577,6 +585,8 @@ class RuntimeManager:
             "--port",
             str(target_port),
             "--no-webui",
+            "--slot-save-path",
+            str(log_dir),
             *server_args,
         ]
         if mmproj_path:
@@ -588,6 +598,15 @@ class RuntimeManager:
             ctx_size=effective_ctx_size,
             log_file_name=backend.log_file_name or "runtime.log",
         )
+
+    def _best_installed_backend_id(self) -> str | None:
+        """Return the installed backend with the lowest BACKEND_PRIORITY, or None."""
+        installed = [
+            (bid, spec) for bid, spec in self.backends.items() if spec.binary_exists
+        ]
+        if not installed:
+            return None
+        return min(installed, key=lambda pair: BACKEND_PRIORITY.get(pair[0], 999))[0]
 
     def _classify_backend(self, backend: BackendSpec) -> str:
         if backend.binary_exists:
@@ -649,6 +668,35 @@ class RuntimeManager:
             self._stop_runtime_locked()
             return {"ok": True, "stopped": True, "selected_backend": self.selected_backend_id}
 
+    def clear_kv_cache(self) -> dict[str, Any]:
+        with self.lock:
+            target = self.current_proxy_target()
+            if target is None:
+                raise RuntimeError("no external backend is running")
+            host, port = target
+            # llama.cpp server slot erase API (slot 0, --parallel 1)
+            url = f"http://{host}:{port}/slots/0?action=erase"
+            req = urllib.request.Request(url=url, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    resp.read()
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                try:
+                    detail = json.loads(body).get("error", {}).get("message", "")
+                except Exception:
+                    detail = ""
+                if "multimodal" in detail.lower():
+                    raise RuntimeError(
+                        "KV cache clear is not supported for multimodal models by llama.cpp; "
+                        "use /omni/backend/stop + /omni/model/select to reload instead"
+                    ) from e
+                raise RuntimeError(f"backend slot erase failed: HTTP {e.code} — {detail}") from e
+            except urllib.error.URLError as e:
+                raise RuntimeError(f"backend unreachable: {e}") from e
+            logger.info("KV cache cleared (slot 0 erased)")
+            return {"ok": True, "message": "KV cache cleared"}
+
     def list_supported_models(self, system_name: str) -> dict[str, Any]:
         return self.catalog.list_supported_models(system_name)
 
@@ -708,26 +756,11 @@ class RuntimeManager:
                 logger.warning("No model loaded and no model specified in request")
                 raise RuntimeError("no backend model loaded; call /omni/model/select first or provide 'model'")
 
-            logger.info("Loading model: model=%s backend=%s ctx_size=%s", model, backend_id or "(auto)", ctx_size)
             preferred_backend = self._get_backend(requested_backend_id) if requested_backend_id else self._get_backend()
             if ctx_size is not None and not preferred_backend.supports_ctx_size:
                 raise ValueError(f"{preferred_backend.id} does not support ctx_size overrides")
             model_path, auto_mmproj_path = self._resolve_model_path(preferred_backend, model)
             self._ensure_supported_model_artifact(preferred_backend, model_path)
-
-            # Log model file size and available memory for OOM diagnosis
-            try:
-                model_size = Path(model_path).stat().st_size
-                logger.info("Model file: %s (%.2f GiB)", model_path, model_size / (1024**3))
-            except OSError:
-                logger.info("Model path: %s (size unknown)", model_path)
-            try:
-                from service_core.platforms.common import bytes_to_gib, get_available_memory_bytes
-                logger.info("Available memory before load: %.2f GiB", bytes_to_gib(get_available_memory_bytes()))
-            except Exception:
-                pass
-
-
             mmproj_path = self._resolve_mmproj_path(
                 preferred_backend,
                 mmproj,
@@ -739,7 +772,17 @@ class RuntimeManager:
             elif preferred_backend.runtime_mode == "embedded":
                 resolved_backend_id = preferred_backend.id
             else:
-                resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
+                try:
+                    resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
+                except Exception:
+                    fallback = self._best_installed_backend_id()
+                    if fallback is None:
+                        raise RuntimeError("no installed backend available")
+                    logger.warning(
+                        "Catalog auto-select failed; falling back to best installed backend: %s",
+                        fallback,
+                    )
+                    resolved_backend_id = fallback
             backend = self._get_backend(resolved_backend_id)
             if ctx_size is not None and not backend.supports_ctx_size:
                 raise ValueError(f"{backend.id} does not support ctx_size overrides")
@@ -747,6 +790,7 @@ class RuntimeManager:
             effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
             effective_request_defaults = dict(request_defaults or {})
 
+            # Check if the requested configuration matches the already-running runtime
             current = self.loaded_runtime if self._is_runtime_running_locked() else None
             if current:
                 current_mmproj = current.mmproj_path or ""
@@ -771,6 +815,19 @@ class RuntimeManager:
                 ):
                     current.request_defaults = effective_request_defaults
                     return current
+
+            # Actually loading — log diagnostic info
+            logger.info("Loading model: model=%s backend=%s ctx_size=%s", model, backend_id or "(auto)", ctx_size)
+            try:
+                model_size = Path(model_path).stat().st_size
+                logger.info("Model file: %s (%.2f GiB)", model_path, model_size / (1024**3))
+            except OSError:
+                logger.info("Model path: %s (size unknown)", model_path)
+            try:
+                from service_core.platforms.common import bytes_to_gib, get_available_memory_bytes
+                logger.info("Available memory before load: %.2f GiB", bytes_to_gib(get_available_memory_bytes()))
+            except Exception:
+                pass
 
             self._stop_runtime_locked()
             return self._start_runtime_locked(

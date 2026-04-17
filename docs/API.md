@@ -10,6 +10,8 @@ http://127.0.0.1:9000
 
 All requests use JSON unless noted otherwise.
 
+> **Windows note:** `omniinfer_gateway.py` auto-hides its console window by default. To run in the foreground with visible log output, use `python omniinfer_gateway.py --window-mode visible`.
+
 ## 1. Health check
 
 ### `GET /health`
@@ -248,7 +250,30 @@ Example response:
 }
 ```
 
-## 8. List models
+## 8. Clear KV cache
+
+### `POST /omni/cache/clear`
+
+Erases the backend's KV cache without reloading the model. Useful for freeing VRAM from accumulated conversation context or resetting the cache state.
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:9000/omni/cache/clear
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "message": "KV cache cleared"
+}
+```
+
+Returns `409` if no external backend is running.
+
+## 9. List models
 
 ### `GET /v1/models`
 
@@ -288,7 +313,7 @@ Example response (no model loaded):
 }
 ```
 
-## 9. Chat completions
+## 10. Chat completions
 
 ### `POST /v1/chat/completions`
 
@@ -365,7 +390,7 @@ data: {"usage":{"prompt_tokens":13,"completion_tokens":12,"total_tokens":25}}
 data: [DONE]
 ```
 
-## 10. Shutdown
+## 11. Shutdown
 
 ### `POST /omni/shutdown`
 
@@ -380,7 +405,7 @@ Example response:
 }
 ```
 
-## 11. Error format
+## 12. Error format
 
 Errors are returned as JSON:
 

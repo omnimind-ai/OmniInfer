@@ -24,6 +24,7 @@ Key endpoints:
 | `/omni/backends` | GET | List backends (scope: installed/compatible/all) |
 | `/omni/model/select` | POST | Load a model |
 | `/omni/backend/stop` | POST | Stop current backend |
+| `/omni/cache/clear` | POST | Clear KV cache without reloading model |
 | `/v1/models` | GET | List currently loaded models |
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions |
 | `/omni/shutdown` | POST | Shut down the gateway |
@@ -214,6 +215,22 @@ curl -X POST http://127.0.0.1:9000/omni/model/select \
     "launch_args": ["-ngl", "999"]
   }'
 ```
+
+### Advanced: Clear KV Cache
+
+To reset the backend's KV cache without reloading the model (useful for freeing VRAM from accumulated conversation context):
+
+```bash
+curl -X POST http://127.0.0.1:9000/omni/cache/clear
+```
+
+Response:
+
+```json
+{"ok": true, "message": "KV cache cleared"}
+```
+
+After clearing, the next request starts with a cold cache — equivalent to a fresh model load but without the weight-loading overhead.
 
 ### Stop the Service
 
