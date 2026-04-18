@@ -15,6 +15,7 @@ from service_core.platforms.common import (
     get_available_cuda_memory_bytes,
     get_available_memory_bytes,
     get_available_rocm_memory_bytes,
+    is_vulkan_gpu_present,
     parse_extra_args,
     parse_optional_int,
     prepend_env_path,
@@ -125,8 +126,10 @@ class HostPlatform(ABC):
             return self._is_rocm_detected()
         if "metal" in caps:
             return True  # Metal is always present on macOS Apple Silicon
+        if "vulkan" in caps:
+            return self._is_vulkan_detected()
 
-        # Vulkan, SYCL: treat as compatible if user installed the runtime
+        # SYCL: treat as compatible if user installed the runtime
         return backend.binary_exists
 
     def _is_cuda_detected(self) -> bool:
@@ -138,6 +141,11 @@ class HostPlatform(ABC):
         if not hasattr(self, "_rocm_detected_cache"):
             self._rocm_detected_cache = get_available_rocm_memory_bytes() is not None
         return self._rocm_detected_cache
+
+    def _is_vulkan_detected(self) -> bool:
+        if not hasattr(self, "_vulkan_detected_cache"):
+            self._vulkan_detected_cache = is_vulkan_gpu_present()
+        return self._vulkan_detected_cache
 
     def prepare_runtime_env(self, env: dict[str, str], backend: BackendSpec) -> dict[str, str]:
         if self.system_name != "windows" and backend.launcher_path:

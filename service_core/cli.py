@@ -37,6 +37,8 @@ CLI_STATE_DIR = Path.home() / ".config" / "omniinfer"
 CLI_STATE_FILE = CLI_STATE_DIR / "cli_state.json"
 CLI_LOG_DIR = Path.home() / ".cache" / "omniinfer"
 CLI_LOG_FILE = CLI_LOG_DIR / "gateway.log"
+
+_cli_port_override: int | None = None
 DEFAULT_IMAGE_PATH = Path(REPO_ROOT) / "tests" / "pictures" / "test1.png"
 SYSTEM_CHOICES = ("linux", "mac", "windows")
 
@@ -143,7 +145,10 @@ def save_cli_state(payload: dict[str, Any]) -> None:
 
 
 def get_service_config() -> dict[str, Any]:
-    return load_app_config(Path(APP_ROOT))
+    config = load_app_config(Path(APP_ROOT))
+    if _cli_port_override is not None:
+        config["port"] = _cli_port_override
+    return config
 
 
 def service_base_url() -> str:
@@ -1042,6 +1047,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=HELP_TEXT,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--port", type=int, default=None, help="Gateway port (overrides config file)")
     sub = parser.add_subparsers(dest="command")
 
     backend = sub.add_parser("backend", help="Backend commands")
@@ -1124,6 +1130,10 @@ def main(argv: list[str] | None = None) -> int:
     args, unknown_args = parser.parse_known_args(argv)
     unknown_args = [item for item in unknown_args if item != "--"]
     setattr(args, "backend_extra_args", unknown_args)
+
+    global _cli_port_override
+    if args.port is not None:
+        _cli_port_override = args.port
 
     if args.command is None:
         parser.print_help()

@@ -233,6 +233,55 @@ def get_available_rocm_memory_bytes() -> int | None:
     return None
 
 
+def _has_physical_gpu_render_node() -> bool:
+    """Check if any /dev/dri/renderD* node belongs to a real GPU (not software renderer)."""
+    render_nodes = sorted(Path("/dev/dri").glob("renderD*"))
+    if not render_nodes:
+        return False
+    # Read the kernel driver name via sysfs to filter out software renderers
+    software_drivers = {"vgem", "virtio_gpu", "bochs", "cirrus", "qxl"}
+    for node in render_nodes:
+        try:
+            # /sys/class/drm/renderD128/device/driver -> ../../bus/pci/drivers/amdgpu
+            driver_link = Path(f"/sys/class/drm/{node.name}/device/driver")
+            if driver_link.is_symlink():
+                driver_name = Path(os.readlink(driver_link)).name
+                if driver_name not in software_drivers:
+                    return True
+            else:
+                # No sysfs driver info (e.g. some SoC setups) — trust the node
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def is_vulkan_gpu_present() -> bool:
+    """Return True if a physical GPU usable by Vulkan is detected."""
+    # Linux: check /dev/dri/renderD* with driver filtering
+    # Works for NVIDIA, AMD, Intel, ARM Mali/Adreno, etc.
+    if _has_physical_gpu_render_node():
+        return True
+    # Fallback: try vulkaninfo (covers non-Linux or unusual setups)
+    try:
+        result = subprocess.run(
+            ["vulkaninfo", "--summary"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            **hidden_subprocess_kwargs(),
+        )
+        if result.returncode == 0 and "deviceType" in result.stdout:
+            # Exclude llvmpipe / SwiftShader (CPU-based Vulkan implementations)
+            if "cpu" not in result.stdout.lower() and "llvmpipe" not in result.stdout.lower():
+                return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return False
+
+
 def bytes_to_gib(value: int) -> float:
     return round(float(value) / float(1024 ** 3), 2)
 
