@@ -325,8 +325,13 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     BACKEND_IDS+=("llama.cpp-mtmd");   BACKEND_DESCS+=("llama.cpp-mtmd  —  Multimodal (text + vision)")
 else
     # Desktop: query gateway API for compatible backends (hardware-matched)
-    # First ensure the service is running
+    # First ensure the service is running, then wait for it to be ready
     "${INSTALL_DIR}/omniinfer" status >/dev/null 2>&1 || true
+    for _i in $(seq 1 30); do
+        _health=$(curl -s -m 2 "http://127.0.0.1:${OMNI_PORT}/health" 2>/dev/null) || _health=""
+        if echo "${_health}" | grep -q '"status"'; then break; fi
+        sleep 1
+    done
 
     _backends_json=$(curl -sS "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
     _recommended=$(echo "${_backends_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('recommended',''))" 2>/dev/null) || _recommended=""
