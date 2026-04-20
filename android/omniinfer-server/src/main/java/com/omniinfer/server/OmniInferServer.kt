@@ -38,11 +38,12 @@ object OmniInferServer {
 
     /**
      * Load a model and start the server.
-     * @param modelPath absolute path to model file (GGUF) or config.json (MNN)
-     * @param backend "llama.cpp" or "mnn"
+     * @param modelPath absolute path to model file (GGUF, config.json, or .pte)
+     * @param backend "llama.cpp", "mnn", or "executorch-qnn"
      * @param port local server port (default 9099)
      * @param nThreads CPU threads (0 = auto)
      * @param nCtx context window size
+     * @param extraConfig backend-specific config (e.g. "qnn_lib_dir", "decoder_model_version")
      * @return true if model loaded and server started successfully
      */
     fun loadModel(
@@ -50,7 +51,8 @@ object OmniInferServer {
         backend: String = "llama.cpp",
         port: Int = 9099,
         nThreads: Int = 0,
-        nCtx: Int = 16384
+        nCtx: Int = 16384,
+        extraConfig: Map<String, String>? = null
     ): Boolean {
         val ctx = appContext ?: run {
             Log.e(TAG, "Not initialized. Call init(context) first.")
@@ -74,7 +76,8 @@ object OmniInferServer {
             nThreads = nThreads,
             nCtx = nCtx,
             nativeLibDir = nativeLibDir,
-            cacheDir = ctx.cacheDir.absolutePath
+            cacheDir = ctx.cacheDir.absolutePath,
+            extraConfig = extraConfig
         )
 
         if (handle == 0L) {
