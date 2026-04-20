@@ -24,6 +24,10 @@
 #include "backend_mnn.h"
 #endif
 
+#if defined(OMNIINFER_BACKEND_EXECUTORCH_QNN)
+#include "backend_executorch_qnn.h"
+#endif
+
 namespace {
 
 constexpr const char* kTag = "OmniInferJni";
@@ -217,6 +221,11 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
 #if defined(OMNIINFER_BACKEND_LLAMA_CPP)
   if (!backend && (backend_name == "llama.cpp" || backend_name.empty())) {
     backend = std::make_unique<omniinfer::LlamaCppBackend>();
+  }
+#endif
+#if defined(OMNIINFER_BACKEND_EXECUTORCH_QNN)
+  if (!backend && backend_name == "executorch-qnn") {
+    backend = std::make_unique<omniinfer::ExecuTorchQnnBackend>();
   }
 #endif
   if (!backend) {
