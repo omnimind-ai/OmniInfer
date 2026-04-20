@@ -4,6 +4,7 @@ plugins {
 }
 
 val ktorVersion: String = findProperty("omniinfer.ktor.version")?.toString() ?: "3.1.3"
+val enableExecutorchQnn: Boolean = findProperty("omniinfer.backend.executorch_qnn")?.toString()?.toBoolean() ?: false
 
 android {
     namespace = "com.omniinfer.server"
@@ -25,6 +26,9 @@ android {
                 arguments += "-DLLAMA_BUILD_COMMON=ON"
                 arguments += "-DGGML_CPU_ARM_ARCH=armv8.2-a+fp16+dotprod+i8mm"
                 arguments += "-DOMNIINFER_BACKEND_MNN=ON"
+                if (enableExecutorchQnn) {
+                    arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=ON"
+                }
             }
         }
     }

@@ -72,6 +72,8 @@ if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
         message(FATAL_ERROR "ExecuTorch pre-built libs not found at ${ET_PREBUILT_DIR}/lib")
     endif()
 
+    set(ET_INCLUDE_DIR "${ET_PREBUILT_DIR}/include")
+
     # Runner source files (compiled into JNI library)
     set(ET_RUNNER_SRCS
         ${ET_PREBUILT_DIR}/runner_src/runner.cpp
@@ -82,6 +84,7 @@ if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
         ${ET_PREBUILT_DIR}/runner_src/rpc_mem.cpp
         ${ET_PREBUILT_DIR}/runner_src/attention_sink_rope_runner.cpp
         ${ET_PREBUILT_DIR}/runner_src/lhd_token_generator.cpp
+        ${ET_INCLUDE_DIR}/executorch/examples/models/llama/tokenizer/llama_tiktoken.cpp
     )
 
     # Import pre-built static libraries
@@ -109,8 +112,11 @@ if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
         endif()
     endforeach()
 
-    # QNN backend shared library (loaded at runtime via dlopen)
-    # Not linked at build time — loaded dynamically from device path
+    # QNN backend shared library — linked at build time for symbol resolution.
+    # At runtime, the matching version is loaded from the user-specified qnn_lib_dir.
+    add_library(et_qnn_backend SHARED IMPORTED)
+    set_target_properties(et_qnn_backend PROPERTIES
+        IMPORTED_LOCATION "${ET_PREBUILT_DIR}/lib_shared/libqnn_executorch_backend.so")
 endif()
 
 # OmniInfer JNI bridge
@@ -133,11 +139,22 @@ if(OMNIINFER_BACKEND_MNN)
 endif()
 
 if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE OMNIINFER_BACKEND_EXECUTORCH_QNN=1)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+            OMNIINFER_BACKEND_EXECUTORCH_QNN=1
+            C10_USING_CUSTOM_GENERATED_MACROS
+            PCRE2_STATIC
+            GFLAGS_IS_A_DLL=0)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${ET_RUNNER_SRCS})
+    # Include paths matching ET's own build:
+    #   1. ET source root (for #include <executorch/examples/...>)
+    #   2. Installed headers (runtime, extension, kernels)
+    #   3. c10 compat (portable_type/c10/ as root so <c10/util/...> resolves)
+    #   4. tokenizer headers
+    #   5. gflags, nlohmann/json
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
             ${ET_PREBUILT_DIR}/include
-            ${ET_PREBUILT_DIR}/include/executorch)
+            ${ET_PREBUILT_DIR}/include/executorch
+            ${ET_PREBUILT_DIR}/include/executorch/runtime/core/portable_type/c10)
     # Link all pre-built static libs that exist
     foreach(lib_name ${ET_STATIC_LIBS})
         if(TARGET et_${lib_name})
@@ -148,7 +165,9 @@ if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
     foreach(absl_lib ${ET_ABSL_LIBS})
         target_link_libraries(${CMAKE_PROJECT_NAME} ${absl_lib})
     endforeach()
-    target_link_libraries(${CMAKE_PROJECT_NAME} dl)
+    target_link_libraries(${CMAKE_PROJECT_NAME} et_qnn_backend dl)
+    # Allow duplicate symbols between llama.cpp unicode and ET tokenizers unicode
+    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE "LINKER:--allow-multiple-definition")
 endif()
 
 target_link_libraries(${CMAKE_PROJECT_NAME} android log)

@@ -239,7 +239,20 @@ public:
     int reasoning_token_count = 0;
 
     // Thinking tag normalizer (for non-standard tags like Gemma's)
-    thinking_tags::Normalizer tag_normalizer;
+    // Only created if the model uses non-standard thinking tags.
+    const thinking_tags::NativeTagPair* non_std_tags = nullptr;
+    std::unique_ptr<thinking_tags::Normalizer> tag_normalizer;
+
+    // Detect if model uses non-standard thinking tags
+    if (thinking_enabled) {
+      // Check known non-standard models (e.g., Gemma uses <|channel>thought)
+      if (decoder_model_version_.find("gemma") != std::string::npos) {
+        non_std_tags = thinking_tags::detect_in_prompt(prompt);
+        if (non_std_tags) {
+          tag_normalizer = std::make_unique<thinking_tags::Normalizer>(*non_std_tags);
+        }
+      }
+    }
 
     auto t_start = std::chrono::steady_clock::now();
     auto t_first_token = t_start;
@@ -262,7 +275,7 @@ public:
       full_output += piece;
 
       // Normalize thinking tags (e.g., Gemma's <|channel>thought -> <think>)
-      std::string normalized = tag_normalizer.process(piece);
+      std::string normalized = tag_normalizer ? tag_normalizer->process(piece) : piece;
 
       // Track thinking tokens
       if (thinking_enabled) {
@@ -293,10 +306,10 @@ public:
       }
     };
 
-    // Stats callback
-    executorch::llm::Stats captured_stats;
+    // Stats callback — capture pointer since Stats has deleted copy assignment
+    const executorch::llm::Stats* captured_stats_ptr = nullptr;
     auto stats_callback = [&](const executorch::llm::Stats& stats) {
-      captured_stats = stats;
+      captured_stats_ptr = &stats;
     };
 
     // Run generation
@@ -318,14 +331,14 @@ public:
     last_metrics_.generated_tokens = token_count;
     last_metrics_.reasoning_tokens = reasoning_token_count;
 
-    if (captured_stats.num_prompt_tokens > 0) {
-      last_metrics_.prompt_tokens = captured_stats.num_prompt_tokens;
+    if (captured_stats_ptr && captured_stats_ptr->num_prompt_tokens > 0) {
+      last_metrics_.prompt_tokens = captured_stats_ptr->num_prompt_tokens;
       // Convert ms to us
-      int64_t prefill_ms = captured_stats.prompt_eval_end_ms - captured_stats.inference_start_ms;
-      int64_t decode_ms = captured_stats.inference_end_ms - captured_stats.prompt_eval_end_ms;
+      int64_t prefill_ms = captured_stats_ptr->prompt_eval_end_ms - captured_stats_ptr->inference_start_ms;
+      int64_t decode_ms = captured_stats_ptr->inference_end_ms - captured_stats_ptr->prompt_eval_end_ms;
       last_metrics_.prefill_us = prefill_ms * 1000;
       last_metrics_.decode_us = decode_ms * 1000;
-      last_metrics_.generated_tokens = captured_stats.num_generated_tokens;
+      last_metrics_.generated_tokens = captured_stats_ptr->num_generated_tokens;
     } else {
       // Fallback: compute from wall clock
       auto prefill_dur = std::chrono::duration_cast<std::chrono::microseconds>(
