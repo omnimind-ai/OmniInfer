@@ -136,25 +136,28 @@ public:
             model_path.c_str(), tokenizer_path.c_str(),
             decoder_model_version_.c_str(), qnn_lib_dir.c_str());
 
-    // ADSP_LIBRARY_PATH: where the DSP driver searches for skel libs.
-    // This may differ from qnn_lib_dir because DSP can't access app-private dirs.
-    std::string adsp_path = et_json_string(config_json, "adsp_library_path");
-    if (adsp_path.empty()) adsp_path = qnn_lib_dir;
+    // QNN runtime .so files and the HTP skel are bundled in jniLibs and
+    // extracted by the system to nativeLibraryDir. We use that path for both
+    // dlopen (CPU-side libs) and ADSP_LIBRARY_PATH (DSP skel discovery).
+    // The skel must be in a world-readable dir for the FastRPC daemon to find it.
+    std::string lib_dir = native_lib_dir;
+    if (!qnn_lib_dir.empty()) lib_dir = qnn_lib_dir;
 
-    // Set ADSP_LIBRARY_PATH for QNN HTP skel loading.
-    if (!adsp_path.empty()) {
-      setenv("ADSP_LIBRARY_PATH", adsp_path.c_str(), 1);
-      ET_LOGI("Set ADSP_LIBRARY_PATH=%s", adsp_path.c_str());
+    if (!lib_dir.empty()) {
+      // ADSP_LIBRARY_PATH must include the skel's location.
+      // Prepend our dir to any existing system paths.
+      std::string adsp = lib_dir + ";/odm/lib/rfsa/adsp";
+      setenv("ADSP_LIBRARY_PATH", adsp.c_str(), 1);
+      ET_LOGI("Set ADSP_LIBRARY_PATH=%s", adsp.c_str());
 
-      // Pre-load QNN runtime libraries from the user-specified directory.
-      // These can't be in jniLibs (would pull in transitive deps not in APK).
+      // Pre-load QNN runtime libraries so ET delegate can find them.
       const char* qnn_libs[] = {
         "libQnnSystem.so", "libQnnHtp.so", "libQnnHtpPrepare.so",
         "libQnnHtpNetRunExtensions.so", "libqnn_executorch_backend.so",
         nullptr
       };
       for (int i = 0; qnn_libs[i]; i++) {
-        std::string lib_path = qnn_lib_dir + "/" + qnn_libs[i];
+        std::string lib_path = lib_dir + "/" + qnn_libs[i];
         void* h = dlopen(lib_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
         if (!h) {
           ET_LOGE("dlopen %s failed: %s", qnn_libs[i], dlerror());
@@ -162,8 +165,6 @@ public:
           ET_LOGI("Loaded %s", qnn_libs[i]);
         }
       }
-    } else if (!native_lib_dir.empty()) {
-      setenv("ADSP_LIBRARY_PATH", native_lib_dir.c_str(), 1);
     }
 
     // Create ET Module
