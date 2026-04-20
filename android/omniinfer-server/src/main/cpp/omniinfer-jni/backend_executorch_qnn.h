@@ -33,6 +33,7 @@ namespace omniinfer {
 namespace {
 
 // Extract a string value from minimal JSON object by key.
+// Handles JSON-escaped forward slashes (\/) which org.json produces.
 inline std::string et_json_string(const std::string& json, const std::string& key) {
   std::string search = "\"" + key + "\"";
   auto pos = json.find(search);
@@ -41,9 +42,23 @@ inline std::string et_json_string(const std::string& json, const std::string& ke
   if (pos == std::string::npos) return "";
   auto q1 = json.find('"', pos + 1);
   if (q1 == std::string::npos) return "";
-  auto q2 = json.find('"', q1 + 1);
-  if (q2 == std::string::npos) return "";
-  return json.substr(q1 + 1, q2 - q1 - 1);
+  // Find closing quote, handling escape sequences
+  std::string result;
+  size_t i = q1 + 1;
+  while (i < json.size()) {
+    if (json[i] == '\\' && i + 1 < json.size()) {
+      char c = json[i + 1];
+      if (c == '/' || c == '"' || c == '\\') { result += c; i += 2; }
+      else if (c == 'n') { result += '\n'; i += 2; }
+      else if (c == 't') { result += '\t'; i += 2; }
+      else { result += c; i += 2; }
+    } else if (json[i] == '"') {
+      break;
+    } else {
+      result += json[i]; i++;
+    }
+  }
+  return result;
 }
 
 inline int et_json_int(const std::string& json, const std::string& key, int def) {
@@ -121,28 +136,28 @@ public:
             model_path.c_str(), tokenizer_path.c_str(),
             decoder_model_version_.c_str(), qnn_lib_dir.c_str());
 
-    // Set library paths for QNN runtime
+    // Set ADSP_LIBRARY_PATH for QNN HTP skel loading.
     if (!qnn_lib_dir.empty()) {
       setenv("ADSP_LIBRARY_PATH", qnn_lib_dir.c_str(), 1);
-      // Append to LD_LIBRARY_PATH
-      const char* existing = getenv("LD_LIBRARY_PATH");
-      std::string ld_path = qnn_lib_dir;
-      if (existing && strlen(existing) > 0) {
-        ld_path += ":";
-        ld_path += existing;
-      }
-      setenv("LD_LIBRARY_PATH", ld_path.c_str(), 1);
+      ET_LOGI("Set ADSP_LIBRARY_PATH=%s", qnn_lib_dir.c_str());
 
-      // dlopen the QNN backend .so from the lib dir
-      std::string backend_so = qnn_lib_dir + "/libqnn_executorch_backend.so";
-      void* handle = dlopen(backend_so.c_str(), RTLD_NOW | RTLD_GLOBAL);
-      if (!handle) {
-        ET_LOGE("Failed to dlopen %s: %s", backend_so.c_str(), dlerror());
-        return false;
+      // Pre-load QNN runtime libraries from the user-specified directory.
+      // These can't be in jniLibs (would pull in transitive deps not in APK).
+      const char* qnn_libs[] = {
+        "libQnnSystem.so", "libQnnHtp.so", "libQnnHtpPrepare.so",
+        "libQnnHtpNetRunExtensions.so", "libqnn_executorch_backend.so",
+        nullptr
+      };
+      for (int i = 0; qnn_libs[i]; i++) {
+        std::string lib_path = qnn_lib_dir + "/" + qnn_libs[i];
+        void* h = dlopen(lib_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (!h) {
+          ET_LOGE("dlopen %s failed: %s", qnn_libs[i], dlerror());
+        } else {
+          ET_LOGI("Loaded %s", qnn_libs[i]);
+        }
       }
-      ET_LOGI("Loaded QNN backend: %s", backend_so.c_str());
     } else if (!native_lib_dir.empty()) {
-      // Fallback: use native_lib_dir from app
       setenv("ADSP_LIBRARY_PATH", native_lib_dir.c_str(), 1);
     }
 
@@ -153,6 +168,13 @@ public:
           executorch::extension::Module::LoadMode::MmapUseMlockIgnoreErrors);
     } catch (const std::exception& e) {
       ET_LOGE("Failed to create Module: %s", e.what());
+      return false;
+    }
+
+    // Load the module program before querying metadata
+    auto load_err = module_->load();
+    if (load_err != executorch::runtime::Error::Ok) {
+      ET_LOGE("Module::load() failed with error %d", static_cast<int>(load_err));
       return false;
     }
 

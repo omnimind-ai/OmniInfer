@@ -112,11 +112,9 @@ if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
         endif()
     endforeach()
 
-    # QNN backend shared library — linked at build time for symbol resolution.
-    # At runtime, the matching version is loaded from the user-specified qnn_lib_dir.
-    add_library(et_qnn_backend SHARED IMPORTED)
-    set_target_properties(et_qnn_backend PROPERTIES
-        IMPORTED_LOCATION "${ET_PREBUILT_DIR}/lib_shared/libqnn_executorch_backend.so")
+    # QNN backend shared library (libqnn_executorch_backend.so) is NOT linked at
+    # build time. It's loaded at runtime by the ET delegate from the device path.
+    # rpc_mem.cpp uses dlsym() for QnnExecuTorchAlloc/Free/AddCustomMem functions.
 endif()
 
 # OmniInfer JNI bridge
@@ -165,7 +163,7 @@ if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
     foreach(absl_lib ${ET_ABSL_LIBS})
         target_link_libraries(${CMAKE_PROJECT_NAME} ${absl_lib})
     endforeach()
-    target_link_libraries(${CMAKE_PROJECT_NAME} et_qnn_backend dl)
+    target_link_libraries(${CMAKE_PROJECT_NAME} dl)
     # Allow duplicate symbols between llama.cpp unicode and ET tokenizers unicode
     target_link_options(${CMAKE_PROJECT_NAME} PRIVATE "LINKER:--allow-multiple-definition")
 endif()
