@@ -117,7 +117,7 @@ public:
     std::string qnn_lib_dir = et_json_string(config_json, "qnn_lib_dir");
     float temperature = 0.8f;
     int eval_mode = 1; // hybrid
-    bool shared_buffer = et_json_bool(config_json, "shared_buffer", true);
+    bool shared_buffer = et_json_bool(config_json, "shared_buffer", false);
 
     if (decoder_model_version_.empty()) {
       decoder_model_version_ = "qwen3"; // default for Phase 1
@@ -136,10 +136,15 @@ public:
             model_path.c_str(), tokenizer_path.c_str(),
             decoder_model_version_.c_str(), qnn_lib_dir.c_str());
 
+    // ADSP_LIBRARY_PATH: where the DSP driver searches for skel libs.
+    // This may differ from qnn_lib_dir because DSP can't access app-private dirs.
+    std::string adsp_path = et_json_string(config_json, "adsp_library_path");
+    if (adsp_path.empty()) adsp_path = qnn_lib_dir;
+
     // Set ADSP_LIBRARY_PATH for QNN HTP skel loading.
-    if (!qnn_lib_dir.empty()) {
-      setenv("ADSP_LIBRARY_PATH", qnn_lib_dir.c_str(), 1);
-      ET_LOGI("Set ADSP_LIBRARY_PATH=%s", qnn_lib_dir.c_str());
+    if (!adsp_path.empty()) {
+      setenv("ADSP_LIBRARY_PATH", adsp_path.c_str(), 1);
+      ET_LOGI("Set ADSP_LIBRARY_PATH=%s", adsp_path.c_str());
 
       // Pre-load QNN runtime libraries from the user-specified directory.
       // These can't be in jniLibs (would pull in transitive deps not in APK).
