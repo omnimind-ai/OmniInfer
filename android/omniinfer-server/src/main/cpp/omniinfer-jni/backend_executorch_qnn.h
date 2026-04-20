@@ -117,7 +117,7 @@ public:
     std::string qnn_lib_dir = et_json_string(config_json, "qnn_lib_dir");
     float temperature = 0.8f;
     int eval_mode = 1; // hybrid
-    bool shared_buffer = et_json_bool(config_json, "shared_buffer", false);
+    bool shared_buffer = et_json_bool(config_json, "shared_buffer", true);
 
     if (decoder_model_version_.empty()) {
       decoder_model_version_ = "qwen3"; // default for Phase 1
@@ -178,10 +178,20 @@ public:
     }
 
     // Load the module program before querying metadata
+    ET_LOGI("Loading module program...");
     auto load_err = module_->load();
+    ET_LOGI("Module::load() returned %d", static_cast<int>(load_err));
     if (load_err != executorch::runtime::Error::Ok) {
       ET_LOGE("Module::load() failed with error %d", static_cast<int>(load_err));
       return false;
+    }
+
+    // List available methods
+    auto method_names = module_->method_names();
+    if (method_names.ok()) {
+      for (const auto& name : *method_names) {
+        ET_LOGI("Module method: %s", name.c_str());
+      }
     }
 
     // Detect KV bit width from model metadata
@@ -190,6 +200,7 @@ public:
       auto bw_result = module_->get("get_kv_io_bit_width");
       if (bw_result.ok()) {
         kv_bit_width = bw_result->toScalar().to<int64_t>();
+        ET_LOGI("KV bit width from model: %d", kv_bit_width);
       }
     } catch (...) {
       ET_LOGI("Could not read kv_io_bit_width, defaulting to 8");
