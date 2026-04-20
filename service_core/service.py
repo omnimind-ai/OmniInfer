@@ -668,12 +668,14 @@ class OmniHandler(BaseHTTPRequestHandler):
                 return
 
             try:
+                # Chat completions never triggers model loading; use /omni/model/select instead.
+                # model/mmproj/ctx_size/launch_args from the request are ignored for loading decisions.
                 runtime = self.manager.ensure_model_loaded(
-                    model=requested_model,
-                    mmproj=requested_mmproj,
-                    backend_id=requested_backend,
-                    ctx_size=requested_ctx_size,
-                    launch_args=requested_launch_args,
+                    model=None,
+                    mmproj=None,
+                    backend_id=None,
+                    ctx_size=None,
+                    launch_args=None,
                     request_defaults=requested_request_defaults,
                 )
             except (ValueError, FileNotFoundError) as e:
