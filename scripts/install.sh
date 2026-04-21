@@ -270,6 +270,11 @@ port_in_use() {
 }
 
 if port_in_use "${OMNI_PORT}"; then
+    # Try shutting down an existing OmniInfer gateway on this port
+    curl -sS -X POST "http://127.0.0.1:${OMNI_PORT}/omni/shutdown" >/dev/null 2>&1 || true
+    sleep 3
+fi
+if port_in_use "${OMNI_PORT}"; then
     warn "Port ${OMNI_PORT} is in use, looking for a free port ..."
     for try_port in 9001 9002 9003 9004 9005 9010 9020 9050 9100 8900 8800 19000; do
         if ! port_in_use "${try_port}"; then

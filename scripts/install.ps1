@@ -286,6 +286,14 @@ function Test-PortFree {
 }
 
 if (-not (Test-PortFree $OmniPort)) {
+    # Try shutting down an existing OmniInfer gateway on this port
+    try {
+        $null = Invoke-RestMethod -Uri "http://127.0.0.1:$OmniPort/omni/shutdown" -Method POST -TimeoutSec 5 -ErrorAction Stop
+        Write-Info "Shut down existing gateway on port $OmniPort"
+        Start-Sleep -Seconds 3
+    } catch {}
+}
+if (-not (Test-PortFree $OmniPort)) {
     Write-Warn "Port $OmniPort is in use, looking for a free port ..."
     $found = $false
     foreach ($tryPort in 9001, 9002, 9003, 9004, 9005, 9010, 9020, 9050, 9100, 8900, 8800, 19000) {
@@ -344,7 +352,9 @@ if ($_backendsJson -and $_backendsJson.data) {
     foreach ($b in $_backendsJson.data) {
         $BackendIds   += $b.id
         $desc = $b.description
-        if ($desc) { $BackendDescs += "$($b.id)  -  $desc" } else { $BackendDescs += $b.id }
+        $label = if ($desc) { "$($b.id)  -  $desc" } else { $b.id }
+        if ($b.binary_exists) { $label += "  (installed)" }
+        $BackendDescs += $label
     }
     if ($_backendsJson.recommended) {
         # Move recommended backend to the top of the list
