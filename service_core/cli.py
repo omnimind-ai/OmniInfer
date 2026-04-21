@@ -247,10 +247,15 @@ def start_service_background() -> None:
     CLI_LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_handle = CLI_LOG_FILE.open("a", encoding="utf-8")
     if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        )
         subprocess.Popen(
             command,
             cwd=str(REPO_ROOT),
+            stdin=subprocess.DEVNULL,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             text=True,
