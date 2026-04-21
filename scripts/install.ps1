@@ -451,18 +451,28 @@ if ($Backend) {
         $zipPath = Join-Path $env:TEMP $zipName
         $extractDir = Join-Path $env:TEMP "omni-prebuilt-$SelectedBackend"
 
-        $maxRetries = 3
-        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
-            try {
-                Invoke-WebRequest -Uri $prebuiltUrl -OutFile $zipPath -UseBasicParsing
-                break
-            } catch {
-                if ($attempt -lt $maxRetries) {
-                    Write-Warn "Download failed (attempt $attempt/$maxRetries): $_"
-                    Write-Info "Retrying in 3 seconds ..."
-                    Start-Sleep -Seconds 3
-                } else {
-                    Stop-Fatal "Download failed after $maxRetries attempts: $_"
+        # Prefer curl.exe (ships with Windows 10+) for robust downloads with
+        # retry, resume, and redirect support.  Fall back to Invoke-WebRequest.
+        $curlExe = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($curlExe) {
+            & curl.exe -L --retry 5 --retry-delay 3 -C - -o $zipPath $prebuiltUrl
+            if ($LASTEXITCODE -ne 0) {
+                Stop-Fatal "Download failed (curl exit code $LASTEXITCODE). Check your network or try a proxy."
+            }
+        } else {
+            $maxRetries = 3
+            for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+                try {
+                    Invoke-WebRequest -Uri $prebuiltUrl -OutFile $zipPath -UseBasicParsing
+                    break
+                } catch {
+                    if ($attempt -lt $maxRetries) {
+                        Write-Warn "Download failed (attempt $attempt/$maxRetries): $_"
+                        Write-Info "Retrying in 3 seconds ..."
+                        Start-Sleep -Seconds 3
+                    } else {
+                        Stop-Fatal "Download failed after $maxRetries attempts: $_"
+                    }
                 }
             }
         }
