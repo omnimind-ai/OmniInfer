@@ -451,31 +451,77 @@ if ($Backend) {
         $zipPath = Join-Path $env:TEMP $zipName
         $extractDir = Join-Path $env:TEMP "omni-prebuilt-$SelectedBackend"
 
-        # Prefer the Windows-bundled curl.exe (System32) for robust downloads
-        # with retry, resume, and redirect support.  We use the full path to
-        # avoid picking up MSYS2/Git curl which may fail with certificate errors.
-        $systemCurl = Join-Path $env:SystemRoot "System32\curl.exe"
-        if (Test-Path $systemCurl) {
-            & $systemCurl -L --retry 5 --retry-delay 3 -C - -o $zipPath $prebuiltUrl
-            if ($LASTEXITCODE -ne 0) {
-                Stop-Fatal "Download failed (curl exit code $LASTEXITCODE). Check your network or try a proxy."
-            }
-        } else {
-            $maxRetries = 3
-            for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
-                try {
-                    Invoke-WebRequest -Uri $prebuiltUrl -OutFile $zipPath -UseBasicParsing
-                    break
-                } catch {
-                    if ($attempt -lt $maxRetries) {
-                        Write-Warn "Download failed (attempt $attempt/$maxRetries): $_"
-                        Write-Info "Retrying in 3 seconds ..."
-                        Start-Sleep -Seconds 3
-                    } else {
-                        Stop-Fatal "Download failed after $maxRetries attempts: $_"
-                    }
+        # GitHub mirror prefixes for regions where github.com is unreliable.
+        # Tried in order; original GitHub URL is always the final fallback.
+        $GhMirrorPrefixes = @(
+            "https://ghfast.top/"
+        )
+
+        # Build ordered list: mirrors first, then direct GitHub
+        $downloadUrls = @()
+        foreach ($prefix in $GhMirrorPrefixes) {
+            $downloadUrls += "${prefix}${prebuiltUrl}"
+        }
+        $downloadUrls += $prebuiltUrl
+
+        # Auto-detect system proxy when no proxy env vars are set
+        if (-not $env:HTTPS_PROXY -and -not $env:HTTP_PROXY) {
+            try {
+                $inetSettings = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -ErrorAction SilentlyContinue
+                if ($inetSettings.ProxyEnable -eq 1 -and $inetSettings.ProxyServer) {
+                    $sysProxy = $inetSettings.ProxyServer
+                    if ($sysProxy -match "https?=([^;]+)") { $sysProxy = $Matches[1] }
+                    $env:HTTPS_PROXY = "http://$sysProxy"
+                    $env:HTTP_PROXY  = "http://$sysProxy"
+                    Write-Info "Auto-detected system proxy: $sysProxy"
                 }
+            } catch {}
+        }
+
+        # Use Windows-bundled curl.exe (System32) to avoid MSYS2/Git curl cert issues
+        $systemCurl = Join-Path $env:SystemRoot "System32\curl.exe"
+        $downloaded = $false
+
+        foreach ($dlUrl in $downloadUrls) {
+            $urlLabel = if ($dlUrl -eq $prebuiltUrl) { "GitHub" } else { "mirror" }
+            Write-Info "Trying $urlLabel ..."
+
+            if (Test-Path $systemCurl) {
+                if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -lt 1024) {
+                    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+                }
+                & $systemCurl -L --retry 3 --retry-delay 3 --connect-timeout 15 -C - -o $zipPath $dlUrl 2>&1
+                if ($LASTEXITCODE -eq 0 -and (Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1048576) {
+                    $downloaded = $true; break
+                }
+            } else {
+                try {
+                    Invoke-WebRequest -Uri $dlUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 300
+                    if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1048576) {
+                        $downloaded = $true; break
+                    }
+                } catch {}
             }
+            Write-Warn "$urlLabel download failed, trying next source ..."
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        }
+
+        if (-not $downloaded) {
+            Write-Err "All download sources failed."
+            Write-Host ""
+            Write-Host "  Please download manually:" -ForegroundColor Yellow
+            Write-Host "    $prebuiltUrl" -ForegroundColor White
+            Write-Host ""
+            Write-Host "  Save the file to:" -ForegroundColor Yellow
+            Write-Host "    $zipPath" -ForegroundColor White
+            Write-Host "  Then re-run this script." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  Or set a proxy:" -ForegroundColor Yellow
+            Write-Host '    $env:HTTPS_PROXY = "http://127.0.0.1:PORT"' -ForegroundColor White
+            Write-Host ""
+            Write-Host "Press any key to exit ..." -ForegroundColor DarkGray
+            try { [void][Console]::ReadKey($true) } catch { Start-Sleep -Seconds 10 }
+            exit 1
         }
         Write-Ok "Downloaded ($([math]::Round((Get-Item $zipPath).Length / 1MB)) MB)"
 
