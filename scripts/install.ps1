@@ -451,10 +451,20 @@ if ($Backend) {
         $zipPath = Join-Path $env:TEMP $zipName
         $extractDir = Join-Path $env:TEMP "omni-prebuilt-$SelectedBackend"
 
-        try {
-            Invoke-WebRequest -Uri $prebuiltUrl -OutFile $zipPath -UseBasicParsing
-        } catch {
-            Stop-Fatal "Download failed: $_"
+        $maxRetries = 3
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            try {
+                Invoke-WebRequest -Uri $prebuiltUrl -OutFile $zipPath -UseBasicParsing
+                break
+            } catch {
+                if ($attempt -lt $maxRetries) {
+                    Write-Warn "Download failed (attempt $attempt/$maxRetries): $_"
+                    Write-Info "Retrying in 3 seconds ..."
+                    Start-Sleep -Seconds 3
+                } else {
+                    Stop-Fatal "Download failed after $maxRetries attempts: $_"
+                }
+            }
         }
         Write-Ok "Downloaded ($([math]::Round((Get-Item $zipPath).Length / 1MB)) MB)"
 
