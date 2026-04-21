@@ -290,7 +290,7 @@ if (-not (Test-PortFree $OmniPort)) {
     # Also try shutting down gateway on ports from previous config overrides
     foreach ($shutdownPort in @($OmniPort, 9001, 9002, 9003, 9004, 9005)) {
         try {
-            $null = Invoke-RestMethod -Uri "http://127.0.0.1:$shutdownPort/omni/shutdown" -Method POST -TimeoutSec 3 -NoProxy -ErrorAction Stop
+            $null = Invoke-RestMethod -Uri "http://127.0.0.1:$shutdownPort/omni/shutdown" -Method POST -TimeoutSec 3 -ErrorAction Stop
             Write-Info "Shut down existing gateway on port $shutdownPort"
         } catch {}
     }
@@ -340,16 +340,16 @@ function Invoke-OmniInfer {
 
 # Cleanup: shut down any gateway service started by the CLI on script exit
 Register-EngineEvent PowerShell.Exiting -Action {
-    try { Invoke-RestMethod -Uri "http://127.0.0.1:$($script:OmniPort)/omni/shutdown" -Method POST -TimeoutSec 3 -NoProxy 2>$null } catch {}
+    try { Invoke-OmniInfer shutdown 2>$null } catch {}
 } | Out-Null
 
 $BackendIds   = @()
 $BackendDescs = @()
-# Query the gateway API for compatible backends (hardware-matched)
+# Query compatible backends via CLI --json flag (avoids gateway HTTP and proxy issues)
 $_backendsJson = $null
 try {
-    Invoke-OmniInfer status 2>$null | Out-Null  # ensure gateway is running
-    $_backendsJson = Invoke-RestMethod -Uri "http://127.0.0.1:$OmniPort/omni/backends?scope=compatible" -TimeoutSec 15 -NoProxy -ErrorAction Stop
+    $rawJson = Invoke-OmniInfer backend list --scope compatible --json 2>$null
+    if ($rawJson) { $_backendsJson = $rawJson | ConvertFrom-Json }
 } catch {}
 
 if ($_backendsJson -and $_backendsJson.data) {
@@ -372,7 +372,7 @@ if ($_backendsJson -and $_backendsJson.data) {
         }
     }
 } else {
-    # Fallback: parse CLI text output (use --scope compatible to filter by hardware)
+    # Fallback: parse CLI text output
     $rawOutput = Invoke-OmniInfer backend list --scope compatible 2>$null
     $currentId = ""
     foreach ($line in $rawOutput -split "`n") {

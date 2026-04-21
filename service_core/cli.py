@@ -365,14 +365,21 @@ def format_bool(value: bool | None) -> str:
     return "unknown"
 
 
-def print_backend_list(scope: str = "all") -> int:
+def print_backend_list(scope: str = "all", json_output: bool = False) -> int:
     ensure_service_running()
     state = load_cli_state()
     saved_backend = state.get("selected_backend")
     _status, payload, _ = request_json("GET", f"/omni/backends?scope={scope}", timeout=10.0)
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows:
+        if json_output:
+            print(json.dumps({"object": "list", "data": [], "recommended": None}))
+            return 0
         raise SystemExit("No backends are available on this system.")
+
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
 
     print("Available backends")
     for item in rows:
@@ -1054,6 +1061,7 @@ def build_parser() -> argparse.ArgumentParser:
     backend_sub = backend.add_subparsers(dest="backend_command")
     backend_list = backend_sub.add_parser("list", help="List backends available on this system")
     backend_list.add_argument("--scope", choices=("installed", "compatible", "all"), default="all", help="Filter backends by scope (default: all)")
+    backend_list.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON (for scripting)")
     backend_select = backend_sub.add_parser("select", help="Select a backend")
     backend_select.add_argument("backend_name", help="Backend name")
     backend_sub.add_parser("stop", help="Stop the current backend process")
@@ -1143,7 +1151,7 @@ def main(argv: list[str] | None = None) -> int:
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
         if args.backend_command == "list":
-            return print_backend_list(scope=args.scope)
+            return print_backend_list(scope=args.scope, json_output=getattr(args, "json_output", False))
         if args.backend_command == "select":
             return select_backend(args.backend_name)
         if args.backend_command == "stop":
