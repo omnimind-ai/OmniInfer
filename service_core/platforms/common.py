@@ -184,7 +184,37 @@ def get_available_cuda_memory_bytes() -> int | None:
     return max(free_mib_values) * 1024 * 1024
 
 
+def _is_amd_gpu_present_windows() -> bool:
+    """Detect AMD GPU on Windows via WMI (Win32_VideoController)."""
+    try:
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'AMD|Radeon' }).Name",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            **hidden_subprocess_kwargs(),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            logger.debug("AMD GPU detected via WMI: %s", result.stdout.strip().splitlines()[0])
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return False
+
+
 def get_available_rocm_memory_bytes() -> int | None:
+    # Windows: HIP backend does not use rocm-smi; detect AMD GPU via WMI instead.
+    if os.name == "nt":
+        if _is_amd_gpu_present_windows():
+            # Return system available memory as a proxy — HIP on Windows uses shared memory.
+            return get_available_memory_bytes()
+        return None
+
     candidate_commands = [
         ["rocm-smi", "--showmeminfo", "vram", "--json"],
         ["/opt/rocm/bin/rocm-smi", "--showmeminfo", "vram", "--json"],
