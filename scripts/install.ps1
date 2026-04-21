@@ -290,7 +290,7 @@ if (-not (Test-PortFree $OmniPort)) {
     # Also try shutting down gateway on ports from previous config overrides
     foreach ($shutdownPort in @($OmniPort, 9001, 9002, 9003, 9004, 9005)) {
         try {
-            $null = Invoke-RestMethod -Uri "http://127.0.0.1:$shutdownPort/omni/shutdown" -Method POST -TimeoutSec 3 -ErrorAction Stop
+            $null = Invoke-RestMethod -Uri "http://127.0.0.1:$shutdownPort/omni/shutdown" -Method POST -TimeoutSec 3 -NoProxy -ErrorAction Stop
             Write-Info "Shut down existing gateway on port $shutdownPort"
         } catch {}
     }
@@ -340,7 +340,7 @@ function Invoke-OmniInfer {
 
 # Cleanup: shut down any gateway service started by the CLI on script exit
 Register-EngineEvent PowerShell.Exiting -Action {
-    try { Invoke-RestMethod -Uri "http://127.0.0.1:$($script:OmniPort)/omni/shutdown" -Method POST -TimeoutSec 3 2>$null } catch {}
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:$($script:OmniPort)/omni/shutdown" -Method POST -TimeoutSec 3 -NoProxy 2>$null } catch {}
 } | Out-Null
 
 $BackendIds   = @()
@@ -349,7 +349,7 @@ $BackendDescs = @()
 $_backendsJson = $null
 try {
     Invoke-OmniInfer status 2>$null | Out-Null  # ensure gateway is running
-    $_backendsJson = Invoke-RestMethod -Uri "http://127.0.0.1:$OmniPort/omni/backends?scope=compatible" -TimeoutSec 15 -ErrorAction Stop
+    $_backendsJson = Invoke-RestMethod -Uri "http://127.0.0.1:$OmniPort/omni/backends?scope=compatible" -TimeoutSec 15 -NoProxy -ErrorAction Stop
 } catch {}
 
 if ($_backendsJson -and $_backendsJson.data) {
