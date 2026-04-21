@@ -490,8 +490,10 @@ if ($Backend) {
                 if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -lt 1024) {
                     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
                 }
-                & $systemCurl -L --retry 3 --retry-delay 3 --connect-timeout 15 -C - -o $zipPath $dlUrl 2>&1
-                if ($LASTEXITCODE -eq 0 -and (Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1048576) {
+                $prevEAP2 = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+                & $systemCurl -L --retry 3 --retry-delay 3 --connect-timeout 15 -C - -o $zipPath $dlUrl 2>&1 | Out-Null
+                $curlExit = $LASTEXITCODE; $ErrorActionPreference = $prevEAP2
+                if ($curlExit -eq 0 -and (Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1048576) {
                     $downloaded = $true; break
                 }
             } else {
