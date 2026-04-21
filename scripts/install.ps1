@@ -2,7 +2,7 @@
 #  OmniInfer interactive installer for Windows (PowerShell)
 #
 #  Usage:
-#    irm https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1 | iex
+#    irm "https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1?$(Get-Random)" | iex
 # ──────────────────────────────────────────────────────────────
 
 param(

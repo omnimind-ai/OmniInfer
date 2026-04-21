@@ -49,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1 | iex
+irm "https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1?$(Get-Random)" | iex
 ```
 
 The installer detects your platform and hardware, recommends a backend, and walks you through model setup interactively.
