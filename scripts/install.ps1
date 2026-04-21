@@ -287,11 +287,17 @@ function Test-PortFree {
 
 if (-not (Test-PortFree $OmniPort)) {
     # Try shutting down an existing OmniInfer gateway on this port
-    try {
-        $null = Invoke-RestMethod -Uri "http://127.0.0.1:$OmniPort/omni/shutdown" -Method POST -TimeoutSec 5 -ErrorAction Stop
-        Write-Info "Shut down existing gateway on port $OmniPort"
-        Start-Sleep -Seconds 3
-    } catch {}
+    # Also try shutting down gateway on ports from previous config overrides
+    foreach ($shutdownPort in @($OmniPort, 9001, 9002, 9003, 9004, 9005)) {
+        try {
+            $null = Invoke-RestMethod -Uri "http://127.0.0.1:$shutdownPort/omni/shutdown" -Method POST -TimeoutSec 3 -ErrorAction Stop
+            Write-Info "Shut down existing gateway on port $shutdownPort"
+        } catch {}
+    }
+    Start-Sleep -Seconds 3
+    # Remove stale port config so gateway starts on default port
+    $staleConfig = Join-Path $InstallDir "config\omniinfer.json"
+    if (Test-Path $staleConfig) { Remove-Item $staleConfig -Force -ErrorAction SilentlyContinue }
 }
 if (-not (Test-PortFree $OmniPort)) {
     Write-Warn "Port $OmniPort is in use, looking for a free port ..."
@@ -333,10 +339,8 @@ function Invoke-OmniInfer {
 }
 
 # Cleanup: shut down any gateway service started by the CLI on script exit
-$_gatewayPort = 9000
-try { $_gatewayPort = [int](Get-Content (Join-Path $InstallDir "release\config\omniinfer.json") | ConvertFrom-Json).port } catch {}
 Register-EngineEvent PowerShell.Exiting -Action {
-    try { Invoke-RestMethod -Uri "http://127.0.0.1:$($_gatewayPort)/omni/shutdown" -Method POST -TimeoutSec 3 2>$null } catch {}
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:$($script:OmniPort)/omni/shutdown" -Method POST -TimeoutSec 3 2>$null } catch {}
 } | Out-Null
 
 $BackendIds   = @()
@@ -345,7 +349,7 @@ $BackendDescs = @()
 $_backendsJson = $null
 try {
     Invoke-OmniInfer status 2>$null | Out-Null  # ensure gateway is running
-    $_backendsJson = Invoke-RestMethod -Uri "http://127.0.0.1:$_gatewayPort/omni/backends?scope=compatible" -TimeoutSec 15 -ErrorAction Stop
+    $_backendsJson = Invoke-RestMethod -Uri "http://127.0.0.1:$OmniPort/omni/backends?scope=compatible" -TimeoutSec 15 -ErrorAction Stop
 } catch {}
 
 if ($_backendsJson -and $_backendsJson.data) {
