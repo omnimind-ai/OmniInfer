@@ -381,63 +381,157 @@ if ($BackendIds.Count -eq 0) {
 Write-Info "Platform: Windows"
 Write-Host ""
 
+$PrebuiltInstalled = $false
+
 if ($Backend) {
     $SelectedBackend = $Backend
 } else {
+    # Append "Download prebuilt version" as the last menu option
+    $menuDescs = [System.Collections.ArrayList]::new($BackendDescs)
+    [void]$menuDescs.Add("Download prebuilt version  (skip compilation)")
+
     Write-Host "  Available backends (arrow keys to move, Enter to select):"
     Write-Host ""
 
-    $idx = Select-Menu -Default 0 -Options $BackendDescs
-    $SelectedBackend = $BackendIds[$idx]
+    $idx = Select-Menu -Default 0 -Options $menuDescs
+
+    if ($idx -lt $BackendIds.Count) {
+        # User selected a normal backend (build from source)
+        $SelectedBackend = $BackendIds[$idx]
+    } else {
+        # User selected "Download prebuilt version"
+        $prebuiltJsonPath = Join-Path $InstallDir "scripts\prebuilt_backends.json"
+        if (-not (Test-Path $prebuiltJsonPath)) {
+            Stop-Fatal "Prebuilt mapping file not found: $prebuiltJsonPath"
+        }
+        $prebuiltMap = (Get-Content $prebuiltJsonPath -Raw | ConvertFrom-Json).windows
+
+        # Filter: compatible backends that have a prebuilt URL
+        $prebuiltIds = [System.Collections.ArrayList]::new()
+        $prebuiltDescs = [System.Collections.ArrayList]::new()
+        foreach ($bid in $BackendIds) {
+            if ($prebuiltMap.PSObject.Properties.Name -contains $bid) {
+                [void]$prebuiltIds.Add($bid)
+                $origDesc = $BackendDescs[$BackendIds.IndexOf($bid)]
+                [void]$prebuiltDescs.Add("$origDesc  (prebuilt)")
+            }
+        }
+
+        if ($prebuiltIds.Count -eq 0) {
+            Stop-Fatal "No prebuilt backends available for this platform."
+        }
+
+        Write-Host ""
+        Write-Host "  Available prebuilt backends:"
+        Write-Host ""
+        $pidx = Select-Menu -Default 0 -Options $prebuiltDescs
+        $SelectedBackend = $prebuiltIds[$pidx]
+        $prebuiltUrl = $prebuiltMap.$SelectedBackend
+
+        Write-Ok "Selected prebuilt: $SelectedBackend"
+        Write-Host ""
+
+        # Download and install prebuilt backend
+        Write-Info "Downloading prebuilt $SelectedBackend ..."
+        $zipName = "omni-prebuilt-$SelectedBackend.zip"
+        $zipPath = Join-Path $env:TEMP $zipName
+        $extractDir = Join-Path $env:TEMP "omni-prebuilt-$SelectedBackend"
+
+        try {
+            Invoke-WebRequest -Uri $prebuiltUrl -OutFile $zipPath -UseBasicParsing
+        } catch {
+            Stop-Fatal "Download failed: $_"
+        }
+        Write-Ok "Downloaded ($([math]::Round((Get-Item $zipPath).Length / 1MB)) MB)"
+
+        # Extract and install to runtime directory
+        if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+
+        $runtimeDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend"
+        $binDir = Join-Path $runtimeDir "bin"
+        New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $runtimeDir "logs") | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $runtimeDir "models") | Out-Null
+
+        # Copy all files from the extracted archive to bin/
+        # llama.cpp release zips may have files at root or in a subdirectory
+        $extractedItems = Get-ChildItem $extractDir
+        if ($extractedItems.Count -eq 1 -and $extractedItems[0].PSIsContainer) {
+            # Single subdirectory — copy its contents
+            Copy-Item -Path (Join-Path $extractedItems[0].FullName "*") -Destination $binDir -Recurse -Force
+        } else {
+            # Files at root
+            Copy-Item -Path (Join-Path $extractDir "*") -Destination $binDir -Recurse -Force
+        }
+
+        # Cleanup temp files
+        Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
+
+        # Verify
+        $serverExe = Get-ChildItem $binDir -Filter "llama-server*" -File -ErrorAction SilentlyContinue
+        if (-not $serverExe) {
+            Stop-Fatal "Prebuilt install failed: llama-server not found in $binDir"
+        }
+        Write-Ok "Prebuilt backend installed to $runtimeDir"
+        $PrebuiltInstalled = $true
+    }
 }
 
-Write-Ok "Selected: $SelectedBackend"
+if (-not $PrebuiltInstalled) {
+    Write-Ok "Selected: $SelectedBackend"
+}
 Write-Host ""
 
 # Select backend via CLI
 Invoke-OmniInfer select $SelectedBackend 2>$null
 
 # ── Step 4: Build backend ───────────────────────────────────
-# Windows build scripts do NOT auto-bootstrap submodules.
 
-Write-Info "Step 4/6: Building backend ..."
-
-$llamaCppDir = Join-Path $InstallDir "framework\llama.cpp"
-if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
-    Write-Info "Initializing llama.cpp submodule ..."
-    git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
-    Write-Ok "Submodule ready"
-    Write-Host ""
-}
-
-# Discover build script by convention: scripts/platforms/windows/<backend_id>/build.ps1
-$fullScript = Join-Path $InstallDir "scripts\platforms\windows\$SelectedBackend\build.ps1"
-if (-not (Test-Path $fullScript)) {
-    Stop-Fatal "Build script not found: $fullScript"
-}
-
-if ($SkipBuild) {
-    Write-Info "Skipping build (-SkipBuild)"
+if ($PrebuiltInstalled) {
+    Write-Info "Step 4/6: Backend already installed (prebuilt), skipping build"
 } else {
-    $runtimeCheck = Invoke-OmniInfer backend list 2>$null
-    $isBuilt = ($runtimeCheck -join "`n") -match "$([regex]::Escape($SelectedBackend))[\s\S]*?Runtime available: yes"
-    if ($isBuilt) {
-        Write-Ok "Backend $SelectedBackend already built, skipping"
+    Write-Info "Step 4/6: Building backend ..."
+
+    # Windows build scripts do NOT auto-bootstrap submodules.
+    $llamaCppDir = Join-Path $InstallDir "framework\llama.cpp"
+    if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
+        Write-Info "Initializing llama.cpp submodule ..."
+        git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
+        Write-Ok "Submodule ready"
+        Write-Host ""
+    }
+
+    # Discover build script by convention: scripts/platforms/windows/<backend_id>/build.ps1
+    $fullScript = Join-Path $InstallDir "scripts\platforms\windows\$SelectedBackend\build.ps1"
+    if (-not (Test-Path $fullScript)) {
+        Stop-Fatal "Build script not found: $fullScript"
+    }
+
+    if ($SkipBuild) {
+        Write-Info "Skipping build (-SkipBuild)"
     } else {
-        Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
-        powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host ""
-            Write-Err "Build failed (exit code $LASTEXITCODE). See the messages above for details."
-            exit 1
+        $runtimeCheck = Invoke-OmniInfer backend list 2>$null
+        $isBuilt = ($runtimeCheck -join "`n") -match "$([regex]::Escape($SelectedBackend))[\s\S]*?Runtime available: yes"
+        if ($isBuilt) {
+            Write-Ok "Backend $SelectedBackend already built, skipping"
+        } else {
+            Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
+            powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host ""
+                Write-Err "Build failed (exit code $LASTEXITCODE). See the messages above for details."
+                exit 1
+            }
+            # Verify build produced the expected binary
+            $binDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
+            if (-not (Test-Path $binDir) -or (Get-ChildItem $binDir -File -ErrorAction SilentlyContinue).Count -eq 0) {
+                Write-Err "Build completed but no binaries found in $binDir"
+                exit 1
+            }
+            Write-Ok "Build complete"
         }
-        # Verify build produced the expected binary
-        $binDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
-        if (-not (Test-Path $binDir) -or (Get-ChildItem $binDir -File -ErrorAction SilentlyContinue).Count -eq 0) {
-            Write-Err "Build completed but no binaries found in $binDir"
-            exit 1
-        }
-        Write-Ok "Build complete"
     }
 }
 Write-Host ""

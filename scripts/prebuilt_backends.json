@@ -1,0 +1,8 @@
+{
+  "windows": {
+    "llama.cpp-cpu": "https://github.com/ggml-org/llama.cpp/releases/download/b8864/llama-b8864-bin-win-cpu-x64.zip",
+    "llama.cpp-cuda": "https://github.com/ggml-org/llama.cpp/releases/download/b8864/llama-b8864-bin-win-cuda-12.4-x64.zip",
+    "llama.cpp-hip": "https://github.com/ggml-org/llama.cpp/releases/download/b8864/llama-b8864-bin-win-hip-radeon-x64.zip",
+    "llama.cpp-vulkan": "https://github.com/ggml-org/llama.cpp/releases/download/b8864/llama-b8864-bin-win-vulkan-x64.zip"
+  }
+}
