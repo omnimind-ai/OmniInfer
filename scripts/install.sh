@@ -385,7 +385,7 @@ for b in d.get('data', []):
                 last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
                 BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
             fi
-        done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+        done <<< "$("${INSTALL_DIR}/omniinfer" backend list --scope compatible 2>/dev/null)"
     fi
 fi
 

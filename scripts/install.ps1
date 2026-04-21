@@ -358,8 +358,8 @@ if ($_backendsJson -and $_backendsJson.data) {
         }
     }
 } else {
-    # Fallback: parse CLI text output
-    $rawOutput = Invoke-OmniInfer backend list 2>$null
+    # Fallback: parse CLI text output (use --scope compatible to filter by hardware)
+    $rawOutput = Invoke-OmniInfer backend list --scope compatible 2>$null
     $currentId = ""
     foreach ($line in $rawOutput -split "`n") {
         $line = $line.Trim()
