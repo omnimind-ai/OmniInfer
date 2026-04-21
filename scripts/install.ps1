@@ -270,6 +270,7 @@ Write-Ok "Repository ready at $InstallDir"
 # Hand off to the repo's own copy of this script so that fixes in the repo
 # take effect immediately, even when the irm-downloaded script is stale.
 $repoScript = Join-Path $InstallDir "scripts\install.ps1"
+Write-Info "[debug] HANDOFF=$env:OMNIINFER_INSTALL_HANDOFF repoScript=$repoScript exists=$(Test-Path $repoScript)"
 if (-not $env:OMNIINFER_INSTALL_HANDOFF -and (Test-Path $repoScript)) {
     $env:OMNIINFER_INSTALL_HANDOFF = "1"
     $handoffArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $repoScript, "-InstallDir", $InstallDir)
@@ -299,6 +300,7 @@ function Test-PortFree {
     }
 }
 
+Write-Info "[debug] checking port $OmniPort free=$(Test-PortFree $OmniPort)"
 if (-not (Test-PortFree $OmniPort)) {
     # Try shutting down an existing OmniInfer gateway on this port
     # Also try shutting down gateway on ports from previous config overrides
@@ -362,9 +364,15 @@ $BackendDescs = @()
 # Query compatible backends via CLI --json flag (avoids gateway HTTP and proxy issues)
 $_backendsJson = $null
 try {
+    Write-Info "[debug] calling: backend list --scope compatible --json"
+    $prevEAP3 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     $rawJson = Invoke-OmniInfer backend list --scope compatible --json 2>$null
+    $ErrorActionPreference = $prevEAP3
+    Write-Info "[debug] backend list returned, length=$($rawJson.Length)"
     if ($rawJson) { $_backendsJson = $rawJson | ConvertFrom-Json }
-} catch {}
+} catch {
+    Write-Warn "[debug] backend list failed: $_"
+}
 
 if ($_backendsJson -and $_backendsJson.data) {
     foreach ($b in $_backendsJson.data) {
