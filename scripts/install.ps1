@@ -267,6 +267,20 @@ if (-not (Test-Path (Join-Path $InstallDir "omniinfer.py"))) {
 }
 Write-Ok "Repository ready at $InstallDir"
 
+# Hand off to the repo's own copy of this script so that fixes in the repo
+# take effect immediately, even when the irm-downloaded script is stale.
+$repoScript = Join-Path $InstallDir "scripts\install.ps1"
+if (-not $env:OMNIINFER_INSTALL_HANDOFF -and (Test-Path $repoScript)) {
+    $env:OMNIINFER_INSTALL_HANDOFF = "1"
+    $handoffArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $repoScript, "-InstallDir", $InstallDir)
+    if ($Model)   { $handoffArgs += @("-m", $Model) }
+    if ($Backend) { $handoffArgs += @("-Backend", $Backend) }
+    if ($SkipBuild)      { $handoffArgs += "-SkipBuild" }
+    if ($NonInteractive) { $handoffArgs += "-NonInteractive" }
+    & powershell.exe @handoffArgs
+    exit $LASTEXITCODE
+}
+
 # ── Ensure a usable port ────────────────────────────────────
 
 $OmniPort = 9000
