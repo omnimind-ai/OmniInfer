@@ -451,11 +451,12 @@ if ($Backend) {
         $zipPath = Join-Path $env:TEMP $zipName
         $extractDir = Join-Path $env:TEMP "omni-prebuilt-$SelectedBackend"
 
-        # Prefer curl.exe (ships with Windows 10+) for robust downloads with
-        # retry, resume, and redirect support.  Fall back to Invoke-WebRequest.
-        $curlExe = Get-Command curl.exe -ErrorAction SilentlyContinue
-        if ($curlExe) {
-            & curl.exe -L --retry 5 --retry-delay 3 -C - -o $zipPath $prebuiltUrl
+        # Prefer the Windows-bundled curl.exe (System32) for robust downloads
+        # with retry, resume, and redirect support.  We use the full path to
+        # avoid picking up MSYS2/Git curl which may fail with certificate errors.
+        $systemCurl = Join-Path $env:SystemRoot "System32\curl.exe"
+        if (Test-Path $systemCurl) {
+            & $systemCurl -L --retry 5 --retry-delay 3 -C - -o $zipPath $prebuiltUrl
             if ($LASTEXITCODE -ne 0) {
                 Stop-Fatal "Download failed (curl exit code $LASTEXITCODE). Check your network or try a proxy."
             }
