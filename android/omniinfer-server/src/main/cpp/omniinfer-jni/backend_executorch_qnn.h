@@ -23,6 +23,7 @@
 #include <executorch/extension/llm/runner/irunner.h>
 #include <executorch/extension/llm/runner/stats.h>
 #include <executorch/extension/module/module.h>
+#include <executorch/runtime/platform/platform.h>
 
 #define ET_LOG_TAG "OmniInferET"
 #define ET_LOGI(...) __android_log_print(ANDROID_LOG_INFO, ET_LOG_TAG, __VA_ARGS__)
@@ -108,6 +109,9 @@ public:
   bool load(const std::string& model_path, const std::string& config_json,
             const std::string& native_lib_dir, int n_threads, int n_ctx) override {
 
+    // Initialize ET platform abstraction (enables logging to logcat)
+    et_pal_init();
+
     n_threads_ = n_threads;
     n_ctx_ = n_ctx > 0 ? n_ctx : 2048;
 
@@ -117,7 +121,7 @@ public:
     std::string qnn_lib_dir = et_json_string(config_json, "qnn_lib_dir");
     float temperature = 0.8f;
     int eval_mode = 1; // hybrid
-    bool shared_buffer = et_json_bool(config_json, "shared_buffer", true);
+    bool shared_buffer = et_json_bool(config_json, "shared_buffer", false);
 
     if (decoder_model_version_.empty()) {
       decoder_model_version_ = "qwen3"; // default for Phase 1
@@ -136,29 +140,64 @@ public:
             model_path.c_str(), tokenizer_path.c_str(),
             decoder_model_version_.c_str(), qnn_lib_dir.c_str());
 
-    // QNN runtime .so files and the HTP skel are bundled in jniLibs and
-    // extracted by the system to nativeLibraryDir. We use that path for both
-    // dlopen (CPU-side libs) and ADSP_LIBRARY_PATH (DSP skel discovery).
-    // The skel must be in a world-readable dir for the FastRPC daemon to find it.
+    // QNN runtime .so files (libQnnHtp, skel, stub, etc.) are bundled in
+    // jniLibs and extracted to nativeLibraryDir (requires extractNativeLibs=true).
+    // IMPORTANT: Do NOT bundle libcdsprpc.so or other system FastRPC deps in
+    // jniLibs — they must come from the system (/vendor/lib64/) or the app's
+    // <uses-native-library> declaration. Bundling them overrides the system
+    // version and breaks FastRPC session establishment (error 4000).
     std::string lib_dir = native_lib_dir;
     if (!qnn_lib_dir.empty()) lib_dir = qnn_lib_dir;
 
     if (!lib_dir.empty()) {
       // ADSP_LIBRARY_PATH must include the skel's location.
-      // Prepend our dir to any existing system paths.
-      std::string adsp = lib_dir + ";/odm/lib/rfsa/adsp";
+      // Prepend our dir, then add all standard system skel paths as fallback.
+      // If the bundled skel hits SELinux restrictions, the system skel at these
+      // vendor-labeled paths may work (provided QNN SDK version is compatible).
+      std::string adsp = lib_dir
+          + ";/dsp"
+          + ";/vendor/dsp"
+          + ";/vendor/lib/rfsa/adsp"
+          + ";/odm/lib/rfsa/adsp"
+          + ";/system/lib/rfsa/adsp"
+          + ";/system/vendor/lib/rfsa/adsp";
       setenv("ADSP_LIBRARY_PATH", adsp.c_str(), 1);
       ET_LOGI("Set ADSP_LIBRARY_PATH=%s", adsp.c_str());
 
+      // Diagnostic: check skel accessibility from each ADSP path.
+      // This helps distinguish SELinux issues from version mismatches.
+      const char* skel_names[] = {"libQnnHtpV79Skel.so", "libQnnHtpV75Skel.so",
+                                   "libQnnHtpV73Skel.so", nullptr};
+      const char* adsp_dirs[] = {lib_dir.c_str(), "/dsp", "/vendor/dsp",
+                                  "/vendor/lib/rfsa/adsp", "/odm/lib/rfsa/adsp", nullptr};
+      for (int d = 0; adsp_dirs[d]; d++) {
+        for (int s = 0; skel_names[s]; s++) {
+          std::string path = std::string(adsp_dirs[d]) + "/" + skel_names[s];
+          FILE* f = fopen(path.c_str(), "r");
+          if (f) {
+            fseek(f, 0, SEEK_END);
+            long sz = ftell(f);
+            fclose(f);
+            ET_LOGI("Skel found: %s (%ld bytes, readable)", path.c_str(), sz);
+          }
+        }
+      }
+
       // Pre-load QNN runtime libraries so ET delegate can find them.
+      // Use RTLD_GLOBAL so symbols are visible to subsequent dlopen calls
+      // from within the ET delegate (which does dlopen("libQnnHtp.so") by bare name).
       const char* qnn_libs[] = {
         "libQnnSystem.so", "libQnnHtp.so", "libQnnHtpPrepare.so",
-        "libQnnHtpNetRunExtensions.so", "libqnn_executorch_backend.so",
+        "libqnn_executorch_backend.so",
         nullptr
       };
       for (int i = 0; qnn_libs[i]; i++) {
-        std::string lib_path = lib_dir + "/" + qnn_libs[i];
-        void* h = dlopen(lib_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        // Try bare name first (uses linker search paths), then full path
+        void* h = dlopen(qnn_libs[i], RTLD_NOW | RTLD_GLOBAL);
+        if (!h) {
+          std::string lib_path = lib_dir + "/" + qnn_libs[i];
+          h = dlopen(lib_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        }
         if (!h) {
           ET_LOGE("dlopen %s failed: %s", qnn_libs[i], dlerror());
         } else {
