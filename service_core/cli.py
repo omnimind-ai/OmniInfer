@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import textwrap
 import time
 import urllib.error
@@ -646,53 +647,66 @@ def combine_backend_extra_args(
 
 
 def print_model_load(args: argparse.Namespace) -> int:
-    config_arg = getattr(args, "config", None)
-    backend_extra_args = list(getattr(args, "backend_extra_args", []))
-    selected_backend, backend = resolve_backend_spec_for_native_args(
-        allow_auto=bool(getattr(args, "auto", False)),
-        needs_native_args=bool(config_arg is not None or backend_extra_args),
-    )
-    profile = resolve_backend_profile_arg(config_arg, selected_backend)
-    if profile and profile.backend_id and not selected_backend:
-        selected_backend = profile.backend_id
-        backend = local_backends().get(selected_backend)
-    backend_extras = combine_backend_extra_args(
-        backend=backend,
-        command_name="load",
-        profile=profile,
-        cli_tokens=backend_extra_args,
-    ) if backend is not None else ParsedBackendExtraArgs()
+    verbose = getattr(args, "verbose", False)
+    spinner = _Spinner("Starting service...")
+    if not verbose:
+        spinner.start()
 
-    model_input = args.model
-    if not model_input:
-        raise SystemExit("Please specify a model path with -m or --model.")
-    model_ref = resolve_model_reference(model_input)
-    mmproj_input = args.mmproj
-    mmproj_file = resolve_existing_path(mmproj_input, "mmproj file") if mmproj_input else None
-    effective_ctx_size = args.ctx_size if args.ctx_size is not None else backend_extras.ctx_size
-    if effective_ctx_size is not None and effective_ctx_size <= 0:
-        raise SystemExit("--ctx-size must be a positive integer")
-
-    payload: dict[str, Any] = {"model": str(model_ref)}
-    if mmproj_file:
-        payload["mmproj"] = str(mmproj_file)
-    if effective_ctx_size is not None:
-        payload["ctx_size"] = effective_ctx_size
-    if selected_backend:
-        payload["backend"] = selected_backend
-    if backend_extras.launch_args:
-        payload["launch_args"] = backend_extras.launch_args
-    if profile is not None and backend is not None:
-        profile_chat_extras = combine_backend_extra_args(
-            backend=backend,
-            command_name="chat",
-            profile=None,
-            cli_tokens=list(profile.infer_extra_args),
+    try:
+        config_arg = getattr(args, "config", None)
+        backend_extra_args = list(getattr(args, "backend_extra_args", []))
+        selected_backend, backend = resolve_backend_spec_for_native_args(
+            allow_auto=bool(getattr(args, "auto", False)),
+            needs_native_args=bool(config_arg is not None or backend_extra_args),
         )
-        if profile_chat_extras.request_overrides:
-            payload["request_defaults"] = profile_chat_extras.request_overrides
+        spinner.update("Preparing model...")
+        profile = resolve_backend_profile_arg(config_arg, selected_backend)
+        if profile and profile.backend_id and not selected_backend:
+            selected_backend = profile.backend_id
+            backend = local_backends().get(selected_backend)
+        backend_extras = combine_backend_extra_args(
+            backend=backend,
+            command_name="load",
+            profile=profile,
+            cli_tokens=backend_extra_args,
+        ) if backend is not None else ParsedBackendExtraArgs()
 
-    _status, response, _ = request_json("POST", "/omni/model/select", payload=payload, timeout=600.0)
+        model_input = args.model
+        if not model_input:
+            spinner.stop()
+            raise SystemExit("Please specify a model path with -m or --model.")
+        model_ref = resolve_model_reference(model_input)
+        mmproj_input = args.mmproj
+        mmproj_file = resolve_existing_path(mmproj_input, "mmproj file") if mmproj_input else None
+        effective_ctx_size = args.ctx_size if args.ctx_size is not None else backend_extras.ctx_size
+        if effective_ctx_size is not None and effective_ctx_size <= 0:
+            spinner.stop()
+            raise SystemExit("--ctx-size must be a positive integer")
+
+        payload: dict[str, Any] = {"model": str(model_ref)}
+        if mmproj_file:
+            payload["mmproj"] = str(mmproj_file)
+        if effective_ctx_size is not None:
+            payload["ctx_size"] = effective_ctx_size
+        if selected_backend:
+            payload["backend"] = selected_backend
+        if backend_extras.launch_args:
+            payload["launch_args"] = backend_extras.launch_args
+        if profile is not None and backend is not None:
+            profile_chat_extras = combine_backend_extra_args(
+                backend=backend,
+                command_name="chat",
+                profile=None,
+                cli_tokens=list(profile.infer_extra_args),
+            )
+            if profile_chat_extras.request_overrides:
+                payload["request_defaults"] = profile_chat_extras.request_overrides
+
+        response = _stream_model_load(payload, timeout=600.0, verbose=verbose, spinner=spinner)
+    except SystemExit:
+        spinner.stop()
+        raise
+
     if not isinstance(response, dict):
         raise SystemExit("Failed to load the model.")
     save_selected_backend_name(str(response.get("selected_backend") or selected_backend or ""))
@@ -702,6 +716,136 @@ def print_model_load(args: argparse.Namespace) -> int:
     print(f"mmproj: {response.get('selected_mmproj') or '-'}")
     print(f"ctx-size: {response.get('selected_ctx_size') or '-'}")
     return 0
+
+
+_SPINNER_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
+_SPINNER_INTERVAL = 0.08  # ~12 fps
+
+
+class _Spinner:
+    """Thread-driven spinner that renders independently of the event stream."""
+
+    def __init__(self, text: str = "Loading model...") -> None:
+        self._text = text
+        self._start = time.monotonic()
+        self._active = False
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if not self._is_tty:
+            return
+        self._active = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def update(self, text: str) -> None:
+        with self._lock:
+            self._text = text
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join()
+        if self._active:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+            self._active = False
+
+    def _run(self) -> None:
+        idx = 0
+        while not self._stop_event.is_set():
+            with self._lock:
+                text = self._text
+            elapsed = time.monotonic() - self._start
+            frame = _SPINNER_FRAMES[idx % len(_SPINNER_FRAMES)]
+            idx += 1
+            sys.stdout.write(f"\r{frame} {text} ({elapsed:.1f}s)\033[K")
+            sys.stdout.flush()
+            self._stop_event.wait(_SPINNER_INTERVAL)
+
+
+def _stream_model_load(
+    payload: dict[str, Any],
+    timeout: float = 600.0,
+    verbose: bool = False,
+    spinner: _Spinner | None = None,
+) -> dict[str, Any]:
+    """POST /omni/model/select with SSE progress, falling back to JSON."""
+    url = f"{service_base_url()}/omni/model/select"
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url=url,
+        data=body,
+        method="POST",
+        headers={
+            "Accept": "text/event-stream, application/json",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+    )
+    if spinner is None:
+        spinner = _Spinner()
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            content_type = response.headers.get("Content-Type", "")
+            if "text/event-stream" not in content_type:
+                spinner.stop()
+                raw = response.read()
+                parsed = try_parse_json(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+                raise SystemExit("Failed to load the model.")
+
+            result: dict[str, Any] = {}
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                event_type = event.get("type", "")
+                if event_type == "status":
+                    msg = event.get("message", "")
+                    if verbose:
+                        print(msg)
+                    elif msg:
+                        spinner.update(msg)
+                elif event_type == "log":
+                    msg = event.get("message", "")
+                    if verbose and msg:
+                        print(f"  {msg}")
+                elif event_type == "done":
+                    spinner.stop()
+                    elapsed = event.get("elapsed_s")
+                    if elapsed is not None:
+                        print(f"Backend ready ({elapsed}s)")
+                    result = event
+                elif event_type == "error":
+                    spinner.stop()
+                    raise SystemExit(event.get("message", "model loading failed"))
+            spinner.stop()
+            return result
+    except urllib.error.HTTPError as exc:
+        spinner.stop()
+        raw = exc.read().decode("utf-8", errors="replace")
+        parsed = try_parse_json(raw.encode("utf-8"))
+        if isinstance(parsed, dict):
+            error = parsed.get("error", {})
+            message = error.get("message", raw) if isinstance(error, dict) else raw
+        else:
+            message = raw
+        raise SystemExit(f"Model loading failed (HTTP {exc.code}): {message}") from exc
+    except urllib.error.URLError as exc:
+        spinner.stop()
+        raise SystemExit(f"Unable to reach local OmniInfer service: {exc}") from exc
 
 
 def print_thinking_show() -> int:
@@ -1092,6 +1236,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the selected backend config JSON, or pass an explicit config path",
     )
     model_load.add_argument("--auto", action="store_true", help="Let OmniInfer auto-select a backend for this command instead of using the saved selection")
+    model_load.add_argument("--verbose", action="store_true", help="Show full backend log output during loading")
 
     thinking = sub.add_parser("thinking", help="Default thinking controls")
     thinking_sub = thinking.add_subparsers(dest="thinking_command")

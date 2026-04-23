@@ -13,6 +13,7 @@ from service_core.platforms.common import (
     pick_available_port,
     resolve_input_path,
     wait_http_ready,
+    wait_http_ready_with_progress,
 )
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
@@ -44,4 +45,5 @@ __all__ = [
     "pick_available_port",
     "resolve_input_path",
     "wait_http_ready",
+    "wait_http_ready_with_progress",
 ]

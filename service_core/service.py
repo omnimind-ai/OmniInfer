@@ -412,6 +412,66 @@ class OmniHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             return
 
+    def _stream_model_select_sse(
+        self,
+        model: str,
+        mmproj: str | None,
+        backend: str | None,
+        ctx_size: int | None,
+        launch_args: list[str] | None,
+        request_defaults: dict[str, Any] | None,
+    ) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.end_headers()
+
+        client_gone = False
+
+        def emit(event: dict[str, Any]) -> None:
+            nonlocal client_gone
+            if client_gone:
+                return
+            try:
+                body = json.dumps(event, ensure_ascii=False).encode("utf-8")
+                self.wfile.write(b"data: " + body + b"\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                client_gone = True
+
+        _load_start = time.perf_counter()
+        try:
+            result = self.manager.select_model(
+                model=model,
+                mmproj=mmproj,
+                backend_id=backend,
+                ctx_size=ctx_size,
+                launch_args=launch_args,
+                request_defaults=request_defaults,
+                on_progress=emit,
+            )
+            _elapsed = round(time.perf_counter() - _load_start, 1)
+            emit({"type": "done", "elapsed_s": _elapsed, **result})
+        except (ValueError, FileNotFoundError) as e:
+            emit({"type": "error", "message": str(e)})
+        except RuntimeError as e:
+            emit({"type": "error", "message": str(e)})
+        except Exception as e:
+            logger.exception("Unhandled error in streaming model select")
+            emit({"type": "error", "message": f"internal error: {e}"})
+
+        if not client_gone:
+            try:
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                pass
+
     def _read_json(self) -> dict[str, Any]:
         n = int(self.headers.get("Content-Length", "0") or "0")
         raw = self.rfile.read(n) if n > 0 else b"{}"
@@ -602,6 +662,17 @@ class OmniHandler(BaseHTTPRequestHandler):
                 return
             if not model:
                 self._send_json(400, {"error": {"message": "field 'model' is required"}})
+                return
+            accept = self.headers.get("Accept", "")
+            if "text/event-stream" in accept:
+                self._stream_model_select_sse(
+                    model=model,
+                    mmproj=mmproj,
+                    backend=backend,
+                    ctx_size=ctx_size,
+                    launch_args=launch_args,
+                    request_defaults=request_defaults,
+                )
                 return
             try:
                 result = self.manager.select_model(
