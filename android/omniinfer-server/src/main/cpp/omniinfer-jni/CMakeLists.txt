@@ -126,6 +126,7 @@ if(OMNIINFER_BACKEND_LLAMA_CPP)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE OMNIINFER_BACKEND_LLAMA_CPP=1)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
             ${LLAMA_CPP_DIR} ${LLAMA_CPP_DIR}/common ${LLAMA_CPP_DIR}/include
+            ${LLAMA_CPP_DIR}/vendor
             ${LLAMA_CPP_DIR}/ggml/include ${LLAMA_CPP_DIR}/ggml/src
             ${LLAMA_CPP_DIR}/tools/mtmd)
     target_link_libraries(${CMAKE_PROJECT_NAME} llama common mtmd)
