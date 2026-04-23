@@ -636,7 +636,7 @@ def combine_backend_extra_args(
 
 def print_model_load(args: argparse.Namespace) -> int:
     verbose = getattr(args, "verbose", False)
-    spinner = _Spinner()
+    spinner = _Spinner("Starting service...")
     if not verbose:
         spinner.start()
 
@@ -647,6 +647,7 @@ def print_model_load(args: argparse.Namespace) -> int:
             allow_auto=bool(getattr(args, "auto", False)),
             needs_native_args=bool(config_arg is not None or backend_extra_args),
         )
+        spinner.update("Preparing model...")
         profile = resolve_backend_profile_arg(config_arg, selected_backend)
         if profile and profile.backend_id and not selected_backend:
             selected_backend = profile.backend_id
@@ -712,8 +713,8 @@ _SPINNER_INTERVAL = 0.08  # ~12 fps
 class _Spinner:
     """Thread-driven spinner that renders independently of the event stream."""
 
-    def __init__(self) -> None:
-        self._text = "Loading model..."
+    def __init__(self, text: str = "Loading model...") -> None:
+        self._text = text
         self._start = time.monotonic()
         self._active = False
         self._stop_event = threading.Event()
