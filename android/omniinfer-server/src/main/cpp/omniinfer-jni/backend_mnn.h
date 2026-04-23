@@ -27,17 +27,14 @@ public:
       cache_dir_ = (slash != std::string::npos) ? model_path.substr(0, slash) : "/tmp";
     }
 
-    n_threads_ = n_threads;
+    int eff_threads = n_threads > 0 ? n_threads : 6;  // Default 6: big cores only, avoid slow efficiency cores
+    n_threads_ = eff_threads;
     n_ctx_ = n_ctx > 0 ? n_ctx : 16384;
-    // Only override settings the user explicitly requested; let model config.json
-    // defaults (thread_num, precision, memory, etc.) stand otherwise.
     std::ostringstream cfg;
-    cfg << "{";
-    bool first = true;
-    if (n_threads > 0) { cfg << "\"thread_num\":" << n_threads; first = false; }
-    if (n_ctx > 0) { if (!first) cfg << ","; cfg << "\"max_new_tokens\":" << n_ctx; }
+    cfg << "{\"thread_num\":" << eff_threads;
+    if (n_ctx > 0) cfg << ",\"max_new_tokens\":" << n_ctx;
     cfg << "}";
-    if (cfg.str() != "{}") llm_->set_config(cfg.str());
+    llm_->set_config(cfg.str());
 
     if (!config_json.empty()) llm_->set_config(config_json);
 
