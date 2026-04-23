@@ -8,9 +8,25 @@ Base URL:
 http://127.0.0.1:9000
 ```
 
+The port defaults to `9000` and can be changed via `config/omniinfer.json` or the CLI `--port` flag.
+
 All requests use JSON unless noted otherwise.
 
 > **Windows note:** `omniinfer_gateway.py` auto-hides its console window by default. To run in the foreground with visible log output, use `python omniinfer_gateway.py --window-mode visible`.
+
+> **Multi-instance:** You can run multiple gateways on different ports, each serving a different model:
+>
+> ```bash
+> # Terminal 1 – large model on default port 9000
+> omniinfer model load -m /path/to/large-model.gguf
+>
+> # Terminal 2 – small model on port 9001
+> omniinfer --port 9001 model load -m /path/to/small-model.gguf
+>
+> # Query each instance independently
+> curl http://127.0.0.1:9000/v1/chat/completions -d '{"messages":[...]}'
+> curl http://127.0.0.1:9001/v1/chat/completions -d '{"messages":[...]}'
+> ```
 
 ## 1. Health check
 

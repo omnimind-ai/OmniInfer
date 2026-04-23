@@ -12,7 +12,7 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger("platform")
 
@@ -52,6 +52,66 @@ def wait_http_ready(host: str, port: int, timeout_s: int) -> bool:
     deadline = time.time() + timeout_s
     url = f"http://{host}:{port}/health"
     while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                if resp.getcode() in (200, 503):
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def wait_http_ready_with_progress(
+    host: str,
+    port: int,
+    timeout_s: int,
+    proc: subprocess.Popen[Any],
+    log_path: Path,
+    on_progress: Callable[[dict[str, Any]], None],
+) -> bool:
+    """Like wait_http_ready, but tails the backend log and checks process liveness."""
+    logger.debug("Waiting for %s:%d with progress (timeout=%ds)", host, port, timeout_s)
+    deadline = time.time() + timeout_s
+    url = f"http://{host}:{port}/health"
+    file_pos = 0
+    try:
+        file_pos = log_path.stat().st_size
+    except OSError:
+        pass
+
+    while time.time() < deadline:
+        # Tail new log content
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(file_pos)
+                new_content = f.read()
+                file_pos = f.tell()
+        except OSError:
+            new_content = ""
+        if new_content:
+            for line in new_content.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    on_progress({"type": "log", "message": stripped})
+
+        # Check process alive
+        if proc.poll() is not None:
+            # Process exited — read any remaining output
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(file_pos)
+                    remainder = f.read()
+            except OSError:
+                remainder = ""
+            if remainder:
+                for line in remainder.splitlines():
+                    stripped = line.strip()
+                    if stripped:
+                        on_progress({"type": "log", "message": stripped})
+            return False
+
+        # Health check
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if resp.getcode() in (200, 503):
@@ -184,7 +244,37 @@ def get_available_cuda_memory_bytes() -> int | None:
     return max(free_mib_values) * 1024 * 1024
 
 
+def _is_amd_gpu_present_windows() -> bool:
+    """Detect AMD GPU on Windows via WMI (Win32_VideoController)."""
+    try:
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'AMD|Radeon' }).Name",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            **hidden_subprocess_kwargs(),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            logger.debug("AMD GPU detected via WMI: %s", result.stdout.strip().splitlines()[0])
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return False
+
+
 def get_available_rocm_memory_bytes() -> int | None:
+    # Windows: HIP backend does not use rocm-smi; detect AMD GPU via WMI instead.
+    if os.name == "nt":
+        if _is_amd_gpu_present_windows():
+            # Return system available memory as a proxy — HIP on Windows uses shared memory.
+            return get_available_memory_bytes()
+        return None
+
     candidate_commands = [
         ["rocm-smi", "--showmeminfo", "vram", "--json"],
         ["/opt/rocm/bin/rocm-smi", "--showmeminfo", "vram", "--json"],
@@ -231,6 +321,55 @@ def get_available_rocm_memory_bytes() -> int | None:
             return max(free_bytes)
 
     return None
+
+
+def _has_physical_gpu_render_node() -> bool:
+    """Check if any /dev/dri/renderD* node belongs to a real GPU (not software renderer)."""
+    render_nodes = sorted(Path("/dev/dri").glob("renderD*"))
+    if not render_nodes:
+        return False
+    # Read the kernel driver name via sysfs to filter out software renderers
+    software_drivers = {"vgem", "virtio_gpu", "bochs", "cirrus", "qxl"}
+    for node in render_nodes:
+        try:
+            # /sys/class/drm/renderD128/device/driver -> ../../bus/pci/drivers/amdgpu
+            driver_link = Path(f"/sys/class/drm/{node.name}/device/driver")
+            if driver_link.is_symlink():
+                driver_name = Path(os.readlink(driver_link)).name
+                if driver_name not in software_drivers:
+                    return True
+            else:
+                # No sysfs driver info (e.g. some SoC setups) — trust the node
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def is_vulkan_gpu_present() -> bool:
+    """Return True if a physical GPU usable by Vulkan is detected."""
+    # Linux: check /dev/dri/renderD* with driver filtering
+    # Works for NVIDIA, AMD, Intel, ARM Mali/Adreno, etc.
+    if _has_physical_gpu_render_node():
+        return True
+    # Fallback: try vulkaninfo (covers non-Linux or unusual setups)
+    try:
+        result = subprocess.run(
+            ["vulkaninfo", "--summary"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            **hidden_subprocess_kwargs(),
+        )
+        if result.returncode == 0 and "deviceType" in result.stdout:
+            # Exclude llvmpipe / SwiftShader (CPU-based Vulkan implementations)
+            if "cpu" not in result.stdout.lower() and "llvmpipe" not in result.stdout.lower():
+                return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return False
 
 
 def bytes_to_gib(value: int) -> float:

@@ -270,6 +270,11 @@ port_in_use() {
 }
 
 if port_in_use "${OMNI_PORT}"; then
+    # Try shutting down an existing OmniInfer gateway on this port
+    curl -sS -X POST "http://127.0.0.1:${OMNI_PORT}/omni/shutdown" >/dev/null 2>&1 || true
+    sleep 3
+fi
+if port_in_use "${OMNI_PORT}"; then
     warn "Port ${OMNI_PORT} is in use, looking for a free port ..."
     for try_port in 9001 9002 9003 9004 9005 9010 9020 9050 9100 8900 8800 19000; do
         if ! port_in_use "${try_port}"; then
@@ -325,8 +330,13 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     BACKEND_IDS+=("llama.cpp-mtmd");   BACKEND_DESCS+=("llama.cpp-mtmd  —  Multimodal (text + vision)")
 else
     # Desktop: query gateway API for compatible backends (hardware-matched)
-    # First ensure the service is running
+    # First ensure the service is running, then wait for it to be ready
     "${INSTALL_DIR}/omniinfer" status >/dev/null 2>&1 || true
+    for _i in $(seq 1 30); do
+        _health=$(curl -s -m 2 "http://127.0.0.1:${OMNI_PORT}/health" 2>/dev/null) || _health=""
+        if echo "${_health}" | grep -q '"status"'; then break; fi
+        sleep 1
+    done
 
     _backends_json=$(curl -sS "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
     _recommended=$(echo "${_backends_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('recommended',''))" 2>/dev/null) || _recommended=""
@@ -380,7 +390,7 @@ for b in d.get('data', []):
                 last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
                 BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
             fi
-        done <<< "$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null)"
+        done <<< "$("${INSTALL_DIR}/omniinfer" backend list --scope compatible 2>/dev/null)"
     fi
 fi
 

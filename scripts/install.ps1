@@ -2,7 +2,7 @@
 #  OmniInfer interactive installer for Windows (PowerShell)
 #
 #  Usage:
-#    irm https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1 | iex
+#    irm "https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1?$(Get-Random)" | iex
 # ──────────────────────────────────────────────────────────────
 
 param(
@@ -267,6 +267,20 @@ if (-not (Test-Path (Join-Path $InstallDir "omniinfer.py"))) {
 }
 Write-Ok "Repository ready at $InstallDir"
 
+# Hand off to the repo's own copy of this script so that fixes in the repo
+# take effect immediately, even when the irm-downloaded script is stale.
+$repoScript = Join-Path $InstallDir "scripts\install.ps1"
+if (-not $env:OMNIINFER_INSTALL_HANDOFF -and (Test-Path $repoScript)) {
+    $env:OMNIINFER_INSTALL_HANDOFF = "1"
+    $handoffArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $repoScript, "-InstallDir", $InstallDir)
+    if ($Model)   { $handoffArgs += @("-m", $Model) }
+    if ($Backend) { $handoffArgs += @("-Backend", $Backend) }
+    if ($SkipBuild)      { $handoffArgs += "-SkipBuild" }
+    if ($NonInteractive) { $handoffArgs += "-NonInteractive" }
+    & powershell.exe @handoffArgs
+    exit $LASTEXITCODE
+}
+
 # ── Ensure a usable port ────────────────────────────────────
 
 $OmniPort = 9000
@@ -285,6 +299,20 @@ function Test-PortFree {
     }
 }
 
+if (-not (Test-PortFree $OmniPort)) {
+    # Try shutting down an existing OmniInfer gateway on this port
+    # Also try shutting down gateway on ports from previous config overrides
+    foreach ($shutdownPort in @($OmniPort, 9001, 9002, 9003, 9004, 9005)) {
+        try {
+            $null = Invoke-RestMethod -Uri "http://127.0.0.1:$shutdownPort/omni/shutdown" -Method POST -TimeoutSec 3 -ErrorAction Stop
+            Write-Info "Shut down existing gateway on port $shutdownPort"
+        } catch {}
+    }
+    Start-Sleep -Seconds 3
+    # Remove stale port config so gateway starts on default port
+    $staleConfig = Join-Path $InstallDir "config\omniinfer.json"
+    if (Test-Path $staleConfig) { Remove-Item $staleConfig -Force -ErrorAction SilentlyContinue }
+}
 if (-not (Test-PortFree $OmniPort)) {
     Write-Warn "Port $OmniPort is in use, looking for a free port ..."
     $found = $false
@@ -325,26 +353,28 @@ function Invoke-OmniInfer {
 }
 
 # Cleanup: shut down any gateway service started by the CLI on script exit
-$_gatewayPort = 9000
-try { $_gatewayPort = [int](Get-Content (Join-Path $InstallDir "release\config\omniinfer.json") | ConvertFrom-Json).port } catch {}
 Register-EngineEvent PowerShell.Exiting -Action {
-    try { Invoke-RestMethod -Uri "http://127.0.0.1:$($_gatewayPort)/omni/shutdown" -Method POST -TimeoutSec 3 2>$null } catch {}
+    try { Invoke-OmniInfer shutdown 2>$null } catch {}
 } | Out-Null
 
 $BackendIds   = @()
 $BackendDescs = @()
-# Query the gateway API for compatible backends (hardware-matched)
+# Query compatible backends via CLI --json flag (avoids gateway HTTP and proxy issues)
 $_backendsJson = $null
 try {
-    Invoke-OmniInfer status 2>$null | Out-Null  # ensure gateway is running
-    $_backendsJson = Invoke-RestMethod -Uri "http://127.0.0.1:$_gatewayPort/omni/backends?scope=compatible" -TimeoutSec 15 -ErrorAction Stop
+    $prevEAP3 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $rawJson = Invoke-OmniInfer backend list --scope compatible --json 2>$null
+    $ErrorActionPreference = $prevEAP3
+    if ($rawJson) { $_backendsJson = $rawJson | ConvertFrom-Json }
 } catch {}
 
 if ($_backendsJson -and $_backendsJson.data) {
     foreach ($b in $_backendsJson.data) {
         $BackendIds   += $b.id
         $desc = $b.description
-        if ($desc) { $BackendDescs += "$($b.id)  -  $desc" } else { $BackendDescs += $b.id }
+        $label = if ($desc) { "$($b.id)  -  $desc" } else { $b.id }
+        if ($b.binary_exists) { $label += "  (installed)" }
+        $BackendDescs += $label
     }
     if ($_backendsJson.recommended) {
         # Move recommended backend to the top of the list
@@ -359,7 +389,7 @@ if ($_backendsJson -and $_backendsJson.data) {
     }
 } else {
     # Fallback: parse CLI text output
-    $rawOutput = Invoke-OmniInfer backend list 2>$null
+    $rawOutput = Invoke-OmniInfer backend list --scope compatible 2>$null
     $currentId = ""
     foreach ($line in $rawOutput -split "`n") {
         $line = $line.Trim()
@@ -381,63 +411,226 @@ if ($BackendIds.Count -eq 0) {
 Write-Info "Platform: Windows"
 Write-Host ""
 
+$PrebuiltInstalled = $false
+
 if ($Backend) {
     $SelectedBackend = $Backend
 } else {
+    # Append "Download prebuilt version" as the last menu option
+    $menuDescs = [System.Collections.ArrayList]::new($BackendDescs)
+    [void]$menuDescs.Add("Download prebuilt version  (skip compilation)")
+
     Write-Host "  Available backends (arrow keys to move, Enter to select):"
     Write-Host ""
 
-    $idx = Select-Menu -Default 0 -Options $BackendDescs
-    $SelectedBackend = $BackendIds[$idx]
+    $idx = Select-Menu -Default 0 -Options $menuDescs
+
+    if ($idx -lt $BackendIds.Count) {
+        # User selected a normal backend (build from source)
+        $SelectedBackend = $BackendIds[$idx]
+    } else {
+        # User selected "Download prebuilt version"
+        $prebuiltJsonPath = Join-Path $InstallDir "scripts\prebuilt_backends.json"
+        if (-not (Test-Path $prebuiltJsonPath)) {
+            Stop-Fatal "Prebuilt mapping file not found: $prebuiltJsonPath"
+        }
+        $prebuiltMap = (Get-Content $prebuiltJsonPath -Raw | ConvertFrom-Json).windows
+
+        # Filter: compatible backends that have a prebuilt URL
+        $prebuiltIds = [System.Collections.ArrayList]::new()
+        $prebuiltDescs = [System.Collections.ArrayList]::new()
+        foreach ($bid in $BackendIds) {
+            if ($prebuiltMap.PSObject.Properties.Name -contains $bid) {
+                [void]$prebuiltIds.Add($bid)
+                $origDesc = $BackendDescs[$BackendIds.IndexOf($bid)]
+                [void]$prebuiltDescs.Add("$origDesc  (prebuilt)")
+            }
+        }
+
+        if ($prebuiltIds.Count -eq 0) {
+            Stop-Fatal "No prebuilt backends available for this platform."
+        }
+
+        Write-Host ""
+        Write-Host "  Available prebuilt backends:"
+        Write-Host ""
+        $pidx = Select-Menu -Default 0 -Options $prebuiltDescs
+        $SelectedBackend = $prebuiltIds[$pidx]
+        $prebuiltUrl = $prebuiltMap.$SelectedBackend
+
+        Write-Ok "Selected prebuilt: $SelectedBackend"
+        Write-Host ""
+
+        # Download and install prebuilt backend
+        Write-Info "Downloading prebuilt $SelectedBackend ..."
+        $zipName = "omni-prebuilt-$SelectedBackend.zip"
+        $zipPath = Join-Path $env:TEMP $zipName
+        $extractDir = Join-Path $env:TEMP "omni-prebuilt-$SelectedBackend"
+
+        # GitHub mirror prefixes for regions where github.com is unreliable.
+        # Tried in order; original GitHub URL is always the final fallback.
+        $GhMirrorPrefixes = @(
+            "https://ghfast.top/"
+        )
+
+        # Build ordered list: mirrors first, then direct GitHub
+        $downloadUrls = @()
+        foreach ($prefix in $GhMirrorPrefixes) {
+            $downloadUrls += "${prefix}${prebuiltUrl}"
+        }
+        $downloadUrls += $prebuiltUrl
+
+        # Auto-detect system proxy when no proxy env vars are set
+        if (-not $env:HTTPS_PROXY -and -not $env:HTTP_PROXY) {
+            try {
+                $inetSettings = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -ErrorAction SilentlyContinue
+                if ($inetSettings.ProxyEnable -eq 1 -and $inetSettings.ProxyServer) {
+                    $sysProxy = $inetSettings.ProxyServer
+                    if ($sysProxy -match "https?=([^;]+)") { $sysProxy = $Matches[1] }
+                    $env:HTTPS_PROXY = "http://$sysProxy"
+                    $env:HTTP_PROXY  = "http://$sysProxy"
+                    Write-Info "Auto-detected system proxy: $sysProxy"
+                }
+            } catch {}
+        }
+
+        # Use Windows-bundled curl.exe (System32) to avoid MSYS2/Git curl cert issues
+        $systemCurl = Join-Path $env:SystemRoot "System32\curl.exe"
+        $downloaded = $false
+
+        foreach ($dlUrl in $downloadUrls) {
+            $urlLabel = if ($dlUrl -eq $prebuiltUrl) { "GitHub" } else { "mirror" }
+            Write-Info "Trying $urlLabel ..."
+
+            if (Test-Path $systemCurl) {
+                if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -lt 1024) {
+                    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+                }
+                $prevEAP2 = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+                & $systemCurl -L --retry 3 --retry-delay 3 --connect-timeout 15 -C - -o $zipPath $dlUrl 2>&1 | Out-Null
+                $curlExit = $LASTEXITCODE; $ErrorActionPreference = $prevEAP2
+                if ($curlExit -eq 0 -and (Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1048576) {
+                    $downloaded = $true; break
+                }
+            } else {
+                try {
+                    Invoke-WebRequest -Uri $dlUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 300
+                    if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1048576) {
+                        $downloaded = $true; break
+                    }
+                } catch {}
+            }
+            Write-Warn "$urlLabel download failed, trying next source ..."
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        }
+
+        if (-not $downloaded) {
+            Write-Err "All download sources failed."
+            Write-Host ""
+            Write-Host "  Please download manually:" -ForegroundColor Yellow
+            Write-Host "    $prebuiltUrl" -ForegroundColor White
+            Write-Host ""
+            Write-Host "  Save the file to:" -ForegroundColor Yellow
+            Write-Host "    $zipPath" -ForegroundColor White
+            Write-Host "  Then re-run this script." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  Or set a proxy:" -ForegroundColor Yellow
+            Write-Host '    $env:HTTPS_PROXY = "http://127.0.0.1:PORT"' -ForegroundColor White
+            Write-Host ""
+            Write-Host "Press any key to exit ..." -ForegroundColor DarkGray
+            try { [void][Console]::ReadKey($true) } catch { Start-Sleep -Seconds 10 }
+            exit 1
+        }
+        Write-Ok "Downloaded ($([math]::Round((Get-Item $zipPath).Length / 1MB)) MB)"
+
+        # Extract and install to runtime directory
+        if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+
+        $runtimeDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend"
+        $binDir = Join-Path $runtimeDir "bin"
+        New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $runtimeDir "logs") | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $runtimeDir "models") | Out-Null
+
+        # Copy all files from the extracted archive to bin/
+        # llama.cpp release zips may have files at root or in a subdirectory
+        $extractedItems = Get-ChildItem $extractDir
+        if ($extractedItems.Count -eq 1 -and $extractedItems[0].PSIsContainer) {
+            # Single subdirectory — copy its contents
+            Copy-Item -Path (Join-Path $extractedItems[0].FullName "*") -Destination $binDir -Recurse -Force
+        } else {
+            # Files at root
+            Copy-Item -Path (Join-Path $extractDir "*") -Destination $binDir -Recurse -Force
+        }
+
+        # Cleanup temp files
+        Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
+
+        # Verify
+        $serverExe = Get-ChildItem $binDir -Filter "llama-server*" -File -ErrorAction SilentlyContinue
+        if (-not $serverExe) {
+            Stop-Fatal "Prebuilt install failed: llama-server not found in $binDir"
+        }
+        Write-Ok "Prebuilt backend installed to $runtimeDir"
+        $PrebuiltInstalled = $true
+    }
 }
 
-Write-Ok "Selected: $SelectedBackend"
+if (-not $PrebuiltInstalled) {
+    Write-Ok "Selected: $SelectedBackend"
+}
 Write-Host ""
 
 # Select backend via CLI
 Invoke-OmniInfer select $SelectedBackend 2>$null
 
 # ── Step 4: Build backend ───────────────────────────────────
-# Windows build scripts do NOT auto-bootstrap submodules.
 
-Write-Info "Step 4/6: Building backend ..."
-
-$llamaCppDir = Join-Path $InstallDir "framework\llama.cpp"
-if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
-    Write-Info "Initializing llama.cpp submodule ..."
-    git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
-    Write-Ok "Submodule ready"
-    Write-Host ""
-}
-
-# Discover build script by convention: scripts/platforms/windows/<backend_id>/build.ps1
-$fullScript = Join-Path $InstallDir "scripts\platforms\windows\$SelectedBackend\build.ps1"
-if (-not (Test-Path $fullScript)) {
-    Stop-Fatal "Build script not found: $fullScript"
-}
-
-if ($SkipBuild) {
-    Write-Info "Skipping build (-SkipBuild)"
+if ($PrebuiltInstalled) {
+    Write-Info "Step 4/6: Backend already installed (prebuilt), skipping build"
 } else {
-    $runtimeCheck = Invoke-OmniInfer backend list 2>$null
-    $isBuilt = ($runtimeCheck -join "`n") -match "$([regex]::Escape($SelectedBackend))[\s\S]*?Runtime available: yes"
-    if ($isBuilt) {
-        Write-Ok "Backend $SelectedBackend already built, skipping"
+    Write-Info "Step 4/6: Building backend ..."
+
+    # Windows build scripts do NOT auto-bootstrap submodules.
+    $llamaCppDir = Join-Path $InstallDir "framework\llama.cpp"
+    if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
+        Write-Info "Initializing llama.cpp submodule ..."
+        git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
+        Write-Ok "Submodule ready"
+        Write-Host ""
+    }
+
+    # Discover build script by convention: scripts/platforms/windows/<backend_id>/build.ps1
+    $fullScript = Join-Path $InstallDir "scripts\platforms\windows\$SelectedBackend\build.ps1"
+    if (-not (Test-Path $fullScript)) {
+        Stop-Fatal "Build script not found: $fullScript"
+    }
+
+    if ($SkipBuild) {
+        Write-Info "Skipping build (-SkipBuild)"
     } else {
-        Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
-        powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host ""
-            Write-Err "Build failed (exit code $LASTEXITCODE). See the messages above for details."
-            exit 1
+        $runtimeCheck = Invoke-OmniInfer backend list 2>$null
+        $isBuilt = ($runtimeCheck -join "`n") -match "$([regex]::Escape($SelectedBackend))[\s\S]*?Runtime available: yes"
+        if ($isBuilt) {
+            Write-Ok "Backend $SelectedBackend already built, skipping"
+        } else {
+            Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
+            powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host ""
+                Write-Err "Build failed (exit code $LASTEXITCODE). See the messages above for details."
+                exit 1
+            }
+            # Verify build produced the expected binary
+            $binDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
+            if (-not (Test-Path $binDir) -or (Get-ChildItem $binDir -File -ErrorAction SilentlyContinue).Count -eq 0) {
+                Write-Err "Build completed but no binaries found in $binDir"
+                exit 1
+            }
+            Write-Ok "Build complete"
         }
-        # Verify build produced the expected binary
-        $binDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
-        if (-not (Test-Path $binDir) -or (Get-ChildItem $binDir -File -ErrorAction SilentlyContinue).Count -eq 0) {
-            Write-Err "Build completed but no binaries found in $binDir"
-            exit 1
-        }
-        Write-Ok "Build complete"
     }
 }
 Write-Host ""
