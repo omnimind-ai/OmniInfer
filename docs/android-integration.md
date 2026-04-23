@@ -52,13 +52,13 @@ project(":omniinfer-server").projectDir =
 Add the module dependency and required Ktor libraries:
 
 ```kotlin
-val ktorVersion = "3.1.3"
+val ktorVersion = "3.1.3"  // tested version — other 3.x versions may work
 
 dependencies {
     implementation(project(":omniinfer-server"))
 
     // Ktor (HTTP server) — omniinfer-server declares these as compileOnly,
-    // so the app must provide them.
+    // so the app must provide them. The versions below are tested and recommended.
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-cio:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
@@ -67,6 +67,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
 ```
+
+> **Why compileOnly?** This avoids transitive dependency conflicts when your app already uses Ktor or kotlinx-serialization at a different version. You control the exact versions in your app's dependency block.
 
 ### Backend Selection (CMake Arguments)
 
@@ -173,7 +175,7 @@ val success: Boolean = OmniInferServer.loadModel(
 2. Starts `OmniInferService` as a foreground service (notification required by Android).
 3. The Ktor HTTP server binds to `127.0.0.1:<port>`.
 
-If you call `loadModel()` again with a different model/backend, the previous model is automatically unloaded first. If called with the same model, it returns immediately.
+**Single-model behavior:** Only one model can be loaded at a time. Calling `loadModel()` with a different model/backend automatically unloads the previous one first. Calling with the same model is a no-op and returns immediately.
 
 **Model Paths:**
 
@@ -267,6 +269,47 @@ curl -s -X POST http://127.0.0.1:9099/v1/cancel
 | Graceful stop (`/v1/cancel`) | Finishes normally (finish + usage + `[DONE]`) | Preserved | Prefix reuse (`cached_tokens > 0`) |
 | Hard cancel (disconnect) | Interrupted | Cleared | Full prefill (`cached_tokens = 0`) |
 
+### Streaming Usage and Performance Metrics
+
+The final SSE chunk of a streaming response contains detailed `usage` and `performance` fields:
+
+```json
+{
+  "usage": {
+    "prompt_tokens": 460,
+    "completion_tokens": 18,
+    "total_tokens": 478,
+    "completion_tokens_details": {
+      "reasoning_tokens": 120,
+      "text_tokens": 29
+    },
+    "prompt_tokens_details": {
+      "image_tokens": 253,
+      "text_tokens": 207,
+      "cached_tokens": 438,
+      "cache_creation_input_tokens": 22,
+      "cache_type": "ephemeral"
+    },
+    "performance": {
+      "prefill_time_ms": 230.6,
+      "prefill_tokens_per_second": 1995.1,
+      "decode_time_ms": 1021.8,
+      "decode_tokens_per_second": 17.6,
+      "total_time_ms": 1252.4,
+      "time_to_first_token_ms": 230.6
+    }
+  }
+}
+```
+
+| Field | Presence | Description |
+|-------|----------|-------------|
+| `completion_tokens_details` | Only when `reasoning_tokens > 0` | Thinking mode token breakdown |
+| `prompt_tokens_details.image_tokens` | Only when > 0 | Tokens consumed by image inputs |
+| `cached_tokens` | Always | KV cache prefix reused from previous request (0 on first request) |
+| `cache_creation_input_tokens` | Always | Tokens actually prefilled this request (= prompt - cached) |
+| `performance` | Always | Timing and throughput metrics |
+
 ### Utility Methods
 
 ```kotlin
@@ -342,3 +385,11 @@ your-app/
 **Important for llama.cpp multimodal:** The mmproj and model GGUF must be in the **same directory**. The backend scans the directory automatically. If you place the GGUF in one location and the mmproj elsewhere, vision will silently not work and the model will respond with "I cannot view images."
 
 See `docs/API.md` for the full HTTP API reference.
+
+## Native Library Output
+
+The module produces a single shared library: `libomniinfer-jni.so` (arm64-v8a). It statically links llama.cpp, MNN, and all other native dependencies, so there are no additional `.so` files to manage (unless the ExecuTorch QNN backend is enabled, which bundles separate QNN runtime libraries in `jniLibs/`).
+
+## Troubleshooting
+
+**Native library symbol conflicts:** If your app already includes native libraries that use ggml, llama.cpp, or MNN, you may encounter duplicate symbol errors at link time. The `omniinfer-server` module statically links these libraries into `libomniinfer-jni.so`. To resolve conflicts, either exclude your app's copy of the conflicting library or disable the overlapping OmniInfer backend via CMake arguments.
