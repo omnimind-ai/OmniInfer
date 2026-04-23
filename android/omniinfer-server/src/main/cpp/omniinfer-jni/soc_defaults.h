@@ -34,6 +34,7 @@ struct SocThreadDefault {
 // Sorted by specificity is not required; first prefix match wins.
 static constexpr SocThreadDefault kSocThreadDefaults[] = {
     // Qualcomm Snapdragon
+    {"sm8750", 4},  // 8 Elite: 2×Oryon L + 6×Oryon M (decode peaks at 4 threads)
     {"sm8650", 6},  // 8 Gen 3: 1×X4 + 3×A720 + 2×A720 (+ 2×A520 efficiency)
 };
 
