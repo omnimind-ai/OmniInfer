@@ -129,7 +129,7 @@ if(OMNIINFER_BACKEND_LLAMA_CPP)
             ${LLAMA_CPP_DIR}/vendor
             ${LLAMA_CPP_DIR}/ggml/include ${LLAMA_CPP_DIR}/ggml/src
             ${LLAMA_CPP_DIR}/tools/mtmd)
-    target_link_libraries(${CMAKE_PROJECT_NAME} llama common mtmd)
+    target_link_libraries(${CMAKE_PROJECT_NAME} llama llama-common mtmd)
 endif()
 
 if(OMNIINFER_BACKEND_MNN)
