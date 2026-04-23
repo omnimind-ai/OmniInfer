@@ -203,7 +203,7 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
   const auto backend_name = ExtractJsonString(config, "backend").value_or("llama.cpp");
   const auto model_path = ExtractJsonString(config, "model_path");
   const auto native_lib_dir = ExtractJsonString(config, "native_lib_dir").value_or("");
-  const int n_threads = ExtractJsonInt(config, "n_threads").value_or(4);
+  const int n_threads = ExtractJsonInt(config, "n_threads").value_or(0);
   const int n_ctx = ExtractJsonInt(config, "n_ctx").value_or(4096);
 
   if (!model_path.has_value()) {
