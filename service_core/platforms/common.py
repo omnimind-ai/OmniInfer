@@ -12,7 +12,7 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger("platform")
 
@@ -52,6 +52,66 @@ def wait_http_ready(host: str, port: int, timeout_s: int) -> bool:
     deadline = time.time() + timeout_s
     url = f"http://{host}:{port}/health"
     while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                if resp.getcode() in (200, 503):
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def wait_http_ready_with_progress(
+    host: str,
+    port: int,
+    timeout_s: int,
+    proc: subprocess.Popen[Any],
+    log_path: Path,
+    on_progress: Callable[[dict[str, Any]], None],
+) -> bool:
+    """Like wait_http_ready, but tails the backend log and checks process liveness."""
+    logger.debug("Waiting for %s:%d with progress (timeout=%ds)", host, port, timeout_s)
+    deadline = time.time() + timeout_s
+    url = f"http://{host}:{port}/health"
+    file_pos = 0
+    try:
+        file_pos = log_path.stat().st_size
+    except OSError:
+        pass
+
+    while time.time() < deadline:
+        # Tail new log content
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(file_pos)
+                new_content = f.read()
+                file_pos = f.tell()
+        except OSError:
+            new_content = ""
+        if new_content:
+            for line in new_content.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    on_progress({"type": "log", "message": stripped})
+
+        # Check process alive
+        if proc.poll() is not None:
+            # Process exited — read any remaining output
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(file_pos)
+                    remainder = f.read()
+            except OSError:
+                remainder = ""
+            if remainder:
+                for line in remainder.splitlines():
+                    stripped = line.strip()
+                    if stripped:
+                        on_progress({"type": "log", "message": stripped})
+            return False
+
+        # Health check
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if resp.getcode() in (200, 503):

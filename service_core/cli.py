@@ -680,7 +680,7 @@ def print_model_load(args: argparse.Namespace) -> int:
         if profile_chat_extras.request_overrides:
             payload["request_defaults"] = profile_chat_extras.request_overrides
 
-    _status, response, _ = request_json("POST", "/omni/model/select", payload=payload, timeout=600.0)
+    response = _stream_model_load(payload, timeout=600.0)
     if not isinstance(response, dict):
         raise SystemExit("Failed to load the model.")
     save_selected_backend_name(str(response.get("selected_backend") or selected_backend or ""))
@@ -690,6 +690,91 @@ def print_model_load(args: argparse.Namespace) -> int:
     print(f"mmproj: {response.get('selected_mmproj') or '-'}")
     print(f"ctx-size: {response.get('selected_ctx_size') or '-'}")
     return 0
+
+
+_NOTABLE_LOG_KEYWORDS = (
+    "loading model",
+    "load_tensors: loading",
+    "load_tensors: offload",
+    "load_tensors: offloaded",
+    "buffer size",
+    "model loaded",
+    "server is listening",
+    "loaded multimodal",
+    "ggml_cuda_init:",
+    "error",
+    "Error",
+    "ERROR",
+)
+
+
+def _is_notable_backend_log(line: str) -> bool:
+    if set(line.strip()) <= {"."}:
+        return False
+    return any(kw in line for kw in _NOTABLE_LOG_KEYWORDS)
+
+
+def _stream_model_load(payload: dict[str, Any], timeout: float = 600.0) -> dict[str, Any]:
+    """POST /omni/model/select with SSE progress, falling back to JSON."""
+    url = f"{service_base_url()}/omni/model/select"
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url=url,
+        data=body,
+        method="POST",
+        headers={
+            "Accept": "text/event-stream, application/json",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            content_type = response.headers.get("Content-Type", "")
+            if "text/event-stream" not in content_type:
+                raw = response.read()
+                parsed = try_parse_json(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+                raise SystemExit("Failed to load the model.")
+
+            result: dict[str, Any] = {}
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                event_type = event.get("type", "")
+                if event_type == "status":
+                    print(event.get("message", ""))
+                elif event_type == "log":
+                    msg = event.get("message", "")
+                    if msg and _is_notable_backend_log(msg):
+                        print(f"  {msg}")
+                elif event_type == "done":
+                    elapsed = event.get("elapsed_s")
+                    if elapsed is not None:
+                        print(f"Backend ready ({elapsed}s)")
+                    result = event
+                elif event_type == "error":
+                    raise SystemExit(event.get("message", "model loading failed"))
+            return result
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        parsed = try_parse_json(raw.encode("utf-8"))
+        if isinstance(parsed, dict):
+            error = parsed.get("error", {})
+            message = error.get("message", raw) if isinstance(error, dict) else raw
+        else:
+            message = raw
+        raise SystemExit(f"Model loading failed (HTTP {exc.code}): {message}") from exc
+    except urllib.error.URLError as exc:
+        raise SystemExit(f"Unable to reach local OmniInfer service: {exc}") from exc
 
 
 def print_thinking_show() -> int:

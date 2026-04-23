@@ -13,7 +13,7 @@ import urllib.request
 from dataclasses import dataclass
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger("runtime")
 
@@ -29,6 +29,7 @@ from service_core.platforms import (
     parse_optional_int,
     pick_available_port,
     wait_http_ready,
+    wait_http_ready_with_progress,
 )
 
 
@@ -372,6 +373,7 @@ class RuntimeManager:
         ctx_size: int | None = None,
         launch_args: list[str] | None = None,
         request_defaults: dict[str, Any] | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> LoadedRuntime:
         if backend.runtime_mode == "embedded":
             return self._start_embedded_runtime_locked(
@@ -380,6 +382,7 @@ class RuntimeManager:
                 mmproj_path,
                 ctx_size=ctx_size,
                 request_defaults=request_defaults,
+                on_progress=on_progress,
             )
         return self._start_external_runtime_locked(
             backend,
@@ -388,6 +391,7 @@ class RuntimeManager:
             ctx_size=ctx_size,
             launch_args=launch_args,
             request_defaults=request_defaults,
+            on_progress=on_progress,
         )
 
     def _start_embedded_runtime_locked(
@@ -397,6 +401,7 @@ class RuntimeManager:
         mmproj_path: str | None,
         ctx_size: int | None = None,
         request_defaults: dict[str, Any] | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> LoadedRuntime:
         if not backend.binary_exists:
             logger.error("Embedded backend %s not available: required Python packages missing", backend.id)
@@ -406,6 +411,8 @@ class RuntimeManager:
             )
 
         logger.info("Loading embedded model via %s: %s", backend.id, model_path)
+        if on_progress:
+            on_progress({"type": "status", "message": f"Loading model via {backend.id}..."})
         driver = get_embedded_backend_driver(backend.id)
         model_ref = display_path_reference(model_path, backend.models_dir)
         state = driver.load_model(
@@ -443,6 +450,7 @@ class RuntimeManager:
         ctx_size: int | None = None,
         launch_args: list[str] | None = None,
         request_defaults: dict[str, Any] | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> LoadedRuntime:
         if not backend.binary_exists or not backend.launcher_path:
             logger.error("Backend launcher not found: %s (path=%s)", backend.id, backend.launcher_path or "(unset)")
@@ -500,8 +508,17 @@ class RuntimeManager:
         self._backend_job_handle = _assign_to_kill_on_close_job(proc.pid)
 
         logger.info("Backend %s started (PID %d), waiting for health check on port %d...", backend.id, proc.pid, launch.port)
+        if on_progress:
+            on_progress({"type": "status", "message": f"Starting backend {backend.id}..."})
         _health_start = time.perf_counter()
-        if not wait_http_ready(self.backend_host, launch.port, self.startup_timeout_s):
+        if on_progress:
+            ready = wait_http_ready_with_progress(
+                self.backend_host, launch.port, self.startup_timeout_s,
+                proc=proc, log_path=log_path, on_progress=on_progress,
+            )
+        else:
+            ready = wait_http_ready(self.backend_host, launch.port, self.startup_timeout_s)
+        if not ready:
             message = "backend did not become ready in time"
             if proc.poll() is not None:
                 try:
@@ -527,10 +544,13 @@ class RuntimeManager:
                 log_handle=log_handle,
             )
             logger.error("Backend %s did not become ready within %ds", backend.id, self.startup_timeout_s)
+            if on_progress:
+                on_progress({"type": "error", "message": message})
             self._stop_runtime_locked()
             raise RuntimeError(message)
 
-        logger.info("Backend health check: passed in %.1fs", time.perf_counter() - _health_start)
+        _elapsed = time.perf_counter() - _health_start
+        logger.info("Backend health check: passed in %.1fs", _elapsed)
 
         runtime = LoadedRuntime(
             backend_id=backend.id,
@@ -711,6 +731,7 @@ class RuntimeManager:
         ctx_size: int | None = None,
         launch_args: list[str] | None = None,
         request_defaults: dict[str, Any] | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> LoadedRuntime:
         with self.lock:
             requested_backend_id = self._normalize_backend_id(backend_id)
@@ -752,6 +773,7 @@ class RuntimeManager:
                         ctx_size=ctx_size,
                         launch_args=desired_launch_args,
                         request_defaults=desired_request_defaults,
+                        on_progress=on_progress,
                     )
                 logger.warning("No model loaded and no model specified in request")
                 raise RuntimeError("no backend model loaded; call /omni/model/select first or provide 'model'")
@@ -837,6 +859,7 @@ class RuntimeManager:
                 ctx_size=ctx_size,
                 launch_args=effective_launch_args,
                 request_defaults=effective_request_defaults,
+                on_progress=on_progress,
             )
 
     def select_model(
@@ -847,6 +870,7 @@ class RuntimeManager:
         ctx_size: int | None = None,
         launch_args: list[str] | None = None,
         request_defaults: dict[str, Any] | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         runtime = self.ensure_model_loaded(
             model=model,
@@ -855,6 +879,7 @@ class RuntimeManager:
             ctx_size=ctx_size,
             launch_args=launch_args,
             request_defaults=request_defaults,
+            on_progress=on_progress,
         )
         return {
             "ok": True,
