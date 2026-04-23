@@ -1,6 +1,7 @@
 #pragma once
 
 #include "inference_backend.h"
+#include "soc_defaults.h"
 #include "thinking_tags.h"
 #include "tool_call_parser.h"
 
@@ -39,7 +40,7 @@ public:
     model_ = llama_model_load_from_file(model_path.c_str(), mp);
     if (!model_) return false;
 
-    int eff_threads = n_threads > 0 ? n_threads : 6;  // Default 6: big cores only, avoid slow efficiency cores
+    int eff_threads = n_threads > 0 ? n_threads : get_soc_default_threads();
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = n_ctx;

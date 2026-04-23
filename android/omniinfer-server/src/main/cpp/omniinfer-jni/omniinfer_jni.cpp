@@ -1,5 +1,7 @@
 #include <jni.h>
 
+#include "soc_defaults.h"
+
 #include <android/log.h>
 
 #include <atomic>
@@ -395,7 +397,8 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
        << "\"reasoning_tokens\":" << m.reasoning_tokens << ","
        << "\"image_tokens\":" << m.image_tokens << ","
        << "\"cached_tokens\":" << m.cached_tokens << ","
-       << "\"n_threads\":" << it->second->backend->n_threads()
+       << "\"n_threads\":" << it->second->backend->n_threads() << ","
+       << "\"soc\":\"" << omniinfer::get_soc_identifier() << "\""
        << "}";
   return StdStringToJString(env, json.str());
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "inference_backend.h"
+#include "soc_defaults.h"
 #include "thinking_tags.h"
 #include "tool_call_parser.h"
 
@@ -27,7 +28,7 @@ public:
       cache_dir_ = (slash != std::string::npos) ? model_path.substr(0, slash) : "/tmp";
     }
 
-    int eff_threads = n_threads > 0 ? n_threads : 6;  // Default 6: big cores only, avoid slow efficiency cores
+    int eff_threads = n_threads > 0 ? n_threads : get_soc_default_threads();
     n_threads_ = eff_threads;
     n_ctx_ = n_ctx > 0 ? n_ctx : 16384;
     std::ostringstream cfg;
