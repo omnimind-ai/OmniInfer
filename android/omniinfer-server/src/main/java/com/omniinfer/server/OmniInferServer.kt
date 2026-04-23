@@ -32,6 +32,25 @@ object OmniInferServer {
         Log.i(TAG, "Initialized")
     }
 
+    /**
+     * Customize the foreground service notification. Call before [loadModel].
+     * @param title notification title (default "OmniInfer Server")
+     * @param channelName notification channel name (default "OmniInfer Server")
+     * @param smallIcon resource ID for the notification icon (default system icon)
+     * @param textFormat lambda that receives the port and returns the notification text
+     */
+    fun configureNotification(
+        title: String = "OmniInfer Server",
+        channelName: String = "OmniInfer Server",
+        smallIcon: Int = android.R.drawable.ic_menu_manage,
+        textFormat: ((port: Int) -> String) = { "Running on port $it" }
+    ) {
+        OmniInferService.notifTitle = title
+        OmniInferService.notifChannelName = channelName
+        OmniInferService.notifSmallIcon = smallIcon
+        OmniInferService.notifTextFormat = textFormat
+    }
+
     fun getPort(): Int = serverPort
 
     fun isReady(): Boolean = currentHandle != 0L && serverRunning
