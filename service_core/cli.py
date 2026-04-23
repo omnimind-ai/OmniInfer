@@ -694,7 +694,7 @@ def print_model_load(args: argparse.Namespace) -> int:
     return 0
 
 
-_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPINNER_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
 _SPINNER_INTERVAL = 0.08  # ~12 fps
 
 
