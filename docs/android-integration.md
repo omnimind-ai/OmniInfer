@@ -106,7 +106,32 @@ android {
 }
 ```
 
-## Step 3: Use the API
+## Step 3: Allow Cleartext HTTP to Localhost
+
+OmniInfer's HTTP server runs on `http://127.0.0.1`. Android 9+ blocks cleartext HTTP by default. You must add a network security config to allow localhost connections, or the app will fail to reach the server.
+
+**`app/src/main/res/xml/network_security_config.xml`:**
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
+```
+
+**`app/src/main/AndroidManifest.xml`:**
+
+```xml
+<application
+    android:networkSecurityConfig="@xml/network_security_config"
+    ... >
+```
+
+Without this, all HTTP requests to the local inference server will be rejected with `java.net.UnknownServiceException: CLEARTEXT communication to 127.0.0.1 not permitted`.
+
+## Step 4: Use the API
 
 ### Lifecycle
 
