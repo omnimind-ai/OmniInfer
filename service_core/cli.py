@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import textwrap
 import time
 import urllib.error
@@ -693,7 +694,53 @@ def print_model_load(args: argparse.Namespace) -> int:
     return 0
 
 
-_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPINNER_INTERVAL = 0.08  # ~12 fps
+
+
+class _Spinner:
+    """Thread-driven spinner that renders independently of the event stream."""
+
+    def __init__(self) -> None:
+        self._text = "Loading model..."
+        self._start = time.monotonic()
+        self._active = False
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if not self._is_tty:
+            return
+        self._active = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def update(self, text: str) -> None:
+        with self._lock:
+            self._text = text
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join()
+        if self._active:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+            self._active = False
+
+    def _run(self) -> None:
+        idx = 0
+        while not self._stop_event.is_set():
+            with self._lock:
+                text = self._text
+            elapsed = time.monotonic() - self._start
+            frame = _SPINNER_FRAMES[idx % len(_SPINNER_FRAMES)]
+            idx += 1
+            sys.stdout.write(f"\r{frame} {text} ({elapsed:.1f}s)\033[K")
+            sys.stdout.flush()
+            self._stop_event.wait(_SPINNER_INTERVAL)
 
 
 def _stream_model_load(
@@ -713,29 +760,7 @@ def _stream_model_load(
             "Content-Type": "application/json; charset=utf-8",
         },
     )
-    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-    spinner_idx = 0
-    spinner_active = False
-    load_start = time.monotonic()
-
-    def _spinner_update(text: str) -> None:
-        nonlocal spinner_idx, spinner_active
-        if not is_tty:
-            return
-        frame = _SPINNER_FRAMES[spinner_idx % len(_SPINNER_FRAMES)]
-        spinner_idx += 1
-        elapsed = time.monotonic() - load_start
-        line = f"\r{frame} {text} ({elapsed:.1f}s)"
-        sys.stdout.write(f"{line}\033[K")
-        sys.stdout.flush()
-        spinner_active = True
-
-    def _spinner_clear() -> None:
-        nonlocal spinner_active
-        if spinner_active and is_tty:
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
-            spinner_active = False
+    spinner = _Spinner()
 
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -747,8 +772,10 @@ def _stream_model_load(
                     return parsed
                 raise SystemExit("Failed to load the model.")
 
+            if not verbose:
+                spinner.start()
+
             result: dict[str, Any] = {}
-            status_text = "Loading model..."
             for raw_line in response:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line or not line.startswith("data:"):
@@ -762,32 +789,28 @@ def _stream_model_load(
                     continue
                 event_type = event.get("type", "")
                 if event_type == "status":
-                    status_text = event.get("message", status_text)
-                    if verbose:
-                        _spinner_clear()
-                        print(status_text)
-                    else:
-                        _spinner_update(status_text)
-                elif event_type == "log":
                     msg = event.get("message", "")
                     if verbose:
-                        _spinner_clear()
-                        print(f"  {msg}")
+                        print(msg)
                     elif msg:
-                        _spinner_update(status_text)
+                        spinner.update(msg)
+                elif event_type == "log":
+                    msg = event.get("message", "")
+                    if verbose and msg:
+                        print(f"  {msg}")
                 elif event_type == "done":
-                    _spinner_clear()
+                    spinner.stop()
                     elapsed = event.get("elapsed_s")
                     if elapsed is not None:
                         print(f"Backend ready ({elapsed}s)")
                     result = event
                 elif event_type == "error":
-                    _spinner_clear()
+                    spinner.stop()
                     raise SystemExit(event.get("message", "model loading failed"))
-            _spinner_clear()
+            spinner.stop()
             return result
     except urllib.error.HTTPError as exc:
-        _spinner_clear()
+        spinner.stop()
         raw = exc.read().decode("utf-8", errors="replace")
         parsed = try_parse_json(raw.encode("utf-8"))
         if isinstance(parsed, dict):
@@ -797,7 +820,7 @@ def _stream_model_load(
             message = raw
         raise SystemExit(f"Model loading failed (HTTP {exc.code}): {message}") from exc
     except urllib.error.URLError as exc:
-        _spinner_clear()
+        spinner.stop()
         raise SystemExit(f"Unable to reach local OmniInfer service: {exc}") from exc
 
 
