@@ -635,54 +635,65 @@ def combine_backend_extra_args(
 
 
 def print_model_load(args: argparse.Namespace) -> int:
-    config_arg = getattr(args, "config", None)
-    backend_extra_args = list(getattr(args, "backend_extra_args", []))
-    selected_backend, backend = resolve_backend_spec_for_native_args(
-        allow_auto=bool(getattr(args, "auto", False)),
-        needs_native_args=bool(config_arg is not None or backend_extra_args),
-    )
-    profile = resolve_backend_profile_arg(config_arg, selected_backend)
-    if profile and profile.backend_id and not selected_backend:
-        selected_backend = profile.backend_id
-        backend = local_backends().get(selected_backend)
-    backend_extras = combine_backend_extra_args(
-        backend=backend,
-        command_name="load",
-        profile=profile,
-        cli_tokens=backend_extra_args,
-    ) if backend is not None else ParsedBackendExtraArgs()
-
-    model_input = args.model
-    if not model_input:
-        raise SystemExit("Please specify a model path with -m or --model.")
-    model_ref = resolve_model_reference(model_input)
-    mmproj_input = args.mmproj
-    mmproj_file = resolve_existing_path(mmproj_input, "mmproj file") if mmproj_input else None
-    effective_ctx_size = args.ctx_size if args.ctx_size is not None else backend_extras.ctx_size
-    if effective_ctx_size is not None and effective_ctx_size <= 0:
-        raise SystemExit("--ctx-size must be a positive integer")
-
-    payload: dict[str, Any] = {"model": str(model_ref)}
-    if mmproj_file:
-        payload["mmproj"] = str(mmproj_file)
-    if effective_ctx_size is not None:
-        payload["ctx_size"] = effective_ctx_size
-    if selected_backend:
-        payload["backend"] = selected_backend
-    if backend_extras.launch_args:
-        payload["launch_args"] = backend_extras.launch_args
-    if profile is not None and backend is not None:
-        profile_chat_extras = combine_backend_extra_args(
-            backend=backend,
-            command_name="chat",
-            profile=None,
-            cli_tokens=list(profile.infer_extra_args),
-        )
-        if profile_chat_extras.request_overrides:
-            payload["request_defaults"] = profile_chat_extras.request_overrides
-
     verbose = getattr(args, "verbose", False)
-    response = _stream_model_load(payload, timeout=600.0, verbose=verbose)
+    spinner = _Spinner()
+    if not verbose:
+        spinner.start()
+
+    try:
+        config_arg = getattr(args, "config", None)
+        backend_extra_args = list(getattr(args, "backend_extra_args", []))
+        selected_backend, backend = resolve_backend_spec_for_native_args(
+            allow_auto=bool(getattr(args, "auto", False)),
+            needs_native_args=bool(config_arg is not None or backend_extra_args),
+        )
+        profile = resolve_backend_profile_arg(config_arg, selected_backend)
+        if profile and profile.backend_id and not selected_backend:
+            selected_backend = profile.backend_id
+            backend = local_backends().get(selected_backend)
+        backend_extras = combine_backend_extra_args(
+            backend=backend,
+            command_name="load",
+            profile=profile,
+            cli_tokens=backend_extra_args,
+        ) if backend is not None else ParsedBackendExtraArgs()
+
+        model_input = args.model
+        if not model_input:
+            spinner.stop()
+            raise SystemExit("Please specify a model path with -m or --model.")
+        model_ref = resolve_model_reference(model_input)
+        mmproj_input = args.mmproj
+        mmproj_file = resolve_existing_path(mmproj_input, "mmproj file") if mmproj_input else None
+        effective_ctx_size = args.ctx_size if args.ctx_size is not None else backend_extras.ctx_size
+        if effective_ctx_size is not None and effective_ctx_size <= 0:
+            spinner.stop()
+            raise SystemExit("--ctx-size must be a positive integer")
+
+        payload: dict[str, Any] = {"model": str(model_ref)}
+        if mmproj_file:
+            payload["mmproj"] = str(mmproj_file)
+        if effective_ctx_size is not None:
+            payload["ctx_size"] = effective_ctx_size
+        if selected_backend:
+            payload["backend"] = selected_backend
+        if backend_extras.launch_args:
+            payload["launch_args"] = backend_extras.launch_args
+        if profile is not None and backend is not None:
+            profile_chat_extras = combine_backend_extra_args(
+                backend=backend,
+                command_name="chat",
+                profile=None,
+                cli_tokens=list(profile.infer_extra_args),
+            )
+            if profile_chat_extras.request_overrides:
+                payload["request_defaults"] = profile_chat_extras.request_overrides
+
+        response = _stream_model_load(payload, timeout=600.0, verbose=verbose, spinner=spinner)
+    except SystemExit:
+        spinner.stop()
+        raise
+
     if not isinstance(response, dict):
         raise SystemExit("Failed to load the model.")
     save_selected_backend_name(str(response.get("selected_backend") or selected_backend or ""))
@@ -747,6 +758,7 @@ def _stream_model_load(
     payload: dict[str, Any],
     timeout: float = 600.0,
     verbose: bool = False,
+    spinner: _Spinner | None = None,
 ) -> dict[str, Any]:
     """POST /omni/model/select with SSE progress, falling back to JSON."""
     url = f"{service_base_url()}/omni/model/select"
@@ -760,20 +772,19 @@ def _stream_model_load(
             "Content-Type": "application/json; charset=utf-8",
         },
     )
-    spinner = _Spinner()
+    if spinner is None:
+        spinner = _Spinner()
 
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             content_type = response.headers.get("Content-Type", "")
             if "text/event-stream" not in content_type:
+                spinner.stop()
                 raw = response.read()
                 parsed = try_parse_json(raw)
                 if isinstance(parsed, dict):
                     return parsed
                 raise SystemExit("Failed to load the model.")
-
-            if not verbose:
-                spinner.start()
 
             result: dict[str, Any] = {}
             for raw_line in response:
