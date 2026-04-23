@@ -1,5 +1,7 @@
 #include <jni.h>
 
+#include "soc_defaults.h"
+
 #include <android/log.h>
 
 #include <atomic>
@@ -22,6 +24,10 @@
 
 #if defined(OMNIINFER_BACKEND_MNN)
 #include "backend_mnn.h"
+#endif
+
+#if defined(OMNIINFER_BACKEND_EXECUTORCH_QNN)
+#include "backend_executorch_qnn.h"
 #endif
 
 namespace {
@@ -199,7 +205,7 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
   const auto backend_name = ExtractJsonString(config, "backend").value_or("llama.cpp");
   const auto model_path = ExtractJsonString(config, "model_path");
   const auto native_lib_dir = ExtractJsonString(config, "native_lib_dir").value_or("");
-  const int n_threads = ExtractJsonInt(config, "n_threads").value_or(4);
+  const int n_threads = ExtractJsonInt(config, "n_threads").value_or(0);
   const int n_ctx = ExtractJsonInt(config, "n_ctx").value_or(4096);
 
   if (!model_path.has_value()) {
@@ -217,6 +223,11 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
 #if defined(OMNIINFER_BACKEND_LLAMA_CPP)
   if (!backend && (backend_name == "llama.cpp" || backend_name.empty())) {
     backend = std::make_unique<omniinfer::LlamaCppBackend>();
+  }
+#endif
+#if defined(OMNIINFER_BACKEND_EXECUTORCH_QNN)
+  if (!backend && backend_name == "executorch-qnn") {
+    backend = std::make_unique<omniinfer::ExecuTorchQnnBackend>();
   }
 #endif
   if (!backend) {
@@ -386,7 +397,8 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
        << "\"reasoning_tokens\":" << m.reasoning_tokens << ","
        << "\"image_tokens\":" << m.image_tokens << ","
        << "\"cached_tokens\":" << m.cached_tokens << ","
-       << "\"n_threads\":" << it->second->backend->n_threads()
+       << "\"n_threads\":" << it->second->backend->n_threads() << ","
+       << "\"soc\":\"" << omniinfer::get_soc_identifier() << "\""
        << "}";
   return StdStringToJString(env, json.str());
 }

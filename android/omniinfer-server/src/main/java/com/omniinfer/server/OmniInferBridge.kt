@@ -19,13 +19,19 @@ object OmniInferBridge {
         }
     }
 
+    /**
+     * Initialize a backend session.
+     * @param extraConfig additional key-value pairs merged into the config JSON.
+     *   Useful for backend-specific settings like "qnn_lib_dir", "decoder_model_version".
+     */
     fun init(
         modelPath: String,
         backend: String = "llama.cpp",
         nThreads: Int = 0,
         nCtx: Int = 4096,
         nativeLibDir: String? = null,
-        cacheDir: String? = null
+        cacheDir: String? = null,
+        extraConfig: Map<String, String>? = null
     ): Long {
         if (!isNativeLibraryLoaded) return 0L
         val configJson = JSONObject()
@@ -35,6 +41,7 @@ object OmniInferBridge {
             .put("cache_dir", cacheDir ?: "")
             .put("n_threads", nThreads)
             .put("n_ctx", nCtx)
+        extraConfig?.forEach { (k, v) -> configJson.put(k, v) }
         val handle = nativeInit(configJson.toString())
         // Don't set default think mode — let each request's thinkEnabled param decide.
         return handle

@@ -40,5 +40,6 @@ release.zip
 # Android build artifacts
 android/omniinfer-server/.cxx/
 android/omniinfer-server/build/
+android/omniinfer-server/src/main/jniLibs/
 *.aar
 local.properties

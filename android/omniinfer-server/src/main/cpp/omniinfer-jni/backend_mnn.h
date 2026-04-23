@@ -1,6 +1,7 @@
 #pragma once
 
 #include "inference_backend.h"
+#include "soc_defaults.h"
 #include "thinking_tags.h"
 #include "tool_call_parser.h"
 
@@ -27,12 +28,11 @@ public:
       cache_dir_ = (slash != std::string::npos) ? model_path.substr(0, slash) : "/tmp";
     }
 
-    int eff_threads = n_threads > 0 ? n_threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
+    int eff_threads = n_threads > 0 ? n_threads : get_soc_default_threads();
     n_threads_ = eff_threads;
     n_ctx_ = n_ctx > 0 ? n_ctx : 16384;
     std::ostringstream cfg;
     cfg << "{\"thread_num\":" << eff_threads;
-    cfg << ",\"attention_mode\":9";  // Mixed int8 QK + flash attention
     if (n_ctx > 0) cfg << ",\"max_new_tokens\":" << n_ctx;
     cfg << "}";
     llm_->set_config(cfg.str());

@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application>
+        <!-- Required for QNN HTP DSP access on Android 12+ -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+
         <service
             android:name=".OmniInferService"
             android:exported="false"
