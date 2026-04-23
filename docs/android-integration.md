@@ -231,6 +231,19 @@ Once the model is loaded, the OpenAI-compatible API is available at `http://127.
 - `GET /v1/models` — lists loaded models
 - `POST /v1/chat/completions` — chat inference (streaming and non-streaming)
 
+**Sampling parameters** (all optional, per-request):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `temperature` | float | backend default | Sampling temperature (0 = greedy, higher = more random) |
+| `top_p` | float | backend default | Nucleus sampling threshold |
+| `top_k` | int | backend default | Top-k sampling |
+| `repetition_penalty` | float | 1.0 | Repetition penalty (1.0 = disabled) |
+| `frequency_penalty` | float | 0.0 | Frequency penalty |
+| `presence_penalty` | float | 0.0 | Presence penalty |
+
+If omitted, the backend uses its own defaults (llama.cpp: temp=0.8, top_p=0.95, top_k=40; MNN: model config defaults).
+
 ```kotlin
 // Text request
 val json = """
@@ -238,7 +251,9 @@ val json = """
   "model": "any",
   "messages": [{"role": "user", "content": "Hello!"}],
   "stream": true,
-  "max_tokens": 100
+  "max_tokens": 100,
+  "temperature": 0.7,
+  "top_p": 0.9
 }
 """.trimIndent()
 

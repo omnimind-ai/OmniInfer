@@ -169,6 +169,14 @@ class OmniInferService : Service() {
         val maxTokens = req["max_completion_tokens"]?.jsonPrimitive?.intOrNull
             ?: req["max_tokens"]?.jsonPrimitive?.intOrNull
 
+        // Sampling parameters.
+        val temperature = req["temperature"]?.jsonPrimitive?.floatOrNull
+        val topP = req["top_p"]?.jsonPrimitive?.floatOrNull
+        val topK = req["top_k"]?.jsonPrimitive?.intOrNull
+        val repetitionPenalty = req["repetition_penalty"]?.jsonPrimitive?.floatOrNull
+        val frequencyPenalty = req["frequency_penalty"]?.jsonPrimitive?.floatOrNull
+        val presencePenalty = req["presence_penalty"]?.jsonPrimitive?.floatOrNull
+
         // Tools support.
         val toolsJson = req["tools"]?.jsonArray?.toString()
         val toolChoice = req["tool_choice"]?.jsonPrimitive?.contentOrNull
@@ -256,6 +264,12 @@ class OmniInferService : Service() {
                     toolsJson = toolsJson,
                     toolChoice = toolChoice,
                     maxTokens = maxTokens,
+                    temperature = temperature,
+                    topP = topP,
+                    topK = topK,
+                    repetitionPenalty = repetitionPenalty,
+                    frequencyPenalty = frequencyPenalty,
+                    presencePenalty = presencePenalty,
                     callback = OmniInferStreamCallback(
                         onTokenHandler = { token ->
                             if (connectionAlive) {
@@ -469,6 +483,12 @@ class OmniInferService : Service() {
                 toolsJson = toolsJson,
                 toolChoice = toolChoice,
                 maxTokens = maxTokens,
+                temperature = temperature,
+                topP = topP,
+                topK = topK,
+                repetitionPenalty = repetitionPenalty,
+                frequencyPenalty = frequencyPenalty,
+                presencePenalty = presencePenalty,
                 callback = OmniInferStreamCallback(
                     onMetricsHandler = { metrics ->
                         metricsStr = metrics

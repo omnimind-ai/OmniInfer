@@ -55,6 +55,12 @@ object OmniInferBridge {
         toolsJson: String? = null,
         toolChoice: String? = null,
         maxTokens: Int? = null,
+        temperature: Float? = null,
+        topP: Float? = null,
+        topK: Int? = null,
+        repetitionPenalty: Float? = null,
+        frequencyPenalty: Float? = null,
+        presencePenalty: Float? = null,
         callback: OmniInferStreamCallback? = null
     ): String {
         if (!isNativeLibraryLoaded) return ""
@@ -69,6 +75,12 @@ object OmniInferBridge {
             if (toolChoice != null) sb.append(",\"tool_choice\":\"").append(toolChoice).append("\"")
         }
         if (maxTokens != null && maxTokens > 0) sb.append(",\"max_tokens\":").append(maxTokens)
+        if (temperature != null) sb.append(",\"temperature\":").append(temperature)
+        if (topP != null) sb.append(",\"top_p\":").append(topP)
+        if (topK != null) sb.append(",\"top_k\":").append(topK)
+        if (repetitionPenalty != null) sb.append(",\"repetition_penalty\":").append(repetitionPenalty)
+        if (frequencyPenalty != null) sb.append(",\"frequency_penalty\":").append(frequencyPenalty)
+        if (presencePenalty != null) sb.append(",\"presence_penalty\":").append(presencePenalty)
         sb.append("}")
         return nativeGenerate(handle, "", "", sb.toString(), imageDataArray, callback)
     }

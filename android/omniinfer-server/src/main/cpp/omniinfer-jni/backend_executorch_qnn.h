@@ -284,7 +284,8 @@ public:
       const std::string& messages_json,
       const std::vector<std::vector<uint8_t>>& images,
       int max_tokens,
-      std::atomic<bool>& graceful_stop) override {
+      std::atomic<bool>& graceful_stop,
+      const std::string& /*sampling_json*/ = "") override {
 
     if (!runner_iface_) return "";
 
