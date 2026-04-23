@@ -27,6 +27,12 @@ class OmniInferService : Service() {
         private const val TAG = "OmniInferService"
         private const val NOTIFICATION_ID = 9099
         private const val CHANNEL_ID = "omniinfer_server"
+
+        /** Customizable notification fields. Set via [OmniInferServer.configureNotification]. */
+        internal var notifTitle: String = "OmniInfer Server"
+        internal var notifChannelName: String = "OmniInfer Server"
+        internal var notifSmallIcon: Int = android.R.drawable.ic_menu_manage
+        internal var notifTextFormat: ((port: Int) -> String) = { "Running on port $it" }
     }
 
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
@@ -45,7 +51,7 @@ class OmniInferService : Service() {
     private fun promoteToForeground(port: Int) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "OmniInfer Server", NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID, notifChannelName, NotificationManager.IMPORTANCE_LOW
             ).apply { description = "Local inference server" }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
@@ -54,9 +60,9 @@ class OmniInferService : Service() {
         } else {
             @Suppress("DEPRECATION") Notification.Builder(this)
         }
-            .setContentTitle("OmniInfer Server")
-            .setContentText("Running on port $port")
-            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setContentTitle(notifTitle)
+            .setContentText(notifTextFormat(port))
+            .setSmallIcon(notifSmallIcon)
             .setOngoing(true)
             .build()
 

@@ -157,6 +157,21 @@ OmniInferServer.init(context = applicationContext)
 
 `init()` only stores the application context. No native resources are allocated.
 
+### Customize the Notification (Optional)
+
+The foreground service notification is customizable. Call `configureNotification()` after `init()` but before `loadModel()`:
+
+```kotlin
+OmniInferServer.configureNotification(
+    title = "My AI Assistant",
+    channelName = "AI Engine",
+    smallIcon = R.drawable.ic_my_icon,
+    textFormat = { port -> "AI engine active" }
+)
+```
+
+All parameters are optional and have sensible defaults.
+
 ### Load a Model
 
 ```kotlin
