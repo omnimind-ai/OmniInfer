@@ -680,7 +680,8 @@ def print_model_load(args: argparse.Namespace) -> int:
         if profile_chat_extras.request_overrides:
             payload["request_defaults"] = profile_chat_extras.request_overrides
 
-    response = _stream_model_load(payload, timeout=600.0)
+    verbose = getattr(args, "verbose", False)
+    response = _stream_model_load(payload, timeout=600.0, verbose=verbose)
     if not isinstance(response, dict):
         raise SystemExit("Failed to load the model.")
     save_selected_backend_name(str(response.get("selected_backend") or selected_backend or ""))
@@ -692,29 +693,14 @@ def print_model_load(args: argparse.Namespace) -> int:
     return 0
 
 
-_NOTABLE_LOG_KEYWORDS = (
-    "loading model",
-    "load_tensors: loading",
-    "load_tensors: offload",
-    "load_tensors: offloaded",
-    "buffer size",
-    "model loaded",
-    "server is listening",
-    "loaded multimodal",
-    "ggml_cuda_init:",
-    "error",
-    "Error",
-    "ERROR",
-)
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 
-def _is_notable_backend_log(line: str) -> bool:
-    if set(line.strip()) <= {"."}:
-        return False
-    return any(kw in line for kw in _NOTABLE_LOG_KEYWORDS)
-
-
-def _stream_model_load(payload: dict[str, Any], timeout: float = 600.0) -> dict[str, Any]:
+def _stream_model_load(
+    payload: dict[str, Any],
+    timeout: float = 600.0,
+    verbose: bool = False,
+) -> dict[str, Any]:
     """POST /omni/model/select with SSE progress, falling back to JSON."""
     url = f"{service_base_url()}/omni/model/select"
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -727,6 +713,30 @@ def _stream_model_load(payload: dict[str, Any], timeout: float = 600.0) -> dict[
             "Content-Type": "application/json; charset=utf-8",
         },
     )
+    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    spinner_idx = 0
+    spinner_active = False
+    load_start = time.monotonic()
+
+    def _spinner_update(text: str) -> None:
+        nonlocal spinner_idx, spinner_active
+        if not is_tty:
+            return
+        frame = _SPINNER_FRAMES[spinner_idx % len(_SPINNER_FRAMES)]
+        spinner_idx += 1
+        elapsed = time.monotonic() - load_start
+        line = f"\r{frame} {text} ({elapsed:.1f}s)"
+        sys.stdout.write(f"{line}\033[K")
+        sys.stdout.flush()
+        spinner_active = True
+
+    def _spinner_clear() -> None:
+        nonlocal spinner_active
+        if spinner_active and is_tty:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+            spinner_active = False
+
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             content_type = response.headers.get("Content-Type", "")
@@ -738,6 +748,7 @@ def _stream_model_load(payload: dict[str, Any], timeout: float = 600.0) -> dict[
                 raise SystemExit("Failed to load the model.")
 
             result: dict[str, Any] = {}
+            status_text = "Loading model..."
             for raw_line in response:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line or not line.startswith("data:"):
@@ -751,20 +762,32 @@ def _stream_model_load(payload: dict[str, Any], timeout: float = 600.0) -> dict[
                     continue
                 event_type = event.get("type", "")
                 if event_type == "status":
-                    print(event.get("message", ""))
+                    status_text = event.get("message", status_text)
+                    if verbose:
+                        _spinner_clear()
+                        print(status_text)
+                    else:
+                        _spinner_update(status_text)
                 elif event_type == "log":
                     msg = event.get("message", "")
-                    if msg and _is_notable_backend_log(msg):
+                    if verbose:
+                        _spinner_clear()
                         print(f"  {msg}")
+                    elif msg:
+                        _spinner_update(status_text)
                 elif event_type == "done":
+                    _spinner_clear()
                     elapsed = event.get("elapsed_s")
                     if elapsed is not None:
                         print(f"Backend ready ({elapsed}s)")
                     result = event
                 elif event_type == "error":
+                    _spinner_clear()
                     raise SystemExit(event.get("message", "model loading failed"))
+            _spinner_clear()
             return result
     except urllib.error.HTTPError as exc:
+        _spinner_clear()
         raw = exc.read().decode("utf-8", errors="replace")
         parsed = try_parse_json(raw.encode("utf-8"))
         if isinstance(parsed, dict):
@@ -774,6 +797,7 @@ def _stream_model_load(payload: dict[str, Any], timeout: float = 600.0) -> dict[
             message = raw
         raise SystemExit(f"Model loading failed (HTTP {exc.code}): {message}") from exc
     except urllib.error.URLError as exc:
+        _spinner_clear()
         raise SystemExit(f"Unable to reach local OmniInfer service: {exc}") from exc
 
 
@@ -1164,6 +1188,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the selected backend config JSON, or pass an explicit config path",
     )
     model_load.add_argument("--auto", action="store_true", help="Let OmniInfer auto-select a backend for this command instead of using the saved selection")
+    model_load.add_argument("--verbose", action="store_true", help="Show full backend log output during loading")
 
     thinking = sub.add_parser("thinking", help="Default thinking controls")
     thinking_sub = thinking.add_subparsers(dest="thinking_command")
