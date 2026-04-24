@@ -59,11 +59,12 @@ $configureArgs = @(
     "-DCMAKE_BUILD_TYPE=$BuildType",
     "-DBUILD_SHARED_LIBS=OFF",
     "-DLLAMA_BUILD_TESTS=OFF",
-    "-DLLAMA_BUILD_EXAMPLES=OFF",
+    "-DLLAMA_BUILD_EXAMPLES=ON",
     "-DLLAMA_BUILD_SERVER=ON",
     "-DLLAMA_OPENSSL=OFF",
     "-DGGML_CUDA=ON",
-    "-DGGML_NATIVE=OFF"
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_WIN_VER=0x0A00"
 )
 
 if ($CudaArchitectures) {
