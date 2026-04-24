@@ -449,6 +449,101 @@ def print_status() -> int:
     return 0
 
 
+def print_ps(json_output: bool = False) -> int:
+    """List all running OmniInfer services on common ports."""
+    import socket
+
+    # Common ports to scan
+    ports_to_scan = [9000, 9001, 9002, 9003, 9004, 9005, 9010, 9020, 9050, 9100, 8900, 8800, 19000]
+
+    def is_port_listening(port: int) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                result = s.connect_ex(("127.0.0.1", port))
+                return result == 0
+        except Exception:
+            return False
+
+    def is_omniinfer_service(port: int) -> bool:
+        """Check if the port is running an OmniInfer gateway."""
+        try:
+            url = f"http://127.0.0.1:{port}/health"
+            req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=2) as response:
+                data = json.loads(response.read().decode("utf-8", errors="replace"))
+                return isinstance(data, dict) and "status" in data
+        except Exception:
+            return False
+
+    def get_service_state(port: int) -> dict[str, Any] | None:
+        """Get the state of an OmniInfer service."""
+        try:
+            url = f"http://127.0.0.1:{port}/omni/state"
+            req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=3) as response:
+                return json.loads(response.read().decode("utf-8", errors="replace"))
+        except Exception:
+            return None
+
+    services: list[dict[str, Any]] = []
+
+    for port in ports_to_scan:
+        if not is_port_listening(port):
+            continue
+
+        if not is_omniinfer_service(port):
+            continue
+
+        state = get_service_state(port)
+        if state is None:
+            services.append({
+                "port": port,
+                "status": "running",
+                "backend": "unknown",
+                "backend_ready": False,
+                "model": "not loaded",
+                "error": "Failed to get state"
+            })
+            continue
+
+        services.append({
+            "port": port,
+            "status": "running",
+            "backend": state.get("backend", "none"),
+            "backend_ready": state.get("backend_ready", False),
+            "model": state.get("model", "not loaded"),
+            "mmproj": state.get("mmproj"),
+            "ctx_size": state.get("ctx_size"),
+        })
+
+    if json_output:
+        print(json.dumps(services, ensure_ascii=False, indent=2))
+        return 0
+
+    if not services:
+        print("No running OmniInfer services found.")
+        return 0
+
+    print("Running OmniInfer Services:")
+    print()
+    for svc in services:
+        print(f"  Port {svc['port']}:")
+        print(f"    Status: {svc['status']}")
+        print(f"    Backend: {svc['backend']}")
+        print(f"    Backend Ready: {'yes' if svc['backend_ready'] else 'no'}")
+        print(f"    Model: {svc['model']}")
+        if svc.get('mmproj'):
+            print(f"    MMProj: {svc['mmproj']}")
+        if svc.get('ctx_size'):
+            print(f"    Context Size: {svc['ctx_size']}")
+        if svc.get('error'):
+            print(f"    Error: {svc['error']}")
+        print()
+
+    return 0
+
+
 def flatten_best_models(payload: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for family, family_models in payload.items():
@@ -1160,7 +1255,7 @@ def handle_hidden_completion(argv: list[str]) -> int:
     current = words[cword] if 0 <= cword < len(words) else ""
     previous = words[cword - 1] if cword - 1 >= 0 else ""
 
-    top_level = ["backend", "select", "status", "model", "thinking", "chat", "shutdown", "serve", "completion"]
+    top_level = ["backend", "select", "status", "ps", "model", "thinking", "chat", "shutdown", "serve", "completion"]
     backend_sub = ["list", "select", "stop"]
     model_sub = ["list", "load"]
     thinking_sub = ["show", "set"]
@@ -1219,6 +1314,9 @@ def build_parser() -> argparse.ArgumentParser:
     select_alias.add_argument("backend_name", help="Backend name")
 
     sub.add_parser("status", help="Show current status")
+
+    ps = sub.add_parser("ps", help="List all running OmniInfer services")
+    ps.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
     model = sub.add_parser("model", help="Model commands")
     model_sub = model.add_subparsers(dest="model_command")
@@ -1316,6 +1414,10 @@ def main(argv: list[str] | None = None) -> int:
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
         return print_status()
+    if args.command == "ps":
+        if unknown_args:
+            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+        return print_ps(json_output=getattr(args, "json_output", False))
     if args.command == "model":
         if args.model_command == "list":
             if unknown_args:

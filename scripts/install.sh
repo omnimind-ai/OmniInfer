@@ -318,30 +318,13 @@ fi
 
 OMNI_PORT="${_OMNI_PORT}"
 
-if [[ "${_OMNI_PORT_FOUND}" == "free" ]] && [[ "${OMNI_PORT}" != "9000" ]]; then
-    warn "Default port 9000 is occupied, using alternative port ${OMNI_PORT}"
+if [[ "${OMNI_PORT_FOUND}" == "free" ]] && [[ "${OMNI_PORT}" != "9000" ]]; then
+    warn "Default port 9000 is occupied, will use alternative port ${OMNI_PORT}"
+    info "To start the service on port ${OMNI_PORT}, use: ./omniinfer serve --port ${OMNI_PORT}"
+    info "To list all running services, use: ./omniinfer ps"
 fi
 
-# Write config if not using default port
-if [[ "${OMNI_PORT}" != "9000" ]]; then
-    info "Using port ${OMNI_PORT}"
-    CONFIG_DIR="${INSTALL_DIR}/config"
-    mkdir -p "${CONFIG_DIR}"
-    cat > "${CONFIG_DIR}/omniinfer.json" <<PORTCFG
-{
-  "host": "127.0.0.1",
-  "port": ${OMNI_PORT}
-}
-PORTCFG
-    ok "Config written: ${CONFIG_DIR}/omniinfer.json (port ${OMNI_PORT})"
-fi
 echo ""
-
-# ── Cleanup: shut down any gateway started by the CLI on exit ──
-_cleanup_gateway() {
-    curl -sS -X POST "http://127.0.0.1:${OMNI_PORT}/omni/shutdown" >/dev/null 2>&1 || true
-}
-trap _cleanup_gateway EXIT
 
 # ── Step 3: Detect platform & choose backend ────────────────
 
