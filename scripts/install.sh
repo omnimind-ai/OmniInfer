@@ -66,6 +66,12 @@ need_cmd() {
     ok "$1"
 }
 
+# Run omniinfer CLI with the correct port
+# OMNI_PORT must be set before calling this function
+omniinfer_cmd() {
+    "${INSTALL_DIR}/omniinfer" --port "${OMNI_PORT}" "$@"
+}
+
 # Resolve the TTY file descriptor for interactive input.
 # Works in both normal terminal and curl|bash piped mode.
 INPUT_TTY=""
@@ -269,40 +275,62 @@ port_in_use() {
     fi
 }
 
-if port_in_use "${OMNI_PORT}"; then
-    # Try shutting down an existing OmniInfer gateway on this port
-    curl -sS -X POST "http://127.0.0.1:${OMNI_PORT}/omni/shutdown" >/dev/null 2>&1 || true
-    sleep 3
-fi
-if port_in_use "${OMNI_PORT}"; then
-    warn "Port ${OMNI_PORT} is in use, looking for a free port ..."
-    for try_port in 9001 9002 9003 9004 9005 9010 9020 9050 9100 8900 8800 19000; do
-        if ! port_in_use "${try_port}"; then
-            OMNI_PORT="${try_port}"
-            break
-        fi
-    done
-    if [[ "${OMNI_PORT}" -eq 9000 ]]; then
-        fatal "Could not find a free port"
-    fi
-    info "Using port ${OMNI_PORT}"
-    CONFIG_DIR="${INSTALL_DIR}/config"
-    mkdir -p "${CONFIG_DIR}"
-    cat > "${CONFIG_DIR}/omniinfer.json" <<PORTCFG
-{
-  "host": "127.0.0.1",
-  "port": ${OMNI_PORT}
-}
-PORTCFG
-    ok "Config written: ${CONFIG_DIR}/omniinfer.json (port ${OMNI_PORT})"
-fi
-echo ""
+# ── Find an available port ────────────────────────────────────
+# Try default port 9000 first, check if it's an OmniInfer gateway
+# If not or occupied by others, try alternative ports
 
-# ── Cleanup: shut down any gateway started by the CLI on exit ──
-_cleanup_gateway() {
-    curl -sS -X POST "http://127.0.0.1:${OMNI_PORT}/omni/shutdown" >/dev/null 2>&1 || true
-}
-trap _cleanup_gateway EXIT
+_ATTEMPT_PORTS=(9000 9001 9002 9003 9004 9005 9010 9020 9050 9100 8900 8800 19000)
+_OMNI_PORT_FOUND=""
+
+for _TRY_PORT in "${_ATTEMPT_PORTS[@]}"; do
+    if ! port_in_use "${_TRY_PORT}"; then
+        _OMNI_PORT="${_TRY_PORT}"
+        _OMNI_PORT_FOUND="free"
+        break
+    fi
+
+    # Port is occupied, check if it's an OmniInfer gateway we can shut down
+    info "Port ${_TRY_PORT} is occupied, checking if it's an OmniInfer gateway..."
+    _quick_check=$(curl -sS -w "%{http_code}" --connect-timeout 1 --max-time 1 "http://127.0.0.1:${_TRY_PORT}/health" 2>/dev/null || true)
+    _is_http=$?
+
+    if [[ ${_is_http} -eq 0 ]]; then
+        # Port responds to HTTP, try OmniInfer shutdown API
+        _shutdown_response=$(curl -sS -w "\n%{http_code}" --connect-timeout 3 --max-time 10 -X POST "http://127.0.0.1:${_TRY_PORT}/omni/shutdown" 2>/dev/null || true)
+        _http_code=$(echo "$_shutdown_response" | tail -1)
+        if [[ "$_http_code" == "200" ]] || [[ "$_http_code" == "204" ]]; then
+            ok "OmniInfer gateway found on port ${_TRY_PORT}, shutdown requested"
+            # Wait for port to be released, max 10 seconds
+            _wait_count=0
+            while port_in_use "${_TRY_PORT}" && [[ ${_wait_count} -lt 20 ]]; do
+                sleep 0.5
+                _wait_count=$((_wait_count + 1))
+            done
+            if ! port_in_use "${_TRY_PORT}"; then
+                ok "Port ${_TRY_PORT} is now available"
+                _OMNI_PORT="${_TRY_PORT}"
+                _OMNI_PORT_FOUND="released"
+                break
+            fi
+        fi
+    fi
+
+    warn "Port ${_TRY_PORT} is occupied by another service, trying next port..."
+done
+
+if [[ -z "${_OMNI_PORT}" ]]; then
+    fatal "Could not find an available port. Tried: ${_ATTEMPT_PORTS[*]}"
+fi
+
+OMNI_PORT="${_OMNI_PORT}"
+
+if [[ "${_OMNI_PORT_FOUND}" == "free" ]] && [[ "${OMNI_PORT}" != "9000" ]]; then
+    warn "Default port 9000 is occupied, will use alternative port ${OMNI_PORT}"
+    info "To start the service on port ${OMNI_PORT}, use: ./omniinfer serve --port ${OMNI_PORT}"
+    info "To list all running services, use: ./omniinfer ps"
+fi
+
+echo ""
 
 # ── Step 3: Detect platform & choose backend ────────────────
 
@@ -331,14 +359,14 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
 else
     # Desktop: query gateway API for compatible backends (hardware-matched)
     # First ensure the service is running, then wait for it to be ready
-    "${INSTALL_DIR}/omniinfer" status >/dev/null 2>&1 || true
+    omniinfer_cmd status >/dev/null 2>&1 || true
     for _i in $(seq 1 30); do
         _health=$(curl -s -m 2 "http://127.0.0.1:${OMNI_PORT}/health" 2>/dev/null) || _health=""
         if echo "${_health}" | grep -q '"status"'; then break; fi
         sleep 1
     done
 
-    _backends_json=$(curl -sS "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
+    _backends_json=$(curl -sS --connect-timeout 3 --max-time 5 "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
     _recommended=$(echo "${_backends_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('recommended',''))" 2>/dev/null) || _recommended=""
 
     # Parse API response (use process substitution to avoid subshell variable loss)
@@ -390,7 +418,7 @@ for b in d.get('data', []):
                 last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
                 BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
             fi
-        done <<< "$("${INSTALL_DIR}/omniinfer" backend list --scope compatible 2>/dev/null)"
+        done <<< "$(omniinfer_cmd backend list --scope compatible 2>/dev/null)"
     fi
 fi
 
@@ -414,7 +442,7 @@ echo ""
 
 # Select backend via CLI (skip on Android — runtime not installed yet)
 if [[ "${IS_ANDROID_PLATFORM}" -eq 0 ]]; then
-    "${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}"
+    omniinfer_cmd select "${SELECTED_BACKEND}"
 fi
 
 # ── Step 4: Build backend ───────────────────────────────────
@@ -483,7 +511,7 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     fi
 
     # Now that runtime is installed, select the backend
-    "${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}"
+    omniinfer_cmd select "${SELECTED_BACKEND}"
 
 else
     # ── Desktop: discover and run build script by convention ──
@@ -496,7 +524,7 @@ else
         info "Skipping build (--skip-build)"
     else
         # Check if runtime is already available via CLI
-        RUNTIME_AVAILABLE=$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null | grep -A3 "[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
+        RUNTIME_AVAILABLE=$(omniinfer_cmd backend list 2>/dev/null | grep -A3 "[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
         if [[ "${RUNTIME_AVAILABLE}" -gt 0 ]]; then
             ok "Backend ${SELECTED_BACKEND} already built, skipping"
         else
@@ -546,7 +574,7 @@ else
             CATALOG_URL="https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/${CATALOG_SYSTEM}/model_list.json"
 
             # Use embedded Python to parse catalog and present choices
-            MODEL_INFO=$(curl -sS "${CATALOG_URL}" | python3 -c "
+            MODEL_INFO=$(curl -sS --connect-timeout 5 --max-time 10 "${CATALOG_URL}" | python3 -c "
 import json, sys
 
 raw = sys.stdin.buffer.read()
@@ -665,7 +693,7 @@ echo ""
 
 if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     info "Loading model ..."
-    if ! "${INSTALL_DIR}/omniinfer" model load -m "${MODEL_PATH}"; then
+    if ! omniinfer_cmd model load -m "${MODEL_PATH}"; then
         err "Failed to load model. Make sure the backend is built and the model path is correct."
         echo ""
         echo "  Try building the backend first, then re-run:"
@@ -680,7 +708,7 @@ if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     # ── Cleanup function (runs on exit or Ctrl+C) ────────
     print_finish() {
         echo ""
-        "${INSTALL_DIR}/omniinfer" shutdown 2>/dev/null || true
+        omniinfer_cmd shutdown 2>/dev/null || true
 
         cat <<FINISH
 
@@ -733,7 +761,7 @@ FINISH
         [[ -z "${user_msg}" ]] && continue
         [[ "${user_msg}" == "exit" || "${user_msg}" == "quit" ]] && break
         printf '\033[1;32mAI:\033[0m ' >&2
-        "${INSTALL_DIR}/omniinfer" chat --message "${user_msg}"
+        omniinfer_cmd chat --message "${user_msg}"
         echo ""
     done
 
