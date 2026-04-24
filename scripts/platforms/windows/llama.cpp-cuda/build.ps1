@@ -49,8 +49,66 @@ function Find-Msys2Ucrt64Toolchain {
 Require-Command cmake
 Require-Command nvcc
 
-if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
-    throw "CUDA builds on Windows require MSVC cl.exe in PATH. Please open a Visual Studio 2022 Developer PowerShell (or install Build Tools with the C++ workload) and retry."
+function Find-And-Load-Msvc {
+    if (Get-Command cl -ErrorAction SilentlyContinue) { return $true }
+
+    $vcvarsallCandidates = @()
+
+    # Try vswhere first
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $installPath = & $vswhere -latest -property installationPath 2>$null
+        if ($installPath) {
+            $vcvarsallCandidates += Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
+        }
+    }
+
+    # Search common directories on all drives
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $root = $drive.Root
+        $vcvarsallCandidates += Join-Path $root "Coding\Tools\VS\BuildTools2022\VC\Auxiliary\Build\vcvarsall.bat"
+        $vcvarsallCandidates += Join-Path $root "BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
+        foreach ($year in @("2022","2019")) {
+            $vcvarsallCandidates += Join-Path $root "Program Files\Microsoft Visual Studio\$year\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
+            $vcvarsallCandidates += Join-Path $root "Program Files\Microsoft Visual Studio\$year\Community\VC\Auxiliary\Build\vcvarsall.bat"
+            $vcvarsallCandidates += Join-Path $root "Program Files (x86)\Microsoft Visual Studio\$year\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
+        }
+    }
+
+    # Determine MSVC toolset version constraint from CUDA version.
+    # CUDA 11.x requires MSVC <= 14.29; CUDA 12.x+ works with newer MSVC.
+    $vcvarsVerArg = ""
+    $nvccOutput = nvcc --version 2>&1 | Out-String
+    if ($nvccOutput -match 'release (\d+)\.(\d+)') {
+        $cudaMajor = [int]$matches[1]
+        if ($cudaMajor -lt 12) {
+            $vcvarsVerArg = "-vcvars_ver=14.29"
+            Write-Host "CUDA $cudaMajor detected: requesting MSVC toolset 14.29 for compatibility"
+        }
+    }
+
+    foreach ($vcvarsall in $vcvarsallCandidates) {
+        if (-not (Test-Path $vcvarsall)) { continue }
+        Write-Host "Found MSVC: $vcvarsall"
+        $vcvarsCmd = "x64 $vcvarsVerArg".Trim()
+        Write-Host "Loading MSVC environment: vcvarsall.bat $vcvarsCmd"
+        $envLines = cmd /c "`"$vcvarsall`" $vcvarsCmd >nul 2>&1 && set" 2>&1
+        foreach ($line in $envLines) {
+            if ($line -match '^([^=]+)=(.*)$') {
+                [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+            }
+        }
+        if (Get-Command cl -ErrorAction SilentlyContinue) {
+            $clPath = (Get-Command cl).Source
+            Write-Host "MSVC loaded: $clPath"
+            return $true
+        }
+    }
+    return $false
+}
+
+if (-not (Find-And-Load-Msvc)) {
+    throw "CUDA builds require MSVC cl.exe. Install Visual Studio Build Tools or set vcvarsall.bat path."
 }
 
 $configureArgs = @(
