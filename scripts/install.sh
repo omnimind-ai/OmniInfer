@@ -269,22 +269,61 @@ port_in_use() {
     fi
 }
 
-if port_in_use "${OMNI_PORT}"; then
-    # Try shutting down an existing OmniInfer gateway on this port
-    curl -sS -X POST "http://127.0.0.1:${OMNI_PORT}/omni/shutdown" >/dev/null 2>&1 || true
-    sleep 3
-fi
-if port_in_use "${OMNI_PORT}"; then
-    warn "Port ${OMNI_PORT} is in use, looking for a free port ..."
-    for try_port in 9001 9002 9003 9004 9005 9010 9020 9050 9100 8900 8800 19000; do
-        if ! port_in_use "${try_port}"; then
-            OMNI_PORT="${try_port}"
-            break
-        fi
-    done
-    if [[ "${OMNI_PORT}" -eq 9000 ]]; then
-        fatal "Could not find a free port"
+# ── Find an available port ────────────────────────────────────
+# Try default port 9000 first, check if it's an OmniInfer gateway
+# If not or occupied by others, try alternative ports
+
+_ATTEMPT_PORTS=(9000 9001 9002 9003 9004 9005 9010 9020 9050 9100 8900 8800 19000)
+_OMNI_PORT_FOUND=""
+
+for _TRY_PORT in "${_ATTEMPT_PORTS[@]}"; do
+    if ! port_in_use "${_TRY_PORT}"; then
+        _OMNI_PORT="${_TRY_PORT}"
+        _OMNI_PORT_FOUND="free"
+        break
     fi
+
+    # Port is occupied, check if it's an OmniInfer gateway we can shut down
+    info "Port ${_TRY_PORT} is occupied, checking if it's an OmniInfer gateway..."
+    _quick_check=$(curl -sS -w "%{http_code}" --connect-timeout 1 --max-time 1 "http://127.0.0.1:${_TRY_PORT}/health" 2>/dev/null || true)
+    _is_http=$?
+
+    if [[ ${_is_http} -eq 0 ]]; then
+        # Port responds to HTTP, try OmniInfer shutdown API
+        _shutdown_response=$(curl -sS -w "\n%{http_code}" --connect-timeout 3 --max-time 10 -X POST "http://127.0.0.1:${_TRY_PORT}/omni/shutdown" 2>/dev/null || true)
+        _http_code=$(echo "$_shutdown_response" | tail -1)
+        if [[ "$_http_code" == "200" ]] || [[ "$_http_code" == "204" ]]; then
+            ok "OmniInfer gateway found on port ${_TRY_PORT}, shutdown requested"
+            # Wait for port to be released, max 10 seconds
+            _wait_count=0
+            while port_in_use "${_TRY_PORT}" && [[ ${_wait_count} -lt 20 ]]; do
+                sleep 0.5
+                _wait_count=$((_wait_count + 1))
+            done
+            if ! port_in_use "${_TRY_PORT}"; then
+                ok "Port ${_TRY_PORT} is now available"
+                _OMNI_PORT="${_TRY_PORT}"
+                _OMNI_PORT_FOUND="released"
+                break
+            fi
+        fi
+    fi
+
+    warn "Port ${_TRY_PORT} is occupied by another service, trying next port..."
+done
+
+if [[ -z "${_OMNI_PORT}" ]]; then
+    fatal "Could not find an available port. Tried: ${_ATTEMPT_PORTS[*]}"
+fi
+
+OMNI_PORT="${_OMNI_PORT}"
+
+if [[ "${_OMNI_PORT_FOUND}" == "free" ]] && [[ "${OMNI_PORT}" != "9000" ]]; then
+    warn "Default port 9000 is occupied, using alternative port ${OMNI_PORT}"
+fi
+
+# Write config if not using default port
+if [[ "${OMNI_PORT}" != "9000" ]]; then
     info "Using port ${OMNI_PORT}"
     CONFIG_DIR="${INSTALL_DIR}/config"
     mkdir -p "${CONFIG_DIR}"
@@ -338,7 +377,7 @@ else
         sleep 1
     done
 
-    _backends_json=$(curl -sS "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
+    _backends_json=$(curl -sS --connect-timeout 3 --max-time 5 "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
     _recommended=$(echo "${_backends_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('recommended',''))" 2>/dev/null) || _recommended=""
 
     # Parse API response (use process substitution to avoid subshell variable loss)
@@ -546,7 +585,7 @@ else
             CATALOG_URL="https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/${CATALOG_SYSTEM}/model_list.json"
 
             # Use embedded Python to parse catalog and present choices
-            MODEL_INFO=$(curl -sS "${CATALOG_URL}" | python3 -c "
+            MODEL_INFO=$(curl -sS --connect-timeout 5 --max-time 10 "${CATALOG_URL}" | python3 -c "
 import json, sys
 
 raw = sys.stdin.buffer.read()
