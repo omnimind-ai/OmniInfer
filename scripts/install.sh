@@ -318,7 +318,7 @@ fi
 
 OMNI_PORT="${_OMNI_PORT}"
 
-if [[ "${OMNI_PORT_FOUND}" == "free" ]] && [[ "${OMNI_PORT}" != "9000" ]]; then
+if [[ "${_OMNI_PORT_FOUND}" == "free" ]] && [[ "${OMNI_PORT}" != "9000" ]]; then
     warn "Default port 9000 is occupied, will use alternative port ${OMNI_PORT}"
     info "To start the service on port ${OMNI_PORT}, use: ./omniinfer serve --port ${OMNI_PORT}"
     info "To list all running services, use: ./omniinfer ps"
