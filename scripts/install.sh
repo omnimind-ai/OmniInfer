@@ -66,6 +66,12 @@ need_cmd() {
     ok "$1"
 }
 
+# Run omniinfer CLI with the correct port
+# OMNI_PORT must be set before calling this function
+omniinfer_cmd() {
+    "${INSTALL_DIR}/omniinfer" --port "${OMNI_PORT}" "$@"
+}
+
 # Resolve the TTY file descriptor for interactive input.
 # Works in both normal terminal and curl|bash piped mode.
 INPUT_TTY=""
@@ -353,7 +359,7 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
 else
     # Desktop: query gateway API for compatible backends (hardware-matched)
     # First ensure the service is running, then wait for it to be ready
-    "${INSTALL_DIR}/omniinfer" status >/dev/null 2>&1 || true
+    omniinfer_cmd status >/dev/null 2>&1 || true
     for _i in $(seq 1 30); do
         _health=$(curl -s -m 2 "http://127.0.0.1:${OMNI_PORT}/health" 2>/dev/null) || _health=""
         if echo "${_health}" | grep -q '"status"'; then break; fi
@@ -412,7 +418,7 @@ for b in d.get('data', []):
                 last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
                 BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
             fi
-        done <<< "$("${INSTALL_DIR}/omniinfer" backend list --scope compatible 2>/dev/null)"
+        done <<< "$(omniinfer_cmd backend list --scope compatible 2>/dev/null)"
     fi
 fi
 
@@ -436,7 +442,7 @@ echo ""
 
 # Select backend via CLI (skip on Android — runtime not installed yet)
 if [[ "${IS_ANDROID_PLATFORM}" -eq 0 ]]; then
-    "${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}"
+    omniinfer_cmd select "${SELECTED_BACKEND}"
 fi
 
 # ── Step 4: Build backend ───────────────────────────────────
@@ -505,7 +511,7 @@ if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     fi
 
     # Now that runtime is installed, select the backend
-    "${INSTALL_DIR}/omniinfer" select "${SELECTED_BACKEND}"
+    omniinfer_cmd select "${SELECTED_BACKEND}"
 
 else
     # ── Desktop: discover and run build script by convention ──
@@ -518,7 +524,7 @@ else
         info "Skipping build (--skip-build)"
     else
         # Check if runtime is already available via CLI
-        RUNTIME_AVAILABLE=$("${INSTALL_DIR}/omniinfer" backend list 2>/dev/null | grep -A3 "[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
+        RUNTIME_AVAILABLE=$(omniinfer_cmd backend list 2>/dev/null | grep -A3 "[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
         if [[ "${RUNTIME_AVAILABLE}" -gt 0 ]]; then
             ok "Backend ${SELECTED_BACKEND} already built, skipping"
         else
@@ -687,7 +693,7 @@ echo ""
 
 if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     info "Loading model ..."
-    if ! "${INSTALL_DIR}/omniinfer" model load -m "${MODEL_PATH}"; then
+    if ! omniinfer_cmd model load -m "${MODEL_PATH}"; then
         err "Failed to load model. Make sure the backend is built and the model path is correct."
         echo ""
         echo "  Try building the backend first, then re-run:"
@@ -702,7 +708,7 @@ if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     # ── Cleanup function (runs on exit or Ctrl+C) ────────
     print_finish() {
         echo ""
-        "${INSTALL_DIR}/omniinfer" shutdown 2>/dev/null || true
+        omniinfer_cmd shutdown 2>/dev/null || true
 
         cat <<FINISH
 
@@ -755,7 +761,7 @@ FINISH
         [[ -z "${user_msg}" ]] && continue
         [[ "${user_msg}" == "exit" || "${user_msg}" == "quit" ]] && break
         printf '\033[1;32mAI:\033[0m ' >&2
-        "${INSTALL_DIR}/omniinfer" chat --message "${user_msg}"
+        omniinfer_cmd chat --message "${user_msg}"
         echo ""
     done
 
