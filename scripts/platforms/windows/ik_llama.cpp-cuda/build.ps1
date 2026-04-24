@@ -7,9 +7,9 @@ $ErrorActionPreference = "Stop"
 
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = Resolve-Path (Join-Path $ScriptRoot "..\..\..\..")
-$PackageRoot = Join-Path $RepoRoot ".local\runtime\windows\llama.cpp-cuda"
-$LlamaRoot = Resolve-Path (Join-Path $RepoRoot "framework\llama.cpp")
-$BuildRoot = Join-Path $PackageRoot "build\llama.cpp-cuda"
+$PackageRoot = Join-Path $RepoRoot ".local\runtime\windows\ik_llama.cpp-cuda"
+$LlamaRoot = Resolve-Path (Join-Path $RepoRoot "framework\ik_llama.cpp")
+$BuildRoot = Join-Path $PackageRoot "build\ik_llama.cpp-cuda"
 $BinRoot = Join-Path $PackageRoot "bin"
 
 function Require-Command {
@@ -117,11 +117,12 @@ $configureArgs = @(
     "-DCMAKE_BUILD_TYPE=$BuildType",
     "-DBUILD_SHARED_LIBS=OFF",
     "-DLLAMA_BUILD_TESTS=OFF",
-    "-DLLAMA_BUILD_EXAMPLES=OFF",
+    "-DLLAMA_BUILD_EXAMPLES=ON",
     "-DLLAMA_BUILD_SERVER=ON",
     "-DLLAMA_OPENSSL=OFF",
     "-DGGML_CUDA=ON",
-    "-DGGML_NATIVE=OFF"
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_WIN_VER=0x0A00"
 )
 
 if ($CudaArchitectures) {
@@ -152,16 +153,16 @@ if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -Erro
 
 New-Item -ItemType Directory -Force -Path $BuildRoot, $BinRoot | Out-Null
 
-Write-Host "Configuring llama.cpp CUDA build..."
+Write-Host "Configuring ik_llama.cpp CUDA build..."
 cmake @configureArgs
 if ($LASTEXITCODE -ne 0) {
-    throw "CMake configure failed for llama.cpp CUDA build."
+    throw "CMake configure failed for ik_llama.cpp CUDA build."
 }
 
-Write-Host "Building CUDA llama-server.exe..."
+Write-Host "Building ik_llama.cpp CUDA llama-server.exe..."
 cmake --build $BuildRoot --target llama-server --config $BuildType @buildArgs
 if ($LASTEXITCODE -ne 0) {
-    throw "CMake build failed for llama.cpp CUDA build."
+    throw "CMake build failed for ik_llama.cpp CUDA build."
 }
 
 Get-ChildItem (Join-Path $BuildRoot "bin") -File | ForEach-Object {
@@ -186,6 +187,6 @@ if (-not (Test-Path (Join-Path $BinRoot "llama-server.exe"))) {
 }
 
 Write-Host ""
-Write-Host "GPU build complete."
+Write-Host "ik_llama.cpp CUDA build complete."
 Write-Host "Toolchain: $toolchainKind"
 Write-Host "Binary package location: $BinRoot"
