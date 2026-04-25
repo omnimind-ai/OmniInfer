@@ -154,6 +154,14 @@ public:
       // Prepend our dir, then add all standard system skel paths as fallback.
       // If the bundled skel hits SELinux restrictions, the system skel at these
       // vendor-labeled paths may work (provided QNN SDK version is compatible).
+      // FastRPC Unsigned PD mode: the app process itself opens skel files
+      // via apps_std_fopen_fd and passes them to the DSP. Both DSP_LIBRARY_PATH
+      // and ADSP_LIBRARY_PATH must be set — DSP_LIBRARY_PATH is used by the
+      // FastRPC host-side library for the fopen path, ADSP_LIBRARY_PATH is the
+      // legacy name checked by some QNN SDK versions.
+      setenv("DSP_LIBRARY_PATH", lib_dir.c_str(), 1);
+      ET_LOGI("Set DSP_LIBRARY_PATH=%s", lib_dir.c_str());
+
       std::string adsp = lib_dir
           + ";/dsp"
           + ";/vendor/dsp"
