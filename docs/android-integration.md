@@ -447,7 +447,7 @@ The ET QNN backend uses **pre-built binaries only** — no compilation is needed
 
 ### Step 1: Download the Pre-built Package
 
-Download all `.so` files into `omniinfer-server/src/main/jniLibs/arm64-v8a/`.
+Download all `.so` files into your **app's** `app/src/main/jniLibs/arm64-v8a/` directory (not inside the OmniInfer submodule). Gradle automatically merges jniLibs from the app module and library modules into the final APK.
 
 **Base URL:** `https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/`
 
