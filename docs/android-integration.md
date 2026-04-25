@@ -445,43 +445,35 @@ The ET QNN backend uses **pre-built binaries only** — no compilation is needed
 2. **A `.pte` model file** — exported via ExecuTorch's QNN export pipeline
 3. **A Snapdragon device** — 8 Gen 1 (SM8450) or newer
 
-### Step 1: Download the Pre-built Package
-
-Download all `.so` files into your **app's** `app/src/main/jniLibs/arm64-v8a/` directory (not inside the OmniInfer submodule). Gradle automatically merges jniLibs from the app module and library modules into the final APK.
-
-**Base URL:** `https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/`
-
-**Universal files (required):**
-
-| File | Size | Download |
-|------|------|----------|
-| `libetqnn_runner.so` | 87 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libetqnn_runner.so) |
-| `libqnn_executorch_backend.so` | 0.6 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libqnn_executorch_backend.so) |
-| `libQnnHtp.so` | 2.7 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtp.so) |
-| `libQnnHtpPrepare.so` | 82 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpPrepare.so) |
-| `libQnnSystem.so` | 2.9 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnSystem.so) |
-| `libQnnHtpNetRunExtensions.so` | 0.9 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpNetRunExtensions.so) |
-
-**Skel/Stub file selection by chip:**
-
-| SoC | Chip | Skel | Stub |
-|-----|------|------|------|
-| SM8650 | 8 Gen 3 | [libQnnHtpV75Skel.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV75Skel.so) (11 MB) | [libQnnHtpV75Stub.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV75Stub.so) (0.7 MB) |
-| SM8750 | 8 Elite | [libQnnHtpV79Skel.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV79Skel.so) (11 MB) | [libQnnHtpV79Stub.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV79Stub.so) (0.7 MB) |
-| SM8850 | 8 Elite Gen 2 | [libQnnHtpV81Skel.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV81Skel.so) (12 MB) | [libQnnHtpV81Stub.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV81Stub.so) (0.7 MB) |
-
-Bundle all skel/stub pairs for full chip coverage (~24 MB total). QNN runtime auto-selects the matching version.
-
-### Step 2: Enable in Gradle
+### Step 1: Enable in Gradle
 
 ```properties
 # gradle.properties
 omniinfer.backend.executorch_qnn=true
 ```
 
-No CMake arguments needed — the ET QNN backend does not compile native code. It only needs the pre-built files in `jniLibs/`.
+That's it. The first build will **automatically download** all required QNN pre-built binaries (~213 MB) into the omniinfer-server module's `jniLibs/`. Subsequent builds skip the download if files are already present.
 
-### Step 3: Download a Model
+No manual downloads, no CMake arguments needed.
+
+<details>
+<summary>What gets downloaded (click to expand)</summary>
+
+All files are downloaded from `https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/`:
+
+**Universal (all chips):**
+- `libetqnn_runner.so` (87 MB) — subprocess runner
+- `libqnn_executorch_backend.so` (0.6 MB) — ET QNN delegate
+- `libQnnHtp.so` (2.7 MB), `libQnnHtpPrepare.so` (82 MB), `libQnnSystem.so` (2.9 MB), `libQnnHtpNetRunExtensions.so` (0.9 MB) — QNN runtime
+
+**Chip-specific skel/stub (all bundled for broad device support):**
+- V75: SM8650 (8 Gen 3)
+- V79: SM8750 (8 Elite)
+- V81: SM8850 (8 Elite Gen 2)
+
+</details>
+
+### Step 2: Download a Model
 
 Download pre-exported `.pte` models from ModelScope. Each model is exported for a specific SoC — pick the one matching your target device.
 
@@ -512,7 +504,7 @@ Place `hybrid_llama_qnn.pte` and `tokenizer.json` in the same directory on the d
 
 **Export your own model** (advanced): Requires a Linux server with the matching QNN SDK (2.44.0) installed. See the [ExecuTorch documentation](https://pytorch.org/executorch/stable/llm/getting-started.html) for the export pipeline.
 
-### Step 4: Load and Run
+### Step 3: Load and Run
 
 ```kotlin
 // Place tokenizer.json in the same directory as the .pte file
