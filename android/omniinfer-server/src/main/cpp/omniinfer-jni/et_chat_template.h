@@ -93,12 +93,25 @@ inline std::string apply_qwen3(const std::vector<Message>& msgs, bool thinking_e
   std::string result;
   bool has_system = false;
 
-  for (const auto& msg : msgs) {
+  // Find last user message for soft switch injection (/think or /no_think)
+  int last_user_idx = -1;
+  for (int i = static_cast<int>(msgs.size()) - 1; i >= 0; i--) {
+    if (msgs[i].role == "user") { last_user_idx = i; break; }
+  }
+
+  for (int i = 0; i < static_cast<int>(msgs.size()); i++) {
+    const auto& msg = msgs[i];
     if (msg.role == "system") {
       has_system = true;
       result += "<|im_start|>system\n" + msg.content + "<|im_end|>\n";
     } else if (msg.role == "user") {
-      result += "<|im_start|>user\n" + msg.content + "<|im_end|>\n";
+      // Qwen3 soft switch: append /no_think or /think to last user message.
+      // This reliably controls thinking regardless of the generation prompt.
+      std::string content = msg.content;
+      if (i == last_user_idx) {
+        content += thinking_enabled ? " /think" : " /no_think";
+      }
+      result += "<|im_start|>user\n" + content + "<|im_end|>\n";
     } else if (msg.role == "assistant") {
       result += "<|im_start|>assistant\n" + msg.content + "<|im_end|>\n";
     }
