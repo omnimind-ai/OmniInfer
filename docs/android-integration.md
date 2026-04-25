@@ -480,17 +480,36 @@ omniinfer.backend.executorch_qnn=true
 
 No CMake arguments needed — the ET QNN backend does not compile native code. It only needs the pre-built files in `jniLibs/`.
 
-### Step 3: Obtain a Model
+### Step 3: Download a Model
 
-The `.pte` model must be exported using ExecuTorch's QNN export pipeline with a **matching QNN SDK version** (same version as the pre-built package).
+Download pre-exported `.pte` models from ModelScope. Each model is exported for a specific SoC — pick the one matching your target device.
 
-**Option A: Download pre-exported models** (recommended)
+**Model repository:** [BiReRa/omniinfer-01001](https://modelscope.cn/models/BiReRa/omniinfer-01001)
 
-Check [OmniInfer Releases](https://github.com/omnimind-ai/OmniInfer/releases) for pre-exported `.pte` models. Each model listing specifies the required QNN SDK version and supported chips.
+**Available models (QNN SDK 2.44, Qwen3 family):**
 
-**Option B: Export your own model**
+| SoC | Model | Size | Download |
+|-----|-------|------|----------|
+| SM8650 (8 Gen 3) | Qwen3-0.6B | 680 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-0_6b/hybrid_llama_qnn.pte) |
+| SM8650 (8 Gen 3) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-1_7b/hybrid_llama_qnn.pte) |
+| SM8650 (8 Gen 3) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-4b/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-0.6B | 679 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-0_6b/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-1_7b/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-4b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 2) | Qwen3-0.6B | 682 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-0_6b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 2) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-1_7b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 2) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-4b/hybrid_llama_qnn.pte) |
 
-Requires a Linux server with the matching QNN SDK installed. See the [ExecuTorch documentation](https://pytorch.org/executorch/stable/llm/getting-started.html) for the export pipeline.
+**Tokenizer** (same for all models): [tokenizer.json](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-0_6b/tokenizer.json) (11 MB)
+
+Or download via CLI:
+```bash
+modelscope download --model BiReRa/omniinfer-01001 --include "SM8650_qwen3-1_7b/*" --local_dir ./models
+```
+
+Place `hybrid_llama_qnn.pte` and `tokenizer.json` in the same directory on the device.
+
+**Export your own model** (advanced): Requires a Linux server with the matching QNN SDK (2.44.0) installed. See the [ExecuTorch documentation](https://pytorch.org/executorch/stable/llm/getting-started.html) for the export pipeline.
 
 ### Step 4: Load and Run
 
@@ -517,8 +536,10 @@ Tested on Snapdragon 8 Gen 3 (SM8650):
 
 | Model | Decode (tok/s) | TTFT | Load Time | RAM |
 |-------|---------------|------|-----------|-----|
-| Qwen3-0.6B (QNN 2.37) | 20.96 | 173ms | 1.0s | 708 MiB |
-| Qwen3-1.7B (QNN 2.44) | 22.85 | 67ms | 1.4s | 1715 MiB |
+| Qwen3-0.6B | 20.96 | 173ms | 1.0s | 708 MiB |
+| Qwen3-1.7B | 22.85 | 67ms | 1.4s | 1715 MiB |
+
+Prefill speed: **~1000 tok/s** (183 tokens in 180ms on Qwen3-1.7B).
 
 ### Limitations
 
