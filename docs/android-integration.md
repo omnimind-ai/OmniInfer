@@ -447,29 +447,30 @@ The ET QNN backend uses **pre-built binaries only** — no compilation is needed
 
 ### Step 1: Download the Pre-built Package
 
-Download the ET QNN binary package from [OmniInfer Releases](https://github.com/omnimind-ai/OmniInfer/releases). Each package is built for a specific QNN SDK version and contains all required binaries.
+Download all `.so` files into `omniinfer-server/src/main/jniLibs/arm64-v8a/`.
 
-The package contains these files, all go into `omniinfer-server/src/main/jniLibs/arm64-v8a/`:
+**Base URL:** `https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/`
 
-| File | Size | Description |
-|------|------|-------------|
-| `libetqnn_runner.so` | ~91 MB | Subprocess executable (ET runner) |
-| `libqnn_executorch_backend.so` | ~0.6 MB | ET QNN delegate (auto-registration) |
-| `libQnnHtp.so` | ~2.5 MB | QNN HTP runtime |
-| `libQnnHtpPrepare.so` | ~66-82 MB | QNN HTP ops library |
-| `libQnnSystem.so` | ~2.5 MB | QNN system library |
-| `libQnnHtpV75Skel.so` | ~9-11 MB | Hexagon DSP skel (select per chip, see below) |
-| `libQnnHtpV75Stub.so` | ~0.7 MB | FastRPC stub (select per chip) |
+**Universal files (required):**
+
+| File | Size | Download |
+|------|------|----------|
+| `libetqnn_runner.so` | 87 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libetqnn_runner.so) |
+| `libqnn_executorch_backend.so` | 0.6 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libqnn_executorch_backend.so) |
+| `libQnnHtp.so` | 2.7 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtp.so) |
+| `libQnnHtpPrepare.so` | 82 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpPrepare.so) |
+| `libQnnSystem.so` | 2.9 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnSystem.so) |
+| `libQnnHtpNetRunExtensions.so` | 0.9 MB | [Download](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpNetRunExtensions.so) |
 
 **Skel/Stub file selection by chip:**
 
-| SoC | Chip | Hexagon Version | Skel File | Stub File |
-|-----|------|----------------|-----------|-----------|
-| SM8650 | 8 Gen 3 | V75 | `libQnnHtpV75Skel.so` | `libQnnHtpV75Stub.so` |
-| SM8750 | 8 Elite | V79 | `libQnnHtpV79Skel.so` | `libQnnHtpV79Stub.so` |
-| SM8850 | 8 Elite Gen 2 | V81 | `libQnnHtpV81Skel.so` | `libQnnHtpV81Stub.so` |
+| SoC | Chip | Skel | Stub |
+|-----|------|------|------|
+| SM8650 | 8 Gen 3 | [libQnnHtpV75Skel.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV75Skel.so) (11 MB) | [libQnnHtpV75Stub.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV75Stub.so) (0.7 MB) |
+| SM8750 | 8 Elite | [libQnnHtpV79Skel.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV79Skel.so) (11 MB) | [libQnnHtpV79Stub.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV79Stub.so) (0.7 MB) |
+| SM8850 | 8 Elite Gen 2 | [libQnnHtpV81Skel.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV81Skel.so) (12 MB) | [libQnnHtpV81Stub.so](https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/libQnnHtpV81Stub.so) (0.7 MB) |
 
-The pre-built package includes all three skel/stub pairs. Bundle them all — QNN runtime auto-selects the matching version at runtime. Total overhead is ~24 MB for full chip coverage.
+Bundle all skel/stub pairs for full chip coverage (~24 MB total). QNN runtime auto-selects the matching version.
 
 ### Step 2: Enable in Gradle
 
