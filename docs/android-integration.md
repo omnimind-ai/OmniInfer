@@ -465,12 +465,11 @@ The package contains these files, all go into `omniinfer-server/src/main/jniLibs
 
 | SoC | Chip | Hexagon Version | Skel File | Stub File |
 |-----|------|----------------|-----------|-----------|
-| SM8450 | 8 Gen 1 | V69 | `libQnnHtpV69Skel.so` | `libQnnHtpV69Stub.so` |
-| SM8550 | 8 Gen 2 | V73 | `libQnnHtpV73Skel.so` | `libQnnHtpV73Stub.so` |
 | SM8650 | 8 Gen 3 | V75 | `libQnnHtpV75Skel.so` | `libQnnHtpV75Stub.so` |
 | SM8750 | 8 Elite | V79 | `libQnnHtpV79Skel.so` | `libQnnHtpV79Stub.so` |
+| SM8850 | 8 Elite Gen 2 | V81 | `libQnnHtpV81Skel.so` | `libQnnHtpV81Stub.so` |
 
-You can bundle multiple skel/stub pairs to support multiple chips. Only the matching one is loaded at runtime.
+The pre-built package includes all three skel/stub pairs. Bundle them all — QNN runtime auto-selects the matching version at runtime. Total overhead is ~24 MB for full chip coverage.
 
 ### Step 2: Enable in Gradle
 
