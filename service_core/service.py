@@ -494,7 +494,10 @@ class OmniHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, anthropic-version, x-api-key",
+        )
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
 
@@ -827,7 +830,139 @@ class OmniHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if path == "/v1/messages":
+            self._handle_anthropic_messages()
+            return
+
         self._send_json(404, {"error": {"message": f"not found: {path}"}})
+
+    # ── Anthropic Messages API (/v1/messages) ────────────────────────────
+
+    def _handle_anthropic_messages(self) -> None:
+        from service_core.anthropic_adapter import (
+            anthropic_request_to_openai,
+            openai_response_to_anthropic,
+            stream_anthropic_from_embedded,
+            stream_anthropic_proxy,
+        )
+
+        _req_start = time.perf_counter()
+        body = self._read_json()
+        requested_model = str(body.get("model", "")).strip() or None
+        is_stream = body.get("stream") is True
+
+        logger.info(
+            "POST /v1/messages model=%s messages=%d stream=%s",
+            body.get("model", ""),
+            len(body.get("messages", [])),
+            is_stream,
+        )
+
+        # Convert Anthropic → OpenAI format
+        try:
+            payload = anthropic_request_to_openai(body)
+        except Exception as e:
+            self._send_json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
+            return
+
+        # Apply thinking mode (adapter already sets "think" field)
+        try:
+            apply_thinking_mode(payload, default_enabled=self.default_thinking)
+        except ValueError as e:
+            self._send_json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
+            return
+
+        # Ensure a model is loaded
+        try:
+            runtime = self.manager.ensure_model_loaded(
+                model=None,
+                mmproj=None,
+                backend_id=None,
+                ctx_size=None,
+                launch_args=None,
+                request_defaults=None,
+            )
+        except (ValueError, FileNotFoundError) as e:
+            self._send_json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
+            return
+        except RuntimeError as e:
+            self._send_json(409, {"error": {"type": "invalid_request_error", "message": str(e)}})
+            return
+
+        # Merge runtime defaults and set model
+        effective_payload = dict(runtime.request_defaults)
+        effective_payload.update(payload)
+        payload = effective_payload
+        if not payload.get("model"):
+            payload["model"] = runtime.model_ref
+
+        response_model = requested_model or payload.get("model", "")
+
+        runtime_mode = self.manager.current_runtime_mode()
+
+        # ── Embedded mode ────────────────────────────────────────────
+        if runtime_mode == "embedded":
+            try:
+                if is_stream:
+                    events = self.manager.stream_chat_completion(payload)
+                    stream_anthropic_from_embedded(self, events, response_model)
+                    _elapsed = time.perf_counter() - _req_start
+                    logger.info("POST /v1/messages -> 200 (%.2fs, embedded stream)", _elapsed)
+                    return
+                response = self.manager.chat_completion(payload)
+            except ValueError as e:
+                self._send_json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
+                return
+            except RuntimeError as e:
+                self._send_json(409, {"error": {"type": "invalid_request_error", "message": str(e)}})
+                return
+
+            anthropic_resp = openai_response_to_anthropic(response, response_model)
+            _elapsed = time.perf_counter() - _req_start
+            logger.info("POST /v1/messages -> 200 (%.2fs, embedded)", _elapsed)
+            self._send_json(200, anthropic_resp)
+            return
+
+        # ── Proxy mode ───────────────────────────────────────────────
+        target = self.manager.current_proxy_target()
+        if not target:
+            self._send_json(409, {"error": {"type": "invalid_request_error", "message": "selected backend is not ready"}})
+            return
+        host, port = target
+
+        if is_stream:
+            self._debug(f"anthropic proxy stream -> http://{host}:{port}/v1/chat/completions")
+            stream_anthropic_proxy(self, host, port, payload, response_model)
+            _elapsed = time.perf_counter() - _req_start
+            logger.info("POST /v1/messages -> 200 (%.2fs, proxy stream)", _elapsed)
+            return
+
+        code, resp_body = http_json(
+            "POST",
+            f"http://{host}:{port}/v1/chat/completions",
+            payload=payload,
+            timeout=600,
+        )
+        _elapsed = time.perf_counter() - _req_start
+
+        if code != 200:
+            logger.warning("POST /v1/messages -> %d (%.2fs, proxy)", code, _elapsed)
+            try:
+                err = json.loads(resp_body)
+            except Exception:
+                err = {"error": {"type": "api_error", "message": resp_body.decode("utf-8", errors="replace")}}
+            self._send_json(code, err)
+            return
+
+        try:
+            oai_resp = json.loads(resp_body)
+        except json.JSONDecodeError:
+            self._send_json(502, {"error": {"type": "api_error", "message": "invalid JSON from backend"}})
+            return
+
+        anthropic_resp = openai_response_to_anthropic(oai_resp, response_model)
+        logger.info("POST /v1/messages -> 200 (%.2fs, proxy)", _elapsed)
+        self._send_json(200, anthropic_resp)
 
 
 def parse_args(config: dict[str, Any]) -> argparse.Namespace:
