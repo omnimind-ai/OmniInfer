@@ -184,10 +184,24 @@ public:
     ET_LOGI("ExecuTorch QNN subprocess load: model=%s tokenizer=%s lib_dir=%s",
             model_path.c_str(), tokenizer_path.c_str(), lib_dir.c_str());
 
-    // Find the runner executable in nativeLibraryDir
-    std::string runner_path = lib_dir + "/libetqnn_runner.so";
-    if (access(runner_path.c_str(), X_OK) != 0) {
-      ET_LOGE("Runner not found or not executable: %s", runner_path.c_str());
+    // Find the runner executable. nativeLibraryDir varies by device
+    // (lib/arm64 vs lib/arm64-v8a), so try multiple paths.
+    std::string runner_path;
+    const std::string candidates[] = {
+      lib_dir + "/libetqnn_runner.so",
+      lib_dir + "-v8a/libetqnn_runner.so",  // lib/arm64 → lib/arm64-v8a
+    };
+    for (const auto& path : candidates) {
+      if (access(path.c_str(), X_OK) == 0) {
+        runner_path = path;
+        // Also update lib_dir to match the actual directory
+        lib_dir = path.substr(0, path.rfind('/'));
+        break;
+      }
+    }
+    if (runner_path.empty()) {
+      ET_LOGE("Runner not found at any candidate path:");
+      for (const auto& path : candidates) ET_LOGE("  tried: %s", path.c_str());
       return false;
     }
 
