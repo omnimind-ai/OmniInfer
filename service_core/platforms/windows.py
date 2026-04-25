@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import platform
 
-from service_core.backends import WINDOWS_LLAMA_CPP_TEMPLATES
+from service_core.backends import WINDOWS_IK_LLAMA_CPP_TEMPLATES, WINDOWS_LLAMA_CPP_TEMPLATES
 from service_core.platforms.base import HostPlatform
 
 
@@ -23,7 +23,7 @@ class WindowsPlatform(HostPlatform):
 
     @property
     def backend_templates(self):
-        return WINDOWS_LLAMA_CPP_TEMPLATES
+        return WINDOWS_LLAMA_CPP_TEMPLATES + WINDOWS_IK_LLAMA_CPP_TEMPLATES
 
     @property
     def catalog_backend_aliases(self) -> dict[str, str]:
@@ -34,4 +34,4 @@ class WindowsPlatform(HostPlatform):
 
     @property
     def gpu_backend_ids(self) -> frozenset[str]:
-        return frozenset({"llama.cpp-cuda", "llama.cpp-vulkan", "llama.cpp-sycl", "llama.cpp-hip"})
+        return frozenset({"llama.cpp-cuda", "llama.cpp-vulkan", "llama.cpp-sycl", "llama.cpp-hip", "ik_llama.cpp-cuda"})

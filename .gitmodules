@@ -28,3 +28,6 @@
 	path = framework/omniinfer-native
 	url = git@github.com:36330/llama.git
 	branch = eagle3-sync-upstream
+[submodule "framework/ik_llama.cpp"]
+	path = framework/ik_llama.cpp
+	url = git@github.com:ikawrakow/ik_llama.cpp.git
