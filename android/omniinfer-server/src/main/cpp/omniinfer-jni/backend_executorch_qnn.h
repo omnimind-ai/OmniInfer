@@ -330,8 +330,11 @@ public:
     // EOS special tokens. We filter both: skip tokens that are part of the
     // prompt prefix, and suppress known special tokens.
     std::string full_output;
-    size_t prompt_echo_remaining = prompt.size();  // bytes of prompt left to skip
-    bool prompt_echo_done = false;
+    // Note: prompt echo filtering is disabled because the runner is compiled
+    // with echo=false. If using a runner with echo=true, set this to prompt.size().
+    size_t prompt_echo_remaining = 0;
+    bool prompt_echo_done = true;
+    bool thinking_tag_injected = false;  // inject <think> for thinking mode
 
     while (true) {
       if (cancelled.load(std::memory_order_relaxed)) {
@@ -365,6 +368,15 @@ public:
             text = text.substr(prompt_echo_remaining);
             prompt_echo_done = true;
           }
+        }
+
+        // Inject <think> tag: the generation prompt ends with <think>\n
+        // which is consumed during prefill and not echoed by the runner.
+        // Kotlin's parseThinkingTags() needs it to split reasoning/content.
+        if (thinking_enabled && !thinking_tag_injected) {
+          thinking_tag_injected = true;
+          std::string synth = "<think>\n" + text;
+          text = synth;
         }
 
         // Filter EOS / special tokens
