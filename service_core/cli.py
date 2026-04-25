@@ -52,31 +52,26 @@ Common commands:
   omniinfer select <backend>
   omniinfer status
   omniinfer model load -m /path/to/model.gguf
-  omniinfer model load -m /path/to/model-directory --config
-  omniinfer select mlx-mac
-  omniinfer model load -m /path/to/mlx-model-directory
+  omniinfer model load -m /path/to/model.gguf --config
   omniinfer chat --message "Introduce yourself in one sentence."
-  omniinfer chat --message "Introduce yourself in one sentence." --config
-  omniinfer chat -m /path/to/model.gguf --message "Introduce yourself."
-  omniinfer chat -m /path/to/model.gguf -mm /path/to/mmproj.gguf --image tests/pictures/test1.png --message "Describe this image."
+  omniinfer chat --message "Describe this image." --image photo.png
   omniinfer shutdown
 
 Design notes:
-  1. The CLI automatically checks whether the local OmniInfer service is running and starts it when needed.
+  1. The CLI automatically starts the service and selects the best backend when needed.
   2. Host and port details are hidden by default; the CLI uses local app configuration automatically.
   3. `omniinfer select <backend>` persists the current backend selection.
-  4. `omniinfer chat` uses the selected backend by default. If none is selected, it prompts you to run `omniinfer backend list` and `omniinfer select <backend>`.
-  5. Output is designed for a local inference workflow rather than exposing raw HTTP JSON.
-  6. `omniinfer chat` streams tokens to stdout by default. Use `--no-stream` if you want the final response after completion instead.
+  4. `omniinfer chat` requires a model to be loaded first via `omniinfer model load`.
+  5. `omniinfer chat` streams tokens to stdout by default. Use `--no-stream` for batch output.
 
 Command map:
   backend list              -> show available backends
   select <backend>          -> choose a backend
   status                    -> show service status, selected backend, and loaded model
   model list                -> show models supported on the current system
-  model load                -> choose and load a model, optionally from a backend config JSON
+  model load                -> load a model, optionally with a backend config JSON
   thinking show/set         -> show or change the default think setting
-  chat                      -> run text or multimodal inference, optionally from a backend config JSON
+  chat                      -> run text or multimodal inference on the loaded model
   backend stop              -> stop the currently running backend process
   shutdown                  -> stop the OmniInfer service
   serve                     -> start the service in the foreground
@@ -627,19 +622,26 @@ def print_model_list(system_name: str, best: bool) -> int:
     return 0
 
 
-def require_selected_backend(allow_auto: bool) -> str | None:
+def require_selected_backend() -> str:
     selected_backend = ensure_service_and_selection()
     if selected_backend:
         return selected_backend
-    if allow_auto:
-        return None
-    raise SystemExit(
-        "No backend has been selected yet.\n"
-        "Run the following first:\n"
-        "  omniinfer backend list\n"
-        "  omniinfer select <backend>\n"
-        "If you want OmniInfer to auto-select a backend for this command, use --auto."
-    )
+    # No backend selected — auto-select best installed
+    status, payload, _ = request_json("GET", "/omni/backends?scope=installed", timeout=10.0)
+    if not isinstance(payload, dict):
+        raise SystemExit("Failed to query installed backends.")
+    recommended = payload.get("recommended")
+    if not recommended:
+        raise SystemExit(
+            "No installed backend found.\n"
+            "Build or install a backend first, then run:\n"
+            "  omniinfer backend list\n"
+            "  omniinfer select <backend>"
+        )
+    print(f"No backend selected. Auto-selecting: {recommended}")
+    request_json("POST", "/omni/backend/select", payload={"backend": recommended}, timeout=30.0)
+    save_selected_backend_name(recommended)
+    return str(recommended)
 
 
 def resolve_model_reference(path_text: str) -> Path:
@@ -697,24 +699,8 @@ def merge_backend_request_overrides(base: dict[str, Any], extra: dict[str, Any])
     return merged
 
 
-def resolve_backend_spec_for_native_args(
-    *,
-    allow_auto: bool,
-    needs_native_args: bool,
-) -> tuple[str | None, Any | None]:
-    if allow_auto and needs_native_args:
-        raise SystemExit(
-            "Backend-native extra args cannot be combined with --auto. "
-            "Run `omniinfer select <backend>` first, then use --config or backend-specific extra args."
-        )
-    selected_backend = require_selected_backend(allow_auto=allow_auto)
-    if not selected_backend:
-        if needs_native_args:
-            raise SystemExit(
-                "Backend-native extra args require a selected backend. "
-                "Run `omniinfer select <backend>` first."
-            )
-        return None, None
+def resolve_backend_spec_for_native_args() -> tuple[str, Any]:
+    selected_backend = require_selected_backend()
     backends = local_backends()
     backend = backends.get(selected_backend)
     if backend is None:
@@ -750,13 +736,10 @@ def print_model_load(args: argparse.Namespace) -> int:
     try:
         config_arg = getattr(args, "config", None)
         backend_extra_args = list(getattr(args, "backend_extra_args", []))
-        selected_backend, backend = resolve_backend_spec_for_native_args(
-            allow_auto=bool(getattr(args, "auto", False)),
-            needs_native_args=bool(config_arg is not None or backend_extra_args),
-        )
+        selected_backend, backend = resolve_backend_spec_for_native_args()
         spinner.update("Preparing model...")
         profile = resolve_backend_profile_arg(config_arg, selected_backend)
-        if profile and profile.backend_id and not selected_backend:
+        if profile and profile.backend_id and profile.backend_id != selected_backend:
             selected_backend = profile.backend_id
             backend = local_backends().get(selected_backend)
         backend_extras = combine_backend_extra_args(
@@ -764,7 +747,7 @@ def print_model_load(args: argparse.Namespace) -> int:
             command_name="load",
             profile=profile,
             cli_tokens=backend_extra_args,
-        ) if backend is not None else ParsedBackendExtraArgs()
+        )
 
         model_input = args.model
         if not model_input:
@@ -1098,50 +1081,20 @@ def stream_chat(payload: dict[str, Any]) -> int:
 
 
 def chat(args: argparse.Namespace) -> int:
-    config_arg = getattr(args, "config", None)
-    backend_extra_args = list(getattr(args, "backend_extra_args", []))
-    selected_backend, backend = resolve_backend_spec_for_native_args(
-        allow_auto=bool(getattr(args, "auto", False)),
-        needs_native_args=bool(config_arg is not None or backend_extra_args),
-    )
-    profile = resolve_backend_profile_arg(config_arg, selected_backend)
-    if profile and profile.backend_id and not selected_backend:
-        selected_backend = profile.backend_id
-        backend = local_backends().get(selected_backend)
-    backend_extras = combine_backend_extra_args(
-        backend=backend,
-        command_name="chat",
-        profile=profile,
-        cli_tokens=backend_extra_args,
-    ) if backend is not None else ParsedBackendExtraArgs()
+    ensure_service_running()
     state = current_runtime_state()
 
-    model_input = args.model
-    model_path = resolve_model_reference(model_input) if model_input else None
-    mmproj_input = args.mmproj
-    mmproj_path = resolve_existing_path(mmproj_input, "mmproj file") if mmproj_input else None
-    effective_ctx_size = args.ctx_size if args.ctx_size is not None else backend_extras.ctx_size
-    if effective_ctx_size is not None and effective_ctx_size <= 0:
-        raise SystemExit("--ctx-size must be a positive integer")
-
-    if model_path is None and not state.get("model"):
+    if not state.get("model"):
         raise SystemExit(
             "No model is currently loaded.\n"
-            "Run `omniinfer model load -m <model>` first, or pass a model directly to this chat command with -m/--model."
+            "Run `omniinfer model load -m <model>` first."
         )
 
-    runtime_request_defaults = state.get("request_defaults") if isinstance(state.get("request_defaults"), dict) else {}
-    effective_request_defaults = dict(runtime_request_defaults)
-    effective_request_defaults = merge_backend_request_overrides(
-        effective_request_defaults,
-        backend_extras.request_overrides,
-    )
-
-    message_text = args.message if args.message is not None else backend_extras.message
+    message_text = args.message
     if not message_text:
         raise SystemExit("Please provide --message.")
 
-    image_input = args.image if args.image is not None else backend_extras.image
+    image_input = args.image
     messages = [{"role": "user", "content": message_text}]
     if image_input:
         image_file = resolve_existing_path(image_input, "image file")
@@ -1161,7 +1114,8 @@ def chat(args: argparse.Namespace) -> int:
             }
         ]
 
-    payload: dict[str, Any] = dict(effective_request_defaults)
+    runtime_request_defaults = state.get("request_defaults") if isinstance(state.get("request_defaults"), dict) else {}
+    payload: dict[str, Any] = dict(runtime_request_defaults)
     payload["messages"] = messages
     payload["temperature"] = args.temperature if args.temperature is not None else payload.get("temperature", 0.2)
     payload["max_tokens"] = args.max_tokens if args.max_tokens is not None else payload.get("max_tokens", 128)
@@ -1171,39 +1125,15 @@ def chat(args: argparse.Namespace) -> int:
         if args.think is not None
         else payload.get("think", False)
     )
-    if model_path:
-        payload["model"] = str(model_path)
-    if mmproj_path:
-        payload["mmproj"] = str(mmproj_path)
-    if effective_ctx_size is not None:
-        payload["ctx_size"] = effective_ctx_size
-    if selected_backend:
-        payload["backend"] = selected_backend
-    if profile is not None and backend is not None:
-        load_extras = combine_backend_extra_args(
-            backend=backend,
-            command_name="load",
-            profile=None,
-            cli_tokens=list(profile.load_extra_args),
-        )
-        if load_extras.launch_args:
-            payload["launch_args"] = load_extras.launch_args
-        if load_extras.ctx_size is not None and args.ctx_size is None and "ctx_size" not in payload:
-            payload["ctx_size"] = load_extras.ctx_size
-    if backend_extras.request_overrides:
-        payload["request_defaults"] = backend_extras.request_overrides
 
     effective_stream = bool(payload.get("stream"))
     if effective_stream:
         payload["stream_options"] = {"include_usage": True}
-        result = stream_chat(payload)
-        save_selected_backend_name(selected_backend)
-        return result
+        return stream_chat(payload)
 
     _status, response, _ = request_json("POST", "/v1/chat/completions", payload=payload, timeout=600.0)
     if not isinstance(response, dict):
         raise SystemExit("Inference response has an unexpected format.")
-    save_selected_backend_name(selected_backend)
     print_chat_output(response)
     return 0
 
@@ -1333,7 +1263,6 @@ def build_parser() -> argparse.ArgumentParser:
         const="",
         help="Use the selected backend config JSON, or pass an explicit config path",
     )
-    model_load.add_argument("--auto", action="store_true", help="Let OmniInfer auto-select a backend for this command instead of using the saved selection")
     model_load.add_argument("--verbose", action="store_true", help="Show full backend log output during loading")
 
     thinking = sub.add_parser("thinking", help="Default thinking controls")
@@ -1342,25 +1271,15 @@ def build_parser() -> argparse.ArgumentParser:
     thinking_set = thinking_sub.add_parser("set", help="Set the default thinking state")
     thinking_set.add_argument("value", choices=("on", "off"), help="on or off")
 
-    chat_cmd = sub.add_parser("chat", help="Run model inference")
+    chat_cmd = sub.add_parser("chat", help="Run inference on the loaded model")
     chat_cmd.add_argument("--message", help="User message")
     stream_group = chat_cmd.add_mutually_exclusive_group()
     stream_group.add_argument("--stream", dest="stream", action="store_true", default=None, help="Stream tokens to stdout")
     stream_group.add_argument("--no-stream", dest="stream", action="store_false", help="Wait for the final response before printing")
-    chat_cmd.add_argument("-m", "--model", help="Model path or model directory for this request")
-    chat_cmd.add_argument("-mm", "--mmproj", help="mmproj path for this request")
-    chat_cmd.add_argument("--ctx-size", type=int, help="Optional llama.cpp context length override for this request")
     chat_cmd.add_argument("--image", help="Optional image path for multimodal inference")
     chat_cmd.add_argument("--think", choices=("on", "off"), help="Thinking mode for this request")
     chat_cmd.add_argument("--temperature", type=float, help="Sampling temperature")
     chat_cmd.add_argument("--max-tokens", type=int, help="Maximum output tokens for this request")
-    chat_cmd.add_argument(
-        "--config",
-        nargs="?",
-        const="",
-        help="Use the selected backend config JSON, or pass an explicit config path",
-    )
-    chat_cmd.add_argument("--auto", action="store_true", help="Let OmniInfer auto-select a backend for this command instead of using the saved selection")
 
     sub.add_parser("shutdown", help="Stop the OmniInfer service")
     sub.add_parser("serve", help="Start the OmniInfer service in the foreground")
