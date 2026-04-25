@@ -540,7 +540,7 @@ Prefill speed: **~1000 tok/s** (183 tokens in 180ms on Qwen3-1.7B).
 - **Single-turn only** — KV cache reuse across turns is not yet implemented in the subprocess protocol
 - **Qualcomm only** — requires Snapdragon SoC with Hexagon NPU
 - **No sampling control** — temperature and other sampling parameters are not yet passed to the subprocess runner
-- **`extractNativeLibs=true` required** — the omniinfer-server manifest sets this automatically via manifest merge. If your app explicitly sets `extractNativeLibs="false"`, the ET QNN backend will fail (runner .so must be a regular file on disk for fork+exec)
+- **`extractNativeLibs=true` required** — the omniinfer-server manifest sets this via manifest merge. However, if your app's `AndroidManifest.xml` explicitly sets `android:extractNativeLibs="false"`, it will override the library setting. You must either remove the override or set it to `true`. The runner .so must exist as a regular file on disk for fork+exec.
 
 ## Troubleshooting
 

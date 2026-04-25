@@ -325,8 +325,17 @@ public:
 
     write_cmd(cmd.str());
 
-    // Read response lines
+    // Read response lines.
+    // The runner may echo the prompt (if compiled with echo=true) and emit
+    // EOS special tokens. We filter both: skip tokens that are part of the
+    // prompt prefix, and suppress known special tokens.
     std::string full_output;
+    // Note: prompt echo filtering is disabled because the runner is compiled
+    // with echo=false. If using a runner with echo=true, set this to prompt.size().
+    size_t prompt_echo_remaining = 0;
+    bool prompt_echo_done = true;
+    bool thinking_tag_injected = false;  // inject <think> for thinking mode
+
     while (true) {
       if (cancelled.load(std::memory_order_relaxed)) {
         write_cmd("{\"command\":\"cancel\"}\n");
@@ -335,7 +344,6 @@ public:
 
       std::string line = read_line(100);
       if (line.empty()) {
-        // Check if child is still alive
         int status;
         pid_t r = waitpid(child_pid_, &status, WNOHANG);
         if (r == child_pid_) {
@@ -349,6 +357,35 @@ public:
       std::string type = json_type(line);
       if (type == "token") {
         std::string text = json_text(line);
+
+        // Skip prompt echo: runner with echo=true replays the full prompt
+        if (!prompt_echo_done) {
+          if (text.size() <= prompt_echo_remaining) {
+            prompt_echo_remaining -= text.size();
+            if (prompt_echo_remaining == 0) prompt_echo_done = true;
+            continue;
+          } else {
+            text = text.substr(prompt_echo_remaining);
+            prompt_echo_done = true;
+          }
+        }
+
+        // Inject <think> tag: the generation prompt ends with <think>\n
+        // which is consumed during prefill and not echoed by the runner.
+        // Kotlin's parseThinkingTags() needs it to split reasoning/content.
+        if (thinking_enabled && !thinking_tag_injected) {
+          thinking_tag_injected = true;
+          std::string synth = "<think>\n" + text;
+          text = synth;
+        }
+
+        // Filter EOS / special tokens
+        if (text == "<|im_end|>" || text == "<|endoftext|>" ||
+            text == "<end_of_turn>" || text == "<|eot_id|>" ||
+            text == "</s>") {
+          continue;
+        }
+
         full_output += text;
         if (on_token) {
           bool cont = on_token(text);
