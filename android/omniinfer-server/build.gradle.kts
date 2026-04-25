@@ -9,6 +9,7 @@ val enableExecutorchQnn: Boolean = findProperty("omniinfer.backend.executorch_qn
 android {
     namespace = "com.omniinfer.server"
     compileSdk = 35
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         minSdk = 26
