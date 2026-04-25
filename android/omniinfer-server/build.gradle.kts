@@ -8,8 +8,12 @@ val enableExecutorchQnn: Boolean = findProperty("omniinfer.backend.executorch_qn
 
 // --- ExecuTorch QNN: auto-download pre-built binaries ---
 if (enableExecutorchQnn) {
+    // Bump this version when uploading new prebuilt binaries to OSS.
+    // Gradle will re-download all files when the version changes.
+    val etQnnPrebuiltVersion = "2"
     val baseUrl = "https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a"
     val jniDir = file("src/main/jniLibs/arm64-v8a")
+    val versionFile = File(jniDir, ".etqnn_version")
 
     // Universal files (required for all chips)
     val universalFiles = listOf(
@@ -29,13 +33,18 @@ if (enableExecutorchQnn) {
     val allFiles = universalFiles + chipFiles
 
     val downloadEtQnnLibs by tasks.registering {
-        description = "Download ExecuTorch QNN pre-built .so files if missing"
-        outputs.upToDateWhen { allFiles.all { File(jniDir, it).exists() } }
+        description = "Download ExecuTorch QNN pre-built .so files (version $etQnnPrebuiltVersion)"
+        outputs.upToDateWhen {
+            versionFile.exists() && versionFile.readText().trim() == etQnnPrebuiltVersion
+                && allFiles.all { File(jniDir, it).exists() }
+        }
         doLast {
+            val needsUpdate = !versionFile.exists()
+                || versionFile.readText().trim() != etQnnPrebuiltVersion
             jniDir.mkdirs()
             allFiles.forEach { name ->
                 val target = File(jniDir, name)
-                if (!target.exists()) {
+                if (!target.exists() || needsUpdate) {
                     logger.lifecycle("Downloading $name ...")
                     uri("$baseUrl/$name").toURL().openStream().use { input ->
                         target.outputStream().use { output -> input.copyTo(output) }
@@ -43,6 +52,7 @@ if (enableExecutorchQnn) {
                     logger.lifecycle("  → ${target.length() / 1024 / 1024} MB")
                 }
             }
+            versionFile.writeText(etQnnPrebuiltVersion)
         }
     }
 
