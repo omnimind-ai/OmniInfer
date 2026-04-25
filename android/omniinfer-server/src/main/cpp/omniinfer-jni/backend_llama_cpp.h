@@ -54,9 +54,8 @@ public:
     ctx_ = llama_init_from_model(model_, cp);
     if (!ctx_) { llama_model_free(model_); model_ = nullptr; return false; }
 
-    common_params_sampling sp;
-    sp.temp = 0.7f;
-    sampler_ = common_sampler_init(model_, sp);
+    sampler_ = common_sampler_init(model_, default_sampling_);
+
     chat_templates_ = common_chat_templates_init(model_, "");
     batch_ = llama_batch_init(512, 0, 1);
     n_ctx_ = n_ctx;
@@ -90,8 +89,10 @@ public:
       const std::string& messages_json,
       const std::vector<std::vector<uint8_t>>& images,
       int max_tokens,
-      std::atomic<bool>& graceful_stop) override {
+      std::atomic<bool>& graceful_stop,
+      const std::string& sampling_json = "") override {
 
+    apply_sampling_params(sampling_json);
     common_sampler_reset(sampler_);
 
     // Build full messages vector.
@@ -344,7 +345,7 @@ full_prefill:
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     std::string full_response;
     int n_reasoning_tokens = 0;
-    int eff_max_tokens = max_tokens > 0 ? max_tokens : (n_ctx_ - n_prompt_tokens - 4);
+    int eff_max_tokens = max_tokens > 0 ? max_tokens : std::min(4096, n_ctx_ - n_prompt_tokens - 4);
     bool counting_reasoning = thinking_enabled && params.supports_thinking;
     std::string utf8_buf;
 
@@ -529,6 +530,40 @@ private:
     llama_batch_free(batch_); batch_ = {};
     if (ctx_) { llama_free(ctx_); ctx_ = nullptr; }
     if (model_) { llama_model_free(model_); model_ = nullptr; }
+  }
+
+  // Extract a numeric JSON value by key. Returns empty if not found.
+  static std::string json_num(const std::string& json, const char* key) {
+    std::string needle = std::string("\"") + key + "\"";
+    auto pos = json.find(needle);
+    if (pos == std::string::npos) return "";
+    pos = json.find(':', pos + needle.size());
+    if (pos == std::string::npos) return "";
+    pos++;
+    while (pos < json.size() && json[pos] == ' ') pos++;
+    size_t end = pos;
+    while (end < json.size() && (std::isdigit(json[end]) || json[end] == '.' || json[end] == '-' || json[end] == 'e' || json[end] == 'E' || json[end] == '+'))
+      end++;
+    return (end > pos) ? json.substr(pos, end - pos) : "";
+  }
+
+  // Apply per-request sampling parameters. Rebuilds the sampler only when needed.
+  void apply_sampling_params(const std::string& json) {
+    if (json.empty()) return;  // no overrides — keep current sampler
+    common_params_sampling sp = default_sampling_;
+    auto f = [&](const char* key) -> std::optional<float> {
+      auto v = json_num(json, key);
+      return v.empty() ? std::nullopt : std::optional<float>(std::stof(v));
+    };
+    if (auto v = f("temperature"))       sp.temp = *v;
+    if (auto v = f("top_p"))             sp.top_p = *v;
+    if (auto v = f("repetition_penalty"))sp.penalty_repeat = *v;
+    if (auto v = f("frequency_penalty")) sp.penalty_freq = *v;
+    if (auto v = f("presence_penalty"))  sp.penalty_present = *v;
+    auto tk = json_num(json, "top_k");
+    if (!tk.empty()) sp.top_k = std::stoi(tk);
+    common_sampler_free(sampler_);
+    sampler_ = common_sampler_init(model_, sp);
   }
 
   // Scan model directory for mmproj*.gguf file.
@@ -740,6 +775,7 @@ private:
   static std::once_flag s_backend_init;
   llama_model* model_ = nullptr;
   llama_context* ctx_ = nullptr;
+  common_params_sampling default_sampling_;
   common_sampler* sampler_ = nullptr;
   common_chat_templates_ptr chat_templates_;
   llama_batch batch_ = {};

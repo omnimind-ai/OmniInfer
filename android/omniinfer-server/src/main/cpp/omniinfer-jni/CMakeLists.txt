@@ -140,35 +140,15 @@ if(OMNIINFER_BACKEND_MNN)
 endif()
 
 if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-            OMNIINFER_BACKEND_EXECUTORCH_QNN=1
-            C10_USING_CUSTOM_GENERATED_MACROS
-            PCRE2_STATIC
-            GFLAGS_IS_A_DLL=0)
-    target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${ET_RUNNER_SRCS})
-    # Include paths matching ET's own build:
-    #   1. ET source root (for #include <executorch/examples/...>)
-    #   2. Installed headers (runtime, extension, kernels)
-    #   3. c10 compat (portable_type/c10/ as root so <c10/util/...> resolves)
-    #   4. tokenizer headers
-    #   5. gflags, nlohmann/json
-    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-            ${ET_PREBUILT_DIR}/include
-            ${ET_PREBUILT_DIR}/include/executorch
-            ${ET_PREBUILT_DIR}/include/executorch/runtime/core/portable_type/c10)
-    # Link all pre-built static libs that exist
-    foreach(lib_name ${ET_STATIC_LIBS})
-        if(TARGET et_${lib_name})
-            target_link_libraries(${CMAKE_PROJECT_NAME} et_${lib_name})
-        endif()
-    endforeach()
-    # Link abseil libraries
-    foreach(absl_lib ${ET_ABSL_LIBS})
-        target_link_libraries(${CMAKE_PROJECT_NAME} ${absl_lib})
-    endforeach()
-    target_link_libraries(${CMAKE_PROJECT_NAME} et_qnn_backend dl)
-    # Allow duplicate symbols between llama.cpp unicode and ET tokenizers unicode
-    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE "LINKER:--allow-multiple-definition")
+    # JNI library only needs the compile definition — the actual ET code runs
+    # in the subprocess (libetqnn_runner.so). The backend_executorch_qnn.h
+    # uses fork+exec and communicates via stdin/stdout JSON protocol.
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE OMNIINFER_BACKEND_EXECUTORCH_QNN=1)
+
+    # ET QNN subprocess runner — pre-built binary placed in jniLibs as
+    # libetqnn_runner.so. Will be compiled from et-qnn-runner/main.cpp
+    # once TLS alignment issue with NDK r28 is resolved.
+    # For now, use the pre-built qnn_llama_runner from rkod.
 endif()
 
 target_link_libraries(${CMAKE_PROJECT_NAME} android log)

@@ -5,11 +5,11 @@ This guide explains how to integrate the OmniInfer server library into your Andr
 ## Overview
 
 The `android/omniinfer-server` module is a standalone Android library that provides:
-- On-device LLM/VLM inference via llama.cpp and MNN backends
+- On-device LLM/VLM inference via llama.cpp, MNN, and ExecuTorch QNN (NPU) backends
 - An OpenAI-compatible HTTP API (Ktor server) running locally
 - JNI bridge to native C++ inference engines
 
-Your app includes it as a Gradle module. The native backends (llama.cpp, MNN) are compiled from source via CMake during the Gradle build.
+Your app includes it as a Gradle module. The native backends (llama.cpp, MNN) are compiled from source via CMake during the Gradle build. The ExecuTorch QNN backend uses pre-built binaries for Qualcomm NPU acceleration.
 
 ## Step 1: Add OmniInfer as a Submodule
 
@@ -198,6 +198,7 @@ val success: Boolean = OmniInferServer.loadModel(
 |---------|----------------------|---------|
 | `llama.cpp` | The `.gguf` model file | `/data/.../Qwen3.5-2B-gguf/Qwen3.5-2B-Q4_K_M.gguf` |
 | `mnn` | The `config.json` in the MNN model directory | `/data/.../Qwen3.5-2B-MNN/config.json` |
+| `executorch-qnn` | The `.pte` model file | `/data/.../Qwen3-0.6B/hybrid_llama_qnn.pte` |
 
 ### Multimodal (Vision) Models
 
@@ -231,6 +232,19 @@ Once the model is loaded, the OpenAI-compatible API is available at `http://127.
 - `GET /v1/models` — lists loaded models
 - `POST /v1/chat/completions` — chat inference (streaming and non-streaming)
 
+**Sampling parameters** (all optional, per-request):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `temperature` | float | backend default | Sampling temperature (0 = greedy, higher = more random) |
+| `top_p` | float | backend default | Nucleus sampling threshold |
+| `top_k` | int | backend default | Top-k sampling |
+| `repetition_penalty` | float | 1.0 | Repetition penalty (1.0 = disabled) |
+| `frequency_penalty` | float | 0.0 | Frequency penalty |
+| `presence_penalty` | float | 0.0 | Presence penalty |
+
+If omitted, the backend uses its own defaults (llama.cpp: temp=0.8, top_p=0.95, top_k=40; MNN: model config defaults).
+
 ```kotlin
 // Text request
 val json = """
@@ -238,7 +252,9 @@ val json = """
   "model": "any",
   "messages": [{"role": "user", "content": "Hello!"}],
   "stream": true,
-  "max_tokens": 100
+  "max_tokens": 100,
+  "temperature": 0.7,
+  "top_p": 0.9
 }
 """.trimIndent()
 
@@ -396,6 +412,7 @@ your-app/
 |---------|-------------|-------------------|-------------------|
 | llama.cpp | `.gguf` + optional `mmproj*.gguf` | `Qwen3.5-2B-Q4_K_M.gguf` | Same `.gguf` + `mmproj-F16.gguf` in same dir |
 | MNN | Directory with `config.json` | `Qwen3.5-2B-MNN/config.json` | Same dir + `visual.mnn` / `visual.mnn.weight` |
+| ExecuTorch QNN | `.pte` + `tokenizer.json` | `hybrid_llama_qnn.pte` | Not yet supported |
 
 **Important for llama.cpp multimodal:** The mmproj and model GGUF must be in the **same directory**. The backend scans the directory automatically. If you place the GGUF in one location and the mmproj elsewhere, vision will silently not work and the model will respond with "I cannot view images."
 
@@ -404,6 +421,125 @@ See `docs/API.md` for the full HTTP API reference.
 ## Native Library Output
 
 The module produces a single shared library: `libomniinfer-jni.so` (arm64-v8a). It statically links llama.cpp, MNN, and all other native dependencies, so there are no additional `.so` files to manage (unless the ExecuTorch QNN backend is enabled, which bundles separate QNN runtime libraries in `jniLibs/`).
+
+## ExecuTorch QNN Backend (NPU Acceleration)
+
+The ExecuTorch QNN backend runs LLM inference on the Qualcomm Hexagon NPU, delivering significantly higher throughput than CPU-only backends. It requires Snapdragon 8 Gen 1 or newer.
+
+### How It Works
+
+Unlike llama.cpp and MNN which run inside the JNI process, the ET QNN backend spawns a **subprocess** that communicates via stdin/stdout. This is required because Android's linker namespace restrictions prevent QNN's FastRPC from initializing within a JNI-loaded process. The subprocess uses Qualcomm's Unsigned Protection Domain to access the NPU without root.
+
+```
+App process (JNI) → fork+exec → libetqnn_runner.so (subprocess)
+                  ← stdin/stdout JSON protocol →
+                                    ↓
+                              QNN SDK → FastRPC HAL → Hexagon NPU
+```
+
+### Prerequisites
+
+The ET QNN backend uses **pre-built binaries only** — no compilation is needed from the integrator. You need:
+
+1. **Pre-built binary package** — download from OmniInfer releases
+2. **A `.pte` model file** — exported via ExecuTorch's QNN export pipeline
+3. **A Snapdragon device** — 8 Gen 1 (SM8450) or newer
+
+### Step 1: Enable in Gradle
+
+```properties
+# gradle.properties
+omniinfer.backend.executorch_qnn=true
+```
+
+That's it. The first build will **automatically download** all required QNN pre-built binaries (~213 MB) into the omniinfer-server module's `jniLibs/`. Subsequent builds skip the download if files are already present.
+
+No manual downloads, no CMake arguments needed.
+
+<details>
+<summary>What gets downloaded (click to expand)</summary>
+
+All files are downloaded from `https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a/`:
+
+**Universal (all chips):**
+- `libetqnn_runner.so` (87 MB) — subprocess runner
+- `libqnn_executorch_backend.so` (0.6 MB) — ET QNN delegate
+- `libQnnHtp.so` (2.7 MB), `libQnnHtpPrepare.so` (82 MB), `libQnnSystem.so` (2.9 MB), `libQnnHtpNetRunExtensions.so` (0.9 MB) — QNN runtime
+
+**Chip-specific skel/stub (all bundled for broad device support):**
+- V75: SM8650 (8 Gen 3)
+- V79: SM8750 (8 Elite)
+- V81: SM8850 (8 Elite Gen 2)
+
+</details>
+
+### Step 2: Download a Model
+
+Download pre-exported `.pte` models from ModelScope. Each model is exported for a specific SoC — pick the one matching your target device.
+
+**Model repository:** [BiReRa/omniinfer-01001](https://modelscope.cn/models/BiReRa/omniinfer-01001)
+
+**Available models (QNN SDK 2.44, Qwen3 family):**
+
+| SoC | Model | Size | Download |
+|-----|-------|------|----------|
+| SM8650 (8 Gen 3) | Qwen3-0.6B | 680 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-0_6b/hybrid_llama_qnn.pte) |
+| SM8650 (8 Gen 3) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-1_7b/hybrid_llama_qnn.pte) |
+| SM8650 (8 Gen 3) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-4b/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-0.6B | 679 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-0_6b/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-1_7b/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-4b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 2) | Qwen3-0.6B | 682 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-0_6b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 2) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-1_7b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 2) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-4b/hybrid_llama_qnn.pte) |
+
+**Tokenizer** (same for all models): [tokenizer.json](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-0_6b/tokenizer.json) (11 MB)
+
+Or download via CLI:
+```bash
+modelscope download --model BiReRa/omniinfer-01001 --include "SM8650_qwen3-1_7b/*" --local_dir ./models
+```
+
+Place `hybrid_llama_qnn.pte` and `tokenizer.json` in the same directory on the device.
+
+**Export your own model** (advanced): Requires a Linux server with the matching QNN SDK (2.44.0) installed. See the [ExecuTorch documentation](https://pytorch.org/executorch/stable/llm/getting-started.html) for the export pipeline.
+
+### Step 3: Load and Run
+
+```kotlin
+// Place tokenizer.json in the same directory as the .pte file
+val success = OmniInferServer.loadModel(
+    modelPath = "/sdcard/models/Qwen3-0.6B/hybrid_llama_qnn.pte",
+    backend = "executorch-qnn",
+    extraConfig = mapOf("decoder_model_version" to "qwen3")
+)
+// Once loaded, use the same HTTP API as other backends
+```
+
+The `extraConfig` parameter accepts:
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `decoder_model_version` | No | `qwen3` | Chat template to use: `qwen3`, `qwen2_5`, `llama3`, `gemma3` |
+| `tokenizer_path` | No | auto-discovered | Path to `tokenizer.json` (auto-discovered from model directory) |
+
+### Performance Reference
+
+Tested on Snapdragon 8 Gen 3 (SM8650):
+
+| Model | Decode (tok/s) | TTFT | Load Time | RAM |
+|-------|---------------|------|-----------|-----|
+| Qwen3-0.6B | 20.96 | 173ms | 1.0s | 708 MiB |
+| Qwen3-1.7B | 22.85 | 67ms | 1.4s | 1715 MiB |
+
+Prefill speed: **~1000 tok/s** (183 tokens in 180ms on Qwen3-1.7B).
+
+### Limitations
+
+- **Text-only** — multimodal (vision) and tool calling are not yet supported on the ET QNN backend
+- **Single-turn only** — KV cache reuse across turns is not yet implemented in the subprocess protocol
+- **Qualcomm only** — requires Snapdragon SoC with Hexagon NPU
+- **No sampling control** — temperature and other sampling parameters are not yet passed to the subprocess runner
 
 ## Troubleshooting
 

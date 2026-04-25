@@ -66,7 +66,11 @@ public:
       const std::string& messages_json,
       const std::vector<std::vector<uint8_t>>& images,
       int max_tokens,
-      std::atomic<bool>& graceful_stop) override {
+      std::atomic<bool>& graceful_stop,
+      const std::string& sampling_json = "") override {
+
+    // Apply per-request sampling parameters via set_config.
+    if (!sampling_json.empty()) llm_->set_config(sampling_json);
 
     using ChatMessages = MNN::Transformer::ChatMessages;
     ChatMessages msgs;
@@ -230,7 +234,7 @@ public:
     // Decode: generate tokens one by one for streaming.
     std::string full_response;
     auto* ctx = llm_->getContext();
-    int eff_max_tokens = max_tokens > 0 ? max_tokens : 2048;
+    int eff_max_tokens = max_tokens > 0 ? max_tokens : 4096;
     size_t prev_len = 0;
     int n_reasoning_tokens = 0;
 

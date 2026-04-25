@@ -276,6 +276,23 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
   const auto tool_choice = ExtractJsonString(req, "tool_choice");
   const auto messages_json = ExtractJsonRaw(req, "messages");
 
+  // Build sampling config JSON from per-request parameters.
+  std::string sampling_json;
+  {
+    const char* keys[] = {"temperature", "top_p", "top_k",
+                          "repetition_penalty", "frequency_penalty", "presence_penalty"};
+    std::ostringstream ss;
+    bool first = true;
+    for (auto* key : keys) {
+      auto val = ExtractJsonRaw(req, key);
+      if (val.has_value()) {
+        ss << (first ? "{" : ",") << "\"" << key << "\":" << *val;
+        first = false;
+      }
+    }
+    if (!first) { ss << "}"; sampling_json = ss.str(); }
+  }
+
   // Legacy path: use system_prompt/prompt if messages not in requestJson.
   const std::string sys = messages_json.has_value() ? "" : JStringToStdString(env, system_prompt);
   const std::string user = messages_json.has_value() ? "" : JStringToStdString(env, prompt);
@@ -304,7 +321,7 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
 
   std::string result = session->backend->generate(sys, user, thinking, session->cancelled, on_token,
       tools_json.value_or(""), tool_choice.value_or(""), messages_json.value_or(""),
-      images, max_tokens, session->graceful_stop);
+      images, max_tokens, session->graceful_stop, sampling_json);
 
   // Report metrics.
   auto m = session->backend->get_metrics();

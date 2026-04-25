@@ -6,9 +6,54 @@ plugins {
 val ktorVersion: String = findProperty("omniinfer.ktor.version")?.toString() ?: "3.1.3"
 val enableExecutorchQnn: Boolean = findProperty("omniinfer.backend.executorch_qnn")?.toString()?.toBoolean() ?: false
 
+// --- ExecuTorch QNN: auto-download pre-built binaries ---
+if (enableExecutorchQnn) {
+    val baseUrl = "https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a"
+    val jniDir = file("src/main/jniLibs/arm64-v8a")
+
+    // Universal files (required for all chips)
+    val universalFiles = listOf(
+        "libetqnn_runner.so",
+        "libqnn_executorch_backend.so",
+        "libQnnHtp.so",
+        "libQnnHtpPrepare.so",
+        "libQnnSystem.so",
+        "libQnnHtpNetRunExtensions.so",
+    )
+    // Chip-specific skel/stub pairs (bundle all for broad device support)
+    val chipFiles = listOf(
+        "libQnnHtpV75Skel.so", "libQnnHtpV75Stub.so",  // SM8650 (8 Gen 3)
+        "libQnnHtpV79Skel.so", "libQnnHtpV79Stub.so",  // SM8750 (8 Elite)
+        "libQnnHtpV81Skel.so", "libQnnHtpV81Stub.so",  // SM8850 (8 Elite Gen 2)
+    )
+    val allFiles = universalFiles + chipFiles
+
+    val downloadEtQnnLibs by tasks.registering {
+        description = "Download ExecuTorch QNN pre-built .so files if missing"
+        outputs.upToDateWhen { allFiles.all { File(jniDir, it).exists() } }
+        doLast {
+            jniDir.mkdirs()
+            allFiles.forEach { name ->
+                val target = File(jniDir, name)
+                if (!target.exists()) {
+                    logger.lifecycle("Downloading $name ...")
+                    uri("$baseUrl/$name").toURL().openStream().use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    logger.lifecycle("  → ${target.length() / 1024 / 1024} MB")
+                }
+            }
+        }
+    }
+
+    tasks.matching { it.name.startsWith("buildCMake") || it.name.startsWith("merge") }
+        .configureEach { dependsOn(downloadEtQnnLibs) }
+}
+
 android {
     namespace = "com.omniinfer.server"
     compileSdk = 35
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         minSdk = 26
