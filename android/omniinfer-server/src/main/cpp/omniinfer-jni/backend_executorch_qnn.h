@@ -224,16 +224,13 @@ public:
       std::string ld = lib_dir + ":/system/lib64:/vendor/lib64:/vendor/lib64/egl";
       setenv("LD_LIBRARY_PATH", ld.c_str(), 1);
 
-      // Exec — use qnn_llama_runner CLI interface.
-      // The runner loads model, runs a single prompt, and exits.
-      // For subprocess server mode, we'll write a custom runner later.
-      // For now, test that QNN NPU works in subprocess context.
+      // Exec the custom OmniInfer runner (JSON stdin/stdout protocol).
       execl(runner_path.c_str(), "libetqnn_runner.so",
             "--model_path", model_path.c_str(),
             "--tokenizer_path", tokenizer_path.c_str(),
-            "--prompt", "Hello",
-            "--temperature", "0",
-            "--seq_len", "32",
+            "--decoder_model_version", decoder_model_version_.c_str(),
+            "--lib_dir", lib_dir.c_str(),
+            "--n_ctx", std::to_string(n_ctx_).c_str(),
             nullptr);
       // If execl returns, it failed
       _exit(1);
@@ -248,16 +245,13 @@ public:
 
     ET_LOGI("Subprocess started: pid=%d", pid);
 
-    // Wait for subprocess output — either {"type":"ready"} (custom runner)
-    // or any output at all (stock qnn_llama_runner, for testing).
-    // Also log all output for debugging.
+    // Wait for {"type":"ready"} or {"type":"error"} from the runner.
+    // The runner outputs these after loading the model.
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    bool got_output = false;
     std::string line;
     while (std::chrono::steady_clock::now() < deadline) {
       line = read_line(500);
       if (line.empty()) {
-        // Check if child died
         int status;
         pid_t r = waitpid(child_pid_, &status, WNOHANG);
         if (r == child_pid_) {
@@ -271,7 +265,7 @@ public:
       ET_LOGI("Subprocess: %s", line.c_str());
       std::string type = json_type(line);
       if (type == "ready") {
-        ET_LOGI("Subprocess ready (custom protocol)");
+        ET_LOGI("Subprocess ready, model loaded");
         return true;
       }
       if (type == "error") {
@@ -279,17 +273,9 @@ public:
         release();
         return false;
       }
-      // For stock qnn_llama_runner: any output means it started successfully.
-      // The runner prints stats after generating. We log everything.
-      got_output = true;
     }
 
-    if (got_output) {
-      ET_LOGI("Subprocess produced output (stock runner mode)");
-      return true;
-    }
-
-    ET_LOGE("Subprocess timeout (no output in 60s)");
+    ET_LOGE("Subprocess timeout (no ready in 60s)");
     release();
     return false;
   }
@@ -311,17 +297,16 @@ public:
     if (child_pid_ <= 0) return "";
     last_metrics_ = {};
 
+    // Format prompt using chat template (runner expects a pre-formatted prompt)
+    std::string prompt = et_template::format_prompt(
+        decoder_model_version_, system_prompt, user_prompt,
+        messages_json, thinking_enabled);
+
     // Build generate command JSON
     std::ostringstream cmd;
     cmd << "{\"command\":\"generate\"";
-    if (!messages_json.empty())
-      cmd << ",\"messages\":" << messages_json;
-    if (!system_prompt.empty())
-      cmd << ",\"system_prompt\":\"" << json_escape(system_prompt) << "\"";
-    if (!user_prompt.empty())
-      cmd << ",\"user_prompt\":\"" << json_escape(user_prompt) << "\"";
+    cmd << ",\"prompt\":\"" << json_escape(prompt) << "\"";
     cmd << ",\"max_tokens\":" << (max_tokens > 0 ? max_tokens : 512);
-    cmd << ",\"thinking_enabled\":" << (thinking_enabled ? "true" : "false");
     cmd << "}\n";
 
     write_cmd(cmd.str());
