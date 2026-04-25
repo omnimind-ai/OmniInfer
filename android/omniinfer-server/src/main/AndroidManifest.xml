@@ -4,7 +4,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
-    <application>
+    <!-- extractNativeLibs=true is required for the ET QNN backend, which
+         fork+exec's libetqnn_runner.so as a subprocess. The .so must exist
+         as a regular file on disk, not compressed inside the APK. -->
+    <application android:extractNativeLibs="true">
         <!-- Required for QNN HTP DSP access on Android 12+ -->
         <uses-native-library android:name="libcdsprpc.so" android:required="false" />
 
