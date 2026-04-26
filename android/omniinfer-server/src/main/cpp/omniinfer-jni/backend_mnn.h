@@ -39,8 +39,10 @@ public:
     std::ostringstream cfg;
     if (is_gpu_) {
       // GPU: thread_num is a bitmask, not thread count.
-      // MNN_GPU_MEMORY_BUFFER(64) | MNN_GPU_TUNING_WIDE(4) = 68
-      cfg << "{\"thread_num\":68";
+      // Default: MNN_GPU_MEMORY_BUFFER(64) | MNN_GPU_TUNING_WIDE(4) = 68
+      // Caller can override via "gpu_mode" in config_json.
+      int gpu_mode = extract_int(config_json, "gpu_mode", 68);
+      cfg << "{\"thread_num\":" << gpu_mode;
       cfg << ",\"tmp_path\":\"" << cache_dir_ << "\"";
     } else {
       cfg << "{\"thread_num\":" << eff_threads;
@@ -504,6 +506,20 @@ private:
     if (tag[1] == '/') return "";              // closing tag </...>
     if (tag.find('|') != std::string::npos) return "";  // role marker <|...|>
     return tag;
+  }
+
+  static int extract_int(const std::string& json, const std::string& key, int fallback) {
+    std::string token = "\"" + key + "\"";
+    size_t kp = json.find(token);
+    if (kp == std::string::npos) return fallback;
+    size_t cp = json.find(':', kp + token.size());
+    if (cp == std::string::npos) return fallback;
+    size_t p = cp + 1;
+    while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p]))) p++;
+    if (p >= json.size()) return fallback;
+    char* end = nullptr;
+    long val = std::strtol(json.c_str() + p, &end, 10);
+    return (end != json.c_str() + p) ? (int)val : fallback;
   }
 
   static std::string extract_string(const std::string& json, const std::string& key) {

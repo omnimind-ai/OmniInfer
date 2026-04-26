@@ -10,6 +10,8 @@
     <application android:extractNativeLibs="true">
         <!-- Required for QNN HTP DSP access on Android 12+ -->
         <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+        <!-- Required for MNN OpenCL GPU backend (dlopen from vendor namespace) -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
 
         <service
             android:name=".OmniInferService"
