@@ -31,21 +31,37 @@ public:
     int eff_threads = n_threads > 0 ? n_threads : get_soc_default_threads();
     n_threads_ = eff_threads;
     n_ctx_ = n_ctx > 0 ? n_ctx : 16384;
+
+    // Detect GPU backend from caller config.
+    std::string backend_type = extract_string(config_json, "backend_type");
+    is_gpu_ = (backend_type == "opencl" || backend_type == "vulkan");
+
     std::ostringstream cfg;
-    cfg << "{\"thread_num\":" << eff_threads;
+    if (is_gpu_) {
+      // GPU: thread_num is a bitmask, not thread count.
+      // MNN_GPU_MEMORY_BUFFER(64) | MNN_GPU_TUNING_WIDE(4) = 68
+      cfg << "{\"thread_num\":68";
+      cfg << ",\"tmp_path\":\"" << cache_dir_ << "\"";
+    } else {
+      cfg << "{\"thread_num\":" << eff_threads;
+    }
     if (n_ctx > 0) cfg << ",\"max_new_tokens\":" << n_ctx;
     cfg << "}";
     llm_->set_config(cfg.str());
 
     if (!config_json.empty()) llm_->set_config(config_json);
 
-    // Enable KV cache reuse for multi-turn prefix matching.
-    llm_->set_config(R"({"reuse_kv": true})");
+    // KV cache reuse: enabled for CPU, disabled for GPU (not yet validated on GPU).
+    llm_->set_config(is_gpu_ ? R"({"reuse_kv": false})" : R"({"reuse_kv": true})");
 
     if (!llm_->load()) {
       MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr;
       return false;
     }
+
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "MNN backend loaded: type=%s, threads=%d, ctx=%d",
+        is_gpu_ ? backend_type.c_str() : "cpu", eff_threads, n_ctx_);
 
     // Workaround: MNN's setChatTemplate passes eos but not bos from the jinja config.
     // Read llm_config.json and inject jinja.bos as bos_token in the jinja context
@@ -144,9 +160,14 @@ public:
       return err.str();
     }
 
-    // KV cache prefix reuse.
+    // KV cache prefix reuse (CPU only; GPU reuse_kv is disabled).
     int n_cached_tokens = 0;
-    if (is_multimodal) {
+    if (is_gpu_) {
+      // GPU mode: always full prefill (reuse_kv not yet validated on GPU).
+      llm_->reset();
+      llm_->generate_init(nullptr, "<eop>");
+      llm_->generate(input_ids, 0);
+    } else if (is_multimodal) {
       // Compare conversation history (without generation prompt) for KV cache reuse.
       std::string conv_history = strip_generation_prompt(formatted_text_only);
       bool reuse_mm = has_cache_ && !prev_eval_prompt_.empty() &&
@@ -511,6 +532,7 @@ private:
   std::string cache_dir_;
   int n_threads_ = 0;
   int n_ctx_ = 16384;
+  bool is_gpu_ = false;
   InferenceMetrics last_metrics_;
   // KV cache prefix reuse state.
   std::vector<int> prev_input_ids_;     // text-only token comparison
