@@ -87,9 +87,16 @@ public:
     }
 
     // Flush safe content, keep tail for partial tag matching.
+    // Ensure the split point is on a UTF-8 character boundary.
     if (buf_.size() > keep_) {
-      out += buf_.substr(0, buf_.size() - keep_);
-      buf_ = buf_.substr(buf_.size() - keep_);
+      size_t split = buf_.size() - keep_;
+      // Back up if split lands inside a multi-byte UTF-8 sequence
+      while (split > 0 && (static_cast<unsigned char>(buf_[split]) & 0xC0) == 0x80)
+        split--;
+      if (split > 0) {
+        out += buf_.substr(0, split);
+        buf_ = buf_.substr(split);
+      }
     }
 
     return out;
