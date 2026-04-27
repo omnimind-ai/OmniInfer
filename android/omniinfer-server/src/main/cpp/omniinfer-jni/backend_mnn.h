@@ -53,8 +53,11 @@ public:
 
     if (!config_json.empty()) llm_->set_config(config_json);
 
-    // KV cache reuse: enabled for CPU, disabled for GPU (not yet validated on GPU).
-    llm_->set_config(is_gpu_ ? R"({"reuse_kv": false})" : R"({"reuse_kv": true})");
+    // KV cache reuse: enabled for CPU, disabled for GPU by default.
+    // Caller can override via "reuse_kv" in config_json (e.g. "true"/"false").
+    std::string reuse_kv_override = extract_string(config_json, "reuse_kv");
+    reuse_kv_ = reuse_kv_override.empty() ? !is_gpu_ : (reuse_kv_override == "true");
+    llm_->set_config(reuse_kv_ ? R"({"reuse_kv": true})" : R"({"reuse_kv": false})");
 
     if (!llm_->load()) {
       MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr;
@@ -162,10 +165,10 @@ public:
       return err.str();
     }
 
-    // KV cache prefix reuse (CPU only; GPU reuse_kv is disabled).
+    // KV cache prefix reuse.
     int n_cached_tokens = 0;
-    if (is_gpu_) {
-      // GPU mode: always full prefill (reuse_kv not yet validated on GPU).
+    if (is_gpu_ && !reuse_kv_) {
+      // GPU mode without KV reuse: always full prefill.
       llm_->reset();
       llm_->generate_init(nullptr, "<eop>");
       llm_->generate(input_ids, 0);
@@ -549,6 +552,7 @@ private:
   int n_threads_ = 0;
   int n_ctx_ = 16384;
   bool is_gpu_ = false;
+  bool reuse_kv_ = true;
   InferenceMetrics last_metrics_;
   // KV cache prefix reuse state.
   std::vector<int> prev_input_ids_;     // text-only token comparison
