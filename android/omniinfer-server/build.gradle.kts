@@ -91,9 +91,11 @@ android {
     }
 
     // Shorten .cxx build path on Windows to avoid MAX_PATH (260 char) limit.
+    // Use ~/.cxx/ instead of TEMP — TEMP gets cleaned by Windows, which breaks
+    // CMake cache when KleidiAI downloaded sources are deleted but cache persists.
     if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
         externalNativeBuild.cmake.buildStagingDirectory =
-            file("${System.getenv("TEMP") ?: "C:/tmp"}/.cxx/omniinfer")
+            file("${System.getProperty("user.home")}/.cxx/omniinfer")
     }
 
     compileOptions {
