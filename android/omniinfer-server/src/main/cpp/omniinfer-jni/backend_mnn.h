@@ -36,28 +36,26 @@ public:
     std::string backend_type = extract_string(config_json, "backend_type");
     is_gpu_ = (backend_type == "opencl" || backend_type == "vulkan");
 
+    // KV cache reuse: enabled for CPU, disabled for GPU by default.
+    std::string reuse_kv_override = extract_string(config_json, "reuse_kv");
+    reuse_kv_ = reuse_kv_override.empty() ? !is_gpu_ : (reuse_kv_override == "true");
+
+    // Build unified config before load().
     std::ostringstream cfg;
+    cfg << "{";
     if (is_gpu_) {
-      // GPU: thread_num is a bitmask, not thread count.
-      // Default: MNN_GPU_MEMORY_BUFFER(64) | MNN_GPU_TUNING_WIDE(4) = 68
-      // Caller can override via "gpu_mode" in config_json.
       int gpu_mode = extract_int(config_json, "gpu_mode", 68);
-      cfg << "{\"thread_num\":" << gpu_mode;
+      cfg << "\"thread_num\":" << gpu_mode;
       cfg << ",\"tmp_path\":\"" << cache_dir_ << "\"";
     } else {
-      cfg << "{\"thread_num\":" << eff_threads;
+      cfg << "\"thread_num\":" << eff_threads;
     }
     if (n_ctx > 0) cfg << ",\"max_new_tokens\":" << n_ctx;
+    cfg << ",\"reuse_kv\":" << (reuse_kv_ ? "true" : "false");
     cfg << "}";
     llm_->set_config(cfg.str());
 
     if (!config_json.empty()) llm_->set_config(config_json);
-
-    // KV cache reuse: enabled for CPU, disabled for GPU by default.
-    // Caller can override via "reuse_kv" in config_json (e.g. "true"/"false").
-    std::string reuse_kv_override = extract_string(config_json, "reuse_kv");
-    reuse_kv_ = reuse_kv_override.empty() ? !is_gpu_ : (reuse_kv_override == "true");
-    llm_->set_config(reuse_kv_ ? R"({"reuse_kv": true})" : R"({"reuse_kv": false})");
 
     if (!llm_->load()) {
       MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr;
