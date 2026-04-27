@@ -31,21 +31,42 @@ public:
     int eff_threads = n_threads > 0 ? n_threads : get_soc_default_threads();
     n_threads_ = eff_threads;
     n_ctx_ = n_ctx > 0 ? n_ctx : 16384;
+
+    // Detect GPU backend from caller config.
+    std::string backend_type = extract_string(config_json, "backend_type");
+    is_gpu_ = (backend_type == "opencl" || backend_type == "vulkan");
+
     std::ostringstream cfg;
-    cfg << "{\"thread_num\":" << eff_threads;
+    if (is_gpu_) {
+      // GPU: thread_num is a bitmask, not thread count.
+      // Default: MNN_GPU_MEMORY_BUFFER(64) | MNN_GPU_TUNING_WIDE(4) = 68
+      // Caller can override via "gpu_mode" in config_json.
+      int gpu_mode = extract_int(config_json, "gpu_mode", 68);
+      cfg << "{\"thread_num\":" << gpu_mode;
+      cfg << ",\"tmp_path\":\"" << cache_dir_ << "\"";
+    } else {
+      cfg << "{\"thread_num\":" << eff_threads;
+    }
     if (n_ctx > 0) cfg << ",\"max_new_tokens\":" << n_ctx;
     cfg << "}";
     llm_->set_config(cfg.str());
 
     if (!config_json.empty()) llm_->set_config(config_json);
 
-    // Enable KV cache reuse for multi-turn prefix matching.
-    llm_->set_config(R"({"reuse_kv": true})");
+    // KV cache reuse: enabled for CPU, disabled for GPU by default.
+    // Caller can override via "reuse_kv" in config_json (e.g. "true"/"false").
+    std::string reuse_kv_override = extract_string(config_json, "reuse_kv");
+    reuse_kv_ = reuse_kv_override.empty() ? !is_gpu_ : (reuse_kv_override == "true");
+    llm_->set_config(reuse_kv_ ? R"({"reuse_kv": true})" : R"({"reuse_kv": false})");
 
     if (!llm_->load()) {
       MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr;
       return false;
     }
+
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "MNN backend loaded: type=%s, threads=%d, ctx=%d",
+        is_gpu_ ? backend_type.c_str() : "cpu", eff_threads, n_ctx_);
 
     // Workaround: MNN's setChatTemplate passes eos but not bos from the jinja config.
     // Read llm_config.json and inject jinja.bos as bos_token in the jinja context
@@ -146,7 +167,12 @@ public:
 
     // KV cache prefix reuse.
     int n_cached_tokens = 0;
-    if (is_multimodal) {
+    if (is_gpu_ && !reuse_kv_) {
+      // GPU mode without KV reuse: always full prefill.
+      llm_->reset();
+      llm_->generate_init(nullptr, "<eop>");
+      llm_->generate(input_ids, 0);
+    } else if (is_multimodal) {
       // Compare conversation history (without generation prompt) for KV cache reuse.
       std::string conv_history = strip_generation_prompt(formatted_text_only);
       bool reuse_mm = has_cache_ && !prev_eval_prompt_.empty() &&
@@ -485,6 +511,20 @@ private:
     return tag;
   }
 
+  static int extract_int(const std::string& json, const std::string& key, int fallback) {
+    std::string token = "\"" + key + "\"";
+    size_t kp = json.find(token);
+    if (kp == std::string::npos) return fallback;
+    size_t cp = json.find(':', kp + token.size());
+    if (cp == std::string::npos) return fallback;
+    size_t p = cp + 1;
+    while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p]))) p++;
+    if (p >= json.size()) return fallback;
+    char* end = nullptr;
+    long val = std::strtol(json.c_str() + p, &end, 10);
+    return (end != json.c_str() + p) ? (int)val : fallback;
+  }
+
   static std::string extract_string(const std::string& json, const std::string& key) {
     std::string token = "\"" + key + "\"";
     size_t kp = json.find(token);
@@ -511,6 +551,8 @@ private:
   std::string cache_dir_;
   int n_threads_ = 0;
   int n_ctx_ = 16384;
+  bool is_gpu_ = false;
+  bool reuse_kv_ = true;
   InferenceMetrics last_metrics_;
   // KV cache prefix reuse state.
   std::vector<int> prev_input_ids_;     // text-only token comparison
