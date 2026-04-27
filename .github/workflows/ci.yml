@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  import-check:
+    name: Import Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Import core modules
+        run: |
+          python -c "
+          import service_core.cli
+          import service_core.service
+          import service_core.runtime
+          import service_core.model_catalog
+          import service_core.backend_cli_args
+          import service_core.backend_configs
+          import service_core.anthropic_adapter
+          import service_core.backends
+          import service_core.platforms
+          import service_core.drivers.base
+          print('All imports OK')
+          "
