@@ -469,7 +469,7 @@ All files are downloaded from `https://omnimind-model.oss-cn-beijing.aliyuncs.co
 **Chip-specific skel/stub (all bundled for broad device support):**
 - V75: SM8650 (8 Gen 3)
 - V79: SM8750 (8 Elite)
-- V81: SM8850 (8 Elite Gen 2)
+- V81: SM8850 (8 Elite Gen 5)
 
 </details>
 
@@ -489,9 +489,9 @@ Download pre-exported `.pte` models from ModelScope. Each model is exported for 
 | SM8750 (8 Elite) | Qwen3-0.6B | 679 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-0_6b/hybrid_llama_qnn.pte) |
 | SM8750 (8 Elite) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-1_7b/hybrid_llama_qnn.pte) |
 | SM8750 (8 Elite) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-4b/hybrid_llama_qnn.pte) |
-| SM8850 (8 Elite Gen 2) | Qwen3-0.6B | 682 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-0_6b/hybrid_llama_qnn.pte) |
-| SM8850 (8 Elite Gen 2) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-1_7b/hybrid_llama_qnn.pte) |
-| SM8850 (8 Elite Gen 2) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-4b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 5) | Qwen3-0.6B | 682 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-0_6b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 5) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-1_7b/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 5) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-4b/hybrid_llama_qnn.pte) |
 
 **Tokenizer** (same for all models): [tokenizer.json](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-0_6b/tokenizer.json) (11 MB)
 
