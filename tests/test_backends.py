@@ -127,13 +127,13 @@ class LaunchCommandTests(unittest.TestCase):
             self.assertEqual(launch.ctx_size, 8192)
             self.assertEqual(launch.log_file_name, "turboquant-server.log")
             self.assertEqual(launch.cmd[0], str(launcher_path.resolve()))
-            self.assertIn("-fa", launch.cmd)
-            self.assertIn("on", launch.cmd)
-            self.assertIn("--cache-type-k", launch.cmd)
-            self.assertIn("turbo4", launch.cmd)
-            self.assertIn("--cache-type-v", launch.cmd)
-            self.assertIn("-mm", launch.cmd)
-            self.assertEqual(launch.cmd[launch.cmd.index("-c") + 1], "8192")
+
+            cmd = launch.cmd
+            self.assertEqual(cmd[cmd.index("-fa") + 1], "on")
+            self.assertEqual(cmd[cmd.index("--cache-type-k") + 1], "turbo4")
+            self.assertIn("--cache-type-v", cmd)
+            self.assertEqual(cmd[cmd.index("-mm") + 1], "/tmp/mmproj.gguf")
+            self.assertEqual(cmd[cmd.index("-c") + 1], "8192")
 
     def test_mnn_embedded_backend_properties(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
