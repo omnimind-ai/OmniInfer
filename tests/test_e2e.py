@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""End-to-end inference flow test.
+
+Requires a real model file and (optionally) a running GPU backend.
+Not discovered by pytest — run directly:
+
+    python tests/test_e2e.py --model /path/to/model.gguf
+    python tests/test_e2e.py --model /path/to/model.gguf --backend llama.cpp-cuda
+    python tests/test_e2e.py --model /path/to/model.gguf --mmproj /path/to/mmproj.gguf
+
+The script starts a gateway, loads the model, exercises all HTTP endpoints
+(health, backends, state, thinking, model select, chat, stream, stop,
+direct-load chat, Anthropic /v1/messages), then shuts down.
+"""
 
 from __future__ import annotations
 
