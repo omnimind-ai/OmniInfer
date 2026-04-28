@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""End-to-end inference flow test.
+
+Requires a real model file and (optionally) a running GPU backend.
+Not discovered by pytest — run directly:
+
+    python tests/test_e2e.py --model /path/to/model.gguf
+    python tests/test_e2e.py --model /path/to/model.gguf --backend llama.cpp-cuda
+    python tests/test_e2e.py --model /path/to/model.gguf --mmproj /path/to/mmproj.gguf
+
+The script starts a gateway, loads the model, exercises all HTTP endpoints
+(health, backends, state, thinking, model select, chat, stream, stop,
+direct-load chat, Anthropic /v1/messages), then shuts down.
+"""
 
 from __future__ import annotations
 
@@ -18,11 +31,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_IMAGE = REPO_ROOT / "tests" / "pictures" / "test1.png"
+DEFAULT_IMAGE = REPO_ROOT / "tests" / "fixtures" / "test1.png"
 
 
 def log(message: str) -> None:
@@ -83,8 +96,8 @@ class FlowRunner:
         self.base_url = f"http://{args.host}:{args.port}"
         self.work_dir = Path(tempfile.mkdtemp(prefix="omniinfer-flow."))
         self.gateway_log = self.work_dir / "gateway.log"
-        self.gateway_proc: Optional[subprocess.Popen[str]] = None
-        self.gateway_log_handle: Optional[Any] = None
+        self.gateway_proc: subprocess.Popen[str] | None = None
+        self.gateway_log_handle: Any | None = None
         self.own_gateway = False
         self.success = False
         atexit.register(self.cleanup)
@@ -149,11 +162,11 @@ class FlowRunner:
         self,
         method: str,
         endpoint: str,
-        payload: Optional[Dict[str, Any]] = None,
-        output_name: Optional[str] = None,
+        payload: dict[str, Any] | None = None,
+        output_name: str | None = None,
         allow_error: bool = False,
         timeout: float = 600.0,
-    ) -> Tuple[int, Any, bytes]:
+    ) -> tuple[int, Any, bytes]:
         url = f"{self.base_url}{endpoint}"
         body = None
         headers = {"Accept": "application/json"}
@@ -190,7 +203,7 @@ class FlowRunner:
         self._write_artifact(output_name, raw)
         return status, parsed, raw
 
-    def request_stream(self, endpoint: str, payload: Dict[str, Any], output_name: str) -> str:
+    def request_stream(self, endpoint: str, payload: dict[str, Any], output_name: str) -> str:
         url = f"{self.base_url}{endpoint}"
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
@@ -217,17 +230,30 @@ class FlowRunner:
         self._write_artifact(output_name, content.encode("utf-8"))
         return content
 
-    def _write_artifact(self, output_name: Optional[str], raw: bytes) -> None:
+    def _write_artifact(self, output_name: str | None, raw: bytes) -> None:
         if output_name is None:
             return
         (self.work_dir / output_name).write_bytes(raw)
 
-    def assert_true(self, condition: bool, label: str, details: Optional[Any] = None) -> None:
+    def assert_true(self, condition: bool, label: str, details: Any | None = None) -> None:
         if condition:
             return
         if details is None:
             fail(f"Assertion failed: {label}")
         fail(f"Assertion failed: {label}: {details}")
+
+    def assert_anthropic_response(self, payload: Any, label: str) -> None:
+        self.assert_true(isinstance(payload, dict), f"{label} is a JSON object", payload)
+        self.assert_true(payload.get("type") == "message", f"{label} type", payload)
+        self.assert_true(payload.get("role") == "assistant", f"{label} role", payload)
+        content = payload.get("content")
+        self.assert_true(isinstance(content, list) and len(content) > 0, f"{label} content", payload)
+        self.assert_true(content[0].get("type") == "text", f"{label} content[0] type", payload)
+        self.assert_true(isinstance(content[0].get("text"), str) and content[0]["text"], f"{label} text present", payload)
+        usage = payload.get("usage")
+        self.assert_true(isinstance(usage, dict), f"{label} usage", payload)
+        self.assert_true(isinstance(usage.get("input_tokens"), int), f"{label} input_tokens", payload)
+        self.assert_true(isinstance(usage.get("output_tokens"), int), f"{label} output_tokens", payload)
 
     def assert_chat_response(self, payload: Any, label: str) -> None:
         self.assert_true(isinstance(payload, dict), f"{label} is a JSON object", payload)
@@ -358,7 +384,7 @@ class FlowRunner:
             )
             self.assert_true(isinstance(payload, dict) and payload.get("ok") is True and payload.get("selected_backend") == self.args.backend, "backend select", payload)
 
-        model_select_payload: Dict[str, Any] = {"model": str(self.model)}
+        model_select_payload: dict[str, Any] = {"model": str(self.model)}
         if self.mmproj:
             model_select_payload["mmproj"] = str(self.mmproj)
         if self.args.backend:
@@ -427,11 +453,26 @@ class FlowRunner:
         self.assert_true("data:" in stream_content, "stream contains SSE frames", stream_content[:500])
         self.assert_true("[DONE]" in stream_content, "stream contains DONE marker", stream_content[-500:])
 
+        # --- Anthropic Messages API ---
+        anthropic_payload = {
+            "model": "test",
+            "max_tokens": 128,
+            "messages": [{"role": "user", "content": "Say hello in one sentence."}],
+        }
+        log("POST /v1/messages (Anthropic)")
+        _status, payload, _raw = self.request_json(
+            "POST",
+            "/v1/messages",
+            payload=anthropic_payload,
+            output_name="anthropic-response.json",
+        )
+        self.assert_anthropic_response(payload, "anthropic messages")
+
         log("POST /omni/backend/stop")
         _status, payload, _raw = self.request_json("POST", "/omni/backend/stop", output_name="backend-stop-response.json")
         self.assert_true(isinstance(payload, dict) and payload.get("ok") is True and payload.get("stopped") is True, "backend stop", payload)
 
-        direct_payload: Dict[str, Any] = {
+        direct_payload: dict[str, Any] = {
             "model": str(self.model),
             "think": False,
             "messages": [{"role": "user", "content": "Introduce yourself again in one sentence."}],

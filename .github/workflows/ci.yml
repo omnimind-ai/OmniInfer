@@ -38,3 +38,9 @@ jobs:
           import service_core.drivers.base
           print('All imports OK')
           "
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Run unit tests
+        run: python -m pytest tests/test_backends.py tests/test_drivers.py tests/test_runtime.py -v

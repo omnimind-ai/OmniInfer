@@ -295,14 +295,6 @@ class RuntimeManager:
 
         logger.info("External runtime stopped (backend=%s)", runtime.backend_id)
 
-        job = getattr(self, "_backend_job_handle", None)
-        if job is not None:
-            try:
-                ctypes.windll.kernel32.CloseHandle(job)  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            self._backend_job_handle = None
-
         if runtime.log_handle:
             try:
                 runtime.log_handle.flush()
@@ -636,38 +628,36 @@ class RuntimeManager:
         return "unavailable"
 
     def list_backends(self, scope: str = "installed") -> tuple[list[dict[str, Any]], str | None]:
-        with self.lock:
-            loaded_model = self.loaded_runtime.model_ref if self._is_runtime_running_locked() and self.loaded_runtime else None
+        runtime = self.loaded_runtime
+        loaded_model = runtime.model_ref if runtime and self._is_runtime_running_locked() else None
 
-            classified: list[tuple[BackendSpec, str]] = [
-                (backend, self._classify_backend(backend))
-                for backend in self.backends.values()
-            ]
+        classified: list[tuple[BackendSpec, str]] = [
+            (backend, self._classify_backend(backend))
+            for backend in self.backends.values()
+        ]
 
-            # Filter by scope
-            if scope == "installed":
-                filtered = [(b, c) for b, c in classified if c == "installed"]
-            elif scope == "compatible":
-                filtered = [(b, c) for b, c in classified if c in ("installed", "compatible")]
-            else:  # "all"
-                filtered = classified
+        if scope == "installed":
+            filtered = [(b, c) for b, c in classified if c == "installed"]
+        elif scope == "compatible":
+            filtered = [(b, c) for b, c in classified if c in ("installed", "compatible")]
+        else:  # "all"
+            filtered = classified
 
-            # Recommended: best compatible (installed or compatible) backend by BACKEND_PRIORITY
-            recommended: str | None = None
-            compatible_backends = [(b, c) for b, c in classified if c in ("installed", "compatible")]
-            if compatible_backends:
-                recommended = min(compatible_backends, key=lambda pair: BACKEND_PRIORITY.get(pair[0].id, 99))[0].id
+        recommended: str | None = None
+        compatible_backends = [(b, c) for b, c in classified if c in ("installed", "compatible")]
+        if compatible_backends:
+            recommended = min(compatible_backends, key=lambda pair: BACKEND_PRIORITY.get(pair[0].id, 99))[0].id
 
-            data = [
-                backend.to_api_payload(
-                    selected=backend.id == self.selected_backend_id,
-                    loaded_model=loaded_model if backend.id == self.selected_backend_id else None,
-                    compatibility=compat,
-                    priority=BACKEND_PRIORITY.get(backend.id, 99),
-                )
-                for backend, compat in filtered
-            ]
-            return data, recommended
+        data = [
+            backend.to_api_payload(
+                selected=backend.id == self.selected_backend_id,
+                loaded_model=loaded_model if backend.id == self.selected_backend_id else None,
+                compatibility=compat,
+                priority=BACKEND_PRIORITY.get(backend.id, 99),
+            )
+            for backend, compat in filtered
+        ]
+        return data, recommended
 
     def select_backend(self, backend_id: str) -> dict[str, Any]:
         with self.lock:
@@ -689,33 +679,31 @@ class RuntimeManager:
             return {"ok": True, "stopped": True, "selected_backend": self.selected_backend_id}
 
     def clear_kv_cache(self) -> dict[str, Any]:
-        with self.lock:
-            target = self.current_proxy_target()
-            if target is None:
-                raise RuntimeError("no external backend is running")
-            host, port = target
-            # llama.cpp server slot erase API (slot 0, --parallel 1)
-            url = f"http://{host}:{port}/slots/0?action=erase"
-            req = urllib.request.Request(url=url, method="POST")
+        target = self.current_proxy_target()
+        if target is None:
+            raise RuntimeError("no external backend is running")
+        host, port = target
+        url = f"http://{host}:{port}/slots/0?action=erase"
+        req = urllib.request.Request(url=url, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp.read()
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
             try:
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    resp.read()
-            except urllib.error.HTTPError as e:
-                body = e.read().decode("utf-8", errors="replace")
-                try:
-                    detail = json.loads(body).get("error", {}).get("message", "")
-                except Exception:
-                    detail = ""
-                if "multimodal" in detail.lower():
-                    raise RuntimeError(
-                        "KV cache clear is not supported for multimodal models by llama.cpp; "
-                        "use /omni/backend/stop + /omni/model/select to reload instead"
-                    ) from e
-                raise RuntimeError(f"backend slot erase failed: HTTP {e.code} — {detail}") from e
-            except urllib.error.URLError as e:
-                raise RuntimeError(f"backend unreachable: {e}") from e
-            logger.info("KV cache cleared (slot 0 erased)")
-            return {"ok": True, "message": "KV cache cleared"}
+                detail = json.loads(body).get("error", {}).get("message", "")
+            except (json.JSONDecodeError, KeyError, TypeError):
+                detail = ""
+            if "multimodal" in detail.lower():
+                raise RuntimeError(
+                    "KV cache clear is not supported for multimodal models by llama.cpp; "
+                    "use /omni/backend/stop + /omni/model/select to reload instead"
+                ) from e
+            raise RuntimeError(f"backend slot erase failed: HTTP {e.code} — {detail}") from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"backend unreachable: {e}") from e
+        logger.info("KV cache cleared (slot 0 erased)")
+        return {"ok": True, "message": "KV cache cleared"}
 
     def list_supported_models(self, system_name: str) -> dict[str, Any]:
         return self.catalog.list_supported_models(system_name)
@@ -890,45 +878,42 @@ class RuntimeManager:
         }
 
     def current_proxy_target(self) -> tuple[str, int] | None:
-        with self.lock:
-            if (
-                self._is_runtime_running_locked()
-                and self.loaded_runtime
-                and self.loaded_runtime.runtime_mode == "external_server"
-                and self.loaded_runtime.host
-                and self.loaded_runtime.port is not None
-            ):
-                return self.loaded_runtime.host, self.loaded_runtime.port
-            return None
+        runtime = self.loaded_runtime
+        if (
+            runtime
+            and self._is_runtime_running_locked()
+            and runtime.runtime_mode == "external_server"
+            and runtime.host
+            and runtime.port is not None
+        ):
+            return runtime.host, runtime.port
+        return None
 
     def current_runtime_mode(self) -> str | None:
-        with self.lock:
-            if self._is_runtime_running_locked() and self.loaded_runtime:
-                return self.loaded_runtime.runtime_mode
-            return None
+        runtime = self.loaded_runtime
+        if runtime and self._is_runtime_running_locked():
+            return runtime.runtime_mode
+        return None
 
     def chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
-        with self.lock:
-            runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
-            if runtime is None or runtime.runtime_mode != "embedded" or runtime.embedded_driver is None:
-                raise RuntimeError("selected backend is not ready for embedded inference")
-            return runtime.embedded_driver.chat_completion(runtime.embedded_state, payload)
+        runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
+        if runtime is None or runtime.runtime_mode != "embedded" or runtime.embedded_driver is None:
+            raise RuntimeError("selected backend is not ready for embedded inference")
+        return runtime.embedded_driver.chat_completion(runtime.embedded_state, payload)
 
     def stream_chat_completion(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
-        with self.lock:
-            runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
-            if runtime is None or runtime.runtime_mode != "embedded" or runtime.embedded_driver is None:
-                raise RuntimeError("selected backend is not ready for embedded inference")
-            return list(runtime.embedded_driver.stream_chat_completion(runtime.embedded_state, payload))
+        runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
+        if runtime is None or runtime.runtime_mode != "embedded" or runtime.embedded_driver is None:
+            raise RuntimeError("selected backend is not ready for embedded inference")
+        return list(runtime.embedded_driver.stream_chat_completion(runtime.embedded_state, payload))
 
     def snapshot(self) -> dict[str, Any]:
-        with self.lock:
-            runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
-            return {
-                "backend": self.selected_backend_id,
-                "model": runtime.model_ref if runtime else None,
-                "mmproj": runtime.mmproj_ref if runtime else None,
-                "ctx_size": runtime.ctx_size if runtime else None,
-                "request_defaults": dict(runtime.request_defaults) if runtime else {},
-                "backend_ready": bool(runtime),
-            }
+        runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
+        return {
+            "backend": self.selected_backend_id,
+            "model": runtime.model_ref if runtime else None,
+            "mmproj": runtime.mmproj_ref if runtime else None,
+            "ctx_size": runtime.ctx_size if runtime else None,
+            "request_defaults": dict(runtime.request_defaults) if runtime else {},
+            "backend_ready": bool(runtime),
+        }
