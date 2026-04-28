@@ -367,6 +367,27 @@ class MlxDriverTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.driver.chat_completion(state, payload)
 
+    def test_load_rejects_mmproj(self) -> None:
+        model_dir = self._write_model_dir(vision=False)
+        modules, _ = _mlx_fake_modules()
+        with patch.dict(sys.modules, modules, clear=False):
+            with self.assertRaises(ValueError):
+                self.driver.load_model(model_path=model_dir, model_ref="demo", mmproj_path="/tmp/mmproj.gguf", ctx_size=None)
+
+    def test_load_rejects_ctx_size(self) -> None:
+        model_dir = self._write_model_dir(vision=False)
+        modules, _ = _mlx_fake_modules()
+        with patch.dict(sys.modules, modules, clear=False):
+            with self.assertRaises(ValueError):
+                self.driver.load_model(model_path=model_dir, model_ref="demo", mmproj_path=None, ctx_size=4096)
+
+    def test_unload_model(self) -> None:
+        model_dir = self._write_model_dir(vision=False)
+        modules, _ = _mlx_fake_modules()
+        with patch.dict(sys.modules, modules, clear=False):
+            state = self.driver.load_model(model_path=model_dir, model_ref="demo", mmproj_path=None, ctx_size=None)
+            self.driver.unload_model(state)  # should not raise
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MNN driver tests
