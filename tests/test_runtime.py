@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
+from service_core.platforms.windows import WindowsPlatform
 from service_core.runtime import RuntimeManager
 
 
@@ -75,6 +76,19 @@ class RuntimeRootResolutionTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved, (self.repo_root / ".local" / "runtime" / "linux").resolve())
+
+    def test_each_platform_uses_own_folder_name(self) -> None:
+        for platform_cls, expected_name in [
+            (LinuxPlatform, "linux"),
+            (MacPlatform, "macos"),
+            (WindowsPlatform, "windows"),
+        ]:
+            platform = platform_cls()
+            resolved = platform.discover_runtime_root(
+                repo_root=self.repo_root,
+                app_root=self.app_root,
+            )
+            self.assertEqual(resolved.name, expected_name, f"{platform_cls.__name__} folder")
 
 
 # ---------------------------------------------------------------------------
