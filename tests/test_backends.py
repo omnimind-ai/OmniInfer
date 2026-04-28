@@ -127,44 +127,61 @@ class PlatformRegistrationTests(unittest.TestCase):
 
 
 class LaunchCommandTests(unittest.TestCase):
-    def test_turboquant_launch_command(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            runtime_bin = repo_root / ".local" / "runtime" / "macos" / "turboquant-mac" / "bin"
-            runtime_bin.mkdir(parents=True)
-            launcher_path = runtime_bin / "llama-server"
-            launcher_path.write_text("", encoding="utf-8")
+    """Turboquant launch command construction tests."""
 
-            with patch("service_core.runtime.current_host_platform", return_value=MacPlatform()):
-                manager = RuntimeManager(
-                    repo_root=str(repo_root),
-                    app_root=str(repo_root),
-                    backend_host="127.0.0.1",
-                    backend_port=9100,
-                    startup_timeout_s=10,
-                    default_backend_id="turboquant-mac",
-                )
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        repo_root = Path(self.temp_dir.name)
+        runtime_bin = repo_root / ".local" / "runtime" / "macos" / "turboquant-mac" / "bin"
+        runtime_bin.mkdir(parents=True)
+        self.launcher_path = runtime_bin / "llama-server"
+        self.launcher_path.write_text("", encoding="utf-8")
 
-            backend = manager.backends["turboquant-mac"]
-            launch = manager._prepare_external_runtime_launch(
-                backend,
-                model_path="/tmp/qwen3.5-2b.gguf",
-                mmproj_path="/tmp/mmproj.gguf",
-                ctx_size=8192,
+        with patch("service_core.runtime.current_host_platform", return_value=MacPlatform()):
+            self.manager = RuntimeManager(
+                repo_root=str(repo_root),
+                app_root=str(repo_root),
+                backend_host="127.0.0.1",
+                backend_port=9100,
+                startup_timeout_s=10,
+                default_backend_id="turboquant-mac",
             )
 
-            self.assertEqual(launch.port, 9100)
-            self.assertEqual(launch.ctx_size, 8192)
-            self.assertEqual(launch.log_file_name, "turboquant-server.log")
-            self.assertEqual(launch.cmd[0], str(launcher_path.resolve()))
+        backend = self.manager.backends["turboquant-mac"]
+        self.launch = self.manager._prepare_external_runtime_launch(
+            backend,
+            model_path="/tmp/qwen3.5-2b.gguf",
+            mmproj_path="/tmp/mmproj.gguf",
+            ctx_size=8192,
+        )
 
-            cmd = launch.cmd
-            self.assertEqual(cmd[cmd.index("-fa") + 1], "on")
-            self.assertEqual(cmd[cmd.index("--cache-type-k") + 1], "turbo4")
-            self.assertIn("--cache-type-v", cmd)
-            self.assertEqual(cmd[cmd.index("-mm") + 1], "/tmp/mmproj.gguf")
-            self.assertEqual(cmd[cmd.index("-c") + 1], "8192")
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
 
+    def test_port_and_ctx_size(self) -> None:
+        self.assertEqual(self.launch.port, 9100)
+        self.assertEqual(self.launch.ctx_size, 8192)
+
+    def test_launcher_path_and_log_name(self) -> None:
+        self.assertEqual(self.launch.cmd[0], str(self.launcher_path.resolve()))
+        self.assertEqual(self.launch.log_file_name, "turboquant-server.log")
+
+    def test_flash_attention_flags(self) -> None:
+        cmd = self.launch.cmd
+        self.assertEqual(cmd[cmd.index("-fa") + 1], "on")
+
+    def test_cache_type_flags(self) -> None:
+        cmd = self.launch.cmd
+        self.assertEqual(cmd[cmd.index("--cache-type-k") + 1], "turbo4")
+        self.assertIn("--cache-type-v", cmd)
+
+    def test_model_and_mmproj_flags(self) -> None:
+        cmd = self.launch.cmd
+        self.assertEqual(cmd[cmd.index("-mm") + 1], "/tmp/mmproj.gguf")
+        self.assertEqual(cmd[cmd.index("-c") + 1], "8192")
+
+
+class EmbeddedBackendTests(unittest.TestCase):
     def test_mnn_embedded_backend_properties(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
