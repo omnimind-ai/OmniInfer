@@ -692,7 +692,7 @@ class RuntimeManager:
             body = e.read().decode("utf-8", errors="replace")
             try:
                 detail = json.loads(body).get("error", {}).get("message", "")
-            except Exception:
+            except (json.JSONDecodeError, KeyError, TypeError):
                 detail = ""
             if "multimodal" in detail.lower():
                 raise RuntimeError(

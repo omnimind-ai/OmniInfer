@@ -176,7 +176,7 @@ def _save_request_response(
             f.write(f'  "request": {request_json},\n')
             f.write(f'  "response": {resp_str if resp_str.startswith("{") else json.dumps(resp_str)}\n')
             f.write('}\n')
-    except Exception:
+    except OSError:
         logger.debug("Failed to save request/response log", exc_info=True)
 
 
@@ -200,7 +200,7 @@ def _enrich_context_overflow_error(body: bytes, n_messages: int) -> bytes:
         err["overflow_tokens"] = overflow
         err["n_messages"] = n_messages
         return json.dumps(data, ensure_ascii=False).encode("utf-8")
-    except Exception:
+    except (json.JSONDecodeError, KeyError, TypeError):
         return body
 
 
@@ -236,7 +236,7 @@ def _log_completion(status: int, body: bytes | None, elapsed: float, mode: str) 
                     segs.append(f"decode={dps:.1f}t/s")
             if segs:
                 parts.append(" ".join(segs))
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             pass
     logger.info("  ".join(parts))
 
@@ -716,7 +716,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                     mem_str = f" vram={bytes_to_gib(gpu_mem):.2f}GiB"
                 else:
                     mem_str = f" ram={bytes_to_gib(get_available_memory_bytes()):.2f}GiB"
-            except Exception:
+            except (ImportError, OSError):
                 mem_str = ""
             logger.info(
                 "POST /v1/chat/completions model=%s messages=%d stream=%s%s",
@@ -955,7 +955,7 @@ class OmniHandler(BaseHTTPRequestHandler):
             logger.warning("POST /v1/messages -> %d (%.2fs, proxy)", code, _elapsed)
             try:
                 err = json.loads(resp_body)
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 err = {"error": {"type": "api_error", "message": resp_body.decode("utf-8", errors="replace")}}
             self._send_json(code, err)
             return
