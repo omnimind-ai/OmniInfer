@@ -242,6 +242,19 @@ class FlowRunner:
             fail(f"Assertion failed: {label}")
         fail(f"Assertion failed: {label}: {details}")
 
+    def assert_anthropic_response(self, payload: Any, label: str) -> None:
+        self.assert_true(isinstance(payload, dict), f"{label} is a JSON object", payload)
+        self.assert_true(payload.get("type") == "message", f"{label} type", payload)
+        self.assert_true(payload.get("role") == "assistant", f"{label} role", payload)
+        content = payload.get("content")
+        self.assert_true(isinstance(content, list) and len(content) > 0, f"{label} content", payload)
+        self.assert_true(content[0].get("type") == "text", f"{label} content[0] type", payload)
+        self.assert_true(isinstance(content[0].get("text"), str) and content[0]["text"], f"{label} text present", payload)
+        usage = payload.get("usage")
+        self.assert_true(isinstance(usage, dict), f"{label} usage", payload)
+        self.assert_true(isinstance(usage.get("input_tokens"), int), f"{label} input_tokens", payload)
+        self.assert_true(isinstance(usage.get("output_tokens"), int), f"{label} output_tokens", payload)
+
     def assert_chat_response(self, payload: Any, label: str) -> None:
         self.assert_true(isinstance(payload, dict), f"{label} is a JSON object", payload)
         self.assert_true(payload.get("object") == "chat.completion", f"{label} object", payload)
@@ -439,6 +452,21 @@ class FlowRunner:
         stream_content = self.request_stream("/v1/chat/completions", stream_payload, output_name="stream.txt")
         self.assert_true("data:" in stream_content, "stream contains SSE frames", stream_content[:500])
         self.assert_true("[DONE]" in stream_content, "stream contains DONE marker", stream_content[-500:])
+
+        # --- Anthropic Messages API ---
+        anthropic_payload = {
+            "model": "test",
+            "max_tokens": 128,
+            "messages": [{"role": "user", "content": "Say hello in one sentence."}],
+        }
+        log("POST /v1/messages (Anthropic)")
+        _status, payload, _raw = self.request_json(
+            "POST",
+            "/v1/messages",
+            payload=anthropic_payload,
+            output_name="anthropic-response.json",
+        )
+        self.assert_anthropic_response(payload, "anthropic messages")
 
         log("POST /omni/backend/stop")
         _status, payload, _raw = self.request_json("POST", "/omni/backend/stop", output_name="backend-stop-response.json")
