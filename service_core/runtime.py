@@ -295,14 +295,6 @@ class RuntimeManager:
 
         logger.info("External runtime stopped (backend=%s)", runtime.backend_id)
 
-        job = getattr(self, "_backend_job_handle", None)
-        if job is not None:
-            try:
-                ctypes.windll.kernel32.CloseHandle(job)  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            self._backend_job_handle = None
-
         if runtime.log_handle:
             try:
                 runtime.log_handle.flush()
