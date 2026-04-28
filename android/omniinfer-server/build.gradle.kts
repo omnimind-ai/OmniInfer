@@ -8,7 +8,7 @@ val enableExecutorchQnn: Boolean = findProperty("omniinfer.backend.executorch_qn
 
 // --- ExecuTorch QNN: auto-download pre-built binaries ---
 if (enableExecutorchQnn) {
-    val etQnnVersion = 2  // bump when uploading new binaries to OSS
+    val etQnnVersion = 3  // bump when uploading new binaries to OSS
     val baseUrl = "https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a"
     val jniDir = file("src/main/jniLibs/arm64-v8a")
     val versionFile = File(jniDir, ".etqnn_version")
