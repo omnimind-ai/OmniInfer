@@ -18,7 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -83,8 +83,8 @@ class FlowRunner:
         self.base_url = f"http://{args.host}:{args.port}"
         self.work_dir = Path(tempfile.mkdtemp(prefix="omniinfer-flow."))
         self.gateway_log = self.work_dir / "gateway.log"
-        self.gateway_proc: Optional[subprocess.Popen[str]] = None
-        self.gateway_log_handle: Optional[Any] = None
+        self.gateway_proc: subprocess.Popen[str] | None = None
+        self.gateway_log_handle: Any | None = None
         self.own_gateway = False
         self.success = False
         atexit.register(self.cleanup)
@@ -149,11 +149,11 @@ class FlowRunner:
         self,
         method: str,
         endpoint: str,
-        payload: Optional[Dict[str, Any]] = None,
-        output_name: Optional[str] = None,
+        payload: dict[str, Any] | None = None,
+        output_name: str | None = None,
         allow_error: bool = False,
         timeout: float = 600.0,
-    ) -> Tuple[int, Any, bytes]:
+    ) -> tuple[int, Any, bytes]:
         url = f"{self.base_url}{endpoint}"
         body = None
         headers = {"Accept": "application/json"}
@@ -190,7 +190,7 @@ class FlowRunner:
         self._write_artifact(output_name, raw)
         return status, parsed, raw
 
-    def request_stream(self, endpoint: str, payload: Dict[str, Any], output_name: str) -> str:
+    def request_stream(self, endpoint: str, payload: dict[str, Any], output_name: str) -> str:
         url = f"{self.base_url}{endpoint}"
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
@@ -217,12 +217,12 @@ class FlowRunner:
         self._write_artifact(output_name, content.encode("utf-8"))
         return content
 
-    def _write_artifact(self, output_name: Optional[str], raw: bytes) -> None:
+    def _write_artifact(self, output_name: str | None, raw: bytes) -> None:
         if output_name is None:
             return
         (self.work_dir / output_name).write_bytes(raw)
 
-    def assert_true(self, condition: bool, label: str, details: Optional[Any] = None) -> None:
+    def assert_true(self, condition: bool, label: str, details: Any | None = None) -> None:
         if condition:
             return
         if details is None:
@@ -358,7 +358,7 @@ class FlowRunner:
             )
             self.assert_true(isinstance(payload, dict) and payload.get("ok") is True and payload.get("selected_backend") == self.args.backend, "backend select", payload)
 
-        model_select_payload: Dict[str, Any] = {"model": str(self.model)}
+        model_select_payload: dict[str, Any] = {"model": str(self.model)}
         if self.mmproj:
             model_select_payload["mmproj"] = str(self.mmproj)
         if self.args.backend:
@@ -431,7 +431,7 @@ class FlowRunner:
         _status, payload, _raw = self.request_json("POST", "/omni/backend/stop", output_name="backend-stop-response.json")
         self.assert_true(isinstance(payload, dict) and payload.get("ok") is True and payload.get("stopped") is True, "backend stop", payload)
 
-        direct_payload: Dict[str, Any] = {
+        direct_payload: dict[str, Any] = {
             "model": str(self.model),
             "think": False,
             "messages": [{"role": "user", "content": "Introduce yourself again in one sentence."}],
