@@ -169,20 +169,38 @@ public:
     std::string tokenizer_path = et_json_string(config_json, "tokenizer_path");
     decoder_model_version_ = et_json_string(config_json, "decoder_model_version");
     std::string qnn_lib_dir = et_json_string(config_json, "qnn_lib_dir");
+    std::string seq_len_str = et_json_string(config_json, "seq_len");
 
     if (decoder_model_version_.empty()) decoder_model_version_ = "qwen3";
 
+    // Model directory for auto-discovery
+    std::string model_dir;
+    auto slash = model_path.rfind('/');
+    if (slash != std::string::npos)
+      model_dir = model_path.substr(0, slash + 1);
+
     // Auto-discover tokenizer.json in model directory
-    if (tokenizer_path.empty()) {
-      auto slash = model_path.rfind('/');
-      if (slash != std::string::npos)
-        tokenizer_path = model_path.substr(0, slash + 1) + "tokenizer.json";
+    if (tokenizer_path.empty() && !model_dir.empty())
+      tokenizer_path = model_dir + "tokenizer.json";
+
+    // Auto-discover attention_sink_evictor.pte in model directory
+    std::string evictor_path = et_json_string(config_json, "attention_sink_evictor_path");
+    if (evictor_path.empty() && !model_dir.empty()) {
+      std::string candidate = model_dir + "attention_sink_evictor.pte";
+      if (access(candidate.c_str(), R_OK) == 0)
+        evictor_path = candidate;
     }
+    bool use_sink = !evictor_path.empty();
+
+    // Default seq_len: sink mode → 32768, baseline → n_ctx
+    if (seq_len_str.empty())
+      seq_len_str = use_sink ? "32768" : std::to_string(n_ctx_);
 
     std::string lib_dir = qnn_lib_dir.empty() ? native_lib_dir : qnn_lib_dir;
 
-    ET_LOGI("ExecuTorch QNN subprocess load: model=%s tokenizer=%s lib_dir=%s",
-            model_path.c_str(), tokenizer_path.c_str(), lib_dir.c_str());
+    ET_LOGI("ExecuTorch QNN subprocess load: model=%s tokenizer=%s lib_dir=%s sink=%s seq_len=%s",
+            model_path.c_str(), tokenizer_path.c_str(), lib_dir.c_str(),
+            use_sink ? evictor_path.c_str() : "none", seq_len_str.c_str());
 
     // Find the runner executable. nativeLibraryDir varies by device
     // (lib/arm64 vs lib/arm64-v8a), so try multiple paths.
@@ -239,13 +257,20 @@ public:
       setenv("LD_LIBRARY_PATH", ld.c_str(), 1);
 
       // Exec the custom OmniInfer runner (JSON stdin/stdout protocol).
-      execl(runner_path.c_str(), "libetqnn_runner.so",
-            "--model_path", model_path.c_str(),
-            "--tokenizer_path", tokenizer_path.c_str(),
-            "--decoder_model_version", decoder_model_version_.c_str(),
-            "--lib_dir", lib_dir.c_str(),
-            "--n_ctx", std::to_string(n_ctx_).c_str(),
-            nullptr);
+      // Build argv dynamically to conditionally include sink args.
+      std::vector<const char*> argv;
+      argv.push_back("libetqnn_runner.so");
+      argv.push_back("--model_path");     argv.push_back(model_path.c_str());
+      argv.push_back("--tokenizer_path"); argv.push_back(tokenizer_path.c_str());
+      argv.push_back("--decoder_model_version"); argv.push_back(decoder_model_version_.c_str());
+      argv.push_back("--lib_dir");        argv.push_back(lib_dir.c_str());
+      argv.push_back("--seq_len");        argv.push_back(seq_len_str.c_str());
+      if (use_sink) {
+        argv.push_back("--attention_sink_rope_path");
+        argv.push_back(evictor_path.c_str());
+      }
+      argv.push_back(nullptr);
+      execv(runner_path.c_str(), const_cast<char* const*>(argv.data()));
       // If execl returns, it failed
       _exit(1);
     }
