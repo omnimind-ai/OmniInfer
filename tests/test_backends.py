@@ -104,13 +104,21 @@ class CliArgParserTests(unittest.TestCase):
 
 
 class PlatformRegistrationTests(unittest.TestCase):
-    def test_mac_platform_registers_turboquant_backend(self) -> None:
-        backend_ids = [template.id for template in MacPlatform().backend_templates]
-        self.assertIn("turboquant-mac", backend_ids)
+    def test_mac_platform_registers_all_expected_backends(self) -> None:
+        ids = {t.id for t in MacPlatform().backend_templates}
+        for expected in ["llama.cpp-mac", "turboquant-mac", "mlx-mac"]:
+            self.assertIn(expected, ids)
 
-    def test_linux_platform_registers_mnn_backend(self) -> None:
-        backend_ids = [template.id for template in LinuxPlatform().backend_templates]
-        self.assertIn("mnn-linux", backend_ids)
+    def test_linux_platform_registers_all_expected_backends(self) -> None:
+        ids = {t.id for t in LinuxPlatform().backend_templates}
+        for expected in ["llama.cpp-linux", "mnn-linux"]:
+            self.assertIn(expected, ids)
+
+    def test_all_templates_have_unique_ids(self) -> None:
+        for platform_cls in [MacPlatform, LinuxPlatform]:
+            templates = platform_cls().backend_templates
+            ids = [t.id for t in templates]
+            self.assertEqual(len(ids), len(set(ids)), f"duplicate IDs in {platform_cls.__name__}")
 
 
 # ---------------------------------------------------------------------------
