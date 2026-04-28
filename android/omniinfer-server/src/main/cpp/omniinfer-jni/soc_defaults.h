@@ -34,7 +34,8 @@ struct SocThreadDefault {
 // Sorted by specificity is not required; first prefix match wins.
 static constexpr SocThreadDefault kSocThreadDefaults[] = {
     // Qualcomm Snapdragon
-    {"sm8750", 6},  // 8 Elite: 6×Oryon@3.5G + 2×Oryon@4.3G (decode 4-5≈6, prefill 6>>4; 7-8 threads regress due to freq mismatch sync)
+    {"sm8850", 6},  // 8 Elite Gen 5: 6×Oryon V3@3.6G + 2×Oryon V3@4.6G (decode peaks 6-7, prefill scales to 8)
+    {"sm8750", 6},  // 8 Elite: 6×Oryon V2@3.5G + 2×Oryon V2@4.3G (decode 4-5≈6, prefill 6>>4; 7-8 regress)
     {"sm8650", 6},  // 8 Gen 3: 1×X4 + 3×A720 + 2×A720 (+ 2×A520 efficiency)
     // MediaTek Dimensity
     {"mt6878", 4},  // 7300/7400: 4×A78 + 4×A55 (A55 drags decode, 4 big cores optimal)
