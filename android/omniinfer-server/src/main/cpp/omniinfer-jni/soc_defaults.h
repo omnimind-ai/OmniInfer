@@ -36,11 +36,15 @@ static constexpr SocThreadDefault kSocThreadDefaults[] = {
     // Qualcomm Snapdragon
     {"sm8750", 6},  // 8 Elite: 2×Oryon L + 6×Oryon M (decode 4≈6, prefill 6>>4)
     {"sm8650", 6},  // 8 Gen 3: 1×X4 + 3×A720 + 2×A720 (+ 2×A520 efficiency)
+    // MediaTek Dimensity
+    {"mt6878", 4},  // 7300/7400: 4×A78 + 4×A55 (A55 drags decode, 4 big cores optimal)
 };
 
 // Returns recommended thread count for the current SoC.
 // Falls back to `fallback` if the SoC is not in the table.
-inline int get_soc_default_threads(int fallback = 6) {
+// Default 4: most Android SoCs have 4 big + 4 small cores;
+// using >4 threads pulls in slow efficiency cores that hurt decode.
+inline int get_soc_default_threads(int fallback = 4) {
     static const int cached = [fallback]() {
         std::string soc = get_soc_identifier();
         for (const auto& entry : kSocThreadDefaults) {

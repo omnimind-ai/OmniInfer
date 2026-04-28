@@ -24,7 +24,7 @@ if (enableExecutorchQnn) {
         // Chip-specific skel/stub
         "libQnnHtpV75Skel.so", "libQnnHtpV75Stub.so",  // SM8650 (8 Gen 3)
         "libQnnHtpV79Skel.so", "libQnnHtpV79Stub.so",  // SM8750 (8 Elite)
-        "libQnnHtpV81Skel.so", "libQnnHtpV81Stub.so",  // SM8850 (8 Elite Gen 2)
+        "libQnnHtpV81Skel.so", "libQnnHtpV81Stub.so",  // SM8850 (8 Elite Gen 5)
     )
 
     val downloadEtQnnLibs by tasks.registering {
@@ -75,7 +75,7 @@ android {
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_LLAMAFILE=OFF"
                 arguments += "-DLLAMA_BUILD_COMMON=ON"
-                arguments += "-DGGML_CPU_ARM_ARCH=armv8.2-a+fp16+dotprod+i8mm"
+                arguments += "-DGGML_CPU_ARM_ARCH=armv8.2-a+fp16+dotprod"
                 arguments += "-DOMNIINFER_BACKEND_MNN=ON"
                 if (enableExecutorchQnn) {
                     arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=ON"
@@ -91,11 +91,11 @@ android {
     }
 
     // Shorten .cxx build path on Windows to avoid MAX_PATH (260 char) limit.
-    // Use ~/.cxx/ instead of TEMP — TEMP gets cleaned by Windows, which breaks
-    // CMake cache when KleidiAI downloaded sources are deleted but cache persists.
+    // Set -Pomniinfer.cxx.dir=D:/.cxx/omniinfer to override (e.g. to save C: drive space).
     if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
-        externalNativeBuild.cmake.buildStagingDirectory =
-            file("${System.getProperty("user.home")}/.cxx/omniinfer")
+        val cxxDir = findProperty("omniinfer.cxx.dir")?.toString()
+            ?: "${System.getProperty("user.home")}/.cxx/omniinfer"
+        externalNativeBuild.cmake.buildStagingDirectory = file(cxxDir)
     }
 
     compileOptions {

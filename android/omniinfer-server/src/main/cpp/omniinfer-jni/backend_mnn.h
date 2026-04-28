@@ -9,6 +9,8 @@
 
 #include <android/log.h>
 #include <cstdio>
+#include <dirent.h>
+#include <sched.h>
 #include <unistd.h>
 
 namespace omniinfer {
@@ -52,6 +54,8 @@ public:
     }
     if (n_ctx > 0) cfg << ",\"max_new_tokens\":" << n_ctx;
     cfg << ",\"reuse_kv\":" << (reuse_kv_ ? "true" : "false");
+    std::string power = extract_string(config_json, "power");
+    if (!power.empty()) cfg << ",\"power\":\"" << power << "\"";
     cfg << "}";
     llm_->set_config(cfg.str());
 
@@ -60,6 +64,14 @@ public:
     if (!llm_->load()) {
       MNN::Transformer::Llm::destroy(llm_); llm_ = nullptr;
       return false;
+    }
+
+    // Apply CPU core affinity after load. MNN's internal power-based binding
+    // doesn't work with MNN_USE_THREAD_POOL, so we do it ourselves via
+    // sched_setaffinity on all process threads.
+    power_ = power;
+    if (power == "low" || power == "high") {
+      apply_power_affinity(power, eff_threads);
     }
 
     __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
@@ -545,8 +557,75 @@ private:
     return out;
   }
 
+  // Read CPU max frequencies and partition into groups.
+  // Returns {small_cores, big_cores} sorted by frequency.
+  static std::pair<std::vector<int>, std::vector<int>> get_cpu_core_groups() {
+    std::vector<std::pair<int,int>> core_freqs; // {freq, core_id}
+    for (int i = 0; i < 16; i++) {
+      char path[128];
+      snprintf(path, sizeof(path),
+          "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", i);
+      FILE* f = fopen(path, "r");
+      if (!f) break;
+      int freq = 0;
+      fscanf(f, "%d", &freq);
+      fclose(f);
+      core_freqs.push_back({freq, i});
+    }
+    if (core_freqs.empty()) return {{}, {}};
+    // Find the minimum frequency to identify small cores.
+    int min_freq = core_freqs[0].first;
+    for (auto& cf : core_freqs) min_freq = std::min(min_freq, cf.first);
+    std::vector<int> small, big;
+    for (auto& cf : core_freqs) {
+      if (cf.first == min_freq) small.push_back(cf.second);
+      else big.push_back(cf.second);
+    }
+    return {small, big};
+  }
+
+  // Select cores based on power mode, then bind all process threads.
+  // Uses ALL cores in the target group (not just n_threads) so background
+  // threads (HTTP server, GC, etc.) don't starve on too few cores.
+  void apply_power_affinity(const std::string& power, int /*n_threads*/) {
+    auto [small, big] = get_cpu_core_groups();
+    std::vector<int> target;
+    if (power == "low") {
+      target = small;   // all small cores
+    } else if (power == "high") {
+      target = big;     // all big cores
+    }
+    if (target.empty()) return;
+    int bound = bind_process_to_cores(target);
+    std::string cores_str;
+    for (int c : target) cores_str += std::to_string(c) + " ";
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "CPU affinity: power=%s, bound %d threads to cores [%s]",
+        power.c_str(), bound, cores_str.c_str());
+  }
+
+  // Bind all threads of the current process to the given CPU core set.
+  // Uses sched_setaffinity via /proc/self/task/ — no root needed.
+  static int bind_process_to_cores(const std::vector<int>& cores) {
+    if (cores.empty()) return 0;
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    for (int c : cores) CPU_SET(c, &mask);
+    int bound = 0;
+    DIR* dir = opendir("/proc/self/task");
+    if (!dir) return 0;
+    while (auto* entry = readdir(dir)) {
+      if (entry->d_name[0] == '.') continue;
+      pid_t tid = atoi(entry->d_name);
+      if (tid > 0 && sched_setaffinity(tid, sizeof(mask), &mask) == 0) bound++;
+    }
+    closedir(dir);
+    return bound;
+  }
+
   MNN::Transformer::Llm* llm_ = nullptr;
   std::string cache_dir_;
+  std::string power_;
   int n_threads_ = 0;
   int n_ctx_ = 16384;
   bool is_gpu_ = false;
