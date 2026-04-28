@@ -128,41 +128,59 @@ class _FakeEmbeddedDriver:
 
 
 class EmbeddedRuntimeTests(unittest.TestCase):
-    def test_runtime_manager_supports_embedded_backend(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            repo_root = Path(temp_dir)
-            model_dir = repo_root / "models" / "demo-model"
-            model_dir.mkdir(parents=True)
-            fake_driver = _FakeEmbeddedDriver()
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        repo_root = Path(self.temp_dir.name)
+        self.model_dir = repo_root / "models" / "demo-model"
+        self.model_dir.mkdir(parents=True)
+        self.fake_driver = _FakeEmbeddedDriver()
 
-            with patch("service_core.runtime.current_host_platform", return_value=MacPlatform()):
-                with patch("service_core.runtime.get_embedded_backend_driver", return_value=fake_driver):
-                    manager = RuntimeManager(
-                        repo_root=str(repo_root),
-                        app_root=str(repo_root),
-                        backend_host="127.0.0.1",
-                        backend_port=0,
-                        startup_timeout_s=10,
-                        default_backend_id="mlx-mac",
-                    )
-                    manager.backends["mlx-mac"].python_modules = ()
+        self._platform_patch = patch("service_core.runtime.current_host_platform", return_value=MacPlatform())
+        self._driver_patch = patch("service_core.runtime.get_embedded_backend_driver", return_value=self.fake_driver)
+        self._platform_patch.start()
+        self._driver_patch.start()
 
-                    result = manager.select_model(model=str(model_dir), backend_id="mlx-mac")
-                    self.assertEqual(result["selected_backend"], "mlx-mac")
-                    self.assertEqual(manager.current_runtime_mode(), "embedded")
+        self.manager = RuntimeManager(
+            repo_root=str(repo_root),
+            app_root=str(repo_root),
+            backend_host="127.0.0.1",
+            backend_port=0,
+            startup_timeout_s=10,
+            default_backend_id="mlx-mac",
+        )
+        self.manager.backends["mlx-mac"].python_modules = ()
 
-                    response = manager.chat_completion({"messages": [{"role": "user", "content": "hello"}]})
-                    self.assertEqual(response["choices"][0]["message"]["content"], "embedded hello")
+    def tearDown(self) -> None:
+        self._driver_patch.stop()
+        self._platform_patch.stop()
+        self.temp_dir.cleanup()
 
-                    events = manager.stream_chat_completion({"messages": [{"role": "user", "content": "hello"}]})
-                    self.assertEqual(events[0]["choices"][0]["delta"]["content"], "embedded ")
+    def test_select_model(self) -> None:
+        result = self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")
+        self.assertEqual(result["selected_backend"], "mlx-mac")
+        self.assertEqual(self.manager.current_runtime_mode(), "embedded")
 
-                    snapshot = manager.snapshot()
-                    self.assertEqual(snapshot["backend"], "mlx-mac")
-                    self.assertTrue(snapshot["backend_ready"])
+    def test_chat_completion(self) -> None:
+        self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")
+        response = self.manager.chat_completion({"messages": [{"role": "user", "content": "hello"}]})
+        self.assertEqual(response["choices"][0]["message"]["content"], "embedded hello")
 
-                    manager.stop_runtime()
-                    self.assertTrue(fake_driver.unloaded)
+    def test_stream_chat_completion(self) -> None:
+        self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")
+        events = self.manager.stream_chat_completion({"messages": [{"role": "user", "content": "hello"}]})
+        self.assertEqual(events[0]["choices"][0]["delta"]["content"], "embedded ")
+        self.assertEqual(events[-1]["choices"][0]["finish_reason"], "stop")
+
+    def test_snapshot_with_loaded_model(self) -> None:
+        self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")
+        snapshot = self.manager.snapshot()
+        self.assertEqual(snapshot["backend"], "mlx-mac")
+        self.assertTrue(snapshot["backend_ready"])
+
+    def test_stop_runtime(self) -> None:
+        self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")
+        self.manager.stop_runtime()
+        self.assertTrue(self.fake_driver.unloaded)
 
 
 if __name__ == "__main__":
