@@ -75,7 +75,9 @@ android {
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_LLAMAFILE=OFF"
                 arguments += "-DLLAMA_BUILD_COMMON=ON"
-                arguments += "-DGGML_CPU_ARM_ARCH=armv8.2-a+fp16+dotprod"
+                arguments += "-DBUILD_SHARED_LIBS=ON"
+                arguments += "-DGGML_BACKEND_DL=ON"
+                arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
                 arguments += "-DOMNIINFER_BACKEND_MNN=ON"
                 if (enableExecutorchQnn) {
                     arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=ON"

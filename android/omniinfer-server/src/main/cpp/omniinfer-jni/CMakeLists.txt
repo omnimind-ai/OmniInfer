@@ -31,7 +31,6 @@ if(OMNIINFER_BACKEND_LLAMA_CPP)
     if(NOT EXISTS "${LLAMA_CPP_DIR}/CMakeLists.txt")
         message(FATAL_ERROR "llama.cpp not found at ${LLAMA_CPP_DIR}")
     endif()
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     add_subdirectory(${LLAMA_CPP_DIR} build-llama)
     # Multimodal (vision) support via mtmd
     if(NOT DEFINED LLAMA_INSTALL_VERSION)

@@ -12,6 +12,8 @@
 #include "peg-parser.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "ggml.h"
+#include "ggml-backend.h"
 
 #include <android/log.h>
 #include <chrono>
@@ -28,12 +30,27 @@ public:
   bool load(const std::string& model_path, const std::string& /*config_json*/,
             const std::string& native_lib_dir, int n_threads, int n_ctx) override {
     std::call_once(s_backend_init, [&]() {
+      // Route ggml logs to Android logcat so backend selection is visible.
+      ggml_log_set([](enum ggml_log_level level, const char* text, void*) {
+        int prio = (level == GGML_LOG_LEVEL_ERROR) ? ANDROID_LOG_ERROR :
+                   (level == GGML_LOG_LEVEL_WARN)  ? ANDROID_LOG_WARN  : ANDROID_LOG_INFO;
+        __android_log_print(prio, "GGML", "%s", text);
+      }, nullptr);
+
       if (!native_lib_dir.empty()) {
         ggml_backend_load_all_from_path(native_lib_dir.c_str());
       } else {
         ggml_backend_load_all();
       }
       llama_backend_init();
+
+      // Log which backends were loaded (confirms variant selection).
+      size_t n = ggml_backend_reg_count();
+      for (size_t i = 0; i < n; i++) {
+        auto reg = ggml_backend_reg_get(i);
+        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+            "GGML backend [%zu]: %s", i, ggml_backend_reg_name(reg));
+      }
     });
 
     llama_model_params mp = llama_model_default_params();
