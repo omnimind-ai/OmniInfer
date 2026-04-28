@@ -75,6 +75,28 @@ class CliArgParserTests(unittest.TestCase):
         self.assertEqual(parsed.request_overrides["top_p"], 0.8)
         self.assertEqual(parsed.request_overrides["stop"], ["<END>"])
 
+    def test_empty_args_returns_defaults(self) -> None:
+        backend = make_backend("llama.cpp-cpu", "llama.cpp")
+        parsed = parse_backend_load_extra_args(backend, [])
+        self.assertIsNone(parsed.ctx_size)
+        self.assertEqual(parsed.launch_args, [])
+
+    def test_reserved_flags_rejected_in_load_args(self) -> None:
+        backend = make_backend("llama.cpp-cpu", "llama.cpp")
+        for flag in ["-m", "--model", "-mm", "--mmproj"]:
+            with self.assertRaises(ValueError, msg=f"{flag} should be rejected"):
+                parse_backend_load_extra_args(backend, [flag, "value"])
+
+    def test_unsupported_chat_arg_rejected(self) -> None:
+        backend = make_backend("llama.cpp-cpu", "llama.cpp")
+        with self.assertRaises(ValueError):
+            parse_backend_chat_extra_args(backend, ["-Z"])  # single-char flags not in known set
+
+    def test_mlx_load_args_not_supported(self) -> None:
+        backend = make_backend("mlx-mac", "mlx-lm")
+        with self.assertRaises(ValueError):
+            parse_backend_load_extra_args(backend, ["-c", "4096"])
+
 
 # ---------------------------------------------------------------------------
 # Platform registration
