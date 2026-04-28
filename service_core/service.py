@@ -472,8 +472,12 @@ class OmniHandler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                 pass
 
+    _MAX_REQUEST_BODY = 100 * 1024 * 1024  # 100 MB (multimodal requests may include base64 images)
+
     def _read_json(self) -> dict[str, Any]:
         n = int(self.headers.get("Content-Length", "0") or "0")
+        if n > self._MAX_REQUEST_BODY:
+            raise ValueError(f"Request body too large ({n} bytes, max {self._MAX_REQUEST_BODY})")
         raw = self.rfile.read(n) if n > 0 else b"{}"
         try:
             obj = json.loads(raw.decode("utf-8-sig"))
@@ -597,6 +601,8 @@ class OmniHandler(BaseHTTPRequestHandler):
         self._debug(f"{self.command} {self.path} from {self.client_address[0]}")
         try:
             self._do_POST_impl()
+        except ValueError as e:
+            self._send_json(400, {"error": {"message": str(e)}})
         except Exception as e:  # pragma: no cover - defensive server-side fallback
             logger.exception("Unhandled error in %s %s", self.command, self.path)
             self._send_json(500, {"error": {"message": f"internal server error: {e}"}})
