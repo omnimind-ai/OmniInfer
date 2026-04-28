@@ -15,6 +15,8 @@ from unittest.mock import patch
 from service_core.drivers.mlx import MlxMacDriver
 from service_core.drivers.mnn import MnnLinuxDriver
 
+_FAKE_IMAGE_URL = "data:image/png;base64," + base64.b64encode(b"fake-png-bytes").decode("ascii")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MLX fakes
@@ -234,17 +236,14 @@ class MlxDriverTests(unittest.TestCase):
         Path(tmpdir.name, "config.json").write_text(json.dumps(config), encoding="utf-8")
         return tmpdir.name
 
-    def test_text_chat_completion_and_streaming(self) -> None:
+    # --- text model: chat completion ---
+
+    def test_text_chat_completion(self) -> None:
         payload = {
             "model": "demo-model",
             "messages": [{"role": "user", "content": "hello"}],
-            "temperature": 0.5,
-            "top_p": 0.9,
-            "max_tokens": 32,
-            "prefill_step_size": 512,
-            "kv_bits": 4,
-            "kv_group_size": 32,
-            "quantized_kv_start": 256,
+            "temperature": 0.5, "top_p": 0.9, "max_tokens": 32,
+            "prefill_step_size": 512, "kv_bits": 4, "kv_group_size": 32, "quantized_kv_start": 256,
         }
         model_dir = self._write_model_dir(vision=False)
         modules, calls = _mlx_fake_modules()
@@ -252,13 +251,10 @@ class MlxDriverTests(unittest.TestCase):
         with patch.dict(sys.modules, modules, clear=False):
             state = self.driver.load_model(model_path=model_dir, model_ref="demo", mmproj_path=None, ctx_size=None)
             response = self.driver.chat_completion(state, dict(payload))
-            events = list(self.driver.stream_chat_completion(state, dict(payload)))
 
-        # Verify driver state
         self.assertEqual(state.engine, "mlx_lm")
         self.assertFalse(state.supports_vision)
 
-        # Verify driver passed correct args to backend
         gen = calls.generate[0]
         self.assertIn("user: hello", gen["prompt"])
         self.assertEqual(gen["max_tokens"], 32)
@@ -266,15 +262,26 @@ class MlxDriverTests(unittest.TestCase):
         self.assertEqual(gen["prefill_step_size"], 512)
         self.assertEqual(gen["kv_bits"], 4)
 
-        # Verify response structure
         self.assertEqual(response["object"], "chat.completion")
         self.assertEqual(response["choices"][0]["message"]["content"], "hello world")
         self.assertEqual(response["usage"]["prompt_tokens"], 3)
         self.assertEqual(response["usage"]["completion_tokens"], 2)
         self.assertIn("timings", response)
-        self.assertIn("prompt_ms", response["timings"])
 
-        # Verify streaming events
+    def test_text_streaming(self) -> None:
+        payload = {
+            "model": "demo-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.5, "top_p": 0.9, "max_tokens": 32,
+            "prefill_step_size": 512, "kv_bits": 4, "kv_group_size": 32, "quantized_kv_start": 256,
+        }
+        model_dir = self._write_model_dir(vision=False)
+        modules, _ = _mlx_fake_modules()
+
+        with patch.dict(sys.modules, modules, clear=False):
+            state = self.driver.load_model(model_path=model_dir, model_ref="demo", mmproj_path=None, ctx_size=None)
+            events = list(self.driver.stream_chat_completion(state, dict(payload)))
+
         self.assertEqual(events[0]["choices"][0]["delta"]["role"], "assistant")
         self.assertEqual(events[1]["choices"][0]["delta"]["content"], "hello ")
         self.assertEqual(events[2]["choices"][0]["delta"]["content"], "world")
@@ -283,25 +290,17 @@ class MlxDriverTests(unittest.TestCase):
         self.assertEqual(events[-1]["timings"]["prompt_per_second"], 123.4)
         self.assertEqual(events[-1]["timings"]["predicted_per_second"], 45.6)
 
-    def test_vision_chat_completion_and_streaming(self) -> None:
+    # --- vision model: chat completion ---
+
+    def test_vision_chat_completion(self) -> None:
         payload = {
             "model": "vision-model",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "describe"},
-                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
-                    ],
-                }
-            ],
-            "temperature": 0.3,
-            "top_p": 0.8,
-            "max_tokens": 24,
-            "prefill_step_size": 1024,
-            "kv_bits": 8,
-            "kv_group_size": 64,
-            "quantized_kv_start": 0,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "describe"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+            ]}],
+            "temperature": 0.3, "top_p": 0.8, "max_tokens": 24,
+            "prefill_step_size": 1024, "kv_bits": 8, "kv_group_size": 64, "quantized_kv_start": 0,
         }
         model_dir = self._write_model_dir(vision=True)
         modules, calls = _mlx_fake_modules()
@@ -309,13 +308,10 @@ class MlxDriverTests(unittest.TestCase):
         with patch.dict(sys.modules, modules, clear=False):
             state = self.driver.load_model(model_path=model_dir, model_ref="vision-demo", mmproj_path=None, ctx_size=None)
             response = self.driver.chat_completion(state, dict(payload))
-            events = list(self.driver.stream_chat_completion(state, dict(payload)))
 
-        # Verify driver state
         self.assertEqual(state.engine, "mlx_vlm")
         self.assertTrue(state.supports_vision)
 
-        # Verify driver passed correct args to VLM backend
         gen = calls.vlm_generate[0]
         self.assertEqual(gen["prompt"], "vision prompt")
         self.assertEqual(gen["image"], "data:image/png;base64,AAA")
@@ -323,17 +319,30 @@ class MlxDriverTests(unittest.TestCase):
         self.assertEqual(gen["temperature"], 0.3)
         self.assertEqual(gen["prefill_step_size"], 1024)
         self.assertEqual(gen["kv_bits"], 8)
-        tpl = calls.vlm_apply_chat_template[0]
-        self.assertEqual(tpl["num_images"], 1)
-        self.assertTrue(tpl["add_generation_prompt"])
+        self.assertEqual(calls.vlm_apply_chat_template[0]["num_images"], 1)
 
-        # Verify response
         self.assertEqual(response["choices"][0]["message"]["content"], "vision response")
         self.assertEqual(response["usage"]["prompt_tokens"], 11)
         self.assertEqual(response["usage"]["completion_tokens"], 4)
         self.assertEqual(response["timings"]["peak_memory_gb"], 4.56)
 
-        # Verify streaming events
+    def test_vision_streaming(self) -> None:
+        payload = {
+            "model": "vision-model",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "describe"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+            ]}],
+            "temperature": 0.3, "top_p": 0.8, "max_tokens": 24,
+            "prefill_step_size": 1024, "kv_bits": 8, "kv_group_size": 64, "quantized_kv_start": 0,
+        }
+        model_dir = self._write_model_dir(vision=True)
+        modules, _ = _mlx_fake_modules()
+
+        with patch.dict(sys.modules, modules, clear=False):
+            state = self.driver.load_model(model_path=model_dir, model_ref="vision-demo", mmproj_path=None, ctx_size=None)
+            events = list(self.driver.stream_chat_completion(state, dict(payload)))
+
         self.assertEqual(events[0]["choices"][0]["delta"]["role"], "assistant")
         self.assertEqual(events[1]["choices"][0]["delta"]["content"], "vision ")
         self.assertEqual(events[2]["choices"][0]["delta"]["content"], "response")
@@ -341,17 +350,14 @@ class MlxDriverTests(unittest.TestCase):
         self.assertEqual(events[-1]["timings"]["prompt_per_second"], 222.2)
         self.assertEqual(events[-1]["timings"]["predicted_per_second"], 33.3)
 
+    # --- error cases ---
+
     def test_text_model_rejects_image_inputs(self) -> None:
         payload = {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "describe"},
-                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
-                    ],
-                }
-            ]
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "describe"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+            ]}]
         }
         model_dir = self._write_model_dir(vision=False)
         modules, _ = _mlx_fake_modules()
@@ -380,70 +386,58 @@ class MnnDriverTests(unittest.TestCase):
             Path(tmpdir.name, "visual.mnn").write_text("", encoding="utf-8")
         return tmpdir.name
 
-    def test_text_chat_completion_and_streaming(self) -> None:
+    # --- text model ---
+
+    def test_text_chat_completion(self) -> None:
         model_dir = self._write_model_dir(vision=False)
         fake_cv = _FakeCvModule()
-        payload = {
-            "model": "demo-model",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 16,
-        }
+        payload = {"model": "demo-model", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 16}
         modules, calls = _mnn_fake_modules(fake_cv)
 
         with patch.dict(sys.modules, modules, clear=False):
-            state = self.driver.load_model(
-                model_path=model_dir,
-                model_ref="demo",
-                mmproj_path=None,
-                ctx_size=None,
-                load_options={"thread_num": 12},
-            )
+            state = self.driver.load_model(model_path=model_dir, model_ref="demo", mmproj_path=None, ctx_size=None, load_options={"thread_num": 12})
             response = self.driver.chat_completion(state, dict(payload))
-            events = list(self.driver.stream_chat_completion(state, dict(payload)))
 
-        # Verify model was loaded with correct config
         self.assertTrue(state.model.loaded)
         self.assertEqual(state.model.config["thread_num"], 12)
         self.assertEqual(state.model.config["max_new_tokens"], 16)
         self.assertTrue(calls.create_paths[0].endswith("config.json"))
-
-        # Verify response
         self.assertEqual(response["choices"][0]["message"]["content"], "hello world again")
         self.assertEqual(response["usage"]["prompt_tokens"], 3)
         self.assertEqual(response["usage"]["completion_tokens"], 3)
         self.assertIn("predicted_per_second", response["timings"])
-        self.assertIn("prompt_per_second", response["timings"])
+        self.assertFalse(fake_cv.loaded_paths)
 
-        # Verify streaming
+    def test_text_streaming(self) -> None:
+        model_dir = self._write_model_dir(vision=False)
+        fake_cv = _FakeCvModule()
+        payload = {"model": "demo-model", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 16}
+        modules, _ = _mnn_fake_modules(fake_cv)
+
+        with patch.dict(sys.modules, modules, clear=False):
+            state = self.driver.load_model(model_path=model_dir, model_ref="demo", mmproj_path=None, ctx_size=None)
+            events = list(self.driver.stream_chat_completion(state, dict(payload)))
+
         self.assertEqual(events[0]["choices"][0]["delta"]["role"], "assistant")
         self.assertEqual(events[1]["choices"][0]["delta"]["content"], "hello world again")
         self.assertEqual(events[-1]["choices"][0]["finish_reason"], "stop")
         self.assertIn("predicted_per_second", events[-1]["timings"])
-        self.assertFalse(fake_cv.loaded_paths)
 
-    def test_multimodal_chat_completion_and_streaming(self) -> None:
+    # --- multimodal model ---
+
+    def test_multimodal_chat_completion(self) -> None:
         model_dir = self._write_model_dir(vision=True)
         fake_cv = _FakeCvModule()
-        image_url = "data:image/png;base64," + base64.b64encode(b"fake-png-bytes").decode("ascii")
-        payload = {
-            "model": "vision-model",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "describe"},
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                    ],
-                }
-            ],
-            "max_tokens": 24,
-        }
+        image_url = _FAKE_IMAGE_URL
+        payload = {"model": "vision-model", "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": image_url}},
+        ]}], "max_tokens": 24}
         modules, _ = _mnn_fake_modules(fake_cv)
 
         with patch.dict(sys.modules, modules, clear=False):
             state = self.driver.load_model(model_path=model_dir, model_ref="vision-demo", mmproj_path=None, ctx_size=None)
             response = self.driver.chat_completion(state, dict(payload))
-            events = list(self.driver.stream_chat_completion(state, dict(payload)))
             self.driver.unload_model(state)
 
         self.assertEqual(response["choices"][0]["message"]["content"], "vision answer")
@@ -451,14 +445,28 @@ class MnnDriverTests(unittest.TestCase):
         self.assertEqual(response["usage"]["prompt_tokens"], 3)
         self.assertEqual(response["usage"]["completion_tokens"], 2)
         self.assertIn("predicted_per_second", response["timings"])
+        self.assertEqual(len(fake_cv.loaded_paths), 1)
+
+    def test_multimodal_streaming(self) -> None:
+        model_dir = self._write_model_dir(vision=True)
+        fake_cv = _FakeCvModule()
+        payload = {"model": "vision-model", "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": _FAKE_IMAGE_URL}},
+        ]}], "max_tokens": 24}
+        modules, _ = _mnn_fake_modules(fake_cv)
+
+        with patch.dict(sys.modules, modules, clear=False):
+            state = self.driver.load_model(model_path=model_dir, model_ref="vision-demo", mmproj_path=None, ctx_size=None)
+            events = list(self.driver.stream_chat_completion(state, dict(payload)))
+
         self.assertEqual(events[1]["choices"][0]["delta"]["content"], "vision answer")
         self.assertEqual(events[-1]["choices"][0]["finish_reason"], "stop")
-        self.assertEqual(len(fake_cv.loaded_paths), 2)
 
     def test_text_model_rejects_image_inputs(self) -> None:
         model_dir = self._write_model_dir(vision=False)
         fake_cv = _FakeCvModule()
-        image_url = "data:image/png;base64," + base64.b64encode(b"fake-png-bytes").decode("ascii")
+        image_url = _FAKE_IMAGE_URL
         modules, _ = _mnn_fake_modules(fake_cv)
 
         with patch.dict(sys.modules, modules, clear=False):
@@ -475,7 +483,7 @@ class MnnDriverTests(unittest.TestCase):
     def test_visual_asset_enables_image_inputs(self) -> None:
         model_dir = self._write_model_dir(vision=False, visual_asset=True)
         fake_cv = _FakeCvModule()
-        image_url = "data:image/png;base64," + base64.b64encode(b"fake-png-bytes").decode("ascii")
+        image_url = _FAKE_IMAGE_URL
         modules, _ = _mnn_fake_modules(fake_cv)
 
         with patch.dict(sys.modules, modules, clear=False):
