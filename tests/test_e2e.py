@@ -22,7 +22,7 @@ from typing import Any, Dict, Optional, Tuple
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_IMAGE = REPO_ROOT / "tests" / "pictures" / "test1.png"
+DEFAULT_IMAGE = REPO_ROOT / "tests" / "fixtures" / "test1.png"
 
 
 def log(message: str) -> None:

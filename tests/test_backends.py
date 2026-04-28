@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Backend registration, argument parsing, and launch command construction."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from service_core.backend_cli_args import (
+    parse_backend_chat_extra_args,
+    parse_backend_load_extra_args,
+)
+from service_core.backends.base import BackendSpec
+from service_core.platforms.linux import LinuxPlatform
+from service_core.platforms.mac import MacPlatform
+from service_core.runtime import RuntimeManager
+
+
+def make_backend(backend_id: str, family: str) -> BackendSpec:
+    return BackendSpec(
+        id=backend_id,
+        label=backend_id,
+        family=family,
+        runtime_dir=".",
+        launcher_path=None,
+        models_dir=None,
+        catalog_url=None,
+        description="",
+        capabilities=[],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+
+class CliArgParserTests(unittest.TestCase):
+    def test_llama_cpp_load_args_passthrough_with_ctx_size(self) -> None:
+        backend = make_backend("llama.cpp-vulkan", "llama.cpp")
+
+        parsed = parse_backend_load_extra_args(
+            backend,
+            ["-ngl", "99", "-t", "8", "--threads-batch", "4", "-c", "4096"],
+        )
+
+        self.assertEqual(parsed.ctx_size, 4096)
+        self.assertEqual(parsed.launch_args, ["-ngl", "99", "-t", "8", "--threads-batch", "4"])
+
+    def test_turboquant_chat_args_use_llama_compatible_parser(self) -> None:
+        backend = make_backend("turboquant-mac", "turboquant")
+
+        parsed = parse_backend_chat_extra_args(
+            backend,
+            ["-n", "128", "--top-k", "40", "--stop", "<END>", "--stop", "</END>", "-e"],
+        )
+
+        self.assertEqual(parsed.request_overrides["max_tokens"], 128)
+        self.assertEqual(parsed.request_overrides["top_k"], 40)
+        self.assertEqual(parsed.request_overrides["ignore_eos"], True)
+        self.assertEqual(parsed.request_overrides["stop"], ["<END>", "</END>"])
+
+    def test_mlx_chat_args_accept_image_again(self) -> None:
+        backend = make_backend("mlx-mac", "mlx-lm")
+
+        parsed = parse_backend_chat_extra_args(
+            backend,
+            ["--image", "demo.png", "--temperature", "0.3", "--top-p", "0.8", "--stop", "<END>"],
+        )
+
+        self.assertEqual(parsed.image, "demo.png")
+        self.assertEqual(parsed.request_overrides["temperature"], 0.3)
+        self.assertEqual(parsed.request_overrides["top_p"], 0.8)
+        self.assertEqual(parsed.request_overrides["stop"], ["<END>"])
+
+
+# ---------------------------------------------------------------------------
+# Platform registration
+# ---------------------------------------------------------------------------
+
+
+class PlatformRegistrationTests(unittest.TestCase):
+    def test_mac_platform_registers_turboquant_backend(self) -> None:
+        backend_ids = [template.id for template in MacPlatform().backend_templates]
+        self.assertIn("turboquant-mac", backend_ids)
+
+    def test_linux_platform_registers_mnn_backend(self) -> None:
+        backend_ids = [template.id for template in LinuxPlatform().backend_templates]
+        self.assertIn("mnn-linux", backend_ids)
+
+
+# ---------------------------------------------------------------------------
+# Launch command construction
+# ---------------------------------------------------------------------------
+
+
+class LaunchCommandTests(unittest.TestCase):
+    def test_turboquant_launch_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            runtime_bin = repo_root / ".local" / "runtime" / "macos" / "turboquant-mac" / "bin"
+            runtime_bin.mkdir(parents=True)
+            launcher_path = runtime_bin / "llama-server"
+            launcher_path.write_text("", encoding="utf-8")
+
+            with patch("service_core.runtime.current_host_platform", return_value=MacPlatform()):
+                manager = RuntimeManager(
+                    repo_root=str(repo_root),
+                    app_root=str(repo_root),
+                    backend_host="127.0.0.1",
+                    backend_port=9100,
+                    startup_timeout_s=10,
+                    default_backend_id="turboquant-mac",
+                )
+
+            backend = manager.backends["turboquant-mac"]
+            launch = manager._prepare_external_runtime_launch(
+                backend,
+                model_path="/tmp/qwen3.5-2b.gguf",
+                mmproj_path="/tmp/mmproj.gguf",
+                ctx_size=8192,
+            )
+
+            self.assertEqual(launch.port, 9100)
+            self.assertEqual(launch.ctx_size, 8192)
+            self.assertEqual(launch.log_file_name, "turboquant-server.log")
+            self.assertEqual(launch.cmd[0], str(launcher_path.resolve()))
+            self.assertIn("-fa", launch.cmd)
+            self.assertIn("on", launch.cmd)
+            self.assertIn("--cache-type-k", launch.cmd)
+            self.assertIn("turbo4", launch.cmd)
+            self.assertIn("--cache-type-v", launch.cmd)
+            self.assertIn("-mm", launch.cmd)
+            self.assertEqual(launch.cmd[launch.cmd.index("-c") + 1], "8192")
+
+    def test_mnn_embedded_backend_properties(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            model_dir = repo_root / "models" / "demo-model"
+            model_dir.mkdir(parents=True)
+            (model_dir / "config.json").write_text("{}", encoding="utf-8")
+
+            with patch("service_core.runtime.current_host_platform", return_value=LinuxPlatform()):
+                manager = RuntimeManager(
+                    repo_root=str(repo_root),
+                    app_root=str(repo_root),
+                    backend_host="127.0.0.1",
+                    backend_port=0,
+                    startup_timeout_s=10,
+                    default_backend_id="mnn-linux",
+                )
+
+            backend = manager.backends["mnn-linux"]
+            self.assertEqual(backend.runtime_mode, "embedded")
+            self.assertFalse(backend.supports_mmproj)
+            self.assertFalse(backend.supports_ctx_size)
+
+
+if __name__ == "__main__":
+    unittest.main()
