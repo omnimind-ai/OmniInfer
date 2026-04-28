@@ -182,6 +182,20 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         self.manager.stop_runtime()
         self.assertTrue(self.fake_driver.unloaded)
 
+    def test_select_model_invalid_backend_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            self.manager.select_model(model=str(self.model_dir), backend_id="nonexistent-backend")
+
+    def test_select_model_missing_path_raises(self) -> None:
+        with self.assertRaises(FileNotFoundError):
+            self.manager.select_model(model="/tmp/does-not-exist-model-dir", backend_id="mlx-mac")
+
+    def test_snapshot_without_loaded_model(self) -> None:
+        snapshot = self.manager.snapshot()
+        self.assertEqual(snapshot["backend"], "mlx-mac")
+        self.assertIsNone(snapshot["model"])
+        self.assertFalse(snapshot["backend_ready"])
+
 
 if __name__ == "__main__":
     unittest.main()
