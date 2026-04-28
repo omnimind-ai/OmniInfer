@@ -481,6 +481,10 @@ Download pre-exported `.pte` models from ModelScope. Each model is exported for 
 
 **Available models (QNN SDK 2.44, Qwen3 family):**
 
+Two variants are available: **baseline** (short context, max 2048 tokens) and **sink32k** (long context, up to 32K tokens via attention sink).
+
+**Baseline models (seq2048):**
+
 | SoC | Model | Size | Download |
 |-----|-------|------|----------|
 | SM8650 (8 Gen 3) | Qwen3-0.6B | 680 MB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-0_6b/hybrid_llama_qnn.pte) |
@@ -493,25 +497,56 @@ Download pre-exported `.pte` models from ModelScope. Each model is exported for 
 | SM8850 (8 Elite Gen 5) | Qwen3-1.7B | 1.7 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-1_7b/hybrid_llama_qnn.pte) |
 | SM8850 (8 Elite Gen 5) | Qwen3-4B | 3.1 GB | [.pte](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-4b/hybrid_llama_qnn.pte) |
 
+**Long-context models with Attention Sink (sink32k):**
+
+These models support generation up to 32K tokens total (input + output). Decode speed stays constant regardless of sequence length — no degradation as context grows. Each directory contains two `.pte` files: the main model and an attention sink evictor.
+
+| SoC | Model | .pte + evictor | Download |
+|-----|-------|---------------|----------|
+| SM8650 (8 Gen 3) | Qwen3-0.6B | 680 MB + 4 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-0_6b_sink32k/hybrid_llama_qnn.pte) |
+| SM8650 (8 Gen 3) | Qwen3-1.7B | 1.7 GB + 2 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-1_7b_sink32k/hybrid_llama_qnn.pte) |
+| SM8650 (8 Gen 3) | Qwen3-4B | 3.1 GB + 3 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-4b_sink32k/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-0.6B | 679 MB + 4 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-0_6b_sink32k/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-1.7B | 1.7 GB + 2 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-1_7b_sink32k/hybrid_llama_qnn.pte) |
+| SM8750 (8 Elite) | Qwen3-4B | 3.1 GB + 3 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8750_qwen3-4b_sink32k/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 5) | Qwen3-0.6B | 682 MB + 5 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-0_6b_sink32k/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 5) | Qwen3-1.7B | 1.7 GB + 3 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-1_7b_sink32k/hybrid_llama_qnn.pte) |
+| SM8850 (8 Elite Gen 5) | Qwen3-4B | 3.1 GB + 3 MB | [sink32k](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8850_qwen3-4b_sink32k/hybrid_llama_qnn.pte) |
+
 **Tokenizer** (same for all models): [tokenizer.json](https://modelscope.cn/models/BiReRa/omniinfer-01001/resolve/master/SM8650_qwen3-0_6b/tokenizer.json) (11 MB)
 
 Or download via CLI:
 ```bash
+# Baseline model
 modelscope download --model BiReRa/omniinfer-01001 --include "SM8650_qwen3-1_7b/*" --local_dir ./models
+
+# Long-context (sink32k) model — downloads both .pte files + tokenizer
+modelscope download --model BiReRa/omniinfer-01001 --include "SM8650_qwen3-1_7b_sink32k/*" --local_dir ./models
 ```
 
-Place `hybrid_llama_qnn.pte` and `tokenizer.json` in the same directory on the device.
+Place all files in the same directory on the device. For sink32k models, the directory must contain both `hybrid_llama_qnn.pte` and `attention_sink_evictor.pte` — the evictor is auto-discovered.
 
 **Export your own model** (advanced): Requires a Linux server with the matching QNN SDK (2.44.0) installed. See the [ExecuTorch documentation](https://pytorch.org/executorch/stable/llm/getting-started.html) for the export pipeline.
 
 ### Step 3: Load and Run
 
 ```kotlin
-// Place tokenizer.json in the same directory as the .pte file
+// Baseline model (short context)
 val success = OmniInferServer.loadModel(
     modelPath = "/sdcard/models/Qwen3-0.6B/hybrid_llama_qnn.pte",
     backend = "executorch-qnn",
     extraConfig = mapOf("decoder_model_version" to "qwen3")
+)
+
+// Long-context (sink32k) model — just point to the same directory structure.
+// The evictor .pte is auto-discovered and attention sink is enabled automatically.
+val success = OmniInferServer.loadModel(
+    modelPath = "/sdcard/models/Qwen3-1.7B-sink32k/hybrid_llama_qnn.pte",
+    backend = "executorch-qnn",
+    extraConfig = mapOf(
+        "decoder_model_version" to "qwen3",
+        "seq_len" to "32768"  // max total tokens (input + output)
+    )
 )
 // Once loaded, use the same HTTP API as other backends
 ```
@@ -522,17 +557,44 @@ The `extraConfig` parameter accepts:
 |-----|----------|---------|-------------|
 | `decoder_model_version` | No | `qwen3` | Chat template to use: `qwen3`, `qwen2_5`, `llama3`, `gemma3` |
 | `tokenizer_path` | No | auto-discovered | Path to `tokenizer.json` (auto-discovered from model directory) |
+| `seq_len` | No | `32768` if sink model, else `2048` | Max total tokens (input + output). For sink32k models: use `32768` (1.7B/4B) or `4096` (0.6B — see note below) |
+| `attention_sink_evictor_path` | No | auto-discovered | Path to `attention_sink_evictor.pte` (auto-discovered from model directory) |
+
+> **Qwen3-0.6B sink32k note:** The 0.6B model is too small to reliably generate EOS with `seq_len=32768`, causing infinite generation. Set `seq_len` to `4096` for 0.6B sink models. The 1.7B and 4B models work correctly with `seq_len=32768`.
 
 ### Performance Reference
 
 Tested on Snapdragon 8 Gen 3 (SM8650):
+
+**Baseline models:**
 
 | Model | Decode (tok/s) | TTFT | Load Time | RAM |
 |-------|---------------|------|-----------|-----|
 | Qwen3-0.6B | 20.96 | 173ms | 1.0s | 708 MiB |
 | Qwen3-1.7B | 22.85 | 67ms | 1.4s | 1715 MiB |
 
-Prefill speed: **~1000 tok/s** (183 tokens in 180ms on Qwen3-1.7B).
+**Sink32k models (SM8650, Qwen3-0.6B with seq_len=4096):**
+
+| Input tokens | Prefill (tok/s) | Decode (tok/s) | Notes |
+|-------------|----------------|----------------|-------|
+| 506 | 439 | 20.0 | Normal output quality |
+| 978 | 420 | 19.8 | Normal output quality |
+| 1568 | 415 | 20.0 | Normal output quality |
+| 2984 | 374 | 19.6 | Degraded output (exceeds ~1916 effective context window) |
+
+Key characteristics:
+- **Decode speed is constant** regardless of sequence length — no degradation as context grows
+- Effective understanding window: ~1916 tokens (KV cache 2048 − 4 sink tokens − 128 prefill batch)
+- Inputs beyond the effective window are evicted; the model retains the first 4 tokens (anchors) + most recent ~1916 tokens
+- Long **output** generation works well — tested 1708 tokens at stable 19.8 tok/s
+
+**Sink32k models (SM8750, from export benchmarks):**
+
+| Model | Prefill (tok/s) | Decode (tok/s) | RAM |
+|-------|----------------|----------------|-----|
+| Qwen3-0.6B | 532 | 49.1 | 714 MiB |
+| Qwen3-1.7B | 2018 | 36.9 | 1714 MiB |
+| Qwen3-4B | 1118 | 17.8 | 1777 MiB |
 
 ### Limitations
 
@@ -540,6 +602,7 @@ Prefill speed: **~1000 tok/s** (183 tokens in 180ms on Qwen3-1.7B).
 - **Single-turn only** — KV cache reuse across turns is not yet implemented in the subprocess protocol
 - **Qualcomm only** — requires Snapdragon SoC with Hexagon NPU
 - **No sampling control** — temperature and other sampling parameters are not yet passed to the subprocess runner
+- **Sink context window** — attention sink models can generate up to 32K tokens, but the effective understanding window is ~1916 tokens. Content outside this window is evicted.
 - **`extractNativeLibs=true` required** — the omniinfer-server manifest sets this via manifest merge. However, if your app's `AndroidManifest.xml` explicitly sets `android:extractNativeLibs="false"`, it will override the library setting. You must either remove the override or set it to `true`. The runner .so must exist as a regular file on disk for fork+exec.
 
 ## Troubleshooting
