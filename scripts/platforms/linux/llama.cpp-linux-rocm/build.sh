@@ -23,8 +23,8 @@ check_deps() {
     fi
   }
   _dep cmake     "CMake build system"               "sudo apt install cmake"                                              cmake
-  _dep hipcc     "AMD ROCm HIP compiler"            "Install ROCm: https://rocm.docs.amd.com/projects/install-on-linux/"  rocm-hip-sdk
-  _dep hipconfig "AMD ROCm HIP configuration tool"  "Included with ROCm installation"                                     rocm-hip-sdk
+  _dep hipcc     "AMD ROCm HIP compiler"            "Install ROCm: https://rocm.docs.amd.com/projects/install-on-linux/"  hipcc
+  _dep hipconfig "AMD ROCm HIP configuration tool"  "Included with hipcc package"                                          hipcc
   return ${rc}
 }
 
