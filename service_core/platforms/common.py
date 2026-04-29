@@ -320,7 +320,26 @@ def get_available_rocm_memory_bytes() -> int | None:
         if free_bytes:
             return max(free_bytes)
 
+    # Fallback: rocm-smi not installed but amdgpu driver is loaded.
+    # Return system memory as a proxy so the backend shows as compatible.
+    if _is_amdgpu_driver_loaded():
+        return get_available_memory_bytes()
+
     return None
+
+
+def _is_amdgpu_driver_loaded() -> bool:
+    """Check if any /dev/dri/renderD* node uses the amdgpu kernel driver."""
+    for node in sorted(Path("/dev/dri").glob("renderD*")):
+        try:
+            driver_link = Path(f"/sys/class/drm/{node.name}/device/driver")
+            if driver_link.is_symlink():
+                driver_name = Path(os.readlink(driver_link)).name
+                if driver_name == "amdgpu":
+                    return True
+        except OSError:
+            continue
+    return False
 
 
 def _has_physical_gpu_render_node() -> bool:
