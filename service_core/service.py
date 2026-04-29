@@ -531,14 +531,14 @@ class OmniHandler(BaseHTTPRequestHandler):
         path, query = self._parse_request_target()
 
         if path == "/health":
-            self._send_json(
-                200,
-                {
-                    "status": "ok",
-                    "omni": self.manager.snapshot(),
-                    "thinking": {"default_enabled": self.default_thinking},
-                },
-            )
+            payload: dict[str, Any] = {
+                "status": "ok",
+                "omni": self.manager.snapshot(),
+                "thinking": {"default_enabled": self.default_thinking},
+            }
+            if query.get("deep", [""])[0].lower() in ("true", "1", "yes"):
+                payload["backend_health"] = self.manager.backend_health()
+            self._send_json(200, payload)
             return
 
         if path == "/omni/state":

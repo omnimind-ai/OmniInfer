@@ -103,6 +103,17 @@ class HttpHandlerTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(body["data"], [])
 
+    def test_health_deep_no_backend(self) -> None:
+        self.server.manager.backend_health.return_value = {"status": "no_backend"}
+        code, body = _get(self.base_url, "/health?deep=true")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["backend_health"]["status"], "no_backend")
+
+    def test_health_shallow_has_no_backend_health_key(self) -> None:
+        code, body = _get(self.base_url, "/health")
+        self.assertEqual(code, 200)
+        self.assertNotIn("backend_health", body)
+
     def test_not_found(self) -> None:
         code, body = _get(self.base_url, "/nonexistent")
         self.assertEqual(code, 404)
