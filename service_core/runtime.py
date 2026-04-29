@@ -917,3 +917,31 @@ class RuntimeManager:
             "request_defaults": dict(runtime.request_defaults) if runtime else {},
             "backend_ready": bool(runtime),
         }
+
+    def backend_health(self) -> dict[str, Any]:
+        """Deep health check: verify the backend process is actually responding.
+
+        For external_server backends, pings the backend's /health endpoint.
+        For embedded backends, returns ok if the runtime is loaded (no separate process to check).
+        Returns {"status": "no_backend"} when no model is loaded.
+        """
+        runtime = self.loaded_runtime
+        if not runtime or not self._is_runtime_running_locked():
+            return {"status": "no_backend"}
+
+        if runtime.runtime_mode == "embedded":
+            return {"status": "ok", "mode": "embedded"}
+
+        target = self.current_proxy_target()
+        if target is None:
+            return {"status": "error", "message": "backend process not reachable"}
+
+        host, port = target
+        url = f"http://{host}:{port}/health"
+        try:
+            with urllib.request.urlopen(url, timeout=3) as resp:
+                if resp.getcode() in (200, 503):
+                    return {"status": "ok", "mode": "external_server", "port": port}
+        except Exception:
+            pass
+        return {"status": "error", "message": f"backend at {host}:{port} not responding"}
