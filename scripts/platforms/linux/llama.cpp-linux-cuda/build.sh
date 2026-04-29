@@ -10,6 +10,22 @@ BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
 CUDA_ARCHITECTURES=""
 
+check_deps() {
+  local rc=0
+  _dep() {
+    local cmd="$1" desc="$2" hint="$3" pkg="${4:-}"
+    if command -v "${cmd}" >/dev/null 2>&1; then
+      printf 'ok|%s|%s|%s|%s\n' "${cmd}" "${desc}" "${hint}" "${pkg}"
+    else
+      printf 'missing|%s|%s|%s|%s\n' "${cmd}" "${desc}" "${hint}" "${pkg}"
+      rc=1
+    fi
+  }
+  _dep cmake "CMake build system"    "sudo apt install cmake"                                                cmake
+  _dep nvcc  "NVIDIA CUDA compiler"  "Install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads"     nvidia-cuda-toolkit
+  return ${rc}
+}
+
 usage() {
   cat <<'EOF'
 Usage: build.sh [options]
@@ -60,6 +76,10 @@ while (($# > 0)); do
     -h|--help)
       usage
       exit 0
+      ;;
+    --check-deps)
+      check_deps
+      exit $?
       ;;
     *)
       echo "Unknown argument: $1" >&2
