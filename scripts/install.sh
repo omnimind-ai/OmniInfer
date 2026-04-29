@@ -228,7 +228,16 @@ echo ""
 info "Step 2/6: Preparing repository ..."
 if [ -d "${INSTALL_DIR}/.git" ]; then
     info "Found existing clone at ${INSTALL_DIR}, updating ..."
-    git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || warn "Pull failed, continuing with existing code"
+    _pull_ok=0
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 15 git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null && _pull_ok=1
+    else
+        GIT_SSH_COMMAND="ssh -o ConnectTimeout=10" \
+            git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null && _pull_ok=1
+    fi
+    if [[ "${_pull_ok}" -eq 0 ]]; then
+        warn "Pull failed or timed out (network issue?), continuing with existing code"
+    fi
 else
     info "Cloning OmniInfer to ${INSTALL_DIR} ..."
     CLONED_VIA_HTTPS=0
