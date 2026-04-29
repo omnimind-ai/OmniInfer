@@ -474,49 +474,7 @@ while true; do
         break  # will be caught by Step 4
     fi
 
-    _dep_output=""
-    _dep_rc=0
-    _dep_output=$(bash "${_build_script}" --check-deps 2>/dev/null) || _dep_rc=$?
-    _missing_count=$(printf '%s' "${_dep_output}" | grep -c '^missing|' || true)
-
-    # If all deps satisfied, or script doesn't support --check-deps, proceed
-    if [[ ${_dep_rc} -eq 0 ]] || [[ ${_missing_count} -eq 0 ]]; then
-        if [[ ${_dep_rc} -eq 0 ]]; then
-            ok "All build dependencies satisfied"
-        fi
-        break
-    fi
-
-    # ── Show formatted missing-dependency report ────────────────
-    echo ""
-    err "Missing build dependencies for $(bold "${SELECTED_BACKEND}"):"
-    echo ""
-    printf '  ┌──────────────────────────────────────────────────────────────────┐\n'
-    while IFS='|' read -r _ds _dc _dp _dh _dpkg; do
-        if [[ "${_ds}" == "missing" ]]; then
-            printf '  │  \033[1;31m✗\033[0m  %-16s %s\n' "${_dc}" "${_dp}"
-            printf '  │     \033[2m→ %s\033[0m\n' "${_dh}"
-        fi
-    done <<< "${_dep_output}"
-    printf '  └──────────────────────────────────────────────────────────────────┘\n'
-    echo ""
-
-    # Non-interactive or forced backend: exit immediately
-    if [[ "${NON_INTERACTIVE}" -eq 1 ]] || [[ -n "${BACKEND_OVERRIDE}" ]]; then
-        fatal "Install the missing dependencies and re-run the installer."
-    fi
-
-    # Collect unique package names from the 5th field
-    declare -A _pkgs_seen=()
-    _pkg_list=()
-    while IFS='|' read -r _ds _dc _dp _dh _dpkg; do
-        if [[ "${_ds}" == "missing" ]] && [[ -n "${_dpkg}" ]] && [[ -z "${_pkgs_seen[${_dpkg}]+x}" ]]; then
-            _pkg_list+=("${_dpkg}")
-            _pkgs_seen["${_dpkg}"]=1
-        fi
-    done <<< "${_dep_output}"
-
-    # Detect system package manager
+    # Detect system package manager (once, before inner loop)
     _pkg_mgr=""
     if command -v apt-get >/dev/null 2>&1; then   _pkg_mgr="apt"
     elif command -v dnf >/dev/null 2>&1; then     _pkg_mgr="dnf"
@@ -525,51 +483,107 @@ while true; do
     elif command -v yum >/dev/null 2>&1; then     _pkg_mgr="yum"
     fi
 
-    # Build menu options — offer install only if we have package names + a package manager
-    if [[ ${#_pkg_list[@]} -gt 0 ]] && [[ -n "${_pkg_mgr}" ]]; then
-        echo "  What would you like to do?"
-        echo ""
-        _choice=$(select_menu 0 \
-            "Install missing dependencies now  (sudo ${_pkg_mgr})" \
-            "Choose a different backend" \
-            "Exit and install dependencies first")
+    # Inner loop: check deps → (install → re-check) for the SAME backend
+    _deps_satisfied=0
+    while true; do
+        _dep_output=""
+        _dep_rc=0
+        _dep_output=$(bash "${_build_script}" --check-deps 2>/dev/null) || _dep_rc=$?
+        _missing_count=$(printf '%s' "${_dep_output}" | grep -c '^missing|' || true)
 
-        if [[ "${_choice}" -eq 0 ]]; then
-            echo ""
-            info "Installing: ${_pkg_list[*]} ..."
-            echo ""
-            _install_ok=1
-            case "${_pkg_mgr}" in
-                apt)    sudo apt-get update -qq && sudo apt-get install -y "${_pkg_list[@]}" || _install_ok=0 ;;
-                dnf)    sudo dnf install -y "${_pkg_list[@]}" || _install_ok=0 ;;
-                pacman) sudo pacman -S --noconfirm "${_pkg_list[@]}" || _install_ok=0 ;;
-                zypper) sudo zypper install -y "${_pkg_list[@]}" || _install_ok=0 ;;
-                yum)    sudo yum install -y "${_pkg_list[@]}" || _install_ok=0 ;;
-            esac
-            echo ""
-            if [[ "${_install_ok}" -eq 1 ]]; then
-                info "Re-checking dependencies ..."
-            else
-                warn "Some packages may not have installed correctly. Re-checking ..."
+        # If all deps satisfied, or script doesn't support --check-deps, proceed
+        if [[ ${_dep_rc} -eq 0 ]] || [[ ${_missing_count} -eq 0 ]]; then
+            if [[ ${_dep_rc} -eq 0 ]]; then
+                ok "All build dependencies satisfied"
             fi
-            continue  # loop back to re-check deps
-        elif [[ "${_choice}" -eq 2 ]]; then
-            echo ""
-            info "Install the missing tools, then re-run the installer."
-            exit 1
+            _deps_satisfied=1
+            break
         fi
-    else
-        echo "  What would you like to do?"
-        echo ""
-        _choice=$(select_menu 0 \
-            "Choose a different backend" \
-            "Exit and install dependencies first")
 
-        if [[ "${_choice}" -eq 1 ]]; then
-            echo ""
-            info "Install the missing tools, then re-run the installer."
-            exit 1
+        # ── Show formatted missing-dependency report ────────────────
+        echo ""
+        err "Missing build dependencies for $(bold "${SELECTED_BACKEND}"):"
+        echo ""
+        printf '  ┌──────────────────────────────────────────────────────────────────┐\n'
+        while IFS='|' read -r _ds _dc _dp _dh _dpkg; do
+            if [[ "${_ds}" == "missing" ]]; then
+                printf '  │  \033[1;31m✗\033[0m  %-16s %s\n' "${_dc}" "${_dp}"
+                printf '  │     \033[2m→ %s\033[0m\n' "${_dh}"
+            fi
+        done <<< "${_dep_output}"
+        printf '  └──────────────────────────────────────────────────────────────────┘\n'
+        echo ""
+
+        # Non-interactive or forced backend: exit immediately
+        if [[ "${NON_INTERACTIVE}" -eq 1 ]] || [[ -n "${BACKEND_OVERRIDE}" ]]; then
+            fatal "Install the missing dependencies and re-run the installer."
         fi
+
+        # Collect unique package names from the 5th field
+        declare -A _pkgs_seen=()
+        _pkg_list=()
+        while IFS='|' read -r _ds _dc _dp _dh _dpkg; do
+            if [[ "${_ds}" == "missing" ]] && [[ -n "${_dpkg}" ]] && [[ -z "${_pkgs_seen[${_dpkg}]+x}" ]]; then
+                _pkg_list+=("${_dpkg}")
+                _pkgs_seen["${_dpkg}"]=1
+            fi
+        done <<< "${_dep_output}"
+
+        # Build menu options — offer install only if we have package names + a package manager
+        if [[ ${#_pkg_list[@]} -gt 0 ]] && [[ -n "${_pkg_mgr}" ]]; then
+            echo "  What would you like to do?"
+            echo ""
+            _choice=$(select_menu 0 \
+                "Install missing dependencies now  (sudo ${_pkg_mgr})" \
+                "Choose a different backend" \
+                "Exit and install dependencies first")
+
+            if [[ "${_choice}" -eq 0 ]]; then
+                echo ""
+                info "Installing: ${_pkg_list[*]} ..."
+                echo ""
+                _install_ok=1
+                case "${_pkg_mgr}" in
+                    apt)    sudo apt-get update -qq && sudo apt-get install -y "${_pkg_list[@]}" || _install_ok=0 ;;
+                    dnf)    sudo dnf install -y "${_pkg_list[@]}" || _install_ok=0 ;;
+                    pacman) sudo pacman -S --noconfirm "${_pkg_list[@]}" || _install_ok=0 ;;
+                    zypper) sudo zypper install -y "${_pkg_list[@]}" || _install_ok=0 ;;
+                    yum)    sudo yum install -y "${_pkg_list[@]}" || _install_ok=0 ;;
+                esac
+                echo ""
+                if [[ "${_install_ok}" -eq 0 ]]; then
+                    warn "Installation failed. The package repository may not be configured."
+                    warn "Follow the install guide above, then re-run the installer."
+                fi
+                info "Re-checking dependencies ..."
+                continue  # inner loop: re-check deps for same backend
+            elif [[ "${_choice}" -eq 1 ]]; then
+                break  # break inner loop → outer loop re-selects backend
+            else
+                echo ""
+                info "Install the missing tools, then re-run the installer."
+                exit 1
+            fi
+        else
+            echo "  What would you like to do?"
+            echo ""
+            _choice=$(select_menu 0 \
+                "Choose a different backend" \
+                "Exit and install dependencies first")
+
+            if [[ "${_choice}" -eq 0 ]]; then
+                break  # break inner loop → outer loop re-selects backend
+            else
+                echo ""
+                info "Install the missing tools, then re-run the installer."
+                exit 1
+            fi
+        fi
+    done
+
+    # If deps satisfied, break outer loop → proceed to Step 4
+    if [[ "${_deps_satisfied}" -eq 1 ]]; then
+        break
     fi
 
     echo ""
