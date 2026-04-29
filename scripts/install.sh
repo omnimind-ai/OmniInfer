@@ -447,10 +447,24 @@ while true; do
     if [[ -n "${BACKEND_OVERRIDE}" ]]; then
         SELECTED_BACKEND="${BACKEND_OVERRIDE}"
     else
+        # Append a "skip" option to the menu
+        _menu_descs=("${BACKEND_DESCS[@]}" "Skip for now  —  install backend manually later")
+
         echo "  Available backends (arrow keys to move, Enter to select):"
         echo ""
 
-        idx=$(select_menu 0 "${BACKEND_DESCS[@]}")
+        idx=$(select_menu 0 "${_menu_descs[@]}")
+
+        # Last option = skip
+        if [[ "${idx}" -eq $(( ${#_menu_descs[@]} - 1 )) ]]; then
+            info "Skipping backend selection. You can install a backend later with:"
+            echo "    cd ${INSTALL_DIR} && ./omniinfer backend list --scope compatible"
+            echo "    ./omniinfer select <backend-id>"
+            echo "    bash scripts/platforms/${PLATFORM_DIR}/<backend-id>/build.sh"
+            SKIP_BUILD=1
+            break
+        fi
+
         SELECTED_BACKEND="${BACKEND_IDS[$idx]}"
     fi
 
