@@ -43,4 +43,4 @@ jobs:
         run: pip install pytest
 
       - name: Run unit tests
-        run: python -m pytest tests/test_backends.py tests/test_drivers.py tests/test_runtime.py -v
+        run: python -m pytest tests/test_backends.py tests/test_drivers.py tests/test_runtime.py tests/test_anthropic_adapter.py tests/test_http_handler.py -v
