@@ -228,7 +228,16 @@ echo ""
 info "Step 2/6: Preparing repository ..."
 if [ -d "${INSTALL_DIR}/.git" ]; then
     info "Found existing clone at ${INSTALL_DIR}, updating ..."
-    git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null || warn "Pull failed, continuing with existing code"
+    _pull_ok=0
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 15 git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null && _pull_ok=1
+    else
+        GIT_SSH_COMMAND="ssh -o ConnectTimeout=10" \
+            git -C "${INSTALL_DIR}" pull --ff-only 2>/dev/null && _pull_ok=1
+    fi
+    if [[ "${_pull_ok}" -eq 0 ]]; then
+        warn "Pull failed or timed out (network issue?), continuing with existing code"
+    fi
 else
     info "Cloning OmniInfer to ${INSTALL_DIR} ..."
     CLONED_VIA_HTTPS=0
@@ -426,37 +435,179 @@ if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
     fatal "No backends found. Check your platform support."
 fi
 
-# If backend override is set, use it directly
-if [[ -n "${BACKEND_OVERRIDE}" ]]; then
-    SELECTED_BACKEND="${BACKEND_OVERRIDE}"
-else
-    echo "  Available backends (arrow keys to move, Enter to select):"
+# Map OS to platform directory name (needed for dependency check below)
+case "${OS}" in
+    Darwin) PLATFORM_DIR="macos" ;;
+    Linux)  PLATFORM_DIR="linux" ;;
+    *)      PLATFORM_DIR="linux" ;;
+esac
+
+# Backend selection loop: select → check build deps → re-select if missing
+while true; do
+    if [[ -n "${BACKEND_OVERRIDE}" ]]; then
+        SELECTED_BACKEND="${BACKEND_OVERRIDE}"
+    else
+        # Append a "skip" option to the menu
+        _menu_descs=("${BACKEND_DESCS[@]}" "Skip for now  —  install backend manually later")
+
+        echo "  Available backends (arrow keys to move, Enter to select):"
+        echo ""
+
+        idx=$(select_menu 0 "${_menu_descs[@]}")
+
+        # Last option = skip
+        if [[ "${idx}" -eq $(( ${#_menu_descs[@]} - 1 )) ]]; then
+            info "Skipping backend selection. You can install a backend later with:"
+            echo "    cd ${INSTALL_DIR} && ./omniinfer backend list --scope compatible"
+            echo "    ./omniinfer select <backend-id>"
+            echo "    bash scripts/platforms/${PLATFORM_DIR}/<backend-id>/build.sh"
+            SKIP_BUILD=1
+            break
+        fi
+
+        SELECTED_BACKEND="${BACKEND_IDS[$idx]}"
+    fi
+
+    ok "Selected: ${SELECTED_BACKEND}"
     echo ""
 
-    idx=$(select_menu 0 "${BACKEND_DESCS[@]}")
-    SELECTED_BACKEND="${BACKEND_IDS[$idx]}"
-fi
+    # Select backend via CLI (skip on Android — runtime not installed yet)
+    if [[ "${IS_ANDROID_PLATFORM}" -eq 0 ]]; then
+        omniinfer_cmd select "${SELECTED_BACKEND}"
+    fi
 
-ok "Selected: ${SELECTED_BACKEND}"
-echo ""
+    # ── Pre-build dependency check ──────────────────────────────
+    # Verify required build tools BEFORE starting the build.
+    # Skip for Android (no desktop build scripts) and --skip-build.
+    if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]] || [[ "${SKIP_BUILD}" -eq 1 ]]; then
+        break
+    fi
 
-# Select backend via CLI (skip on Android — runtime not installed yet)
-if [[ "${IS_ANDROID_PLATFORM}" -eq 0 ]]; then
-    omniinfer_cmd select "${SELECTED_BACKEND}"
-fi
+    _build_script="${INSTALL_DIR}/scripts/platforms/${PLATFORM_DIR}/${SELECTED_BACKEND}/build.sh"
+    if [[ ! -f "${_build_script}" ]]; then
+        break  # will be caught by Step 4
+    fi
+
+    # Detect system package manager (once, before inner loop)
+    _pkg_mgr=""
+    if command -v apt-get >/dev/null 2>&1; then   _pkg_mgr="apt"
+    elif command -v dnf >/dev/null 2>&1; then     _pkg_mgr="dnf"
+    elif command -v pacman >/dev/null 2>&1; then  _pkg_mgr="pacman"
+    elif command -v zypper >/dev/null 2>&1; then  _pkg_mgr="zypper"
+    elif command -v yum >/dev/null 2>&1; then     _pkg_mgr="yum"
+    fi
+
+    # Inner loop: check deps → (install → re-check) for the SAME backend
+    _deps_satisfied=0
+    while true; do
+        _dep_output=""
+        _dep_rc=0
+        _dep_output=$(bash "${_build_script}" --check-deps 2>/dev/null) || _dep_rc=$?
+        _missing_count=$(printf '%s' "${_dep_output}" | grep -c '^missing|' || true)
+
+        # If all deps satisfied, or script doesn't support --check-deps, proceed
+        if [[ ${_dep_rc} -eq 0 ]] || [[ ${_missing_count} -eq 0 ]]; then
+            if [[ ${_dep_rc} -eq 0 ]]; then
+                ok "All build dependencies satisfied"
+            fi
+            _deps_satisfied=1
+            break
+        fi
+
+        # ── Show formatted missing-dependency report ────────────────
+        echo ""
+        err "Missing build dependencies for $(bold "${SELECTED_BACKEND}"):"
+        echo ""
+        printf '  ┌──────────────────────────────────────────────────────────────────┐\n'
+        while IFS='|' read -r _ds _dc _dp _dh _dpkg; do
+            if [[ "${_ds}" == "missing" ]]; then
+                printf '  │  \033[1;31m✗\033[0m  %-16s %s\n' "${_dc}" "${_dp}"
+                printf '  │     \033[2m→ %s\033[0m\n' "${_dh}"
+            fi
+        done <<< "${_dep_output}"
+        printf '  └──────────────────────────────────────────────────────────────────┘\n'
+        echo ""
+
+        # Non-interactive or forced backend: exit immediately
+        if [[ "${NON_INTERACTIVE}" -eq 1 ]] || [[ -n "${BACKEND_OVERRIDE}" ]]; then
+            fatal "Install the missing dependencies and re-run the installer."
+        fi
+
+        # Collect unique package names from the 5th field
+        declare -A _pkgs_seen=()
+        _pkg_list=()
+        while IFS='|' read -r _ds _dc _dp _dh _dpkg; do
+            if [[ "${_ds}" == "missing" ]] && [[ -n "${_dpkg}" ]] && [[ -z "${_pkgs_seen[${_dpkg}]+x}" ]]; then
+                _pkg_list+=("${_dpkg}")
+                _pkgs_seen["${_dpkg}"]=1
+            fi
+        done <<< "${_dep_output}"
+
+        # Build menu options — offer install only if we have package names + a package manager
+        if [[ ${#_pkg_list[@]} -gt 0 ]] && [[ -n "${_pkg_mgr}" ]]; then
+            echo "  What would you like to do?"
+            echo ""
+            _choice=$(select_menu 0 \
+                "Install missing dependencies now  (sudo ${_pkg_mgr})" \
+                "Choose a different backend" \
+                "Exit and install dependencies first")
+
+            if [[ "${_choice}" -eq 0 ]]; then
+                echo ""
+                info "Installing: ${_pkg_list[*]} ..."
+                echo ""
+                _install_ok=1
+                case "${_pkg_mgr}" in
+                    apt)    sudo apt-get update -qq && sudo apt-get install -y "${_pkg_list[@]}" || _install_ok=0 ;;
+                    dnf)    sudo dnf install -y "${_pkg_list[@]}" || _install_ok=0 ;;
+                    pacman) sudo pacman -S --noconfirm "${_pkg_list[@]}" || _install_ok=0 ;;
+                    zypper) sudo zypper install -y "${_pkg_list[@]}" || _install_ok=0 ;;
+                    yum)    sudo yum install -y "${_pkg_list[@]}" || _install_ok=0 ;;
+                esac
+                echo ""
+                if [[ "${_install_ok}" -eq 0 ]]; then
+                    warn "Installation failed. The package repository may not be configured."
+                    warn "Follow the install guide above, then re-run the installer."
+                fi
+                info "Re-checking dependencies ..."
+                continue  # inner loop: re-check deps for same backend
+            elif [[ "${_choice}" -eq 1 ]]; then
+                break  # break inner loop → outer loop re-selects backend
+            else
+                echo ""
+                info "Install the missing tools, then re-run the installer."
+                exit 1
+            fi
+        else
+            echo "  What would you like to do?"
+            echo ""
+            _choice=$(select_menu 0 \
+                "Choose a different backend" \
+                "Exit and install dependencies first")
+
+            if [[ "${_choice}" -eq 0 ]]; then
+                break  # break inner loop → outer loop re-selects backend
+            else
+                echo ""
+                info "Install the missing tools, then re-run the installer."
+                exit 1
+            fi
+        fi
+    done
+
+    # If deps satisfied, break outer loop → proceed to Step 4
+    if [[ "${_deps_satisfied}" -eq 1 ]]; then
+        break
+    fi
+
+    echo ""
+done
 
 # ── Step 4: Build backend ───────────────────────────────────
 # Build scripts auto-bootstrap their required submodules.
 # Build script is discovered by convention: scripts/platforms/<platform_dir>/<backend_id>/build.sh
 
 info "Step 4/6: Building backend ..."
-
-# Map OS to platform directory name
-case "${OS}" in
-    Darwin) PLATFORM_DIR="macos" ;;
-    Linux)  PLATFORM_DIR="linux" ;;
-    *)      PLATFORM_DIR="linux" ;;
-esac
 
 if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
     # ── Android / Termux: build llama.cpp natively, install via build-runtime.sh ──

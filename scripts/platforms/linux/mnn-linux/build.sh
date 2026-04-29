@@ -11,6 +11,21 @@ PYTHON_BIN="${OMNIINFER_MNN_PYTHON:-python3}"
 CLEAN_BUILD=0
 SMOKE_TEST=0
 
+check_deps() {
+  local rc=0
+  _dep() {
+    local cmd="$1" desc="$2" hint="$3" pkg="${4:-}"
+    if command -v "${cmd}" >/dev/null 2>&1; then
+      printf 'ok|%s|%s|%s|%s\n' "${cmd}" "${desc}" "${hint}" "${pkg}"
+    else
+      printf 'missing|%s|%s|%s|%s\n' "${cmd}" "${desc}" "${hint}" "${pkg}"
+      rc=1
+    fi
+  }
+  _dep "${PYTHON_BIN}" "Python 3 interpreter"  "sudo apt install python3"  python3
+  return ${rc}
+}
+
 usage() {
   cat <<'EOF'
 Usage: build-mnn-linux.sh [options]
@@ -65,6 +80,10 @@ while (($# > 0)); do
     -h|--help)
       usage
       exit 0
+      ;;
+    --check-deps)
+      check_deps
+      exit $?
       ;;
     *)
       echo "Unknown argument: $1" >&2

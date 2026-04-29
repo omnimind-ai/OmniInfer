@@ -10,6 +10,22 @@ CLEAN_BUILD=1
 BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
 
+check_deps() {
+  local rc=0
+  _dep() {
+    local cmd="$1" desc="$2" hint="$3" pkg="${4:-}"
+    if command -v "${cmd}" >/dev/null 2>&1; then
+      printf 'ok|%s|%s|%s|%s\n' "${cmd}" "${desc}" "${hint}" "${pkg}"
+    else
+      printf 'missing|%s|%s|%s|%s\n' "${cmd}" "${desc}" "${hint}" "${pkg}"
+      rc=1
+    fi
+  }
+  _dep cmake "CMake build system"  "sudo apt install cmake"        cmake
+  _dep ninja "Ninja build system"  "sudo apt install ninja-build"  ninja-build
+  return ${rc}
+}
+
 usage() {
   cat <<'EOF'
 Usage: build-llama-linux-openvino.sh [options]
@@ -59,6 +75,10 @@ while (($# > 0)); do
     -h|--help)
       usage
       exit 0
+      ;;
+    --check-deps)
+      check_deps
+      exit $?
       ;;
     *)
       echo "Unknown argument: $1" >&2

@@ -11,6 +11,23 @@ CLEAN_BUILD=1
 BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
 
+check_deps() {
+  local rc=0
+  _dep() {
+    local cmd="$1" desc="$2" hint="$3" pkg="${4:-}"
+    if command -v "${cmd}" >/dev/null 2>&1; then
+      printf 'ok|%s|%s|%s|%s\n' "${cmd}" "${desc}" "${hint}" "${pkg}"
+    else
+      printf 'missing|%s|%s|%s|%s\n' "${cmd}" "${desc}" "${hint}" "${pkg}"
+      rc=1
+    fi
+  }
+  _dep cmake     "CMake build system"               "sudo apt install cmake"                                              cmake
+  _dep hipcc     "AMD ROCm HIP compiler"            "Install ROCm: https://rocm.docs.amd.com/projects/install-on-linux/"  hipcc
+  _dep hipconfig "AMD ROCm HIP configuration tool"  "Included with hipcc package"                                          hipcc
+  return ${rc}
+}
+
 usage() {
   cat <<'EOF'
 Usage: build-llama-linux-rocm.sh [options]
@@ -65,6 +82,10 @@ while (($# > 0)); do
     -h|--help)
       usage
       exit 0
+      ;;
+    --check-deps)
+      check_deps
+      exit $?
       ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -172,6 +193,34 @@ detect_rocm_root() {
   printf '%s\n' "/usr"
 }
 
+detect_hip_clang_dir() {
+  # 1. Official ROCm layout: ${ROCM_ROOT}/lib/llvm/bin/clang
+  if [[ -x "${ROCM_ROOT}/lib/llvm/bin/clang" ]]; then
+    printf '%s\n' "${ROCM_ROOT}/lib/llvm/bin"
+    return
+  fi
+
+  # 2. Ubuntu/Debian community packages: /usr/lib/llvm-*/bin/clang (pick newest)
+  local latest=""
+  for f in /usr/lib/llvm-*/bin/clang; do
+    [[ -x "${f}" ]] && latest="$(dirname "${f}")"
+  done
+  if [[ -n "${latest}" ]]; then
+    printf '%s\n' "${latest}"
+    return
+  fi
+
+  # 3. clang already in PATH
+  if command -v clang >/dev/null 2>&1; then
+    printf '%s\n' "$(dirname "$(command -v clang)")"
+    return
+  fi
+
+  echo "Could not find a HIP-compatible clang compiler." >&2
+  echo "Install clang or set ROCM_PATH to your ROCm installation." >&2
+  exit 1
+}
+
 detect_gpu_targets() {
   if [[ -n "${GPU_TARGETS}" ]]; then
     printf '%s\n' "${GPU_TARGETS}"
@@ -259,8 +308,8 @@ require_command hipcc
 require_command hipconfig
 warn_rocm_permissions
 
-HIPCXX_DIR="$(hipconfig -l)"
-export HIPCXX="${HIPCXX_DIR}/clang"
+HIP_CLANG_DIR="$(detect_hip_clang_dir)"
+export HIPCXX="${HIP_CLANG_DIR}/clang"
 
 GPU_TARGETS_DETECTED="$(detect_gpu_targets)"
 
@@ -275,8 +324,8 @@ CONFIGURE_ARGS=(
   -DLLAMA_OPENSSL=OFF
   -DGGML_HIP=ON
   -DGGML_NATIVE=OFF
-  -DCMAKE_C_COMPILER="${ROCM_ROOT}/lib/llvm/bin/clang"
-  -DCMAKE_CXX_COMPILER="${ROCM_ROOT}/lib/llvm/bin/clang++"
+  -DCMAKE_C_COMPILER="${HIP_CLANG_DIR}/clang"
+  -DCMAKE_CXX_COMPILER="${HIP_CLANG_DIR}/clang++"
 )
 
 if command -v ninja >/dev/null 2>&1; then
@@ -289,6 +338,7 @@ fi
 
 echo "Configuring llama.cpp Linux ROCm build..."
 echo "  ROCm root: ${ROCM_ROOT}"
+echo "  HIP clang: ${HIP_CLANG_DIR}/clang"
 if [[ -n "${GPU_TARGETS_DETECTED}" ]]; then
   echo "  GPU targets: ${GPU_TARGETS_DETECTED}"
 else
