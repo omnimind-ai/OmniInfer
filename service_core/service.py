@@ -63,7 +63,21 @@ def load_app_config(app_root: Path) -> dict[str, Any]:
         loaded = json.load(f)
     if not isinstance(loaded, dict):
         return defaults
-    return deep_merge(defaults, loaded)
+    merged = deep_merge(defaults, loaded)
+    _validate_config(merged, config_path)
+    return merged
+
+
+def _validate_config(config: dict[str, Any], config_path: Path) -> None:
+    port = config.get("port")
+    if not isinstance(port, int) or not (1 <= port <= 65535):
+        raise ValueError(f"{config_path}: invalid port {port!r} (must be 1-65535)")
+    timeout = config.get("startup_timeout")
+    if not isinstance(timeout, (int, float)) or timeout <= 0:
+        raise ValueError(f"{config_path}: invalid startup_timeout {timeout!r} (must be positive)")
+    host = config.get("host", "")
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError(f"{config_path}: invalid host {host!r} (must be non-empty string)")
 
 
 def json_dumps(obj: Any) -> bytes:

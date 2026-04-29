@@ -9,6 +9,7 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -155,6 +156,50 @@ class HttpHandlerTests(unittest.TestCase):
         req = urllib.request.Request(f"{self.base_url}/v1/chat/completions", method="OPTIONS")
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertEqual(r.getcode(), 204)
+
+
+# ---------------------------------------------------------------------------
+# Config validation
+# ---------------------------------------------------------------------------
+
+
+class ConfigValidationTests(unittest.TestCase):
+    def _validate(self, overrides: dict) -> None:
+        from service_core.service import _validate_config
+        config = {"host": "127.0.0.1", "port": 9000, "startup_timeout": 60}
+        config.update(overrides)
+        _validate_config(config, Path("test.json"))
+
+    def test_valid_config_passes(self) -> None:
+        self._validate({})  # should not raise
+
+    def test_port_zero_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._validate({"port": 0})
+
+    def test_port_negative_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._validate({"port": -1})
+
+    def test_port_too_high_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._validate({"port": 70000})
+
+    def test_port_string_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._validate({"port": "9000"})
+
+    def test_timeout_zero_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._validate({"startup_timeout": 0})
+
+    def test_timeout_negative_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._validate({"startup_timeout": -10})
+
+    def test_host_empty_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self._validate({"host": ""})
 
 
 if __name__ == "__main__":
