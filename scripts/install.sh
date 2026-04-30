@@ -16,6 +16,7 @@ MODEL_PATH=""
 SKIP_BUILD=0
 BACKEND_OVERRIDE=""
 NON_INTERACTIVE=0
+BUILD_BACKEND_ARGS=()
 REPO_SSH="git@github.com:omnimind-ai/OmniInfer.git"
 REPO_HTTPS="https://github.com/omnimind-ai/OmniInfer.git"
 
@@ -28,6 +29,10 @@ while [[ $# -gt 0 ]]; do
         --skip-build)     SKIP_BUILD=1;           shift   ;;
         --backend)        BACKEND_OVERRIDE="$2";  shift 2 ;;
         --non-interactive) NON_INTERACTIVE=1;      shift   ;;
+        --build-native)   BUILD_BACKEND_ARGS+=("--native"); shift ;;
+        --build-portable) BUILD_BACKEND_ARGS+=("--portable"); shift ;;
+        --build-lto)      BUILD_BACKEND_ARGS+=("--lto"); shift ;;
+        --clean-build)    BUILD_BACKEND_ARGS+=("--clean"); shift ;;
         --help|-h)
             cat <<'HELP'
 OmniInfer Installer
@@ -42,6 +47,10 @@ Options:
   --skip-build          Skip the backend build step
   --backend ID          Force a specific backend (e.g. llama.cpp-linux-vulkan)
   --non-interactive     Accept all defaults without prompting
+  --build-native        Build supported CPU backends with host-native CPU tuning
+  --build-portable      Build supported CPU backends in portable mode (default)
+  --build-lto           Enable link-time optimization for supported build scripts
+  --clean-build         Remove the backend build directory before configuring
   -h, --help            Show this help
 HELP
             exit 0
@@ -680,9 +689,30 @@ else
             ok "Backend ${SELECTED_BACKEND} already built, skipping"
         else
             info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
-            if ! bash "${FULL_BUILD_SCRIPT}"; then
+            EFFECTIVE_BUILD_ARGS=()
+            if [[ ${#BUILD_BACKEND_ARGS[@]} -gt 0 ]]; then
+                BUILD_HELP=""
+                if BUILD_HELP=$(bash "${FULL_BUILD_SCRIPT}" --help 2>/dev/null); then
+                    for build_arg in "${BUILD_BACKEND_ARGS[@]}"; do
+                        if printf '%s\n' "${BUILD_HELP}" | grep -Eq "(^|[[:space:]])${build_arg}([,[:space:]]|$)"; then
+                            EFFECTIVE_BUILD_ARGS+=("${build_arg}")
+                        else
+                            warn "Backend ${SELECTED_BACKEND} does not support ${build_arg}; ignoring it"
+                        fi
+                    done
+                else
+                    warn "Cannot inspect build options for ${SELECTED_BACKEND}; passing requested build args through"
+                    EFFECTIVE_BUILD_ARGS=("${BUILD_BACKEND_ARGS[@]}")
+                fi
+            fi
+            if [[ ${#EFFECTIVE_BUILD_ARGS[@]} -gt 0 ]]; then
+                info "Backend build args: ${EFFECTIVE_BUILD_ARGS[*]}"
+            fi
+            _build_rc=0
+            bash "${FULL_BUILD_SCRIPT}" "${EFFECTIVE_BUILD_ARGS[@]}" || _build_rc=$?
+            if [[ "${_build_rc}" -ne 0 ]]; then
                 echo ""
-                fatal "Build failed (exit code $?). See the messages above for details."
+                fatal "Build failed (exit code ${_build_rc}). See the messages above for details."
             fi
             ok "Build complete"
         fi
