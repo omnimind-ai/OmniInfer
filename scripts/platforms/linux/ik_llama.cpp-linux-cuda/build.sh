@@ -132,7 +132,7 @@ ensure_llama_root() {
 
   if [[ ${BOOTSTRAP_SUBMODULE} -eq 0 ]]; then
     echo "ik_llama.cpp source tree was not found at ${LLAMA_ROOT}" >&2
-    echo "Run: git submodule update --init --recursive framework/ik_llama.cpp" >&2
+    echo "Run: git submodule update --init framework/ik_llama.cpp" >&2
     exit 1
   fi
 
@@ -144,10 +144,10 @@ ensure_llama_root() {
   require_command git
   echo "ik_llama.cpp source tree is missing. Bootstrapping the submodule..."
   if [[ ${DRY_RUN} -eq 1 ]]; then
-    echo "  git -C ${REPO_ROOT} submodule update --init --recursive framework/ik_llama.cpp"
+    echo "  git -C ${REPO_ROOT} submodule update --init framework/ik_llama.cpp"
     return
   fi
-  git -C "${REPO_ROOT}" submodule update --init --recursive framework/ik_llama.cpp
+  git -C "${REPO_ROOT}" submodule update --init framework/ik_llama.cpp
 
   if [[ ! -f "${LLAMA_ROOT}/CMakeLists.txt" ]]; then
     echo "Failed to prepare ik_llama.cpp at ${LLAMA_ROOT}" >&2
