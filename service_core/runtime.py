@@ -596,11 +596,12 @@ class RuntimeManager:
             self.backend_host,
             "--port",
             str(target_port),
-            "--no-webui",
             "--slot-save-path",
             str(log_dir),
             *server_args,
         ]
+        if not backend.id.startswith("ik_llama.cpp"):
+            cmd.insert(7, "--no-webui")
         if mmproj_path:
             cmd.extend(["-mm", mmproj_path])
 

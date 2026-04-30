@@ -211,5 +211,53 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         self.assertFalse(snapshot["backend_ready"])
 
 
+class ExternalRuntimeLaunchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self.temp_dir.name)
+        self.runtime_root = self.repo_root / ".local" / "runtime" / "linux"
+        self.model_path = self.repo_root / "model.gguf"
+        self.model_path.write_text("fake", encoding="utf-8")
+
+        for backend_id in ("llama.cpp-linux", "ik_llama.cpp-linux"):
+            launcher = self.runtime_root / backend_id / "bin" / "llama-server"
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+
+        self._platform_patch = patch("service_core.runtime.current_host_platform", return_value=LinuxPlatform())
+        self._platform_patch.start()
+        self.manager = RuntimeManager(
+            repo_root=str(self.repo_root),
+            app_root=str(self.repo_root),
+            backend_host="127.0.0.1",
+            backend_port=12345,
+            startup_timeout_s=10,
+            default_backend_id="llama.cpp-linux",
+        )
+
+    def tearDown(self) -> None:
+        self._platform_patch.stop()
+        self.temp_dir.cleanup()
+
+    def test_llama_cpp_server_launch_disables_webui(self) -> None:
+        launch = self.manager._prepare_external_runtime_launch(
+            self.manager.backends["llama.cpp-linux"],
+            str(self.model_path),
+            None,
+            ctx_size=2048,
+        )
+        self.assertIn("--no-webui", launch.cmd)
+
+    def test_ik_llama_cpp_server_launch_omits_unsupported_no_webui_arg(self) -> None:
+        launch = self.manager._prepare_external_runtime_launch(
+            self.manager.backends["ik_llama.cpp-linux"],
+            str(self.model_path),
+            None,
+            ctx_size=2048,
+        )
+        self.assertNotIn("--no-webui", launch.cmd)
+        self.assertIn("--slot-save-path", launch.cmd)
+
+
 if __name__ == "__main__":
     unittest.main()
