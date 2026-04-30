@@ -704,10 +704,15 @@ if [[ -n "${MODEL_PATH}" ]]; then
     info "Using provided model: ${MODEL_PATH}"
     MODEL_CONFIGURED=1
 else
-    model_choice=$(select_menu 0 \
-        "Download a recommended model" \
-        "Use a local model file" \
-        "Skip (configure later)")
+    if [[ "${NON_INTERACTIVE}" -eq 1 ]]; then
+        info "Non-interactive mode: no --model provided, skipping model configuration."
+        model_choice=2
+    else
+        model_choice=$(select_menu 0 \
+            "Download a recommended model" \
+            "Use a local model file" \
+            "Skip (configure later)")
+    fi
 
     case "${model_choice}" in
         0)
