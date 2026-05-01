@@ -55,6 +55,7 @@ CUDA backends:
   Runtime-only/private libraries, including Ollama's bundled cuBLAS libraries, are not
   enough. You can install the recommended system package or set CUDAToolkit_ROOT/CUDA_HOME
   to a complete CUDA toolkit.
+  Without sudo, try: bash scripts/install-cuda-cublas-local.sh
 HELP
             exit 0
             ;;

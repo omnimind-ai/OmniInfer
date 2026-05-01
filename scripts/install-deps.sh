@@ -30,6 +30,7 @@ omni_install_deps_repair_command() {
 omni_install_deps_cuda_alt_hint() {
     cat <<'EOF'
 Alternative: install a complete CUDA toolkit and set CUDAToolkit_ROOT=/path/to/cuda or CUDA_HOME=/path/to/cuda. Runtime-only or private cuBLAS libraries, such as Ollama's bundled libraries, are not enough for building.
+No sudo option on Ubuntu hosts with NVIDIA apt repo: bash scripts/install-cuda-cublas-local.sh, then rerun with CUDAToolkit_ROOT=$HOME/.local/cuda-12.5.
 EOF
 }
 

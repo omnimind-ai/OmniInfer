@@ -53,4 +53,10 @@ IFS='|' read -r detected_root detected_nvcc detected_cublas detected_cublaslt <<
 [[ "${detected_cublas}" == "${complete}/lib64/libcublas.so" ]]
 [[ "${detected_cublaslt}" == "${complete}/lib64/libcublasLt.so" ]]
 
+env_output="$(OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${complete}" bash -c \
+  "source '${HELPER}'; omni_cuda_require_toolkit 1; printf '%s|%s\n' \"\${LIBRARY_PATH%%:*}\" \"\${LD_LIBRARY_PATH%%:*}\"")"
+IFS='|' read -r library_path_head ld_library_path_head <<< "${env_output}"
+[[ "${library_path_head}" == "${complete}/lib64" ]]
+[[ "${ld_library_path_head}" == "${complete}/lib64" ]]
+
 echo "cuda-detect tests passed"

@@ -87,6 +87,25 @@ omni_cuda_find_lib() {
     "targets/aarch64-linux/lib/${name}"
 }
 
+omni_cuda_library_dirs() {
+  local root="$1"
+  local arch_dir dir output=""
+  arch_dir="$(omni_cuda_arch_dir)"
+  for dir in \
+    "${root}/lib64" \
+    "${root}/lib" \
+    "${root}/targets/${arch_dir}/lib" \
+    "${root}/targets/x86_64-linux/lib" \
+    "${root}/targets/aarch64-linux/lib"; do
+    [[ -d "${dir}" ]] || continue
+    case ":${output}:" in
+      *":${dir}:"*) ;;
+      *) output="${output}${output:+:}${dir}" ;;
+    esac
+  done
+  printf '%s\n' "${output}"
+}
+
 omni_cuda_find_nvcc() {
   local root="$1"
   if [[ -x "${root}/bin/nvcc" ]]; then
@@ -126,6 +145,7 @@ omni_cuda_detect() {
   OMNI_CUDA_CUBLAS_HEADER=""
   OMNI_CUDA_CUBLAS_LIB=""
   OMNI_CUDA_CUBLASLT_LIB=""
+  OMNI_CUDA_LIBRARY_DIRS=""
   OMNI_CUDA_DETECT_REASON=""
 
   omni_cuda_collect_candidate_roots
@@ -158,6 +178,7 @@ omni_cuda_detect() {
     OMNI_CUDA_CUBLAS_HEADER="${header}"
     OMNI_CUDA_CUBLAS_LIB="${cublas}"
     OMNI_CUDA_CUBLASLT_LIB="${cublaslt}"
+    OMNI_CUDA_LIBRARY_DIRS="$(omni_cuda_library_dirs "${root}")"
     return 0
   done
 
@@ -208,6 +229,8 @@ omni_cuda_require_toolkit() {
     export CUDAToolkit_ROOT="${OMNI_CUDA_TOOLKIT_ROOT}"
     export CUDA_HOME="${CUDA_HOME:-${OMNI_CUDA_TOOLKIT_ROOT}}"
     export PATH="${OMNI_CUDA_TOOLKIT_ROOT}/bin:${PATH}"
+    export LIBRARY_PATH="${OMNI_CUDA_LIBRARY_DIRS}${LIBRARY_PATH:+:${LIBRARY_PATH}}"
+    export LD_LIBRARY_PATH="${OMNI_CUDA_LIBRARY_DIRS}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
     return 0
   fi
 

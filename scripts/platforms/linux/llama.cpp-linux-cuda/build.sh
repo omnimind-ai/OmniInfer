@@ -202,6 +202,8 @@ CONFIGURE_ARGS=(
   -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}"
   -DCUDAToolkit_ROOT="${OMNI_CUDA_TOOLKIT_ROOT}"
   -DCMAKE_CUDA_COMPILER="${OMNI_CUDA_NVCC}"
+  -DCMAKE_BUILD_RPATH="${OMNI_CUDA_LIBRARY_DIRS}"
+  -DCMAKE_INSTALL_RPATH="${OMNI_CUDA_LIBRARY_DIRS}"
   -DGGML_NATIVE=OFF
 )
 
@@ -215,6 +217,7 @@ echo "  CUDA toolkit root: ${OMNI_CUDA_TOOLKIT_ROOT}"
 echo "  CUDA compiler: ${OMNI_CUDA_NVCC}"
 echo "  cuBLAS header: ${OMNI_CUDA_CUBLAS_HEADER}"
 echo "  cuBLAS library: ${OMNI_CUDA_CUBLAS_LIB}"
+echo "  CUDA library dirs: ${OMNI_CUDA_LIBRARY_DIRS}"
 echo "  CUDA architectures: ${CUDA_ARCHITECTURES}"
 echo "Building llama-server..."
 echo "  cmake --build ${BUILD_ROOT} --target llama-server --config ${BUILD_TYPE} -j ${JOBS}"
