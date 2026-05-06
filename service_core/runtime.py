@@ -588,6 +588,8 @@ class RuntimeManager:
 
         log_dir = Path(backend.runtime_dir) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
+        webui_args = ["--webui", "none"] if backend.id.startswith("ik_llama.cpp") else ["--no-webui"]
+
         cmd = [
             backend.launcher_path,
             "-m",
@@ -596,7 +598,7 @@ class RuntimeManager:
             self.backend_host,
             "--port",
             str(target_port),
-            "--no-webui",
+            *webui_args,
             "--slot-save-path",
             str(log_dir),
             *server_args,

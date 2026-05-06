@@ -10,6 +10,10 @@ BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
 CUDA_ARCHITECTURES=""
 
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_ROOT}/../../../.." && pwd)"
+source "${SCRIPT_ROOT}/../cuda-detect.sh"
+
 check_deps() {
   local rc=0
   _dep() {
@@ -22,7 +26,16 @@ check_deps() {
     fi
   }
   _dep cmake "CMake build system"    "sudo apt install cmake"                                                cmake
-  _dep nvcc  "NVIDIA CUDA compiler"  "Install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads"     nvidia-cuda-toolkit
+  if omni_cuda_print_nvcc_dep_status; then
+    :
+  else
+    rc=1
+  fi
+  if omni_cuda_print_dep_status 0; then
+    :
+  else
+    rc=1
+  fi
   return ${rc}
 }
 
@@ -40,6 +53,9 @@ Options:
   --smoke-test               Run `llama-server --version` after the build completes
   --dry-run                  Print actions without executing them
   -h, --help                 Show this help message
+
+Environment:
+  CUDAToolkit_ROOT/CUDA_HOME  CUDA toolkit root containing bin/nvcc, cublas_v2.h, and libcublas.so
 EOF
 }
 
@@ -89,8 +105,6 @@ while (($# > 0)); do
   esac
 done
 
-SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_ROOT}/../../../.." && pwd)"
 PACKAGE_ROOT="${REPO_ROOT}/.local/runtime/linux/llama.cpp-linux-cuda"
 LLAMA_ROOT="${REPO_ROOT}/framework/llama.cpp"
 BUILD_ROOT="${PACKAGE_ROOT}/build/llama.cpp-linux-cuda"
@@ -165,7 +179,7 @@ prepare_runtime_dirs() {
 ensure_llama_root
 
 require_command cmake
-require_command nvcc
+omni_cuda_require_toolkit 0
 
 if [[ -z "${JOBS}" ]]; then
   JOBS="$(detect_jobs)"
@@ -186,6 +200,10 @@ CONFIGURE_ARGS=(
   -DLLAMA_OPENSSL=OFF
   -DGGML_CUDA=ON
   -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}"
+  -DCUDAToolkit_ROOT="${OMNI_CUDA_TOOLKIT_ROOT}"
+  -DCMAKE_CUDA_COMPILER="${OMNI_CUDA_NVCC}"
+  -DCMAKE_BUILD_RPATH="${OMNI_CUDA_LIBRARY_DIRS}"
+  -DCMAKE_INSTALL_RPATH="${OMNI_CUDA_LIBRARY_DIRS}"
   -DGGML_NATIVE=OFF
 )
 
@@ -195,6 +213,11 @@ fi
 
 echo "Configuring llama.cpp Linux CUDA build..."
 echo "  cmake ${CONFIGURE_ARGS[*]}"
+echo "  CUDA toolkit root: ${OMNI_CUDA_TOOLKIT_ROOT}"
+echo "  CUDA compiler: ${OMNI_CUDA_NVCC}"
+echo "  cuBLAS header: ${OMNI_CUDA_CUBLAS_HEADER}"
+echo "  cuBLAS library: ${OMNI_CUDA_CUBLAS_LIB}"
+echo "  CUDA library dirs: ${OMNI_CUDA_LIBRARY_DIRS}"
 echo "  CUDA architectures: ${CUDA_ARCHITECTURES}"
 echo "Building llama-server..."
 echo "  cmake --build ${BUILD_ROOT} --target llama-server --config ${BUILD_TYPE} -j ${JOBS}"

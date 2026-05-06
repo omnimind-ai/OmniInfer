@@ -11,6 +11,7 @@ from unittest.mock import patch
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
+from service_core.backends.base import BackendSpec
 from service_core.runtime import RuntimeManager
 
 
@@ -209,6 +210,57 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         self.assertEqual(snapshot["backend"], "mlx-mac")
         self.assertIsNone(snapshot["model"])
         self.assertFalse(snapshot["backend_ready"])
+
+
+class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        root = Path(self.temp_dir.name)
+        self.launcher = root / "llama-server"
+        self.launcher.write_text("#!/usr/bin/env sh\n", encoding="utf-8")
+        self.manager = RuntimeManager(
+            repo_root=str(root),
+            app_root=str(root),
+            backend_host="127.0.0.1",
+            backend_port=12345,
+            startup_timeout_s=10,
+            default_backend_id="llama.cpp-linux",
+        )
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _backend(self, backend_id: str) -> BackendSpec:
+        return BackendSpec(
+            id=backend_id,
+            label=backend_id,
+            family="llama.cpp",
+            runtime_dir=str(self.launcher.parent),
+            launcher_path=str(self.launcher),
+            models_dir=None,
+            catalog_url=None,
+            description=backend_id,
+            capabilities=["chat"],
+        )
+
+    def test_ik_launch_uses_supported_webui_disable_arg(self) -> None:
+        launch = self.manager._prepare_external_runtime_launch(
+            self._backend("ik_llama.cpp-linux-cuda"),
+            model_path="/tmp/model.gguf",
+            mmproj_path=None,
+        )
+        self.assertIn("--webui", launch.cmd)
+        self.assertIn("none", launch.cmd)
+        self.assertNotIn("--no-webui", launch.cmd)
+
+    def test_llama_launch_keeps_no_webui_arg(self) -> None:
+        launch = self.manager._prepare_external_runtime_launch(
+            self._backend("llama.cpp-linux-cuda"),
+            model_path="/tmp/model.gguf",
+            mmproj_path=None,
+        )
+        self.assertIn("--no-webui", launch.cmd)
+        self.assertNotIn("--webui", launch.cmd)
 
 
 if __name__ == "__main__":

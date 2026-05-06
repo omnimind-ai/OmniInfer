@@ -16,6 +16,7 @@ MODEL_PATH=""
 SKIP_BUILD=0
 BACKEND_OVERRIDE=""
 NON_INTERACTIVE=0
+INSTALL_SYSTEM_DEPS="ask"
 REPO_SSH="git@github.com:omnimind-ai/OmniInfer.git"
 REPO_HTTPS="https://github.com/omnimind-ai/OmniInfer.git"
 
@@ -28,6 +29,8 @@ while [[ $# -gt 0 ]]; do
         --skip-build)     SKIP_BUILD=1;           shift   ;;
         --backend)        BACKEND_OVERRIDE="$2";  shift 2 ;;
         --non-interactive) NON_INTERACTIVE=1;      shift   ;;
+        --install-system-deps) INSTALL_SYSTEM_DEPS="yes"; shift ;;
+        --no-install-system-deps) INSTALL_SYSTEM_DEPS="no"; shift ;;
         --help|-h)
             cat <<'HELP'
 OmniInfer Installer
@@ -41,8 +44,18 @@ Options:
   --model, -m PATH      Path to a local GGUF model file or directory
   --skip-build          Skip the backend build step
   --backend ID          Force a specific backend (e.g. llama.cpp-linux-vulkan)
-  --non-interactive     Accept all defaults without prompting
+  --non-interactive     Do not prompt; fail with instructions if dependencies are missing
+  --install-system-deps Automatically install missing system packages with sudo
+  --no-install-system-deps
+                        Never install system packages automatically
   -h, --help            Show this help
+
+CUDA backends:
+  CUDA builds require cuBLAS development files such as cublas_v2.h and libcublas.so.
+  Runtime-only/private libraries, including Ollama's bundled cuBLAS libraries, are not
+  enough. You can install the recommended system package or set CUDAToolkit_ROOT/CUDA_HOME
+  to a complete CUDA toolkit.
+  Without sudo, try: bash scripts/install-cuda-cublas-local.sh
 HELP
             exit 0
             ;;
@@ -268,6 +281,14 @@ if [[ ! -f "${INSTALL_DIR}/omniinfer.py" ]]; then
 fi
 ok "Repository ready at ${INSTALL_DIR}"
 
+INSTALL_DEPS_HELPER="${INSTALL_DIR}/scripts/install-deps.sh"
+if [[ -f "${INSTALL_DEPS_HELPER}" ]]; then
+    # shellcheck source=scripts/install-deps.sh
+    source "${INSTALL_DEPS_HELPER}"
+else
+    fatal "Installer dependency helper not found: ${INSTALL_DEPS_HELPER}"
+fi
+
 # ── Ensure a usable port ────────────────────────────────────
 # If default port 9000 is occupied, find a free one and write config.
 
@@ -489,16 +510,11 @@ while true; do
     fi
 
     # Detect system package manager (once, before inner loop)
-    _pkg_mgr=""
-    if command -v apt-get >/dev/null 2>&1; then   _pkg_mgr="apt"
-    elif command -v dnf >/dev/null 2>&1; then     _pkg_mgr="dnf"
-    elif command -v pacman >/dev/null 2>&1; then  _pkg_mgr="pacman"
-    elif command -v zypper >/dev/null 2>&1; then  _pkg_mgr="zypper"
-    elif command -v yum >/dev/null 2>&1; then     _pkg_mgr="yum"
-    fi
+    _pkg_mgr="$(omni_install_deps_detect_pkg_mgr)"
 
     # Inner loop: check deps → (install → re-check) for the SAME backend
     _deps_satisfied=0
+    _system_deps_install_attempted=0
     while true; do
         _dep_output=""
         _dep_rc=0
@@ -528,11 +544,6 @@ while true; do
         printf '  └──────────────────────────────────────────────────────────────────┘\n'
         echo ""
 
-        # Non-interactive or forced backend: exit immediately
-        if [[ "${NON_INTERACTIVE}" -eq 1 ]] || [[ -n "${BACKEND_OVERRIDE}" ]]; then
-            fatal "Install the missing dependencies and re-run the installer."
-        fi
-
         # Collect unique package names from the 5th field
         declare -A _pkgs_seen=()
         _pkg_list=()
@@ -543,35 +554,78 @@ while true; do
             fi
         done <<< "${_dep_output}"
 
+        if [[ ${#_pkg_list[@]} -gt 0 ]]; then
+            omni_install_deps_print_fix "${_pkg_mgr}" "${_pkg_list[@]}"
+            echo ""
+        fi
+
+        resolve_tty
+        _can_prompt=1
+        if [[ "${NON_INTERACTIVE}" -eq 1 ]] || [[ -z "${INPUT_TTY}" ]]; then
+            _can_prompt=0
+        fi
+
+        _deps_policy="$(omni_install_deps_policy "${INSTALL_SYSTEM_DEPS}" "${NON_INTERACTIVE}" "${_can_prompt}")"
+
+        if [[ "${_deps_policy}" == "auto-install" ]]; then
+            if [[ ${#_pkg_list[@]} -eq 0 ]] || [[ -z "${_pkg_mgr}" ]]; then
+                fatal "Missing dependencies could not be mapped to installable system packages. See the messages above."
+            fi
+            if [[ "${_system_deps_install_attempted}" -eq 1 ]]; then
+                fatal "Dependencies are still missing after attempting system package installation. Run the fix command above, or set CUDAToolkit_ROOT/CUDA_HOME to a complete CUDA toolkit."
+            fi
+            echo ""
+            info "Installing missing system packages: ${_pkg_list[*]} ..."
+            echo ""
+            _system_deps_install_attempted=1
+            if ! omni_install_deps_run "${_pkg_mgr}" "${_pkg_list[@]}"; then
+                warn "Installation failed. The package repository may not be configured."
+                warn "Follow the fix command above, then re-run the installer."
+                if [[ "${NON_INTERACTIVE}" -eq 1 ]]; then
+                    exit 1
+                fi
+            fi
+            info "Re-checking dependencies ..."
+            continue
+        fi
+
+        if [[ "${_deps_policy}" == "fail-disabled" ]]; then
+            fatal "Missing dependencies and automatic system package installation is disabled."
+        fi
+
+        if [[ "${_deps_policy}" == "fail-noninteractive" ]]; then
+            fatal "Missing dependencies in non-interactive mode. Run the fix command above, or set CUDAToolkit_ROOT/CUDA_HOME to a complete CUDA toolkit."
+        fi
+
         # Build menu options — offer install only if we have package names + a package manager
         if [[ ${#_pkg_list[@]} -gt 0 ]] && [[ -n "${_pkg_mgr}" ]]; then
             echo "  What would you like to do?"
             echo ""
-            _choice=$(select_menu 0 \
-                "Install missing dependencies now  (sudo ${_pkg_mgr})" \
-                "Choose a different backend" \
-                "Exit and install dependencies first")
+            if [[ -n "${BACKEND_OVERRIDE}" ]]; then
+                _choice=$(select_menu 0 \
+                    "Install missing dependencies now  (sudo ${_pkg_mgr})" \
+                    "Exit and install dependencies first")
+            else
+                _choice=$(select_menu 0 \
+                    "Install missing dependencies now  (sudo ${_pkg_mgr})" \
+                    "Choose a different backend" \
+                    "Exit and install dependencies first")
+            fi
 
             if [[ "${_choice}" -eq 0 ]]; then
                 echo ""
-                info "Installing: ${_pkg_list[*]} ..."
+                info "Installing missing system packages: ${_pkg_list[*]} ..."
                 echo ""
                 _install_ok=1
-                case "${_pkg_mgr}" in
-                    apt)    sudo apt-get update -qq && sudo apt-get install -y "${_pkg_list[@]}" || _install_ok=0 ;;
-                    dnf)    sudo dnf install -y "${_pkg_list[@]}" || _install_ok=0 ;;
-                    pacman) sudo pacman -S --noconfirm "${_pkg_list[@]}" || _install_ok=0 ;;
-                    zypper) sudo zypper install -y "${_pkg_list[@]}" || _install_ok=0 ;;
-                    yum)    sudo yum install -y "${_pkg_list[@]}" || _install_ok=0 ;;
-                esac
+                omni_install_deps_run "${_pkg_mgr}" "${_pkg_list[@]}" || _install_ok=0
                 echo ""
                 if [[ "${_install_ok}" -eq 0 ]]; then
                     warn "Installation failed. The package repository may not be configured."
-                    warn "Follow the install guide above, then re-run the installer."
+                    warn "Follow the fix command above, then re-run the installer."
                 fi
                 info "Re-checking dependencies ..."
                 continue  # inner loop: re-check deps for same backend
-            elif [[ "${_choice}" -eq 1 ]]; then
+            elif [[ "${_choice}" -eq 1 ]] && [[ -z "${BACKEND_OVERRIDE}" ]]; then
                 break  # break inner loop → outer loop re-selects backend
             else
                 echo ""
@@ -581,11 +635,15 @@ while true; do
         else
             echo "  What would you like to do?"
             echo ""
-            _choice=$(select_menu 0 \
-                "Choose a different backend" \
-                "Exit and install dependencies first")
+            if [[ -n "${BACKEND_OVERRIDE}" ]]; then
+                _choice=$(select_menu 0 "Exit and install dependencies first")
+            else
+                _choice=$(select_menu 0 \
+                    "Choose a different backend" \
+                    "Exit and install dependencies first")
+            fi
 
-            if [[ "${_choice}" -eq 0 ]]; then
+            if [[ "${_choice}" -eq 0 ]] && [[ -z "${BACKEND_OVERRIDE}" ]]; then
                 break  # break inner loop → outer loop re-selects backend
             else
                 echo ""
