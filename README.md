@@ -104,8 +104,8 @@ Linux and macOS:
 Recommended docs:
 
 - [CLI Guide](docs/CLI.md): end-to-end CLI usage for Linux, macOS, Windows, and Android
-- [Android CLI Notes](docs/android-cli.md): Android direct-mode details
-- [Android JNI Bridge](docs/android-jni-bridge.md): generate an Android App bridge and packaged runtime assets
+- [Android App Integration](docs/android/integration.md): embed OmniInfer in a third-party Android app
+- [Android Backend Reference](docs/android/backends.md): Android backend options for llama.cpp, MNN, LiteRT-LM, and ExecuTorch QNN
 - [Build Guide](docs/build.md): build and platform packaging notes
 - [API Reference](docs/API.md): OpenAI-compatible local API usage
 
