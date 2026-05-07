@@ -3,11 +3,14 @@ package com.omniinfer.server
 import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 object OmniInferBridge {
     private const val TAG = "OmniInferBridge"
     private const val LIB_NAME = "omniinfer-jni"
     private val thinkModes = ConcurrentHashMap<Long, Boolean>()
+    private val liteRtHandles = ConcurrentHashMap<Long, LiteRtLmBackend>()
+    private val nextLiteRtHandle = AtomicLong(-1L)
 
     val isNativeLibraryLoaded: Boolean by lazy {
         runCatching {
@@ -33,6 +36,25 @@ object OmniInferBridge {
         cacheDir: String? = null,
         extraConfig: Map<String, String>? = null
     ): Long {
+        if (LiteRtLmBackend.isLiteRtBackend(backend)) {
+            return runCatching {
+                val session = LiteRtLmBackend.create(
+                    modelPath = modelPath,
+                    backend = backend,
+                    nThreads = nThreads,
+                    nCtx = nCtx,
+                    nativeLibDir = nativeLibDir,
+                    cacheDir = cacheDir,
+                    extraConfig = extraConfig,
+                )
+                val handle = nextLiteRtHandle.getAndDecrement()
+                liteRtHandles[handle] = session
+                handle
+            }.getOrElse { error ->
+                Log.e(TAG, "Failed to initialize LiteRT-LM backend: ${error.message}", error)
+                0L
+            }
+        }
         if (!isNativeLibraryLoaded) return 0L
         val configJson = JSONObject()
             .put("backend", backend)
@@ -63,6 +85,24 @@ object OmniInferBridge {
         presencePenalty: Float? = null,
         callback: OmniInferStreamCallback? = null
     ): String {
+        liteRtHandles[handle]?.let { liteRt ->
+            val sb = StringBuilder()
+            sb.append("{\"thinking_enabled\":").append(thinkEnabled)
+            sb.append(",\"messages\":").append(messagesJson)
+            if (toolsJson != null) {
+                sb.append(",\"tools\":").append(toolsJson)
+                if (toolChoice != null) sb.append(",\"tool_choice\":\"").append(toolChoice).append("\"")
+            }
+            if (maxTokens != null && maxTokens > 0) sb.append(",\"max_tokens\":").append(maxTokens)
+            if (temperature != null) sb.append(",\"temperature\":").append(temperature)
+            if (topP != null) sb.append(",\"top_p\":").append(topP)
+            if (topK != null) sb.append(",\"top_k\":").append(topK)
+            if (repetitionPenalty != null) sb.append(",\"repetition_penalty\":").append(repetitionPenalty)
+            if (frequencyPenalty != null) sb.append(",\"frequency_penalty\":").append(frequencyPenalty)
+            if (presencePenalty != null) sb.append(",\"presence_penalty\":").append(presencePenalty)
+            sb.append("}")
+            return liteRt.generate(messagesJson, imageDataArray, sb.toString(), callback)
+        }
         if (!isNativeLibraryLoaded) return ""
         // Build request JSON by string concatenation to avoid org.json re-serialization
         // which can corrupt non-ASCII characters (Chinese, emoji) through its parse/toString cycle.
@@ -86,27 +126,47 @@ object OmniInferBridge {
     }
 
     fun loadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean {
+        if (liteRtHandles.containsKey(handle)) return false
         if (!isNativeLibraryLoaded) return false
         return nativeLoadHistory(handle, roles, contents)
     }
 
     fun setThinkMode(handle: Long, enabled: Boolean) {
+        if (liteRtHandles.containsKey(handle)) {
+            thinkModes[handle] = enabled
+            return
+        }
         if (!isNativeLibraryLoaded) return
         thinkModes[handle] = enabled
         nativeSetThinkMode(handle, enabled)
     }
 
-    fun reset(handle: Long) { if (isNativeLibraryLoaded) nativeReset(handle) }
-    fun cancel(handle: Long) { if (isNativeLibraryLoaded) nativeCancel(handle) }
-    fun gracefulStop(handle: Long) { if (isNativeLibraryLoaded) nativeGracefulStop(handle) }
+    fun reset(handle: Long) {
+        liteRtHandles[handle]?.let { it.reset(); return }
+        if (isNativeLibraryLoaded) nativeReset(handle)
+    }
+    fun cancel(handle: Long) {
+        liteRtHandles[handle]?.let { it.cancel(); return }
+        if (isNativeLibraryLoaded) nativeCancel(handle)
+    }
+    fun gracefulStop(handle: Long) {
+        liteRtHandles[handle]?.let { it.cancel(); return }
+        if (isNativeLibraryLoaded) nativeGracefulStop(handle)
+    }
 
     fun free(handle: Long) {
+        liteRtHandles.remove(handle)?.let {
+            thinkModes.remove(handle)
+            it.close()
+            return
+        }
         if (!isNativeLibraryLoaded) return
         thinkModes.remove(handle)
         nativeFree(handle)
     }
 
     fun collectDiagnostics(handle: Long): Map<String, String> {
+        liteRtHandles[handle]?.let { return it.diagnostics() }
         if (!isNativeLibraryLoaded) return emptyMap()
         val json = runCatching { JSONObject(nativeCollectDiagnosticsJson(handle)) }.getOrNull() ?: return emptyMap()
         return buildMap { json.keys().forEach { key -> put(key, json.optString(key)) } }
