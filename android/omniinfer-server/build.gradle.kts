@@ -81,12 +81,14 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += "-DCMAKE_BUILD_TYPE=Release"
-                arguments += "-DGGML_NATIVE=OFF"
-                arguments += "-DGGML_LLAMAFILE=OFF"
-                arguments += "-DLLAMA_BUILD_COMMON=ON"
                 arguments += "-DBUILD_SHARED_LIBS=ON"
-                arguments += "-DGGML_BACKEND_DL=ON"
-                arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
+                if (enableLlamaCpp) {
+                    arguments += "-DGGML_NATIVE=OFF"
+                    arguments += "-DGGML_LLAMAFILE=OFF"
+                    arguments += "-DLLAMA_BUILD_COMMON=ON"
+                    arguments += "-DGGML_BACKEND_DL=ON"
+                    arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
+                }
                 arguments += "-DOMNIINFER_BACKEND_LLAMA_CPP=${if (enableLlamaCpp) "ON" else "OFF"}"
                 arguments += "-DOMNIINFER_BACKEND_MNN=${if (enableMnn) "ON" else "OFF"}"
                 arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=${if (enableExecutorchQnn) "ON" else "OFF"}"
