@@ -311,4 +311,5 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - Android direct mode uses the local launcher at `.local/runtime/android/bin/omniinfer-android`.
 - Android backend binaries live under `.local/runtime/android/lib/arm64-v8a`.
 - Android OmniInfer Native QNN runtime files can also live under `.local/runtime/android/qnn`.
-- For more Android-specific details, see [Android CLI Notes](android-cli.md).
+- For Android runtime build and packaging details, see [Build Guide](build.md).
+- For Android app embedding, see [Android Integration Guide](android/integration.md).

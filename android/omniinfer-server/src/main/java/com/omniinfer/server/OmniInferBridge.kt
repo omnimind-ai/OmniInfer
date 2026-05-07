@@ -9,8 +9,9 @@ object OmniInferBridge {
     private const val TAG = "OmniInferBridge"
     private const val LIB_NAME = "omniinfer-jni"
     private val thinkModes = ConcurrentHashMap<Long, Boolean>()
-    private val liteRtHandles = ConcurrentHashMap<Long, LiteRtLmBackend>()
+    private val liteRtHandles = ConcurrentHashMap<Long, LiteRtLmSession>()
     private val nextLiteRtHandle = AtomicLong(-1L)
+    @Volatile private var lastError: String = ""
 
     val isNativeLibraryLoaded: Boolean by lazy {
         runCatching {
@@ -36,9 +37,10 @@ object OmniInferBridge {
         cacheDir: String? = null,
         extraConfig: Map<String, String>? = null
     ): Long {
-        if (LiteRtLmBackend.isLiteRtBackend(backend)) {
+        lastError = ""
+        if (LiteRtLmBackendSupport.isLiteRtBackend(backend)) {
             return runCatching {
-                val session = LiteRtLmBackend.create(
+                val session = LiteRtLmBackendSupport.create(
                     modelPath = modelPath,
                     backend = backend,
                     nThreads = nThreads,
@@ -51,11 +53,15 @@ object OmniInferBridge {
                 liteRtHandles[handle] = session
                 handle
             }.getOrElse { error ->
-                Log.e(TAG, "Failed to initialize LiteRT-LM backend: ${error.message}", error)
+                lastError = error.message ?: "Failed to initialize LiteRT-LM backend"
+                Log.e(TAG, "Failed to initialize LiteRT-LM backend: $lastError", error)
                 0L
             }
         }
-        if (!isNativeLibraryLoaded) return 0L
+        if (!isNativeLibraryLoaded) {
+            lastError = "Native backend library '$LIB_NAME' is unavailable."
+            return 0L
+        }
         val configJson = JSONObject()
             .put("backend", backend)
             .put("model_path", modelPath)
@@ -65,9 +71,16 @@ object OmniInferBridge {
             .put("n_ctx", nCtx)
         extraConfig?.forEach { (k, v) -> configJson.put(k, v) }
         val handle = nativeInit(configJson.toString())
+        if (handle == 0L) {
+            lastError = nativeGetLastError().ifBlank {
+                "Failed to initialize backend '$backend'."
+            }
+        }
         // Don't set default think mode — let each request's thinkEnabled param decide.
         return handle
     }
+
+    fun getLastError(): String = lastError
 
     fun generate(
         handle: Long,
@@ -173,6 +186,7 @@ object OmniInferBridge {
     }
 
     private external fun nativeInit(configJson: String): Long
+    private external fun nativeGetLastError(): String
     private external fun nativeGenerate(handle: Long, systemPrompt: String?, prompt: String, requestJson: String, imageDataArray: Array<ByteArray>?, callback: OmniInferStreamCallback?): String
     private external fun nativeLoadHistory(handle: Long, roles: Array<String>, contents: Array<String>): Boolean
     private external fun nativePrewarmImage(handle: Long, imageData: ByteArray?, nThreads: Int): Boolean
