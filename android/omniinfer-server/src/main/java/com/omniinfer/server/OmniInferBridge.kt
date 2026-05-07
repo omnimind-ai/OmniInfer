@@ -9,7 +9,7 @@ object OmniInferBridge {
     private const val TAG = "OmniInferBridge"
     private const val LIB_NAME = "omniinfer-jni"
     private val thinkModes = ConcurrentHashMap<Long, Boolean>()
-    private val liteRtHandles = ConcurrentHashMap<Long, LiteRtLmBackend>()
+    private val liteRtHandles = ConcurrentHashMap<Long, LiteRtLmSession>()
     private val nextLiteRtHandle = AtomicLong(-1L)
 
     val isNativeLibraryLoaded: Boolean by lazy {
@@ -36,9 +36,9 @@ object OmniInferBridge {
         cacheDir: String? = null,
         extraConfig: Map<String, String>? = null
     ): Long {
-        if (LiteRtLmBackend.isLiteRtBackend(backend)) {
+        if (LiteRtLmBackendSupport.isLiteRtBackend(backend)) {
             return runCatching {
-                val session = LiteRtLmBackend.create(
+                val session = LiteRtLmBackendSupport.create(
                     modelPath = modelPath,
                     backend = backend,
                     nThreads = nThreads,

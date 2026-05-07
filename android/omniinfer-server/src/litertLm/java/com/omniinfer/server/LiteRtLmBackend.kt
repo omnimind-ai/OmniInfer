@@ -33,12 +33,12 @@ internal class LiteRtLmBackend private constructor(
     private val cacheDir: String?,
     private val engine: Engine,
     private val engineInitMs: Double,
-) {
+) : LiteRtLmSession {
     private val lock = Any()
     private var activeConversation: Conversation? = null
     private var lastDiagnostics: Map<String, String> = baseDiagnostics()
 
-    fun generate(
+    override fun generate(
         messagesJson: String,
         imageDataArray: Array<ByteArray>?,
         requestJson: String,
@@ -111,13 +111,13 @@ internal class LiteRtLmBackend private constructor(
         }
     }
 
-    fun cancel() {
+    override fun cancel() {
         synchronized(lock) {
             runCatching { activeConversation?.cancelProcess() }
         }
     }
 
-    fun reset() {
+    override fun reset() {
         synchronized(lock) {
             runCatching { activeConversation?.close() }
             activeConversation = null
@@ -125,7 +125,7 @@ internal class LiteRtLmBackend private constructor(
         }
     }
 
-    fun close() {
+    override fun close() {
         synchronized(lock) {
             runCatching { activeConversation?.close() }
             activeConversation = null
@@ -133,7 +133,7 @@ internal class LiteRtLmBackend private constructor(
         }
     }
 
-    fun diagnostics(): Map<String, String> = synchronized(lock) { lastDiagnostics }
+    override fun diagnostics(): Map<String, String> = synchronized(lock) { lastDiagnostics }
 
     private fun parseMessages(messagesJson: String, imageDataArray: Array<ByteArray>?): List<Message> {
         val array = JSONArray(messagesJson)
