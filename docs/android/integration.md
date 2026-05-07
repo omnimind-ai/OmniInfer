@@ -1,0 +1,337 @@
+# Android Integration Guide
+
+This is the short path for embedding OmniInfer into a third-party Android app.
+It keeps the app-side contract simple:
+
+1. Include `android/omniinfer-server` as a Gradle module.
+2. Call `OmniInferServer.init(applicationContext)`.
+3. Load one local model with `OmniInferServer.loadModel(...)`.
+4. Send OpenAI-compatible requests to `http://127.0.0.1:<port>`.
+
+For backend internals and advanced topics, see:
+
+| Topic | Document |
+|---|---|
+| Backend-specific options | [backends.md](./backends.md) |
+| Multimodal model layout | [multimodal.md](./multimodal.md) |
+| HTTP request and streaming examples | [api-examples.md](./api-examples.md) |
+| ExecuTorch QNN / NPU | [et-qnn.md](./et-qnn.md) |
+| Full HTTP API contract | [API.md](../API.md) |
+
+## Requirements
+
+Use these versions unless you have a specific compatibility reason to change them:
+
+| Item | Required / tested |
+|---|---|
+| minSdk | 26+ |
+| ABI | `arm64-v8a` |
+| JDK | 17 for normal Android builds |
+| Android Gradle Plugin | 8.7.3 tested |
+| Kotlin Gradle plugin | 2.3.0+ |
+| Ktor | 3.1.3 tested |
+
+Kotlin `2.3.0+` matters because the LiteRT-LM AAR used by OmniInfer is compiled with Kotlin metadata 2.3.0. Host apps using Kotlin 2.0.x will fail during `:omniinfer-server:compileKotlin`.
+
+## Step 1: Add OmniInfer
+
+From your app repository root:
+
+```bash
+git submodule add https://github.com/omnimind-ai/OmniInfer.git third_party/omniinfer
+```
+
+Do not initialize all submodules recursively. The `framework/` directory contains large desktop/server dependencies that Android does not need.
+
+Initialize only the Android native backends you build:
+
+```bash
+git submodule update --init third_party/omniinfer/framework/llama.cpp
+git submodule update --init third_party/omniinfer/framework/mnn
+```
+
+If you only use LiteRT-LM, those native submodules are not needed for LiteRT itself, but the current Android module still builds llama.cpp and MNN by default unless you fork/tune its CMake arguments.
+
+## Step 2: Configure Gradle
+
+In `settings.gradle.kts`:
+
+```kotlin
+include(":omniinfer-server")
+project(":omniinfer-server").projectDir =
+    file("third_party/omniinfer/android/omniinfer-server")
+```
+
+In `app/build.gradle.kts`:
+
+```kotlin
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    compileSdk = 35
+
+    defaultConfig {
+        minSdk = 26
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+val ktorVersion = "3.1.3"
+
+dependencies {
+    implementation(project(":omniinfer-server"))
+
+    // omniinfer-server declares Ktor as compileOnly, so the app provides it.
+    implementation("io.ktor:ktor-server-core:$ktorVersion")
+    implementation("io.ktor:ktor-server-cio:$ktorVersion")
+    implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // Only needed if you use the OkHttp snippets in this guide.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}
+```
+
+In the root Gradle plugins block, use Kotlin `2.3.0+`:
+
+```kotlin
+plugins {
+    id("com.android.application") version "8.7.3" apply false
+    id("com.android.library") version "8.7.3" apply false
+    id("org.jetbrains.kotlin.android") version "2.3.0" apply false
+}
+```
+
+## Step 3: Allow Localhost HTTP
+
+OmniInfer serves local HTTP on `127.0.0.1`. Android 9+ blocks cleartext HTTP unless you opt in.
+
+Create `app/src/main/res/xml/network_security_config.xml`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
+```
+
+Reference it from `AndroidManifest.xml`:
+
+```xml
+<application
+    android:networkSecurityConfig="@xml/network_security_config"
+    ... >
+```
+
+The library manifest contributes the foreground service declarations. Keep them during manifest merge:
+
+```xml
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+<service
+    android:name="com.omniinfer.server.OmniInferService"
+    android:exported="false"
+    android:foregroundServiceType="specialUse" />
+```
+
+If you enable ExecuTorch QNN, keep `android:extractNativeLibs="true"` because the QNN runner must exist as a regular file on disk.
+
+## Step 4: Load a Model
+
+Call `init()` once, then load a model on a background thread:
+
+```kotlin
+import com.omniinfer.server.OmniInferServer
+
+OmniInferServer.init(applicationContext)
+
+val ok = OmniInferServer.loadModel(
+    modelPath = "/absolute/device/path/to/model",
+    backend = "litert", // "llama.cpp", "mnn", "litert", or "executorch-qnn"
+    port = 9099,
+    nThreads = 4,
+    nCtx = 8192,
+    extraConfig = mapOf("backend_type" to "cpu"),
+)
+```
+
+Only one model is loaded at a time. Loading a different model/backend unloads the previous one first.
+
+`modelPath` depends on the backend:
+
+| Backend | `modelPath` points to | Example |
+|---|---|---|
+| `llama.cpp` | `.gguf` model file | `/sdcard/models/gemma-4-e2b.gguf` |
+| `mnn` | MNN `config.json` | `/sdcard/models/Qwen3.5-2B-MNN/config.json` |
+| `litert`, `litert-lm`, `litertlm` | `.litertlm` model file | `/sdcard/models/gemma-4-E2B-it.litertlm` |
+| `executorch-qnn` | `.pte` model file | `/sdcard/models/Qwen3-1.7B/hybrid_llama_qnn.pte` |
+
+Common backend options:
+
+```kotlin
+// LiteRT-LM CPU
+extraConfig = mapOf("backend_type" to "cpu")
+
+// LiteRT-LM GPU
+extraConfig = mapOf("backend_type" to "gpu")
+
+// ExecuTorch QNN
+extraConfig = mapOf("decoder_model_version" to "qwen3")
+```
+
+See [backends.md](./backends.md) for the full backend table.
+
+## Step 5: Send Requests
+
+After `loadModel()` returns `true`, call the local OpenAI-compatible endpoint:
+
+```kotlin
+import com.omniinfer.server.OmniInferServer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
+
+private val client = OkHttpClient.Builder()
+    .connectTimeout(10, TimeUnit.SECONDS)
+    .readTimeout(300, TimeUnit.SECONDS)
+    .build()
+
+suspend fun chatOnce(prompt: String): String = withContext(Dispatchers.IO) {
+    val body = """
+    {
+      "model": "local",
+      "messages": [{"role": "user", "content": ${JSONObject.quote(prompt)}}],
+      "stream": false,
+      "max_tokens": 128
+    }
+    """.trimIndent()
+
+    val request = Request.Builder()
+        .url("http://127.0.0.1:${OmniInferServer.getPort()}/v1/chat/completions")
+        .post(body.toRequestBody("application/json".toMediaType()))
+        .build()
+
+    client.newCall(request).execute().use { response ->
+        check(response.isSuccessful) { response.body?.string() ?: response.message }
+        val json = JSONObject(response.body!!.string())
+        json.getJSONArray("choices")
+            .getJSONObject(0)
+            .getJSONObject("message")
+            .getString("content")
+    }
+}
+```
+
+For command-line tests through adb:
+
+```bash
+adb forward tcp:9099 tcp:9099
+curl -sS -H "Content-Type: application/json" \
+  --data-binary @request.json \
+  http://127.0.0.1:9099/v1/chat/completions
+```
+
+Prefer `--data-binary @request.json`; some shell-specific wrappers can accidentally send an empty body.
+
+## Lifecycle Helpers
+
+```kotlin
+OmniInferServer.isReady()
+OmniInferServer.getPort()
+OmniInferServer.getLoadedModels()
+OmniInferServer.getDiagnostics()
+
+OmniInferServer.unloadModel() // unload model, keep server available
+OmniInferServer.stop()        // unload model and stop HTTP server
+```
+
+Optional notification customization:
+
+```kotlin
+OmniInferServer.configureNotification(
+    title = "My AI Assistant",
+    channelName = "AI Engine",
+    smallIcon = R.drawable.ic_my_icon,
+    textFormat = { "AI engine active" },
+)
+```
+
+Call `configureNotification()` after `init()` and before `loadModel()`.
+
+## Production Checklist
+
+Before shipping the integration, check:
+
+| Area | Check |
+|---|---|
+| Gradle | Kotlin Gradle plugin `2.3.0+`, AGP 8.x, JDK 17 |
+| Repositories | Maven Central and Google's Maven repository are available |
+| Dependencies | Host app provides Ktor server dependencies |
+| ABI | App packages `arm64-v8a` |
+| Model path | `modelPath` is absolute and readable by the app process |
+| Threading | `loadModel()` runs off the UI thread |
+| Network | `network_security_config.xml` allows `127.0.0.1` cleartext HTTP |
+| Service | Manifest merge keeps `OmniInferService` and foreground service permissions |
+| Shutdown | Call `unloadModel()` or `stop()` from your feature lifecycle |
+| LiteRT long context | Pass explicit `nCtx`; do not rely on `.litertlm` metadata defaults |
+| QNN | Keep `android:extractNativeLibs="true"` if ExecuTorch QNN is enabled |
+
+## Updating OmniInfer Later
+
+When updating the OmniInfer submodule:
+
+```bash
+cd third_party/omniinfer
+git fetch origin
+git checkout origin/main  # or a specific tag
+git submodule update --init framework/llama.cpp
+git submodule update --init framework/mnn
+
+cd ../..
+git add third_party/omniinfer
+git commit -m "Update OmniInfer"
+```
+
+Do not use `--recursive`; it downloads Android-irrelevant framework submodules.
+
+## Troubleshooting
+
+**Kotlin metadata mismatch with LiteRT-LM:** upgrade the host Kotlin Gradle plugin to `2.3.0+`.
+
+**`127.0.0.1` request fails with cleartext error:** add `network_security_config.xml` and reference it from the app manifest.
+
+**HTTP request times out and logcat says JSON input is empty:** verify the client sends a body; for adb tests use `curl --data-binary @request.json`.
+
+**LiteRT-LM fails around 4k context:** pass `nCtx` explicitly in `loadModel()`; some `.litertlm` files do not store max-context metadata.
+
+**Foreground service fails on Android 14+:** ensure manifest merge keeps `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, and `OmniInferService`.
+
+**Native library symbol conflicts:** if your app already bundles ggml, llama.cpp, or MNN, exclude the duplicate copy or disable the overlapping OmniInfer backend in the library module.
