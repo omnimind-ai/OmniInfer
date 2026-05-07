@@ -38,6 +38,39 @@ void LogPrint(int priority, const std::string& message) {
   __android_log_print(priority, kTag, "%s", message.c_str());
 }
 
+std::string& LastErrorStorage() {
+  static std::string* last_error = new std::string();
+  return *last_error;
+}
+
+std::mutex& LastErrorMutex() {
+  static std::mutex* mutex = new std::mutex();
+  return *mutex;
+}
+
+void StoreLastError(const std::string& message) {
+  std::lock_guard<std::mutex> guard(LastErrorMutex());
+  LastErrorStorage() = message;
+}
+
+std::string LoadLastError() {
+  std::lock_guard<std::mutex> guard(LastErrorMutex());
+  return LastErrorStorage();
+}
+
+std::string DisabledBackendMessage(const std::string& backend_name) {
+  if (backend_name == "mnn") {
+    return "Backend 'mnn' is disabled. Enable -Pomniinfer.backend.mnn=true.";
+  }
+  if (backend_name == "llama.cpp" || backend_name.empty()) {
+    return "Backend 'llama.cpp' is disabled. Enable -Pomniinfer.backend.llama_cpp=true.";
+  }
+  if (backend_name == "executorch-qnn") {
+    return "Backend 'executorch-qnn' is disabled. Enable -Pomniinfer.backend.executorch_qnn=true.";
+  }
+  return "Unknown backend '" + backend_name + "'.";
+}
+
 // ---------------------------------------------------------------------------
 // Session state
 // ---------------------------------------------------------------------------
@@ -201,6 +234,7 @@ void InvokeCallbackStringMethod(JNIEnv* env, jobject callback, const char* metho
 // ---------------------------------------------------------------------------
 
 jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
+  StoreLastError("");
   const std::string config = JStringToStdString(env, config_json);
   const auto backend_name = ExtractJsonString(config, "backend").value_or("llama.cpp");
   const auto model_path = ExtractJsonString(config, "model_path");
@@ -209,6 +243,7 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
   const int n_ctx = ExtractJsonInt(config, "n_ctx").value_or(4096);
 
   if (!model_path.has_value()) {
+    StoreLastError("Missing model_path.");
     LogPrint(ANDROID_LOG_ERROR, "NativeInit: missing model_path");
     return 0;
   }
@@ -231,13 +266,15 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
   }
 #endif
   if (!backend) {
-    LogPrint(ANDROID_LOG_ERROR, "NativeInit: unknown or disabled backend: " + backend_name);
+    StoreLastError(DisabledBackendMessage(backend_name));
+    LogPrint(ANDROID_LOG_ERROR, "NativeInit: " + LoadLastError());
     return 0;
   }
 
   LogPrint(ANDROID_LOG_INFO, "NativeInit: backend=" + backend_name + " model=" + *model_path);
 
   if (!backend->load(*model_path, config, native_lib_dir, n_threads, n_ctx)) {
+    StoreLastError("Backend '" + backend_name + "' failed to load model: " + *model_path);
     LogPrint(ANDROID_LOG_ERROR, "NativeInit: " + backend_name + " load failed");
     return 0;
   }
@@ -254,6 +291,10 @@ jlong NativeInit(JNIEnv* env, jobject, jstring config_json) {
   LogPrint(ANDROID_LOG_INFO, "NativeInit: session " + std::to_string(session->handle) +
            " created (" + session->backend->name() + ")");
   return static_cast<jlong>(session->handle);
+}
+
+jstring NativeGetLastError(JNIEnv* env, jobject) {
+  return StdStringToJString(env, LoadLastError());
 }
 
 jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt,
@@ -426,6 +467,7 @@ jstring NativeCollectDiagnosticsJson(JNIEnv* env, jobject, jlong handle) {
 
 JNINativeMethod kMethods[] = {
     {"nativeInit", "(Ljava/lang/String;)J", reinterpret_cast<void*>(NativeInit)},
+    {"nativeGetLastError", "()Ljava/lang/String;", reinterpret_cast<void*>(NativeGetLastError)},
     {"nativeGenerate", "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[[BLcom/omniinfer/server/OmniInferStreamCallback;)Ljava/lang/String;", reinterpret_cast<void*>(NativeGenerate)},
     {"nativeLoadHistory", "(J[Ljava/lang/String;[Ljava/lang/String;)Z", reinterpret_cast<void*>(NativeLoadHistory)},
     {"nativePrewarmImage", "(J[BI)Z", reinterpret_cast<void*>(NativePrewarmImage)},
