@@ -108,6 +108,32 @@ Important LiteRT-LM details:
 - Some `.litertlm` files do not store max-context metadata. Always pass explicit `nCtx` for long-context use.
 - Current OmniInfer LiteRT-LM path is text-only.
 
+### LiteRT-LM Smoke Test
+
+After the host app loads a LiteRT-LM model, verify the local HTTP path with a short non-streaming request:
+
+```bash
+cat > request.json <<'JSON'
+{
+  "model": "local",
+  "messages": [
+    { "role": "user", "content": "Say READY only." }
+  ],
+  "stream": false,
+  "reasoning_effort": "none",
+  "temperature": 0.0,
+  "max_tokens": 16
+}
+JSON
+
+adb forward tcp:9099 tcp:9099
+curl -sS -H "Content-Type: application/json" \
+  --data-binary @request.json \
+  http://127.0.0.1:9099/v1/chat/completions
+```
+
+For GPU smoke tests, load the model with `extraConfig = mapOf("backend_type" to "gpu")` and an explicit `nCtx` before sending the request. A successful response should include normal usage metrics and a `performance` object; check logcat if you need to confirm that LiteRT-LM selected the GPU backend.
+
 ## ExecuTorch QNN
 
 Use ExecuTorch QNN for Qualcomm NPU `.pte` models.
