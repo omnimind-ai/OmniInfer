@@ -94,6 +94,14 @@ android {
         }
     }
 
+    sourceSets {
+        getByName("main") {
+            if (enableLiteRtLm) {
+                java.srcDir("src/litertLm/java")
+            }
+        }
+    }
+
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/omniinfer-jni/CMakeLists.txt")
@@ -128,5 +136,7 @@ dependencies {
     compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.2")
+    if (enableLiteRtLm) {
+        implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.2")
+    }
 }
