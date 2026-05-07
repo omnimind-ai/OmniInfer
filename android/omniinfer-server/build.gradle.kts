@@ -6,7 +6,14 @@ plugins {
 }
 
 val ktorVersion: String = findProperty("omniinfer.ktor.version")?.toString() ?: "3.1.3"
-val enableExecutorchQnn: Boolean = findProperty("omniinfer.backend.executorch_qnn")?.toString()?.toBoolean() ?: false
+
+fun boolProperty(name: String, default: Boolean = true): Boolean =
+    findProperty(name)?.toString()?.toBooleanStrictOrNull() ?: default
+
+val enableLlamaCpp: Boolean = boolProperty("omniinfer.backend.llama_cpp")
+val enableMnn: Boolean = boolProperty("omniinfer.backend.mnn")
+val enableExecutorchQnn: Boolean = boolProperty("omniinfer.backend.executorch_qnn")
+val enableLiteRtLm: Boolean = boolProperty("omniinfer.backend.litert_lm")
 
 // --- ExecuTorch QNN: auto-download pre-built binaries ---
 if (enableExecutorchQnn) {
@@ -74,16 +81,25 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += "-DCMAKE_BUILD_TYPE=Release"
-                arguments += "-DGGML_NATIVE=OFF"
-                arguments += "-DGGML_LLAMAFILE=OFF"
-                arguments += "-DLLAMA_BUILD_COMMON=ON"
                 arguments += "-DBUILD_SHARED_LIBS=ON"
-                arguments += "-DGGML_BACKEND_DL=ON"
-                arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
-                arguments += "-DOMNIINFER_BACKEND_MNN=ON"
-                if (enableExecutorchQnn) {
-                    arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=ON"
+                if (enableLlamaCpp) {
+                    arguments += "-DGGML_NATIVE=OFF"
+                    arguments += "-DGGML_LLAMAFILE=OFF"
+                    arguments += "-DLLAMA_BUILD_COMMON=ON"
+                    arguments += "-DGGML_BACKEND_DL=ON"
+                    arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
                 }
+                arguments += "-DOMNIINFER_BACKEND_LLAMA_CPP=${if (enableLlamaCpp) "ON" else "OFF"}"
+                arguments += "-DOMNIINFER_BACKEND_MNN=${if (enableMnn) "ON" else "OFF"}"
+                arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=${if (enableExecutorchQnn) "ON" else "OFF"}"
+            }
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            if (enableLiteRtLm) {
+                java.srcDir("src/litertLm/java")
             }
         }
     }
@@ -122,5 +138,7 @@ dependencies {
     compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.2")
+    if (enableLiteRtLm) {
+        implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.2")
+    }
 }

@@ -26,6 +26,7 @@ object OmniInferServer {
     private var currentBackend: String = ""
     private var currentModelPath: String = ""
     private var serverRunning = false
+    @Volatile private var lastError: String = ""
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -74,7 +75,8 @@ object OmniInferServer {
         extraConfig: Map<String, String>? = null
     ): Boolean {
         val ctx = appContext ?: run {
-            Log.e(TAG, "Not initialized. Call init(context) first.")
+            lastError = "Not initialized. Call init(context) first."
+            Log.e(TAG, lastError)
             return false
         }
 
@@ -100,7 +102,10 @@ object OmniInferServer {
         )
 
         if (handle == 0L) {
-            Log.e(TAG, "Failed to load model: $modelPath ($backend)")
+            lastError = OmniInferBridge.getLastError().ifBlank {
+                "Failed to load model: $modelPath ($backend)"
+            }
+            Log.e(TAG, lastError)
             return false
         }
 
@@ -124,6 +129,7 @@ object OmniInferServer {
             // and other startup failures instead of returning a false success.
             if (!waitForHealth(port, timeoutMs = 5000)) {
                 Log.e(TAG, "Server failed to start on port $port (port may be in use)")
+                lastError = "Server failed to start on port $port (port may be in use)."
                 unloadModel()
                 return false
             }
@@ -131,6 +137,7 @@ object OmniInferServer {
         }
 
         Log.i(TAG, "Model loaded: $modelPath ($backend), server on port $port")
+        lastError = ""
         return true
     }
 
@@ -161,6 +168,8 @@ object OmniInferServer {
         if (currentHandle == 0L) return emptyMap()
         return OmniInferBridge.collectDiagnostics(currentHandle)
     }
+
+    fun getLastError(): String = lastError
 
     private fun waitForHealth(port: Int, timeoutMs: Long = 5000): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs

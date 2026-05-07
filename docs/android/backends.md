@@ -104,7 +104,7 @@ LiteRT-LM settings:
 Important LiteRT-LM details:
 
 - The host app must use Kotlin Gradle plugin `2.3.0+`.
-- The host app does not need to declare `com.google.ai.edge.litertlm:litertlm-android`; `:omniinfer-server` owns that dependency.
+- The host app does not need to declare `com.google.ai.edge.litertlm:litertlm-android`; `:omniinfer-server` owns that dependency when `omniinfer.backend.litert_lm=true`.
 - Some `.litertlm` files do not store max-context metadata. Always pass explicit `nCtx` for long-context use.
 - Current OmniInfer LiteRT-LM path is text-only.
 
@@ -131,30 +131,48 @@ Common `extraConfig` keys:
 
 QNN is a larger topic because it uses a subprocess runner and bundles Qualcomm runtime libraries. See [et-qnn.md](./et-qnn.md).
 
-## Native Build Notes
+## Backend Gradle Switches
 
-The Android module enables llama.cpp and MNN by default in its Gradle/CMake configuration. LiteRT-LM is a Kotlin/AAR backend and does not use CMake. ExecuTorch QNN is disabled unless:
+OmniInfer enables every Android backend by default so the library is ready for all supported runtimes:
 
 ```properties
+omniinfer.backend.llama_cpp=true
+omniinfer.backend.mnn=true
 omniinfer.backend.executorch_qnn=true
+omniinfer.backend.litert_lm=true
 ```
 
-If you vendor or fork the module and want to reduce native binary size, tune the module's CMake arguments:
+Set a backend to `false` in the host or root `gradle.properties` when the app does not need it:
+
+```properties
+omniinfer.backend.litert_lm=false
+omniinfer.backend.executorch_qnn=false
+```
+
+Switch behavior:
+
+| Property | Default | When set to `false` |
+|---|---:|---|
+| `omniinfer.backend.llama_cpp` | `true` | Skips llama.cpp JNI build path; `llama.cpp` load requests return a disabled-backend error |
+| `omniinfer.backend.mnn` | `true` | Skips MNN JNI build path; `mnn` load requests return a disabled-backend error |
+| `omniinfer.backend.executorch_qnn` | `true` | Skips QNN native build path and prebuilt runtime download; `executorch-qnn` load requests return a disabled-backend error |
+| `omniinfer.backend.litert_lm` | `true` | Skips LiteRT-LM source set and `litertlm-android` dependency; `litert`/`litert-lm` load requests return a disabled-backend error |
+
+For normal third-party integration, prefer these Gradle properties over direct CMake customization. The `:omniinfer-server` module maps the native backend switches to CMake internally.
+
+Host apps should also restrict packaged ABIs unless they intentionally ship emulator or desktop ABIs:
 
 ```kotlin
 android {
     defaultConfig {
-        externalNativeBuild {
-            cmake {
-                arguments += "-DOMNIINFER_BACKEND_LLAMA_CPP=ON"
-                arguments += "-DOMNIINFER_BACKEND_MNN=ON"
-            }
+        ndk {
+            abiFilters += "arm64-v8a"
         }
     }
 }
 ```
 
-For normal third-party integration, the host app usually should not add these CMake arguments; the library module owns native build configuration.
+This avoids packaging unused native libraries such as x86_64 copies from transitive AARs. OmniInfer Android targets real `arm64-v8a` devices.
 
 ## Native Libraries
 
@@ -164,7 +182,7 @@ The main Android native output is:
 libomniinfer-jni.so
 ```
 
-It statically links llama.cpp, MNN, and related native dependencies. ExecuTorch QNN is different: when enabled, it also packages QNN and runner libraries under `jniLibs/arm64-v8a/`.
+It statically links the enabled native backends and their dependencies. ExecuTorch QNN is different: when enabled, it also packages QNN and runner libraries under `jniLibs/arm64-v8a/`.
 
 For GPU/OpenCL backends, the library manifest declares optional device libraries:
 
