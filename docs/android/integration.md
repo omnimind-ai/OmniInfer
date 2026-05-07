@@ -43,14 +43,14 @@ git submodule add https://github.com/omnimind-ai/OmniInfer.git third_party/omnii
 
 Do not initialize all submodules recursively. The `framework/` directory contains large desktop/server dependencies that Android does not need.
 
-Initialize only the Android native backends you build:
+Initialize only the Android native backends you keep enabled:
 
 ```bash
 git submodule update --init third_party/omniinfer/framework/llama.cpp
 git submodule update --init third_party/omniinfer/framework/mnn
 ```
 
-If you only use LiteRT-LM, those native submodules are not needed for LiteRT itself, but the current Android module still builds llama.cpp and MNN by default unless you fork/tune its CMake arguments.
+`framework/llama.cpp` is needed only when `omniinfer.backend.llama_cpp=true`. `framework/mnn` is needed only when `omniinfer.backend.mnn=true`. LiteRT-LM does not require OmniInfer native submodules.
 
 ## Step 2: Configure Gradle
 
@@ -121,6 +121,25 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.3.0" apply false
 }
 ```
+
+Optional backend switches can live in the host app or root `gradle.properties`. All Android backends default to `true`:
+
+```properties
+omniinfer.backend.llama_cpp=true
+omniinfer.backend.mnn=true
+omniinfer.backend.executorch_qnn=true
+omniinfer.backend.litert_lm=true
+```
+
+Set unused backends to `false` to reduce native build work, dependency downloads, and APK size. For example, a LiteRT-only app can disable the native backends:
+
+```properties
+omniinfer.backend.llama_cpp=false
+omniinfer.backend.mnn=false
+omniinfer.backend.executorch_qnn=false
+```
+
+When `omniinfer.backend.litert_lm=false`, `:omniinfer-server` does not add `com.google.ai.edge.litertlm:litertlm-android` and does not compile the LiteRT-LM source set. See [backends.md](./backends.md) for the full switch table.
 
 ## Step 3: Allow Localhost HTTP
 
@@ -295,7 +314,8 @@ Before shipping the integration, check:
 | Gradle | Kotlin Gradle plugin `2.3.0+`, AGP 8.x, JDK 17 |
 | Repositories | Maven Central and Google's Maven repository are available |
 | Dependencies | Host app provides Ktor server dependencies |
-| ABI | App packages `arm64-v8a` |
+| ABI | App packages only `arm64-v8a` unless other ABIs are intentional |
+| Backend switches | Disable unused OmniInfer backends in `gradle.properties` if APK size matters |
 | Model path | `modelPath` is absolute and readable by the app process |
 | Threading | `loadModel()` runs off the UI thread |
 | Network | `network_security_config.xml` allows `127.0.0.1` cleartext HTTP |
@@ -312,8 +332,8 @@ When updating the OmniInfer submodule:
 cd third_party/omniinfer
 git fetch origin
 git checkout origin/main  # or a specific tag
-git submodule update --init framework/llama.cpp
-git submodule update --init framework/mnn
+git submodule update --init framework/llama.cpp  # if llama.cpp is enabled
+git submodule update --init framework/mnn        # if MNN is enabled
 
 cd ../..
 git add third_party/omniinfer

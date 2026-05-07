@@ -41,15 +41,21 @@ This design avoids Android linker namespace restrictions that prevent QNN FastRP
 
 `extractNativeLibs=true` is required because the subprocess runner `.so` must exist as a regular file on disk.
 
-## Enable in Gradle
+## Gradle Switch
 
-In `gradle.properties`:
+The ExecuTorch QNN backend is enabled by default:
 
 ```properties
 omniinfer.backend.executorch_qnn=true
 ```
 
-The first build downloads required QNN prebuilt binaries into `android/omniinfer-server/src/main/jniLibs/arm64-v8a/`. Later builds skip the download when the files already exist.
+Set it to `false` if the app does not use QNN:
+
+```properties
+omniinfer.backend.executorch_qnn=false
+```
+
+When enabled, the first build downloads required QNN prebuilt binaries into `android/omniinfer-server/src/main/jniLibs/arm64-v8a/`. Later builds skip the download when the files already exist.
 
 Downloaded files include:
 
