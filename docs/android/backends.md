@@ -134,6 +134,8 @@ curl -sS -H "Content-Type: application/json" \
 
 For GPU smoke tests, load the model with `extraConfig = mapOf("backend_type" to "gpu")` and an explicit `nCtx` before sending the request. A successful response should include normal usage metrics and a `performance` object; check logcat if you need to confirm that LiteRT-LM selected the GPU backend.
 
+On devices with OEM install guards, `adb install` or `pm install` may open an interactive unknown-source confirmation page and appear to hang. Check the device screen, `dumpsys activity`, or a screenshot; after confirming the install, verify the package with `adb shell pm list packages <package>`.
+
 ## ExecuTorch QNN
 
 Use ExecuTorch QNN for Qualcomm NPU `.pte` models.
@@ -185,6 +187,8 @@ Switch behavior:
 | `omniinfer.backend.litert_lm` | `true` | Skips LiteRT-LM source set and `litertlm-android` dependency; `litert`/`litert-lm` load requests return a disabled-backend error |
 
 For normal third-party integration, prefer these Gradle properties over direct CMake customization. The `:omniinfer-server` module maps the native backend switches to CMake internally.
+
+Even a LiteRT-only host app still configures the `:omniinfer-server` external native build for `libomniinfer-jni.so`. Keep Android SDK NDK `28.2.13676358` available, and install SDK CMake/Ninja if AGP reports `[CXX1416] Could not find Ninja on PATH or in SDK CMake bin folders`.
 
 Host apps should also restrict packaged ABIs unless they intentionally ship emulator or desktop ABIs:
 

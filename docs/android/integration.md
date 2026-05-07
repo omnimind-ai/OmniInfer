@@ -141,6 +141,35 @@ omniinfer.backend.executorch_qnn=false
 
 When `omniinfer.backend.litert_lm=false`, `:omniinfer-server` does not add `com.google.ai.edge.litertlm:litertlm-android` and does not compile the LiteRT-LM source set. See [backends.md](./backends.md) for the full switch table.
 
+### Command-Line LiteRT Test App
+
+For a quick source-build smoke test, create a small host app outside the OmniInfer repository and point its Gradle settings at your local checkout:
+
+```kotlin
+// settings.gradle.kts
+include(":app")
+include(":omniinfer-server")
+project(":omniinfer-server").projectDir =
+    file("/absolute/path/to/OmniInfer/android/omniinfer-server")
+```
+
+Use the Gradle snippets above for the app module, then disable unused native backends in `gradle.properties`:
+
+```properties
+omniinfer.backend.llama_cpp=false
+omniinfer.backend.mnn=false
+omniinfer.backend.executorch_qnn=false
+omniinfer.backend.litert_lm=true
+```
+
+Build from the host app root:
+
+```bash
+./gradlew :app:assembleDebug
+```
+
+If you do not use a checked-in Gradle wrapper, use a user-local Gradle install with `JAVA_HOME` and `ANDROID_HOME` set. A no-sudo Linux setup can install JDK 21 under `~/.local/jdks/` and Android SDK command line tools under `~/Android/Sdk`; install at least `platform-tools`, `platforms;android-35`, `build-tools;35.0.0`, `ndk;28.2.13676358`, and `cmake;3.22.1`. The LiteRT-only app still configures `:omniinfer-server`'s CMake project, so NDK and SDK CMake/Ninja must be present even when llama.cpp, MNN, and ExecuTorch QNN are disabled.
+
 ## Step 3: Allow Localhost HTTP
 
 OmniInfer serves local HTTP on `127.0.0.1`. Android 9+ blocks cleartext HTTP unless you opt in.
@@ -355,3 +384,5 @@ Do not use `--recursive`; it downloads Android-irrelevant framework submodules.
 **Foreground service fails on Android 14+:** ensure manifest merge keeps `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, and `OmniInferService`.
 
 **Native library symbol conflicts:** if your app already bundles ggml, llama.cpp, or MNN, exclude the duplicate copy or disable the overlapping OmniInfer backend in the library module.
+
+**CMake configure fails with missing Ninja:** install an Android SDK CMake package such as `cmake;3.22.1`; it includes the Ninja binary used by AGP's external native build.
