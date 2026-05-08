@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
     else if (arg == "--tokenizer_path" && i + 1 < argc) tokenizer_path = argv[++i];
     else if (arg == "--lib_dir" && i + 1 < argc) lib_dir = argv[++i];
     else if (arg == "--decoder_model_version" && i + 1 < argc) decoder_version = argv[++i];
-    else if (arg == "--n_ctx" && i + 1 < argc) n_ctx = std::atoi(argv[++i]);
+    else if ((arg == "--n_ctx" || arg == "--seq_len") && i + 1 < argc) n_ctx = std::atoi(argv[++i]);
     else if (arg == "--temperature" && i + 1 < argc) temperature = std::atof(argv[++i]);
   }
 
