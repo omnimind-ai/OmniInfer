@@ -31,6 +31,9 @@ internal class LiteRtLmBackend private constructor(
     private val nThreads: Int,
     private val nCtx: Int,
     private val cacheDir: String?,
+    private val visionBackendName: String?,
+    private val maxImages: Int,
+    private val speculativeDecoding: Boolean,
     private val engine: Engine,
     private val engineInitMs: Double,
 ) : LiteRtLmSession {
@@ -45,8 +48,12 @@ internal class LiteRtLmBackend private constructor(
         callback: OmniInferStreamCallback?,
     ): String {
         Log.i(TAG, "generate_start backend=$backendName messagesChars=${messagesJson.length} requestChars=${requestJson.length}")
-        if (!imageDataArray.isNullOrEmpty()) {
-            return """{"error":{"message":"LiteRT-LM backend does not support image input through OmniInfer yet"}}"""
+        val imageCount = imageDataArray?.size ?: 0
+        if (imageCount > 0 && visionBackendName == null) {
+            return """{"error":{"message":"LiteRT-LM image input requires loading the model with extraConfig vision_backend=cpu|gpu|npu"}}"""
+        }
+        if (imageCount > maxImages) {
+            return """{"error":{"message":"LiteRT-LM image count $imageCount exceeds max_images=$maxImages"}}"""
         }
 
         return synchronized(lock) {
@@ -99,6 +106,7 @@ internal class LiteRtLmBackend private constructor(
                     generateMs = generateMs,
                     totalMs = totalMs,
                     sampler = sampler,
+                    imageDataArray = imageDataArray,
                 )
                 callback?.onMetrics(metricsString(lastDiagnostics))
                 Log.i(TAG, "generate_done totalMs=${"%.3f".format(Locale.US, totalMs)}")
@@ -279,6 +287,7 @@ internal class LiteRtLmBackend private constructor(
         generateMs: Double,
         totalMs: Double,
         sampler: EffectiveSamplerConfig,
+        imageDataArray: Array<ByteArray>?,
     ): Map<String, String> {
         val prefillTokens = benchmarkInfo?.lastPrefillTokenCount ?: 0
         val decodeTokens = benchmarkInfo?.lastDecodeTokenCount ?: 0
@@ -289,6 +298,8 @@ internal class LiteRtLmBackend private constructor(
         return baseDiagnostics() + mapOf(
             "prompt_tokens" to prefillTokens.toString(),
             "generated_tokens" to decodeTokens.toString(),
+            "image_count" to (imageDataArray?.size ?: 0).toString(),
+            "image_bytes_total" to (imageDataArray?.sumOf { it.size } ?: 0).toString(),
             "prefill_us" to prefillUs.toString(),
             "decode_us" to decodeUs.toString(),
             "cached_tokens" to "0",
@@ -313,6 +324,9 @@ internal class LiteRtLmBackend private constructor(
         "n_threads" to nThreads.toString(),
         "n_ctx" to nCtx.toString(),
         "cache_dir" to (cacheDir ?: ""),
+        "vision_backend" to (visionBackendName ?: ""),
+        "max_images" to maxImages.toString(),
+        "speculative_decoding" to speculativeDecoding.toString(),
     )
 
     companion object {
@@ -334,25 +348,50 @@ internal class LiteRtLmBackend private constructor(
             extraConfig: Map<String, String>?,
         ): LiteRtLmBackend {
             ExperimentalFlags.enableBenchmark = true
+            val enableSpeculativeDecoding = extraConfig.booleanConfig(
+                "enable_speculative_decoding",
+                "speculative_decoding",
+                "litert_enable_speculative_decoding",
+                default = false,
+            )
+            ExperimentalFlags.enableSpeculativeDecoding = enableSpeculativeDecoding
             val liteRtBackend = selectBackend(backend, nThreads, nativeLibDir, extraConfig)
+            val visionBackend = selectVisionBackend(liteRtBackend, nThreads, nativeLibDir, extraConfig)
+            val maxImages = extraConfig.intConfig("max_images", "litert_max_images", default = 1).coerceAtLeast(1)
+            val effectiveCacheDir = prepareCacheDir(cacheDir)
             val effectiveBackendName = liteRtBackend.name
+            val effectiveVisionBackendName = visionBackend?.name
             val initStartNs = SystemClock.elapsedRealtimeNanos()
             val engine = Engine(
                 EngineConfig(
                     modelPath = modelPath,
                     backend = liteRtBackend,
+                    visionBackend = visionBackend,
                     maxNumTokens = nCtx.takeIf { it > 0 },
-                    cacheDir = cacheDir,
+                    maxNumImages = if (visionBackend != null) maxImages else null,
+                    cacheDir = effectiveCacheDir,
                 )
             )
-            engine.initialize()
+            try {
+                engine.initialize()
+            } finally {
+                ExperimentalFlags.enableSpeculativeDecoding = false
+            }
             val initMs = elapsedMs(initStartNs)
+            Log.i(
+                TAG,
+                "created backend=litert-lm/$effectiveBackendName visionBackend=${effectiveVisionBackendName ?: "none"} " +
+                    "nCtx=$nCtx cacheDir=${effectiveCacheDir ?: ""} speculativeDecoding=$enableSpeculativeDecoding"
+            )
             return LiteRtLmBackend(
                 modelPath = modelPath,
                 backendName = "litert-lm/$effectiveBackendName",
                 nThreads = if (liteRtBackend is Backend.CPU) nThreads else 0,
                 nCtx = nCtx,
-                cacheDir = cacheDir,
+                cacheDir = effectiveCacheDir,
+                visionBackendName = effectiveVisionBackendName,
+                maxImages = maxImages,
+                speculativeDecoding = enableSpeculativeDecoding,
                 engine = engine,
                 engineInitMs = initMs,
             )
@@ -383,6 +422,58 @@ internal class LiteRtLmBackend private constructor(
                 normalized.contains("npu") -> Backend.NPU(nativeLibDir ?: "")
                 else -> Backend.CPU(numOfThreads = nThreads.takeIf { it > 0 })
             }
+        }
+
+        private fun selectVisionBackend(
+            defaultBackend: Backend,
+            nThreads: Int,
+            nativeLibDir: String?,
+            extraConfig: Map<String, String>?,
+        ): Backend? {
+            val explicitType = extraConfig?.get("vision_backend")
+                ?: extraConfig?.get("litert_vision_backend")
+            if (explicitType.isNullOrBlank()) {
+                val enabled = extraConfig.booleanConfig(
+                    "enable_vision",
+                    "enable_multimodal",
+                    "litert_enable_vision",
+                    default = false,
+                )
+                return if (enabled) defaultBackend else null
+            }
+            return when (explicitType.lowercase(Locale.US)) {
+                "none", "off", "false", "disabled" -> null
+                "gpu" -> Backend.GPU()
+                "npu" -> Backend.NPU(nativeLibDir ?: "")
+                else -> Backend.CPU(numOfThreads = nThreads.takeIf { it > 0 })
+            }
+        }
+
+        private fun prepareCacheDir(cacheDir: String?): String? {
+            if (cacheDir.isNullOrBlank() || cacheDir == ":nocache") {
+                return cacheDir
+            }
+            val dir = java.io.File(cacheDir)
+            val ready = dir.exists() || dir.mkdirs()
+            Log.i(
+                TAG,
+                "cache_dir_ready path=$cacheDir exists=${dir.exists()} mkdirsResult=$ready " +
+                    "canRead=${dir.canRead()} canWrite=${dir.canWrite()}"
+            )
+            return cacheDir
+        }
+
+        private fun Map<String, String>?.booleanConfig(vararg keys: String, default: Boolean): Boolean {
+            val value = keys.firstNotNullOfOrNull { this?.get(it) } ?: return default
+            return when (value.lowercase(Locale.US)) {
+                "1", "true", "yes", "on", "enabled" -> true
+                "0", "false", "no", "off", "disabled" -> false
+                else -> default
+            }
+        }
+
+        private fun Map<String, String>?.intConfig(vararg keys: String, default: Int): Int {
+            return keys.firstNotNullOfOrNull { this?.get(it)?.toIntOrNull() } ?: default
         }
 
         private fun metricsString(values: Map<String, String>): String =

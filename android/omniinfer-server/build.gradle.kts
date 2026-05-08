@@ -119,14 +119,14 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
 kotlin {
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_11)
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
@@ -139,6 +139,6 @@ dependencies {
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
     if (enableLiteRtLm) {
-        implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.2")
+        implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
     }
 }
