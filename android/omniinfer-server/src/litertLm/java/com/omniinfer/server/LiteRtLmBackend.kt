@@ -60,13 +60,18 @@ internal class LiteRtLmBackend private constructor(
                 }
                 Log.i(TAG, "generate_parsed messages=${messages.size}")
 
-                val samplerConfig = samplerConfig(request)
+                val sampler = samplerConfig(request)
+                Log.i(
+                    TAG,
+                    "sampler_config source=${sampler.source} top_k=${sampler.topK ?: ""} " +
+                        "top_p=${sampler.topP ?: ""} temperature=${sampler.temperature ?: ""}"
+                )
                 val conversationStartNs = SystemClock.elapsedRealtimeNanos()
                 Log.i(TAG, "conversation_create_start initialMessages=${(messages.size - 1).coerceAtLeast(0)}")
                 conversation = engine.createConversation(
                     ConversationConfig(
                         initialMessages = messages.dropLast(1),
-                        samplerConfig = samplerConfig,
+                        samplerConfig = sampler.config,
                     )
                 )
                 activeConversation = conversation
@@ -93,6 +98,7 @@ internal class LiteRtLmBackend private constructor(
                     conversationCreateMs = conversationCreateMs,
                     generateMs = generateMs,
                     totalMs = totalMs,
+                    sampler = sampler,
                 )
                 callback?.onMetrics(metricsString(lastDiagnostics))
                 Log.i(TAG, "generate_done totalMs=${"%.3f".format(Locale.US, totalMs)}")
@@ -184,15 +190,40 @@ internal class LiteRtLmBackend private constructor(
         return Contents.of(parts)
     }
 
-    private fun samplerConfig(request: JSONObject): SamplerConfig? {
+    private data class EffectiveSamplerConfig(
+        val config: SamplerConfig?,
+        val source: String,
+        val topK: Int?,
+        val topP: Double?,
+        val temperature: Double?,
+    )
+
+    private fun samplerConfig(request: JSONObject): EffectiveSamplerConfig {
         val topK = request.optInt("top_k", 0)
         val topP = if (request.has("top_p")) request.optDouble("top_p") else Double.NaN
         val temperature = if (request.has("temperature")) request.optDouble("temperature") else Double.NaN
-        if (topK <= 0 && topP.isNaN() && temperature.isNaN()) return null
-        return SamplerConfig(
-            topK = if (topK > 0) topK else DEFAULT_TOP_K,
-            topP = if (!topP.isNaN()) topP else DEFAULT_TOP_P,
-            temperature = if (!temperature.isNaN()) temperature else DEFAULT_TEMPERATURE,
+        if (topK <= 0 && topP.isNaN() && temperature.isNaN()) {
+            return EffectiveSamplerConfig(
+                config = null,
+                source = "litert-default",
+                topK = null,
+                topP = null,
+                temperature = null,
+            )
+        }
+        val effectiveTopK = if (topK > 0) topK else DEFAULT_TOP_K
+        val effectiveTopP = if (!topP.isNaN()) topP else DEFAULT_TOP_P
+        val effectiveTemperature = if (!temperature.isNaN()) temperature else DEFAULT_TEMPERATURE
+        return EffectiveSamplerConfig(
+            config = SamplerConfig(
+                topK = effectiveTopK,
+                topP = effectiveTopP,
+                temperature = effectiveTemperature,
+            ),
+            source = "request",
+            topK = effectiveTopK,
+            topP = effectiveTopP,
+            temperature = effectiveTemperature,
         )
     }
 
@@ -247,6 +278,7 @@ internal class LiteRtLmBackend private constructor(
         conversationCreateMs: Double,
         generateMs: Double,
         totalMs: Double,
+        sampler: EffectiveSamplerConfig,
     ): Map<String, String> {
         val prefillTokens = benchmarkInfo?.lastPrefillTokenCount ?: 0
         val decodeTokens = benchmarkInfo?.lastDecodeTokenCount ?: 0
@@ -268,6 +300,10 @@ internal class LiteRtLmBackend private constructor(
             "conversation_create_ms" to "%.3f".format(Locale.US, conversationCreateMs),
             "generate_wall_ms" to "%.3f".format(Locale.US, generateMs),
             "total_wall_ms" to "%.3f".format(Locale.US, totalMs),
+            "sampler_source" to sampler.source,
+            "sampler_top_k" to (sampler.topK?.toString() ?: ""),
+            "sampler_top_p" to (sampler.topP?.toString() ?: ""),
+            "sampler_temperature" to (sampler.temperature?.toString() ?: ""),
         )
     }
 
