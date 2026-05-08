@@ -611,9 +611,16 @@ class OmniInferService : Service() {
 
         val reasoningTokens = diag["reasoning_tokens"]?.toIntOrNull() ?: 0
         val imageTokens = diag["image_tokens"]?.toIntOrNull() ?: 0
+        val imageCount = diag["image_count"]?.toIntOrNull() ?: 0
+        val imageBytesTotal = diag["image_bytes_total"]?.toLongOrNull() ?: 0L
         val cachedTokens = diag["cached_tokens"]?.toIntOrNull() ?: 0
         val prefillUs = diag["prefill_us"]?.toLongOrNull() ?: 0L
         val decodeUs = diag["decode_us"]?.toLongOrNull() ?: 0L
+        val ttftMs = diag["litert_ttft_s"]?.toDoubleOrNull()?.times(1000.0)
+            ?: (prefillUs / 1000.0)
+        val totalWallMs = diag["total_wall_ms"]?.toDoubleOrNull()
+        val generateWallMs = diag["generate_wall_ms"]?.toDoubleOrNull()
+        val engineInitMs = diag["engine_init_ms"]?.toDoubleOrNull()
 
         return buildJsonObject {
             put("prompt_tokens", promptTokens)
@@ -628,6 +635,8 @@ class OmniInferService : Service() {
             }
             putJsonObject("prompt_tokens_details") {
                 if (imageTokens > 0) put("image_tokens", imageTokens)
+                if (imageCount > 0) put("image_count", imageCount)
+                if (imageBytesTotal > 0) put("image_bytes_total", imageBytesTotal)
                 put("text_tokens", promptTokens - imageTokens)
                 put("cached_tokens", cachedTokens)
                 put("cache_creation_input_tokens", promptTokens - cachedTokens)
@@ -646,7 +655,10 @@ class OmniInferService : Service() {
                     put("decode_tokens_per_second", "%.1f".format(completionTokens / (decodeUs / 1e6)).toDouble())
                 }
                 put("total_time_ms", "%.1f".format(prefillMs + decodeMs).toDouble())
-                put("time_to_first_token_ms", "%.1f".format(prefillMs).toDouble())
+                put("time_to_first_token_ms", "%.1f".format(ttftMs).toDouble())
+                engineInitMs?.let { put("engine_init_ms", "%.1f".format(it).toDouble()) }
+                generateWallMs?.let { put("generation_wall_ms", "%.1f".format(it).toDouble()) }
+                totalWallMs?.let { put("request_wall_ms", "%.1f".format(it).toDouble()) }
             }
         }
     }
