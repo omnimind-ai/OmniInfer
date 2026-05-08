@@ -8,7 +8,7 @@ This document describes how OmniInfer Android discovers vision model files. The 
 |---|---|---|
 | llama.cpp | Supported | GGUF model and `mmproj*.gguf` in the same directory |
 | MNN | Supported | `config.json` references text and vision MNN files |
-| LiteRT-LM | Text-only in OmniInfer path | Model-dependent; image input is not enabled through OmniInfer yet |
+| LiteRT-LM | Supported for `.litertlm` models with vision encoder | Enable `extraConfig["vision_backend"]` at model load |
 | ExecuTorch QNN | Text-only | Not supported |
 
 ## llama.cpp Layout
@@ -60,6 +60,37 @@ OmniInferServer.loadModel(
 
 MNN discovers vision files through `config.json`; keep the packaged directory structure intact.
 
+## LiteRT-LM Layout
+
+LiteRT-LM multimodal models package the text and vision assets inside a `.litertlm` file.
+
+```text
+/sdcard/models/gemma-4-E2B-it-litert-lm/
+  gemma-4-E2B-it.litertlm    # modelPath points here
+```
+
+Load call:
+
+```kotlin
+OmniInferServer.loadModel(
+    modelPath = "/sdcard/models/gemma-4-E2B-it-litert-lm/gemma-4-E2B-it.litertlm",
+    backend = "litert",
+    nCtx = 4096,
+    extraConfig = mapOf(
+        "backend_type" to "gpu",
+        "vision_backend" to "gpu",
+        "max_images" to "1",
+    ),
+)
+```
+
+LiteRT-LM details:
+
+- OmniInfer uses `Content.ImageBytes(...)` for image input.
+- The app cache directory is created before `Engine.initialize()` so LiteRT-LM can place GPU/vision cache files.
+- Use LiteRT-LM `0.11.0+` for Gemma 4 E2B/E4B vision models. `0.10.2` cannot initialize Gemma 4 E2B's `vision_70` / `vision_140` / `vision_280` encoder signatures.
+- `nCtx` is passed to `EngineConfig.maxNumTokens`; image inputs consume prompt tokens, so keep enough context for image + text + output.
+
 ## Request Shape
 
 Send image data as an OpenAI-compatible `image_url` item. Data URIs are supported:
@@ -101,8 +132,8 @@ val json = """
 
 ## Troubleshooting
 
-**Model says it cannot see the image:** verify the backend actually loaded vision files. For llama.cpp, the `mmproj*.gguf` must be in the same directory as the model GGUF. For MNN, check `config.json` references `visual.mnn`.
+**Model says it cannot see the image:** verify the backend actually loaded vision files. For llama.cpp, the `mmproj*.gguf` must be in the same directory as the model GGUF. For MNN, check `config.json` references `visual.mnn`. For LiteRT-LM, load with `extraConfig["vision_backend"] = "cpu"` or `"gpu"`.
 
-**Image request works on one backend but not another:** check the backend support table above. LiteRT-LM and ExecuTorch QNN are currently text-only through OmniInfer Android.
+**Image request works on one backend but not another:** check the backend support table above. ExecuTorch QNN is currently text-only through OmniInfer Android.
 
-**Large image request is slow:** image inputs add prompt tokens and prefill work. Check the final response `usage.prompt_tokens_details.image_tokens` and `performance.prefill_tokens_per_second`.
+**Large image request is slow:** image inputs add prompt tokens and prefill work. Check the final response `usage.prompt_tokens`, `usage.prompt_tokens_details`, and `performance.prefill_tokens_per_second`. LiteRT-LM currently reports total prompt tokens and image count/bytes; it does not expose an official separate image-token count through `BenchmarkInfo`.

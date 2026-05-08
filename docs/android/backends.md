@@ -98,6 +98,9 @@ LiteRT-LM settings:
 | `extraConfig["backend_type"] = "npu"` | Uses `Backend.NPU(nativeLibraryDir)` |
 | `extraConfig["litert_backend"]` | Alias for `backend_type` |
 | `extraConfig["gpu_mode"]` | Alias for `backend_type` |
+| `extraConfig["vision_backend"] = "cpu"` / `"gpu"` / `"npu"` | Enables LiteRT-LM image input and selects the vision encoder backend |
+| `extraConfig["enable_speculative_decoding"] = "true"` | Enables LiteRT-LM speculative decoding during normal chat engine initialization |
+| `extraConfig["max_images"] = "1"` | Sets `EngineConfig.maxNumImages` when `vision_backend` is enabled |
 | `nCtx` | Passed to `EngineConfig.maxNumTokens` |
 | request `max_tokens` | OmniInfer cancels LiteRT-LM after the response budget is reached |
 
@@ -106,7 +109,39 @@ Important LiteRT-LM details:
 - The host app must use Kotlin Gradle plugin `2.3.0+`.
 - The host app does not need to declare `com.google.ai.edge.litertlm:litertlm-android`; `:omniinfer-server` owns that dependency when `omniinfer.backend.litert_lm=true`.
 - Some `.litertlm` files do not store max-context metadata. Always pass explicit `nCtx` for long-context use.
-- Current OmniInfer LiteRT-LM path is text-only.
+- OmniInfer uses LiteRT-LM `0.11.0+` for Gemma 4 multimodal support. Older LiteRT-LM `0.10.2` cannot initialize Gemma 4 E2B's three-signature vision encoder.
+- For multimodal, OmniInfer passes images as `Content.ImageBytes(...)` and creates the app cache directory before `Engine.initialize()`.
+- Speculative decoding is a load-time engine setting. Use `extraConfig["enable_speculative_decoding"] = "true"` before model load; changing it per request requires unloading/reloading the LiteRT-LM engine.
+- Do not use LiteRT-LM's public `benchmark()` helper to validate SD-on behavior in `0.11.0`; that helper uses `nativeCreateBenchmark(...)`, whose public Kotlin/JNI signature does not pass the SD flag. Normal chat generation uses `Engine.initialize()` and `Conversation.getBenchmarkInfo()`, which does report the SD-on path.
+
+Speculative decoding GPU load example:
+
+```kotlin
+OmniInferServer.loadModel(
+    modelPath = "/sdcard/models/gemma-4-E2B-it.litertlm",
+    backend = "litert",
+    nCtx = 4096,
+    extraConfig = mapOf(
+        "backend_type" to "gpu",
+        "enable_speculative_decoding" to "true",
+    ),
+)
+```
+
+Multimodal GPU load example:
+
+```kotlin
+OmniInferServer.loadModel(
+    modelPath = "/sdcard/models/gemma-4-E2B-it.litertlm",
+    backend = "litert",
+    nCtx = 4096,
+    extraConfig = mapOf(
+        "backend_type" to "gpu",
+        "vision_backend" to "gpu",
+        "max_images" to "1",
+    ),
+)
+```
 
 ### LiteRT-LM Smoke Test
 
