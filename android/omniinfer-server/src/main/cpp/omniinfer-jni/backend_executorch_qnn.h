@@ -198,7 +198,7 @@ public:
 
     std::string lib_dir = qnn_lib_dir.empty() ? native_lib_dir : qnn_lib_dir;
 
-    ET_LOGI("ExecuTorch QNN subprocess load: model=%s tokenizer=%s lib_dir=%s sink=%s seq_len=%s",
+    ET_LOGI("ExecuTorch QNN subprocess load: model=%s tokenizer=%s lib_dir=%s sink=%s n_ctx=%s",
             model_path.c_str(), tokenizer_path.c_str(), lib_dir.c_str(),
             use_sink ? evictor_path.c_str() : "none", seq_len_str.c_str());
 
@@ -264,7 +264,7 @@ public:
       argv.push_back("--tokenizer_path"); argv.push_back(tokenizer_path.c_str());
       argv.push_back("--decoder_model_version"); argv.push_back(decoder_model_version_.c_str());
       argv.push_back("--lib_dir");        argv.push_back(lib_dir.c_str());
-      argv.push_back("--seq_len");        argv.push_back(seq_len_str.c_str());
+      argv.push_back("--n_ctx");          argv.push_back(seq_len_str.c_str());
       if (use_sink) {
         argv.push_back("--attention_sink_rope_path");
         argv.push_back(evictor_path.c_str());
