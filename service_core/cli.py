@@ -47,7 +47,7 @@ OmniInfer CLI
 
 Common commands:
   omniinfer backend list
-  omniinfer select <backend>
+  omniinfer backend select <backend>
   omniinfer status
   omniinfer model load -m /path/to/model.gguf
   omniinfer model load -m /path/to/model.gguf --config
@@ -58,13 +58,13 @@ Common commands:
 Design notes:
   1. The CLI automatically starts the service and selects the best backend when needed.
   2. Host and port details are hidden by default; the CLI uses local app configuration automatically.
-  3. `omniinfer select <backend>` persists the current backend selection.
+  3. `omniinfer backend select <backend>` persists the current backend selection.
   4. `omniinfer chat` requires a model to be loaded first via `omniinfer model load`.
   5. `omniinfer chat` streams tokens to stdout by default. Use `--no-stream` for batch output.
 
 Command map:
   backend list              -> show available backends
-  select <backend>          -> choose a backend
+  backend select <backend>  -> choose a backend
   status                    -> show service status, selected backend, and loaded model
   model list                -> show models supported on the current system
   model load                -> load a model, optionally with a backend config JSON
@@ -593,7 +593,7 @@ def require_selected_backend() -> str:
             "No installed backend found.\n"
             "Build or install a backend first, then run:\n"
             "  omniinfer backend list\n"
-            "  omniinfer select <backend>"
+            "  omniinfer backend select <backend>"
         )
     print(f"No backend selected. Auto-selecting: {recommended}")
     request_json("POST", "/omni/backend/select", payload={"backend": recommended}, timeout=30.0)
@@ -622,7 +622,7 @@ def resolve_backend_profile_arg(path_text: str | None, selected_backend: str | N
         if not selected_backend:
             raise SystemExit(
                 "Using --config without a path requires a selected backend. "
-                "Run `omniinfer select <backend>` first."
+                "Run `omniinfer backend select <backend>` first."
             )
         target_path = str(profile_path_for_backend(selected_backend))
     try:
@@ -1132,7 +1132,7 @@ def handle_hidden_completion(argv: list[str]) -> int:
     current = words[cword] if 0 <= cword < len(words) else ""
     previous = words[cword - 1] if cword - 1 >= 0 else ""
 
-    top_level = ["backend", "select", "status", "ps", "model", "thinking", "chat", "shutdown", "serve", "completion"]
+    top_level = ["backend", "status", "ps", "model", "thinking", "chat", "shutdown", "serve", "completion"]
     backend_sub = ["list", "select", "stop"]
     model_sub = ["list", "load"]
     thinking_sub = ["show", "set"]
@@ -1145,8 +1145,6 @@ def handle_hidden_completion(argv: list[str]) -> int:
             suggestions = backend_sub
         elif len(words) > 1 and words[1] == "select":
             suggestions = complete_backend_name(current)
-    elif words and words[0] == "select":
-        suggestions = complete_backend_name(current)
     elif words and words[0] == "model":
         if cword == 1:
             suggestions = model_sub
@@ -1186,9 +1184,6 @@ def build_parser() -> argparse.ArgumentParser:
     backend_select = backend_sub.add_parser("select", help="Select a backend")
     backend_select.add_argument("backend_name", help="Backend name")
     backend_sub.add_parser("stop", help="Stop the current backend process")
-
-    select_alias = sub.add_parser("select", help="Select a backend")
-    select_alias.add_argument("backend_name", help="Backend name")
 
     sub.add_parser("status", help="Show current status")
 
@@ -1272,10 +1267,6 @@ def main(argv: list[str] | None = None) -> int:
             return backend_stop()
         parser.error("backend requires a subcommand: list / select / stop")
 
-    if args.command == "select":
-        if unknown_args:
-            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
-        return select_backend(args.backend_name)
     if args.command == "status":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")

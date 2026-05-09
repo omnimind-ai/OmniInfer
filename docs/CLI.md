@@ -99,13 +99,13 @@ Use `./omniinfer backend list --json` when automation needs full backend metadat
 Always pick a backend from `backend list` on your current device.
 
 ```sh
-./omniinfer select <backend>
+./omniinfer backend select <backend>
 ```
 
 Windows:
 
 ```powershell
-.\omniinfer.cmd select <backend>
+.\omniinfer.cmd backend select <backend>
 ```
 
 Examples:
@@ -179,7 +179,7 @@ Explicit file path:
 Advanced path with backend config JSON:
 
 ```sh
-./omniinfer select llama.cpp-vulkan
+./omniinfer backend select llama.cpp-vulkan
 ./omniinfer model load -m /path/to/model-directory --config
 ```
 
@@ -198,7 +198,7 @@ Vision-language model:
 Android OmniInfer Native QNN:
 
 ```sh
-./omniinfer select omniinfer-native
+./omniinfer backend select omniinfer-native
 ./omniinfer model load -m /data/local/tmp/syf/executorch/static_llm
 ./omniinfer chat --message "你好啊，你是谁？"
 ```
@@ -206,7 +206,7 @@ Android OmniInfer Native QNN:
 For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or `mmproj` sidecar:
 
 ```sh
-./omniinfer select mlx-mac
+./omniinfer backend select mlx-mac
 ./omniinfer model load -m /path/to/mlx-vlm-model-directory
 ./omniinfer chat \
   --image /path/to/image.jpg \
@@ -262,7 +262,7 @@ You can also pass backend-native extra args directly:
 
 ```sh
 ./omniinfer backend list
-./omniinfer select <backend>
+./omniinfer backend select <backend>
 ./omniinfer status
 ./omniinfer model list
 ./omniinfer model load -m /path/to/model-directory
