@@ -248,7 +248,7 @@ class CommandHelperTests(unittest.TestCase):
             self.assertTrue(linked.is_symlink())
             self.assertEqual(linked.resolve(), external.resolve())
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0].path, linked)
+            self.assertEqual(rows[0].path.resolve(), linked.resolve())
             self.assertEqual(rows[0].label, "downloads/model.gguf")
 
     def test_model_reference_preserves_managed_symlink_path(self) -> None:
