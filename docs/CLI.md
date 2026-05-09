@@ -288,6 +288,7 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - `backend select` also creates a backend-specific config JSON template for advanced backend-native parameters.
 - Running `./omniinfer` with no arguments opens the TUI only in an interactive terminal; non-interactive usage prints CLI help instead of blocking for input.
 - The TUI auto-discovers models only from OmniInfer-managed `.local` model directories. It does not scan user directories such as `~/models`; use manual path input for those models.
+- The TUI suppresses a leading `<think>...</think>` block in streamed model output and shows only the visible answer text.
 - `load --config` without a path means "use the selected backend profile under `.local/config/backend_profiles/`".
 - Backend profile JSON files should only hold backend-native extra parameters. Keep model paths, prompts/messages, and images on the CLI.
 - `load` is the short form of `model load`; both store the current model path, optional `mmproj`, optional `ctx-size`, and any request defaults loaded from backend-native extra args.

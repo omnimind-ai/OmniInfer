@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -128,12 +129,22 @@ def _chat_loop(backend: str) -> None:
 
         print("Assistant")
         final_payload: dict[str, Any] | None = None
+        buffer = ""
+        visible_started = False
         for chunk in commands.iter_chat_stream(commands.ChatOptions(message=message)):
             if chunk.text:
-                sys.stdout.write(chunk.text)
-                sys.stdout.flush()
+                buffer += chunk.text
+                output, buffer, visible_started = _consume_visible_text(buffer, visible_started)
+                if output:
+                    sys.stdout.write(output)
+                    sys.stdout.flush()
             if chunk.final_payload:
                 final_payload = chunk.final_payload
+        if buffer:
+            output, _buffer, _visible_started = _consume_visible_text(buffer, visible_started, final=True)
+            if output:
+                sys.stdout.write(output)
+                sys.stdout.flush()
         print()
         if final_payload:
             _print_short_performance(final_payload)
@@ -151,6 +162,24 @@ def _print_short_performance(payload: dict[str, Any]) -> None:
         pieces.append(f"speed={timings.get('predicted_per_second')} tok/s")
     if pieces:
         print("[" + ", ".join(pieces) + "]")
+
+
+def _consume_visible_text(buffer: str, visible_started: bool, final: bool = False) -> tuple[str, str, bool]:
+    if visible_started:
+        return buffer, "", True
+
+    stripped = buffer.lstrip()
+    leading_len = len(buffer) - len(stripped)
+    if not stripped.startswith("<think>"):
+        return buffer, "", True
+
+    close_index = stripped.find("</think>")
+    if close_index < 0:
+        return ("", "" if final else buffer, False)
+
+    after = stripped[close_index + len("</think>") :]
+    after = re.sub(r"^\s*", "", after)
+    return after, "", bool(after)
 
 
 def _prompt(label: str, default: str | None = None) -> str:

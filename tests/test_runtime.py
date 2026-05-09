@@ -16,6 +16,7 @@ from service_core.backends.base import BackendSpec
 from service_core.cli import build_parser
 from service_core.local_state import legacy_state_file, load_selected_backend, save_selected_backend, state_file
 from service_core.runtime import RuntimeManager
+from service_core.tui import _consume_visible_text
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +183,17 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].label, "qwen/model.gguf")
+
+    def test_tui_suppresses_initial_thinking_block(self) -> None:
+        output, buffer, visible = _consume_visible_text("<think>hidden", visible_started=False)
+        self.assertEqual(output, "")
+        self.assertEqual(buffer, "<think>hidden")
+        self.assertFalse(visible)
+
+        output, buffer, visible = _consume_visible_text("<think>hidden</think>\nanswer", visible_started=False)
+        self.assertEqual(output, "answer")
+        self.assertEqual(buffer, "")
+        self.assertTrue(visible)
 
 
 # ---------------------------------------------------------------------------
