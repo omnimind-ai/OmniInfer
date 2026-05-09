@@ -9,3 +9,13 @@
 # (Class.forName + getMethod). Preserve class and method names so the
 # reflective create() call works after R8 obfuscation.
 -keep class com.omniinfer.server.LiteRtLmBackendFactory { *; }
+
+# LiteRT-LM native code calls these callback methods by exact Java names.
+# Without these rules, R8 can rename the generated callback implementation to
+# something like Lzd/a; and nativeSendMessageAsync aborts when it looks up
+# onMessage(String), onDone(), or onError(int, String).
+-keep class com.google.ai.edge.litertlm.LiteRtLmJni { *; }
+-keep class com.google.ai.edge.litertlm.LiteRtLmJni$JniMessageCallback { *; }
+-keep class com.google.ai.edge.litertlm.LiteRtLmJni$JniInferenceCallback { *; }
+-keep class com.google.ai.edge.litertlm.Conversation$JniMessageCallbackImpl { *; }
+-keep class com.google.ai.edge.litertlm.Session$JniInferenceCallbackImpl { *; }
