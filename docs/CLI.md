@@ -57,6 +57,8 @@ Linux and macOS:
 ./omniinfer --help
 ```
 
+Run `./omniinfer` without arguments in an interactive terminal to open the basic TUI. The TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop.
+
 Windows:
 
 ```powershell
@@ -264,6 +266,7 @@ You can also pass backend-native extra args directly:
 ## Common Commands
 
 ```sh
+./omniinfer
 ./omniinfer backend list
 ./omniinfer backend select <backend>
 ./omniinfer status
@@ -283,6 +286,8 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 - `backend select` stores your current backend choice for later runs under `.local/config/cli_state.json`.
 - `backend select` also creates a backend-specific config JSON template for advanced backend-native parameters.
+- Running `./omniinfer` with no arguments opens the TUI only in an interactive terminal; non-interactive usage prints CLI help instead of blocking for input.
+- The TUI auto-discovers models only from OmniInfer-managed `.local` model directories. It does not scan user directories such as `~/models`; use manual path input for those models.
 - `load --config` without a path means "use the selected backend profile under `.local/config/backend_profiles/`".
 - Backend profile JSON files should only hold backend-native extra parameters. Keep model paths, prompts/messages, and images on the CLI.
 - `load` is the short form of `model load`; both store the current model path, optional `mmproj`, optional `ctx-size`, and any request defaults loaded from backend-native extra args.

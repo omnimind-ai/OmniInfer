@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import logging
 import os
@@ -18,19 +17,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from service_core.backend_cli_args import (
-    ParsedBackendExtraArgs,
-    parse_backend_chat_extra_args,
-    parse_backend_load_extra_args,
-)
-from service_core.backend_configs import (
-    BackendProfile,
-    ensure_backend_profile_template,
-    load_backend_profile,
-    profile_path_for_backend,
-)
+from service_core import commands
 from service_core.local_state import local_logs_dir
-from service_core.runtime import RuntimeManager
 from service_core.service import APP_ROOT, REPO_ROOT, load_app_config
 
 
@@ -46,6 +34,7 @@ HELP_TEXT = """\
 OmniInfer CLI
 
 Common commands:
+  omniinfer
   omniinfer backend list
   omniinfer backend select <backend>
   omniinfer status
@@ -61,6 +50,7 @@ Design notes:
   3. `omniinfer backend select <backend>` persists the current backend selection.
   4. `omniinfer chat` requires a model to be loaded first via `omniinfer load`.
   5. `omniinfer chat` streams tokens to stdout by default. Use `--no-stream` for batch output.
+  6. `omniinfer` without arguments opens the basic TUI in an interactive terminal.
 
 Command map:
   backend list              -> show available backends
@@ -109,15 +99,6 @@ def detect_system_name() -> str:
     if system.startswith("win"):
         return "windows"
     raise SystemExit(f"unsupported host system: {platform.system()}")
-
-
-def parse_boolish(value: str) -> bool:
-    low = value.strip().lower()
-    if low in {"1", "true", "yes", "on", "enable", "enabled"}:
-        return True
-    if low in {"0", "false", "no", "off", "disable", "disabled"}:
-        return False
-    raise SystemExit(f"invalid boolean value: {value!r}")
 
 
 def get_service_config() -> dict[str, Any]:
@@ -182,23 +163,7 @@ def is_service_running() -> bool:
 
 
 def local_backend_ids() -> list[str]:
-    return list(local_backends().keys())
-
-
-def local_backends() -> dict[str, Any]:
-    config = get_service_config()
-    manager = RuntimeManager(
-        repo_root=str(REPO_ROOT),
-        app_root=str(APP_ROOT),
-        backend_host="127.0.0.1",
-        backend_port=0,
-        startup_timeout_s=int(config.get("startup_timeout", 60)),
-        backend_window_mode=str(config.get("window_mode", "hidden")),
-        runtime_root=str(config.get("runtime_root", "runtime")),
-        backend_overrides=config.get("backends"),
-        default_backend_id=str(config.get("default_backend", "")),
-    )
-    return manager.backends
+    return commands.local_backend_ids()
 
 
 def start_service_background() -> None:
@@ -336,8 +301,7 @@ def format_bool(value: bool | None) -> str:
 
 
 def print_backend_list(scope: str = "compatible", json_output: bool = False) -> int:
-    ensure_service_running()
-    _status, payload, _ = request_json("GET", f"/omni/backends?scope={scope}", timeout=10.0)
+    payload = commands.list_backends(scope=scope)
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows:
         if json_output:
@@ -368,20 +332,13 @@ def print_backend_list(scope: str = "compatible", json_output: bool = False) -> 
 
 
 def select_backend(name: str) -> int:
-    ensure_service_running()
-    available_backends = local_backends()
-    available = list(available_backends.keys())
-    if name not in available_backends:
-        raise SystemExit(f"Unsupported backend: {name}\nAvailable backends: {', '.join(available)}")
-    _status, payload, _ = request_json("POST", "/omni/backend/select", payload={"backend": name}, timeout=30.0)
-    print(f"Selected backend: {name}")
-    models_dir = payload.get("models_dir") if isinstance(payload, dict) else None
-    if models_dir:
-        print(f"Models directory: {models_dir}")
-    profile_path, created = ensure_backend_profile_template(available_backends[name])
+    result = commands.select_backend(name)
+    print(f"Selected backend: {result.backend}")
+    if result.models_dir:
+        print(f"Models directory: {result.models_dir}")
     print(
         "Backend config: "
-        f"{profile_path} ({'created' if created else 'already exists'})"
+        f"{result.profile_path} ({'created' if result.profile_created else 'already exists'})"
     )
     return 0
 
@@ -586,162 +543,54 @@ def print_model_list(system_name: str, best: bool) -> int:
     return 0
 
 
-def require_selected_backend() -> str:
-    selected_backend = ensure_service_and_selection()
-    if selected_backend:
-        return selected_backend
-    # No backend selected — auto-select best installed
-    status, payload, _ = request_json("GET", "/omni/backends?scope=installed", timeout=10.0)
-    if not isinstance(payload, dict):
-        raise SystemExit("Failed to query installed backends.")
-    recommended = payload.get("recommended")
-    if not recommended:
-        raise SystemExit(
-            "No installed backend found.\n"
-            "Build or install a backend first, then run:\n"
-            "  omniinfer backend list\n"
-            "  omniinfer backend select <backend>"
-        )
-    print(f"No backend selected. Auto-selecting: {recommended}")
-    request_json("POST", "/omni/backend/select", payload={"backend": recommended}, timeout=30.0)
-    return str(recommended)
-
-
-def resolve_model_reference(path_text: str) -> Path:
-    path = Path(path_text).expanduser().resolve()
-    if not path.exists():
-        raise SystemExit(f"Model path does not exist: {path}")
-    return path
-
-
-def resolve_existing_path(path_text: str, label: str) -> Path:
-    path = Path(path_text).expanduser().resolve()
-    if not path.exists():
-        raise SystemExit(f"{label} does not exist: {path}")
-    return path
-
-
-def resolve_backend_profile_arg(path_text: str | None, selected_backend: str | None) -> BackendProfile | None:
-    if path_text is None:
-        return None
-    target_path = path_text
-    if path_text == "":
-        if not selected_backend:
-            raise SystemExit(
-                "Using --config without a path requires a selected backend. "
-                "Run `omniinfer backend select <backend>` first."
-            )
-        target_path = str(profile_path_for_backend(selected_backend))
-    try:
-        profile = load_backend_profile(target_path)
-    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
-        raise SystemExit(str(exc)) from exc
-    if profile.backend_id and selected_backend and profile.backend_id != selected_backend:
-        raise SystemExit(
-            f"Backend config {profile.path} belongs to {profile.backend_id}, "
-            f"but the current selected backend is {selected_backend}."
-        )
-    return profile
-
-
-def merge_backend_request_overrides(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in extra.items():
-        if isinstance(value, list) and isinstance(merged.get(key), list):
-            merged[key] = list(merged[key]) + list(value)
-        else:
-            merged[key] = value
-    return merged
-
-
-def resolve_backend_spec_for_native_args() -> tuple[str, Any]:
-    selected_backend = require_selected_backend()
-    backends = local_backends()
-    backend = backends.get(selected_backend)
-    if backend is None:
-        raise SystemExit(f"Selected backend is no longer available locally: {selected_backend}")
-    return selected_backend, backend
-
-
-def combine_backend_extra_args(
-    *,
-    backend: Any,
-    command_name: str,
-    profile: BackendProfile | None,
-    cli_tokens: list[str],
-) -> ParsedBackendExtraArgs:
-    profile_tokens: list[str] = []
-    if profile is not None:
-        profile_tokens = profile.load_extra_args if command_name == "load" else profile.infer_extra_args
-    merged_tokens = [*profile_tokens, *cli_tokens]
-    try:
-        if command_name == "load":
-            return parse_backend_load_extra_args(backend, merged_tokens)
-        return parse_backend_chat_extra_args(backend, merged_tokens)
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
-
-
 def print_model_load(args: argparse.Namespace) -> int:
     verbose = getattr(args, "verbose", False)
+    model_input = getattr(args, "model", None)
+    if not model_input:
+        raise SystemExit("Please specify a model path with -m or --model.")
+
     spinner = _Spinner("Starting service...")
     if not verbose:
         spinner.start()
 
+    def on_progress(event: dict[str, Any]) -> None:
+        event_type = event.get("type", "")
+        msg = event.get("message", "")
+        if event_type == "status":
+            if verbose and msg:
+                print(msg)
+            elif msg:
+                spinner.update(msg)
+        elif event_type == "log":
+            if verbose and msg:
+                print(f"  {msg}")
+        elif event_type == "done":
+            spinner.stop()
+            elapsed = event.get("elapsed_s")
+            if elapsed is not None:
+                print(f"Backend ready ({elapsed}s)")
+        elif event_type == "error":
+            spinner.stop()
+
     try:
-        config_arg = getattr(args, "config", None)
-        backend_extra_args = list(getattr(args, "backend_extra_args", []))
-        selected_backend, backend = resolve_backend_spec_for_native_args()
         spinner.update("Preparing model...")
-        profile = resolve_backend_profile_arg(config_arg, selected_backend)
-        if profile and profile.backend_id and profile.backend_id != selected_backend:
-            selected_backend = profile.backend_id
-            backend = local_backends().get(selected_backend)
-        backend_extras = combine_backend_extra_args(
-            backend=backend,
-            command_name="load",
-            profile=profile,
-            cli_tokens=backend_extra_args,
+        response, selection = commands.load_model(
+            commands.ModelLoadOptions(
+                model=str(model_input),
+                mmproj=getattr(args, "mmproj", None),
+                ctx_size=getattr(args, "ctx_size", None),
+                config=getattr(args, "config", None),
+                backend_extra_args=list(getattr(args, "backend_extra_args", [])),
+                verbose=verbose,
+            ),
+            progress=on_progress,
         )
-
-        model_input = args.model
-        if not model_input:
-            spinner.stop()
-            raise SystemExit("Please specify a model path with -m or --model.")
-        model_ref = resolve_model_reference(model_input)
-        mmproj_input = args.mmproj
-        mmproj_file = resolve_existing_path(mmproj_input, "mmproj file") if mmproj_input else None
-        effective_ctx_size = args.ctx_size if args.ctx_size is not None else backend_extras.ctx_size
-        if effective_ctx_size is not None and effective_ctx_size <= 0:
-            spinner.stop()
-            raise SystemExit("--ctx-size must be a positive integer")
-
-        payload: dict[str, Any] = {"model": str(model_ref)}
-        if mmproj_file:
-            payload["mmproj"] = str(mmproj_file)
-        if effective_ctx_size is not None:
-            payload["ctx_size"] = effective_ctx_size
-        if selected_backend:
-            payload["backend"] = selected_backend
-        if backend_extras.launch_args:
-            payload["launch_args"] = backend_extras.launch_args
-        if profile is not None and backend is not None:
-            profile_chat_extras = combine_backend_extra_args(
-                backend=backend,
-                command_name="chat",
-                profile=None,
-                cli_tokens=list(profile.infer_extra_args),
-            )
-            if profile_chat_extras.request_overrides:
-                payload["request_defaults"] = profile_chat_extras.request_overrides
-
-        response = _stream_model_load(payload, timeout=600.0, verbose=verbose, spinner=spinner)
     except SystemExit:
         spinner.stop()
         raise
 
-    if not isinstance(response, dict):
-        raise SystemExit("Failed to load the model.")
+    if selection.auto_selected:
+        print(f"No backend selected. Auto-selected: {selection.backend}")
     print("Model loaded")
     print(f"Backend: {response.get('selected_backend') or '-'}")
     print(f"Model: {response.get('selected_model') or '-'}")
@@ -810,87 +659,6 @@ class _Spinner:
             sys.stdout.write(f"\r{frame} {text} ({elapsed:.1f}s)\033[K")
             sys.stdout.flush()
             self._stop_event.wait(_SPINNER_INTERVAL)
-
-
-def _stream_model_load(
-    payload: dict[str, Any],
-    timeout: float = 600.0,
-    verbose: bool = False,
-    spinner: _Spinner | None = None,
-) -> dict[str, Any]:
-    """POST /omni/model/select with SSE progress, falling back to JSON."""
-    url = f"{service_base_url()}/omni/model/select"
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(
-        url=url,
-        data=body,
-        method="POST",
-        headers={
-            "Accept": "text/event-stream, application/json",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-    )
-    if spinner is None:
-        spinner = _Spinner()
-
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            content_type = response.headers.get("Content-Type", "")
-            if "text/event-stream" not in content_type:
-                spinner.stop()
-                raw = response.read()
-                parsed = try_parse_json(raw)
-                if isinstance(parsed, dict):
-                    return parsed
-                raise SystemExit("Failed to load the model.")
-
-            result: dict[str, Any] = {}
-            for raw_line in response:
-                line = raw_line.decode("utf-8", errors="replace").strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                event_type = event.get("type", "")
-                if event_type == "status":
-                    msg = event.get("message", "")
-                    if verbose:
-                        print(msg)
-                    elif msg:
-                        spinner.update(msg)
-                elif event_type == "log":
-                    msg = event.get("message", "")
-                    if verbose and msg:
-                        print(f"  {msg}")
-                elif event_type == "done":
-                    spinner.stop()
-                    elapsed = event.get("elapsed_s")
-                    if elapsed is not None:
-                        print(f"Backend ready ({elapsed}s)")
-                    result = event
-                elif event_type == "error":
-                    spinner.stop()
-                    raise SystemExit(event.get("message", "model loading failed"))
-            spinner.stop()
-            return result
-    except urllib.error.HTTPError as exc:
-        spinner.stop()
-        raw = exc.read().decode("utf-8", errors="replace")
-        parsed = try_parse_json(raw.encode("utf-8"))
-        if isinstance(parsed, dict):
-            error = parsed.get("error", {})
-            message = error.get("message", raw) if isinstance(error, dict) else raw
-        else:
-            message = raw
-        raise SystemExit(f"Model loading failed (HTTP {exc.code}): {message}") from exc
-    except urllib.error.URLError as exc:
-        spinner.stop()
-        raise SystemExit(f"Unable to reach local OmniInfer service: {exc}") from exc
 
 
 def print_thinking_show() -> int:
@@ -981,128 +749,52 @@ def print_chat_output(payload: dict[str, Any]) -> None:
     print_performance(payload)
 
 
-def current_runtime_state() -> dict[str, Any]:
-    _status, payload, _ = request_json("GET", "/omni/state", timeout=10.0)
-    if not isinstance(payload, dict):
-        raise SystemExit("Unable to read the current runtime state.")
-    return payload
-
-
-def stream_chat(payload: dict[str, Any]) -> int:
-    request = urllib.request.Request(
-        url=f"{service_base_url()}/v1/chat/completions",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        method="POST",
-        headers={
-            "Accept": "text/event-stream, application/json",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-    )
-    print("Response")
-    final_payload: dict[str, Any] | None = None
-    prefix_buffer = ""
-    prefix_flushed = False
-    try:
-        with urllib.request.urlopen(request, timeout=3600.0) as response:
-            for raw_line in response:
-                line = raw_line.decode("utf-8", errors="replace").strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                choices = event.get("choices")
-                if isinstance(choices, list) and choices:
-                    delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
-                    if isinstance(delta, dict):
-                        content = delta.get("content")
-                        if isinstance(content, str):
-                            if prefix_flushed:
-                                sys.stdout.write(content)
-                                sys.stdout.flush()
-                            else:
-                                prefix_buffer += content
-                                out, prefix_flushed = flush_stream_prefix(prefix_buffer)
-                                if prefix_flushed and out:
-                                    sys.stdout.write(out)
-                                    sys.stdout.flush()
-                if isinstance(event, dict) and "usage" in event:
-                    final_payload = event
-            if not prefix_flushed and prefix_buffer:
-                sys.stdout.write(prefix_buffer)
-                sys.stdout.flush()
-            print()
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"Streaming inference failed with status {exc.code}: {raw}") from exc
-    except urllib.error.URLError as exc:
-        raise SystemExit(f"Streaming inference failed: {exc}") from exc
-
-    if final_payload:
-        print_performance(final_payload)
-    return 0
-
-
 def chat(args: argparse.Namespace) -> int:
-    ensure_service_running()
-    state = current_runtime_state()
-
-    if not state.get("model"):
-        raise SystemExit(
-            "No model is currently loaded.\n"
-            "Run `omniinfer load -m <model>` first."
-        )
-
     if args.message and args.prompt:
         raise SystemExit("Use either positional prompt or --message, not both.")
     message_text = args.message or args.prompt
     if not message_text:
         raise SystemExit("Please provide a message, for example: omniinfer chat \"Hello\".")
 
-    image_input = args.image
-    messages = [{"role": "user", "content": message_text}]
-    if image_input:
-        image_file = resolve_existing_path(image_input, "image file")
-        mime = "image/png"
-        if image_file.suffix.lower() in {".jpg", ".jpeg"}:
-            mime = "image/jpeg"
-        elif image_file.suffix.lower() == ".webp":
-            mime = "image/webp"
-        image_b64 = base64.b64encode(image_file.read_bytes()).decode("ascii")
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": message_text},
-                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
-                ],
-            }
-        ]
-
-    runtime_request_defaults = state.get("request_defaults") if isinstance(state.get("request_defaults"), dict) else {}
-    payload: dict[str, Any] = dict(runtime_request_defaults)
-    payload["messages"] = messages
-    payload["temperature"] = args.temperature if args.temperature is not None else payload.get("temperature", 0.2)
-    payload["max_tokens"] = args.max_tokens if args.max_tokens is not None else payload.get("max_tokens", 128)
-    payload["stream"] = args.stream if args.stream is not None else payload.get("stream", True)
-    payload["think"] = (
-        parse_boolish(args.think)
-        if args.think is not None
-        else payload.get("think", False)
+    payload = commands.build_chat_payload(
+        commands.ChatOptions(
+            message=message_text,
+            image=args.image,
+            stream=args.stream,
+            think=args.think,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+        )
     )
-
     effective_stream = bool(payload.get("stream"))
     if effective_stream:
         payload["stream_options"] = {"include_usage": True}
-        return stream_chat(payload)
+        print("Response")
+        final_payload: dict[str, Any] | None = None
+        prefix_buffer = ""
+        prefix_flushed = False
+        for chunk in commands.iter_chat_stream_payload(payload):
+            if chunk.text:
+                if prefix_flushed:
+                    sys.stdout.write(chunk.text)
+                    sys.stdout.flush()
+                else:
+                    prefix_buffer += chunk.text
+                    out, prefix_flushed = flush_stream_prefix(prefix_buffer)
+                    if prefix_flushed and out:
+                        sys.stdout.write(out)
+                        sys.stdout.flush()
+            if chunk.final_payload:
+                final_payload = chunk.final_payload
+        if not prefix_flushed and prefix_buffer:
+            sys.stdout.write(prefix_buffer)
+            sys.stdout.flush()
+        print()
+        if final_payload:
+            print_performance(final_payload)
+        return 0
 
-    _status, response, _ = request_json("POST", "/v1/chat/completions", payload=payload, timeout=600.0)
-    if not isinstance(response, dict):
-        raise SystemExit("Inference response has an unexpected format.")
+    response = commands.request_chat_payload(payload)
     print_chat_output(response)
     return 0
 
@@ -1268,8 +960,13 @@ def main(argv: list[str] | None = None) -> int:
     global _cli_port_override
     if args.port is not None:
         _cli_port_override = args.port
+    commands.set_port_override(args.port)
 
     if args.command is None:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            from service_core.tui import run_tui
+
+            return run_tui()
         parser.print_help()
         return 0
 

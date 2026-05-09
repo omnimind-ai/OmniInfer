@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from service_core import commands
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
@@ -152,6 +153,26 @@ class CliParserTests(unittest.TestCase):
     def test_top_level_select_is_not_a_command(self) -> None:
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["select", "llama.cpp-linux"])
+
+
+# ---------------------------------------------------------------------------
+# Shared command helpers
+# ---------------------------------------------------------------------------
+
+
+class CommandHelperTests(unittest.TestCase):
+    def test_discovers_models_in_local_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model = root / "qwen" / "model.gguf"
+            model.parent.mkdir()
+            model.write_bytes(b"gguf")
+            (model.parent / "ignore.txt").write_text("not a model", encoding="utf-8")
+
+            rows = commands.discover_models_in_roots([root])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].label, "qwen/model.gguf")
 
 
 # ---------------------------------------------------------------------------
