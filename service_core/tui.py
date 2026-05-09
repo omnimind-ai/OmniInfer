@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import threading
 from pathlib import Path
@@ -11,6 +12,45 @@ from service_core import commands
 
 _LOADING_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
 _LOADING_INTERVAL = 0.08
+_MIN_WIDTH = 64
+_MAX_WIDTH = 100
+
+
+class _Theme:
+    def __init__(self) -> None:
+        self.enabled = bool(getattr(sys.stdout, "isatty", lambda: False)()) and not os.environ.get("NO_COLOR")
+
+    def paint(self, text: str, code: str) -> str:
+        if not self.enabled:
+            return text
+        return f"\033[{code}m{text}\033[0m"
+
+    def dim(self, text: str) -> str:
+        return self.paint(text, "2")
+
+    def brand(self, text: str) -> str:
+        return self.paint(text, "1;36")
+
+    def accent(self, text: str) -> str:
+        return self.paint(text, "36")
+
+    def success(self, text: str) -> str:
+        return self.paint(text, "32")
+
+    def warning(self, text: str) -> str:
+        return self.paint(text, "33")
+
+    def error(self, text: str) -> str:
+        return self.paint(text, "31")
+
+    def role_user(self, text: str) -> str:
+        return self.paint(text, "1;35")
+
+    def role_assistant(self, text: str) -> str:
+        return self.paint(text, "1;34")
+
+
+_THEME = _Theme()
 
 
 def run_tui() -> int:
@@ -20,8 +60,7 @@ def run_tui() -> int:
     interrupted = False
     try:
         _clear()
-        print("OmniInfer")
-        print()
+        _print_header("OmniInfer", "Local inference console")
         remembered = commands.remembered_model_load_options()
         if remembered is not None:
             backend = _try_load_remembered_model(remembered)
@@ -49,25 +88,31 @@ def _choose_backend() -> str:
         if not rows:
             raise SystemExit("No installed backends are available.")
 
-        print("Backends")
+        _print_section("Backends", "Choose the runtime used for model loading")
         for index, item in enumerate(rows, 1):
-            marker = "*" if item.get("selected") else " "
             installed = "installed" if item.get("binary_exists") else "not installed"
-            print(f"{index:>2}. {marker} {item.get('id')} ({installed})")
+            capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), list) else []
+            details = [installed, *[str(value) for value in capabilities[:4]]]
+            _print_menu_item(
+                index=index,
+                label=str(item.get("id") or ""),
+                details=details,
+                selected=bool(item.get("selected")),
+            )
         print()
         choice = _prompt("Select backend", default=_default_selected_index(rows))
         index = _parse_choice(choice, len(rows))
         if index is None:
-            print("Invalid selection.")
+            _print_notice("Invalid selection.", kind="warning")
             continue
         backend_id = str(rows[index - 1].get("id", ""))
         if not backend_id:
-            print("Invalid backend.")
+            _print_notice("Invalid backend.", kind="warning")
             continue
         result = commands.select_backend(backend_id)
-        print(f"Selected backend: {result.backend}")
+        _print_notice(f"Selected backend: {result.backend}", kind="success")
         if result.models_dir:
-            print(f"Models directory: {result.models_dir}")
+            _print_kv("Models directory", result.models_dir)
         print()
         return backend_id
 
@@ -75,21 +120,21 @@ def _choose_backend() -> str:
 def _choose_model() -> Path:
     while True:
         models = commands.discover_local_models()
-        print("Models")
+        _print_section("Models", "Pick a managed model or link a new local file")
         if models:
             for index, model in enumerate(models, 1):
-                print(f"{index:>2}. {model.label}")
-            print(" 0. Enter path manually")
+                _print_menu_item(index=index, label=model.label)
+            _print_menu_item(index=0, label="Enter path manually", details=["link into .local/models"])
             choice = _prompt("Select model", default="1")
             if choice == "0":
                 return _prompt_model_path()
             index = _parse_choice(choice, len(models))
             if index is not None:
                 return models[index - 1].path
-            print("Invalid selection.")
+            _print_notice("Invalid selection.", kind="warning")
             continue
 
-        print("No models found in OmniInfer .local model directories.")
+        _print_notice("No models found in OmniInfer .local model directories.", kind="warning")
         return _prompt_model_path()
 
 
@@ -101,20 +146,21 @@ def _prompt_model_path() -> Path:
             try:
                 linked = commands.link_model_into_managed_models(path)
             except OSError as exc:
-                print(f"Could not link model into {commands.managed_models_dir()}: {exc}")
+                _print_notice(f"Could not link model into {commands.managed_models_dir()}: {exc}", kind="warning")
                 return path
             if linked != path:
-                print(f"Linked model: {linked}")
+                _print_notice(f"Linked model: {linked}", kind="success")
             return linked
-        print(f"Model path does not exist: {path}")
+        _print_notice(f"Model path does not exist: {path}", kind="warning")
 
 
 def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None:
-    print(f"Loading previous model: {options.model}")
+    _print_section("Resume", "Loading your last selected backend and model")
+    _print_kv("Model", options.model)
     try:
         backend = _load_model(options)
     except SystemExit as exc:
-        print(f"Could not load previous model: {exc}")
+        _print_notice(f"Could not load previous model: {exc}", kind="warning")
         print()
         return None
     if backend:
@@ -124,7 +170,7 @@ def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None
 
 def _load_model(options: commands.ModelLoadOptions) -> str | None:
     print()
-    print(f"Loading model: {options.model}")
+    _print_kv("Loading model", options.model)
     spinner = _LoadingSpinner("Preparing model...")
     ready_printed = False
 
@@ -139,7 +185,7 @@ def _load_model(options: commands.ModelLoadOptions) -> str | None:
         elif event_type == "done":
             spinner.stop()
             ready_printed = True
-            print("  Backend ready")
+            _print_notice("Backend ready", kind="success")
 
     spinner.start()
     try:
@@ -150,37 +196,46 @@ def _load_model(options: commands.ModelLoadOptions) -> str | None:
     finally:
         spinner.stop()
     if not ready_printed:
-        print("  Backend ready")
+        _print_notice("Backend ready", kind="success")
     if selection.auto_selected:
-        print(f"Auto-selected backend: {selection.backend}")
-    print(f"Model loaded: {response.get('selected_model') or options.model}")
+        _print_notice(f"Auto-selected backend: {selection.backend}", kind="success")
+    _print_kv("Model loaded", str(response.get("selected_model") or options.model))
     print()
     backend = response.get("selected_backend")
     return str(backend) if backend else None
 
 
 def _chat_loop(backend: str) -> None:
-    print("Chat")
-    print("Commands: /backend, /model, /exit")
-    print()
     current_backend = backend
+    _print_chat_header(current_backend)
     while True:
-        message = _prompt("You")
+        message = _prompt(_THEME.role_user("You"))
         if not message:
             continue
         if message == "/exit":
             return
         if message == "/backend":
             current_backend = _choose_backend()
+            _print_chat_header(current_backend)
             continue
         if message == "/model":
             model = _choose_model()
             loaded_backend = _load_model(commands.ModelLoadOptions(model=str(model)))
             if loaded_backend:
                 current_backend = loaded_backend
+            _print_chat_header(current_backend)
+            continue
+        if message == "/clear":
+            _clear()
+            _print_header("OmniInfer", "Local inference console")
+            _print_chat_header(current_backend)
+            continue
+        if message == "/help":
+            _print_help()
+            print()
             continue
 
-        print("Assistant")
+        print(_THEME.role_assistant("Assistant"))
         final_payload: dict[str, Any] | None = None
         buffer = ""
         visible_started = False
@@ -214,17 +269,110 @@ def _print_short_performance(payload: dict[str, Any]) -> None:
     if isinstance(timings, dict) and "predicted_per_second" in timings:
         pieces.append(f"speed={timings.get('predicted_per_second')} tok/s")
     if pieces:
-        print("[" + ", ".join(pieces) + "]")
+        print(_THEME.dim("[" + ", ".join(pieces) + "]"))
 
 
 def _shutdown_service_for_tui() -> None:
     try:
         stopped = commands.shutdown_service()
     except SystemExit as exc:
-        print(f"Could not stop OmniInfer service: {exc}")
+        _print_notice(f"Could not stop OmniInfer service: {exc}", kind="warning")
         return
     if stopped:
-        print("OmniInfer service stopped")
+        _print_notice("OmniInfer service stopped", kind="success")
+
+
+def _print_header(title: str, subtitle: str) -> None:
+    width = _content_width()
+    print(_THEME.brand(title))
+    print(_THEME.dim(subtitle))
+    print(_THEME.dim("─" * width))
+    print()
+
+
+def _print_section(title: str, subtitle: str | None = None) -> None:
+    width = _content_width()
+    print(_THEME.accent(title))
+    if subtitle:
+        print(_THEME.dim(_truncate(subtitle, width)))
+    print(_THEME.dim("─" * min(width, max(len(title), 24))))
+
+
+def _print_menu_item(
+    *,
+    index: int,
+    label: str,
+    details: list[str] | None = None,
+    selected: bool = False,
+) -> None:
+    width = _content_width()
+    marker = _THEME.success("●") if selected else _THEME.dim("○")
+    prefix = f"{index:>2}. {marker} "
+    detail_text = ""
+    if details:
+        clean_details = [item for item in details if item]
+        if clean_details:
+            detail_text = "  " + _THEME.dim(" · ".join(clean_details))
+    plain_budget = max(width - len(_strip_ansi(prefix)) - len(_strip_ansi(detail_text)), 18)
+    print(f"{prefix}{_truncate(label, plain_budget)}{detail_text}")
+
+
+def _print_notice(message: str, *, kind: str = "info") -> None:
+    colors = {
+        "success": _THEME.success,
+        "warning": _THEME.warning,
+        "error": _THEME.error,
+        "info": _THEME.accent,
+    }
+    paint = colors.get(kind, _THEME.accent)
+    print(f"  {paint('•')} {_truncate(message, _content_width() - 4)}")
+
+
+def _print_kv(label: str, value: str) -> None:
+    width = _content_width()
+    prefix = f"{_THEME.dim(label + ':')} "
+    print(f"  {prefix}{_truncate(value, max(width - len(label) - 4, 16))}")
+
+
+def _print_command_bar() -> None:
+    commands_text = " /backend  /model  /clear  /help  /exit "
+    print(_THEME.dim("Commands") + _THEME.accent(commands_text))
+
+
+def _print_chat_header(backend: str) -> None:
+    _print_section("Chat", f"Backend: {backend}")
+    _print_command_bar()
+    print()
+
+
+def _print_help() -> None:
+    _print_section("Help", "Conversation commands")
+    commands_table = [
+        ("/backend", "switch the selected runtime"),
+        ("/model", "load a different managed model"),
+        ("/clear", "clear the terminal and redraw the chat header"),
+        ("/help", "show this command reference"),
+        ("/exit", "stop the OmniInfer service and leave the TUI"),
+    ]
+    for name, description in commands_table:
+        _print_kv(name, description)
+
+
+def _content_width() -> int:
+    size = shutil.get_terminal_size(fallback=(80, 24))
+    return max(_MIN_WIDTH, min(_MAX_WIDTH, size.columns))
+
+
+def _truncate(text: str, width: int) -> str:
+    if width <= 1:
+        return "…"
+    if len(text) <= width:
+        return text
+    return text[: max(width - 1, 1)] + "…"
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
 class _LoadingSpinner:
@@ -264,7 +412,7 @@ class _LoadingSpinner:
                 text = self._text
             frame = _LOADING_FRAMES[index % len(_LOADING_FRAMES)]
             index += 1
-            sys.stdout.write(f"\r  {frame} {text}\033[K")
+            sys.stdout.write(f"\r  {_THEME.accent(frame)} {_THEME.dim(text)}\033[K")
             sys.stdout.flush()
             self._stop_event.wait(_LOADING_INTERVAL)
 
