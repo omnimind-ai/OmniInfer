@@ -853,7 +853,7 @@ for i, (name, quant, size, url) in enumerate(models[:6]):
                 IFS='|' read -r _ dl_name dl_quant dl_size dl_url <<< "${dl_line}"
 
                 # Download
-                MODELS_DIR="${INSTALL_DIR}/models"
+                MODELS_DIR="${INSTALL_DIR}/.local/models"
                 mkdir -p "${MODELS_DIR}"
                 dl_filename=$(basename "${dl_url}")
                 MODEL_PATH="${MODELS_DIR}/${dl_filename}"

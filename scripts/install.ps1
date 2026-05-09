@@ -551,7 +551,7 @@ if ($Backend) {
         $binDir = Join-Path $runtimeDir "bin"
         New-Item -ItemType Directory -Force -Path $binDir | Out-Null
         New-Item -ItemType Directory -Force -Path (Join-Path $runtimeDir "logs") | Out-Null
-        New-Item -ItemType Directory -Force -Path (Join-Path $runtimeDir "models") | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir ".local\models") | Out-Null
 
         # Copy all files from the extracted archive to bin/
         # llama.cpp release zips may have files at root or in a subdirectory
@@ -717,8 +717,8 @@ if ($Model) {
                     $dlIdx = Select-Menu -Default 0 -Options $dlLabels
                     $selected = $modelList[$dlIdx]
 
-                    $modelsDir = Join-Path $InstallDir "models"
-                    if (-not (Test-Path $modelsDir)) { New-Item -ItemType Directory -Path $modelsDir | Out-Null }
+                    $modelsDir = Join-Path $InstallDir ".local\models"
+                    if (-not (Test-Path $modelsDir)) { New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null }
                     $dlFilename = Split-Path $selected.Url -Leaf
                     $ModelPath = Join-Path $modelsDir $dlFilename
 

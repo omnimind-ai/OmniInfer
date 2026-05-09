@@ -171,25 +171,27 @@ class CliParserTests(unittest.TestCase):
 
 
 class CommandHelperTests(unittest.TestCase):
-    def test_backend_models_dir_defaults_to_shared_local_models(self) -> None:
+    def test_backend_models_dir_defaults_to_shared_local_models_on_all_desktop_platforms(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            runtime_root = root / ".local" / "runtime" / "linux"
+            for platform_cls, runtime_name in [
+                (LinuxPlatform, "linux"),
+                (MacPlatform, "macos"),
+                (WindowsPlatform, "windows"),
+            ]:
+                platform = platform_cls()
+                backends = platform.build_backends(
+                    app_root=root,
+                    runtime_root=root / ".local" / "runtime" / runtime_name,
+                    backend_overrides=None,
+                )
 
-            backends = LinuxPlatform().build_backends(
-                app_root=root,
-                runtime_root=runtime_root,
-                backend_overrides=None,
-            )
-
-        self.assertEqual(
-            Path(backends["llama.cpp-linux-cuda"].models_dir or ""),
-            root / ".local" / "models",
-        )
-        self.assertEqual(
-            Path(backends["ik_llama.cpp-linux-cuda"].models_dir or ""),
-            root / ".local" / "models",
-        )
+                for backend in backends.values():
+                    self.assertEqual(
+                        Path(backend.models_dir or ""),
+                        root / ".local" / "models",
+                        f"{platform_cls.__name__} {backend.id}",
+                    )
 
     def test_discovers_models_in_local_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
