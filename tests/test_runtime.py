@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from service_core import commands
+from service_core import commands, tui
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
@@ -353,6 +353,50 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(output, "answer")
         self.assertEqual(buffer, "")
         self.assertTrue(visible)
+
+    def test_tui_chat_prompt_records_readline_history(self) -> None:
+        class FakeReadline:
+            def __init__(self) -> None:
+                self.items: list[str] = []
+
+            def clear_history(self) -> None:
+                self.items.clear()
+
+            def add_history(self, value: str) -> None:
+                self.items.append(value)
+
+        fake = FakeReadline()
+        with (
+            patch("service_core.tui._readline", fake),
+            patch("service_core.tui._CHAT_HISTORY", []),
+            patch("builtins.input", return_value="你好啊你是谁"),
+        ):
+            result = tui._prompt("You", history=True)
+
+        self.assertEqual(result, "你好啊你是谁")
+        self.assertEqual(fake.items, ["你好啊你是谁"])
+
+    def test_tui_menu_prompt_does_not_record_readline_history(self) -> None:
+        class FakeReadline:
+            def __init__(self) -> None:
+                self.items: list[str] = []
+
+            def clear_history(self) -> None:
+                self.items.clear()
+
+            def add_history(self, value: str) -> None:
+                self.items.append(value)
+
+        fake = FakeReadline()
+        with (
+            patch("service_core.tui._readline", fake),
+            patch("service_core.tui._CHAT_HISTORY", ["previous chat"]),
+            patch("builtins.input", return_value=""),
+        ):
+            result = tui._prompt("Select backend", default="1")
+
+        self.assertEqual(result, "1")
+        self.assertEqual(fake.items, [])
 
 
 # ---------------------------------------------------------------------------

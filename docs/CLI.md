@@ -290,6 +290,7 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - The TUI auto-discovers models from the shared OmniInfer-managed `.local/models` directory. When you enter a model file path manually, the TUI creates a model subdirectory under `.local/models` and places the symlink inside that directory so the model appears in later TUI runs.
 - After a successful model load, the TUI stores the selected backend, model path, optional `mmproj`, and optional `ctx-size` under `.local/config/state.json`; the next TUI launch reloads them and enters chat directly when the model still exists.
 - The TUI chat commands are `/backend`, `/model`, `/clear`, `/help`, and `/exit`.
+- On terminals with readline support, the TUI chat prompt supports Unicode-aware editing and Up/Down input history.
 - The TUI suppresses a leading `<think>...</think>` block in streamed model output and shows only the visible answer text.
 - `load --config` without a path means "use the selected backend profile under `.local/config/backend_profiles/`".
 - Backend profile JSON files should only hold backend-native extra parameters. Keep model paths, prompts/messages, and images on the CLI.

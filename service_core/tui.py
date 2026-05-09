@@ -8,6 +8,11 @@ import threading
 from pathlib import Path
 from typing import Any
 
+try:
+    import readline as _readline
+except ImportError:  # pragma: no cover - platform dependent
+    _readline = None  # type: ignore[assignment]
+
 from service_core import commands
 
 _LOADING_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
@@ -51,6 +56,13 @@ class _Theme:
 
 
 _THEME = _Theme()
+_CHAT_HISTORY: list[str] = []
+
+if _readline is not None:
+    try:
+        _readline.set_history_length(200)
+    except (AttributeError, OSError):
+        pass
 
 
 def run_tui() -> int:
@@ -209,7 +221,7 @@ def _chat_loop(backend: str) -> None:
     current_backend = backend
     _print_chat_header(current_backend)
     while True:
-        message = _prompt(_THEME.role_user("You"))
+        message = _prompt(_THEME.role_user("You"), history=True)
         if not message:
             continue
         if message == "/exit":
@@ -435,10 +447,38 @@ def _consume_visible_text(buffer: str, visible_started: bool, final: bool = Fals
     return after, "", bool(after)
 
 
-def _prompt(label: str, default: str | None = None) -> str:
+def _prompt(label: str, default: str | None = None, *, history: bool = False) -> str:
     suffix = f" [{default}]" if default else ""
-    value = input(f"{label}{suffix}: ").strip()
-    return value or (default or "")
+    _load_readline_history(_CHAT_HISTORY if history else [])
+    try:
+        value = input(f"{label}{suffix}: ").strip()
+    finally:
+        if not history:
+            _load_readline_history([])
+    result = value or (default or "")
+    if history and result:
+        _remember_chat_input(result)
+    return result
+
+
+def _remember_chat_input(value: str) -> None:
+    if _CHAT_HISTORY and _CHAT_HISTORY[-1] == value:
+        _load_readline_history(_CHAT_HISTORY)
+        return
+    _CHAT_HISTORY.append(value)
+    del _CHAT_HISTORY[:-200]
+    _load_readline_history(_CHAT_HISTORY)
+
+
+def _load_readline_history(items: list[str]) -> None:
+    if _readline is None:
+        return
+    try:
+        _readline.clear_history()
+        for item in items:
+            _readline.add_history(item)
+    except (AttributeError, OSError):
+        return
 
 
 def _parse_choice(value: str, count: int) -> int | None:
