@@ -4,3 +4,8 @@
 -keep class com.omniinfer.server.OmniInferBridge { *; }
 -keep class com.omniinfer.server.OmniInferServer { *; }
 -keep class com.omniinfer.server.OmniInferStreamCallback { *; }
+
+# LiteRtLmBackendFactory is accessed via reflection in LiteRtLmBackendSupport
+# (Class.forName + getMethod). Preserve class and method names so the
+# reflective create() call works after R8 obfuscation.
+-keep class com.omniinfer.server.LiteRtLmBackendFactory { *; }
