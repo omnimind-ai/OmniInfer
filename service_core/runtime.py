@@ -517,7 +517,7 @@ class RuntimeManager:
 
         logger.info("Backend %s started (PID %d), waiting for health check on port %d...", backend.id, proc.pid, launch.port)
         if on_progress:
-            on_progress({"type": "status", "message": f"Starting backend {backend.id}..."})
+            on_progress({"type": "status", "message": f"Starting backend {backend.id} and loading model..."})
         _health_start = time.perf_counter()
         if on_progress:
             ready = wait_http_ready_with_progress(
@@ -787,7 +787,11 @@ class RuntimeManager:
             preferred_backend = self._get_backend(requested_backend_id) if requested_backend_id else self._get_backend()
             if ctx_size is not None and not preferred_backend.supports_ctx_size:
                 raise ValueError(f"{preferred_backend.id} does not support ctx_size overrides")
+            if on_progress:
+                on_progress({"type": "status", "message": "Resolving model files..."})
             model_path, auto_mmproj_path = self._resolve_model_path(preferred_backend, model)
+            if on_progress:
+                on_progress({"type": "status", "message": "Checking model artifact..."})
             self._ensure_supported_model_artifact(preferred_backend, model_path)
             mmproj_path = self._resolve_mmproj_path(
                 preferred_backend,
@@ -800,6 +804,8 @@ class RuntimeManager:
             elif preferred_backend.runtime_mode == "embedded":
                 resolved_backend_id = preferred_backend.id
             else:
+                if on_progress:
+                    on_progress({"type": "status", "message": "Selecting backend for this model..."})
                 try:
                     resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
                 except Exception:
@@ -842,6 +848,8 @@ class RuntimeManager:
                     and compare_current_launch_args == compare_wanted_launch_args
                 ):
                     current.request_defaults = effective_request_defaults
+                    if on_progress:
+                        on_progress({"type": "status", "message": "Reusing loaded backend."})
                     return current
 
             # Actually loading — log diagnostic info
@@ -857,7 +865,11 @@ class RuntimeManager:
             except Exception:
                 pass
 
+            if self.loaded_runtime and on_progress:
+                on_progress({"type": "status", "message": "Stopping previous backend..."})
             self._stop_runtime_locked()
+            if on_progress:
+                on_progress({"type": "status", "message": f"Loading model with {backend.id}..."})
             return self._start_runtime_locked(
                 backend,
                 model_path,

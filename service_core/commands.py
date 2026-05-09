@@ -294,10 +294,12 @@ def start_service_background() -> None:
     log_handle.close()
 
 
-def wait_for_service_ready(timeout_s: int) -> None:
+def wait_for_service_ready(timeout_s: int, progress: ProgressCallback | None = None) -> None:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if is_service_running():
+            if progress is not None:
+                progress({"type": "status", "message": "OmniInfer gateway ready."})
             return
         time.sleep(0.5)
     tail = ""
@@ -306,11 +308,20 @@ def wait_for_service_ready(timeout_s: int) -> None:
     raise SystemExit(f"failed to start local OmniInfer service in time\n{tail}")
 
 
-def ensure_service_running() -> None:
+def ensure_service_running(progress: ProgressCallback | None = None) -> None:
     if is_service_running():
+        if progress is not None:
+            progress({"type": "status", "message": "Connected to OmniInfer gateway."})
         return
+    if progress is not None:
+        progress({"type": "status", "message": "Starting OmniInfer gateway..."})
     start_service_background()
-    wait_for_service_ready(timeout_s=max(int(get_service_config().get("startup_timeout", 60)), 10))
+    if progress is not None:
+        progress({"type": "status", "message": "Waiting for OmniInfer gateway..."})
+    wait_for_service_ready(
+        timeout_s=max(int(get_service_config().get("startup_timeout", 60)), 10),
+        progress=progress,
+    )
 
 
 def shutdown_service(wait_timeout_s: float = 10.0) -> bool:
@@ -501,8 +512,12 @@ def load_model(
     progress: ProgressCallback | None = None,
     timeout: float = 600.0,
 ) -> tuple[dict[str, Any], AutoSelectResult]:
-    ensure_service_running()
+    ensure_service_running(progress=progress)
+    if progress is not None:
+        progress({"type": "status", "message": "Preparing model request..."})
     payload, backend_selection = build_model_load_payload(options)
+    if progress is not None:
+        progress({"type": "status", "message": "Sending model load request..."})
     response = stream_model_load(payload, progress=progress, timeout=timeout)
     if not isinstance(response, dict):
         raise SystemExit("Failed to load the model.")
