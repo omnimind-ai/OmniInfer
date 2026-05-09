@@ -9,7 +9,6 @@ import platform
 import re
 import subprocess
 import sys
-import tempfile
 import threading
 import textwrap
 import time
@@ -30,13 +29,12 @@ from service_core.backend_configs import (
     load_backend_profile,
     profile_path_for_backend,
 )
+from service_core.local_state import local_logs_dir
 from service_core.runtime import RuntimeManager
 from service_core.service import APP_ROOT, REPO_ROOT, load_app_config
 
 
-CLI_STATE_DIR = Path.home() / ".config" / "omniinfer"
-CLI_STATE_FILE = CLI_STATE_DIR / "cli_state.json"
-CLI_LOG_DIR = Path.home() / ".cache" / "omniinfer"
+CLI_LOG_DIR = local_logs_dir(Path(APP_ROOT))
 CLI_LOG_FILE = CLI_LOG_DIR / "gateway.log"
 
 _cli_port_override: int | None = None
@@ -119,25 +117,6 @@ def parse_boolish(value: str) -> bool:
     if low in {"0", "false", "no", "off", "disable", "disabled"}:
         return False
     raise SystemExit(f"invalid boolean value: {value!r}")
-
-
-def load_cli_state() -> dict[str, Any]:
-    if not CLI_STATE_FILE.is_file():
-        return {}
-    try:
-        with CLI_STATE_FILE.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def save_cli_state(payload: dict[str, Any]) -> None:
-    CLI_STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = CLI_STATE_FILE.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-    tmp.replace(CLI_STATE_FILE)
 
 
 def get_service_config() -> dict[str, Any]:
@@ -339,23 +318,12 @@ def ensure_service_running() -> None:
     wait_for_service_ready(timeout_s=max(int(get_service_config().get("startup_timeout", 60)), 10))
 
 
-def sync_selected_backend() -> str | None:
-    state = load_cli_state()
-    selected_backend = state.get("selected_backend")
-    if not selected_backend:
-        return None
-
-    status, payload, _ = request_json("GET", "/omni/state", timeout=10.0)
-    if isinstance(payload, dict) and payload.get("backend") == selected_backend:
-        return str(selected_backend)
-
-    request_json("POST", "/omni/backend/select", payload={"backend": selected_backend}, timeout=30.0)
-    return str(selected_backend)
-
-
 def ensure_service_and_selection() -> str | None:
     ensure_service_running()
-    return sync_selected_backend()
+    _status, payload, _ = request_json("GET", "/omni/state", timeout=10.0)
+    if isinstance(payload, dict) and payload.get("backend"):
+        return str(payload["backend"])
+    return None
 
 
 def format_bool(value: bool | None) -> str:
@@ -368,8 +336,6 @@ def format_bool(value: bool | None) -> str:
 
 def print_backend_list(scope: str = "all", json_output: bool = False) -> int:
     ensure_service_running()
-    state = load_cli_state()
-    saved_backend = state.get("selected_backend")
     _status, payload, _ = request_json("GET", f"/omni/backends?scope={scope}", timeout=10.0)
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows:
@@ -385,12 +351,11 @@ def print_backend_list(scope: str = "all", json_output: bool = False) -> int:
     print("Available backends")
     for item in rows:
         backend_id = str(item.get("id", ""))
-        marker = "* " if backend_id == saved_backend else "  "
-        runtime_available = "yes" if item.get("binary_exists") else "no"
         selected = "yes" if item.get("selected") else "no"
+        marker = "* " if selected == "yes" else "  "
+        runtime_available = "yes" if item.get("binary_exists") else "no"
         print(f"{marker}{backend_id}")
-        print(f"    Selected in CLI: {'yes' if backend_id == saved_backend else 'no'}")
-        print(f"    Active in service: {selected}")
+        print(f"    Selected: {selected}")
         print(f"    Runtime available: {runtime_available}")
     return 0
 
@@ -402,7 +367,6 @@ def select_backend(name: str) -> int:
     if name not in available_backends:
         raise SystemExit(f"Unsupported backend: {name}\nAvailable backends: {', '.join(available)}")
     _status, payload, _ = request_json("POST", "/omni/backend/select", payload={"backend": name}, timeout=30.0)
-    save_selected_backend_name(name)
     print(f"Selected backend: {name}")
     models_dir = payload.get("models_dir") if isinstance(payload, dict) else None
     if models_dir:
@@ -425,7 +389,6 @@ def print_status() -> int:
     print("CLI: ready")
     print("Local service: running")
     print(f"Selected backend: {selected_backend or 'none'}")
-    print(f"Active backend: {payload.get('backend') or 'unknown'}")
     print(f"Backend ready: {'yes' if payload.get('backend_ready') else 'no'}")
     print(f"Loaded model: {payload.get('model') or 'not loaded'}")
     print(f"Loaded mmproj: {payload.get('mmproj') or 'not loaded'}")
@@ -634,7 +597,6 @@ def require_selected_backend() -> str:
         )
     print(f"No backend selected. Auto-selecting: {recommended}")
     request_json("POST", "/omni/backend/select", payload={"backend": recommended}, timeout=30.0)
-    save_selected_backend_name(recommended)
     return str(recommended)
 
 
@@ -673,14 +635,6 @@ def resolve_backend_profile_arg(path_text: str | None, selected_backend: str | N
             f"but the current selected backend is {selected_backend}."
         )
     return profile
-
-
-def save_selected_backend_name(name: str | None) -> None:
-    if not name:
-        return
-    state = load_cli_state()
-    state["selected_backend"] = name
-    save_cli_state(state)
 
 
 def merge_backend_request_overrides(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -781,7 +735,6 @@ def print_model_load(args: argparse.Namespace) -> int:
 
     if not isinstance(response, dict):
         raise SystemExit("Failed to load the model.")
-    save_selected_backend_name(str(response.get("selected_backend") or selected_backend or ""))
     print("Model loaded")
     print(f"Backend: {response.get('selected_backend') or '-'}")
     print(f"Model: {response.get('selected_model') or '-'}")

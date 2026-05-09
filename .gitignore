@@ -27,6 +27,7 @@ QWEN.md
 /\.local/runtime
 /\.local/toolchains
 /\.local/logs
+/\.local/config
 /platform
 
 /tmp

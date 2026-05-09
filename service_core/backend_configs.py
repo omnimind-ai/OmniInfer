@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from service_core.backends import BackendSpec
+from service_core.local_state import backend_profile_dir
 from service_core.platforms.common import parse_extra_args
 
 logger = logging.getLogger("config")
 
 
 PROFILE_SCHEMA_VERSION = 2
-PROFILE_DIR = Path.home() / ".config" / "omniinfer" / "backend_profiles"
+PROFILE_DIR = backend_profile_dir()
 
 
 @dataclass

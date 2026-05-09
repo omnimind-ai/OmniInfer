@@ -12,6 +12,7 @@ from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
 from service_core.backends.base import BackendSpec
+from service_core.local_state import load_selected_backend, save_selected_backend, state_file
 from service_core.runtime import RuntimeManager
 
 
@@ -90,6 +91,41 @@ class RuntimeRootResolutionTests(unittest.TestCase):
                 app_root=self.app_root,
             )
             self.assertEqual(resolved.name, expected_name, f"{platform_cls.__name__} folder")
+
+
+# ---------------------------------------------------------------------------
+# Local state
+# ---------------------------------------------------------------------------
+
+
+class LocalStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.app_root = Path(self.temp_dir.name)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_state_file_lives_under_project_local_config(self) -> None:
+        self.assertEqual(state_file(self.app_root), self.app_root / ".local" / "config" / "cli_state.json")
+
+    def test_selected_backend_round_trips_through_local_state(self) -> None:
+        save_selected_backend("ik_llama.cpp-linux-cuda", self.app_root)
+        self.assertEqual(load_selected_backend(self.app_root), "ik_llama.cpp-linux-cuda")
+
+    def test_runtime_manager_prefers_persisted_backend(self) -> None:
+        save_selected_backend("ik_llama.cpp-linux-cuda", self.app_root)
+
+        manager = RuntimeManager(
+            repo_root=str(self.app_root),
+            app_root=str(self.app_root),
+            backend_host="127.0.0.1",
+            backend_port=0,
+            startup_timeout_s=10,
+            default_backend_id="llama.cpp-linux",
+        )
+
+        self.assertEqual(manager.snapshot()["backend"], "ik_llama.cpp-linux-cuda")
 
 
 # ---------------------------------------------------------------------------

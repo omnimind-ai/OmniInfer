@@ -91,7 +91,7 @@ Android:
 ./omniinfer backend list
 ```
 
-The human-readable output shows the CLI selection, service selection, and runtime availability.
+The human-readable output shows the selected backend and runtime availability.
 Use `./omniinfer backend list --json` when automation needs full backend metadata such as capabilities and descriptions.
 
 ### 2. Select a backend
@@ -117,7 +117,7 @@ Examples:
 
 When you select a desktop backend, OmniInfer also creates a backend-specific JSON config template under:
 
-- `~/.config/omniinfer/backend_profiles/<backend>.json`
+- `.local/config/backend_profiles/<backend>.json`
 
 This file is the advanced path for backend-native parameters only.
 Keep basic user inputs such as `-m/--model`, `-mm/--mmproj`, `--message`, and `--image` on the CLI.
@@ -279,9 +279,9 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 ## Useful Notes
 
-- `select` stores your current backend choice for later runs.
+- `select` stores your current backend choice for later runs under `.local/config/cli_state.json`.
 - `select` also creates a backend-specific config JSON template for advanced backend-native parameters.
-- `--config` without a path means "use the selected backend profile under `~/.config/omniinfer/backend_profiles/`".
+- `--config` without a path means "use the selected backend profile under `.local/config/backend_profiles/`".
 - Backend profile JSON files should only hold backend-native extra parameters. Keep model paths, prompts/messages, and images on the CLI.
 - `model load` stores the current model path, optional `mmproj`, optional `ctx-size`, and any request defaults loaded from backend-native extra args.
 - `llama.cpp-*` backends accept either a model file such as `.gguf` or a model directory. Passing a model directory is the simplest cross-backend habit.
