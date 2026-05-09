@@ -388,16 +388,10 @@ def print_backend_list(scope: str = "all", json_output: bool = False) -> int:
         marker = "* " if backend_id == saved_backend else "  "
         runtime_available = "yes" if item.get("binary_exists") else "no"
         selected = "yes" if item.get("selected") else "no"
-        capabilities = ", ".join(item.get("capabilities") or [])
         print(f"{marker}{backend_id}")
         print(f"    Selected in CLI: {'yes' if backend_id == saved_backend else 'no'}")
         print(f"    Active in service: {selected}")
         print(f"    Runtime available: {runtime_available}")
-        if capabilities:
-            print(f"    Capabilities: {capabilities}")
-        description = str(item.get('description', '')).strip()
-        if description:
-            print(f"    Description: {description}")
     return 0
 
 

@@ -91,6 +91,9 @@ Android:
 ./omniinfer backend list
 ```
 
+The human-readable output shows the CLI selection, service selection, and runtime availability.
+Use `./omniinfer backend list --json` when automation needs full backend metadata such as capabilities and descriptions.
+
 ### 2. Select a backend
 
 Always pick a backend from `backend list` on your current device.
