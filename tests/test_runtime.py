@@ -12,6 +12,7 @@ from service_core import commands
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
+from service_core.platforms.common import display_path_reference
 from service_core.backends.base import BackendSpec
 from service_core.cli import build_parser
 from service_core.local_state import (
@@ -241,12 +242,40 @@ class CommandHelperTests(unittest.TestCase):
                 linked = commands.link_model_into_managed_models(external)
                 rows = commands.discover_models_in_roots([commands.managed_models_dir()])
 
-            self.assertEqual(linked.parent, root / ".local" / "models")
+            self.assertEqual(linked.parent, root / ".local" / "models" / "downloads")
             self.assertTrue(linked.is_symlink())
             self.assertEqual(linked.resolve(), external.resolve())
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0].path, linked)
-            self.assertEqual(rows[0].label, "model.gguf")
+            self.assertEqual(rows[0].label, "downloads/model.gguf")
+
+    def test_model_reference_preserves_managed_symlink_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external = root / "downloads" / "model.gguf"
+            external.parent.mkdir()
+            external.write_bytes(b"gguf")
+
+            with patch("service_core.commands.APP_ROOT", root):
+                linked = commands.link_model_into_managed_models(external)
+                resolved = commands.resolve_model_reference(str(linked))
+
+            self.assertEqual(resolved, linked)
+            self.assertEqual(resolved.resolve(), external.resolve())
+
+    def test_display_path_reference_preserves_symlink_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external = root / "downloads" / "model.gguf"
+            managed = root / ".local" / "models" / "downloads" / "model.gguf"
+            external.parent.mkdir()
+            managed.parent.mkdir(parents=True)
+            external.write_bytes(b"gguf")
+            managed.symlink_to(external)
+
+            ref = display_path_reference(str(managed), str(root / ".local" / "models"))
+
+            self.assertEqual(ref, "downloads/model.gguf")
 
     def test_remembered_model_load_options_require_existing_model(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

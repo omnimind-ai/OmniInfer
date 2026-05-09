@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -377,17 +378,21 @@ def require_selected_backend() -> AutoSelectResult:
 
 
 def resolve_model_reference(path_text: str) -> Path:
-    path = Path(path_text).expanduser().resolve()
+    path = _absolute_existing_path(path_text)
     if not path.exists():
         raise SystemExit(f"Model path does not exist: {path}")
     return path
 
 
 def resolve_existing_path(path_text: str, label: str) -> Path:
-    path = Path(path_text).expanduser().resolve()
+    path = _absolute_existing_path(path_text)
     if not path.exists():
         raise SystemExit(f"{label} does not exist: {path}")
     return path
+
+
+def _absolute_existing_path(path_text: str) -> Path:
+    return Path(os.path.abspath(os.path.expanduser(path_text)))
 
 
 def resolve_backend_profile_arg(path_text: str | None, selected_backend_id: str | None) -> BackendProfile | None:
@@ -702,29 +707,31 @@ def managed_models_dir() -> Path:
 
 
 def link_model_into_managed_models(model_path: Path) -> Path:
-    source = Path(model_path).expanduser().resolve()
+    requested = Path(os.path.abspath(os.path.expanduser(str(model_path))))
+    source = requested.resolve() if requested.is_symlink() else requested
     if not source.exists():
         raise FileNotFoundError(f"model path does not exist: {source}")
     if not source.is_file():
         return source
 
     target_root = managed_models_dir().resolve()
-    try:
-        source.relative_to(target_root)
-        return source
-    except ValueError:
-        pass
+    if requested.parent != target_root:
+        try:
+            requested.relative_to(target_root)
+            return requested
+        except ValueError:
+            pass
 
     target_root.mkdir(parents=True, exist_ok=True)
-    target = target_root / source.name
+    directory_name = _managed_model_directory_name(source)
+    target_dir = target_root / directory_name
+    target = target_dir / source.name
     if _link_points_to(target, source):
         return target
     if target.exists() or target.is_symlink():
-        stem = source.stem
-        suffix = source.suffix
         index = 2
         while True:
-            candidate = target_root / f"{stem}-{index}{suffix}"
+            candidate = target_root / f"{directory_name}-{index}" / source.name
             if _link_points_to(candidate, source):
                 return candidate
             if not candidate.exists() and not candidate.is_symlink():
@@ -732,6 +739,7 @@ def link_model_into_managed_models(model_path: Path) -> Path:
                 break
             index += 1
 
+    target.parent.mkdir(parents=True, exist_ok=True)
     os.symlink(source, target)
     return target
 
@@ -744,6 +752,8 @@ def discover_models_in_roots(roots: list[Path]) -> list[LocalModel]:
             continue
         for candidate in root.rglob("*"):
             if not candidate.is_file() or candidate.suffix.lower() not in MODEL_SUFFIXES:
+                continue
+            if _is_flat_managed_model(root, candidate):
                 continue
             resolved = candidate.resolve()
             if resolved in seen:
@@ -767,6 +777,28 @@ def _model_label(root: Path, path: Path) -> str:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
+
+
+def _managed_model_directory_name(source: Path) -> str:
+    parent_name = _safe_path_component(source.parent.name)
+    if parent_name:
+        return parent_name
+    stem_name = _safe_path_component(source.stem)
+    return stem_name or "model"
+
+
+def _safe_path_component(value: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
+    return text.strip(" .-_")
+
+
+def _is_flat_managed_model(root: Path, candidate: Path) -> bool:
+    try:
+        if root.resolve() != managed_models_dir().resolve():
+            return False
+    except OSError:
+        return False
+    return candidate.parent.resolve() == root.resolve()
 
 
 def _link_points_to(path: Path, source: Path) -> bool:

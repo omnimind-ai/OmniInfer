@@ -324,10 +324,10 @@ class RuntimeManager:
             if not backend.models_dir:
                 raise ValueError("relative model path requires a configured models_dir or an absolute model path")
             path = Path(backend.models_dir) / path
-        resolved = path.resolve()
-        if backend.model_artifact == "file" and resolved.is_dir():
-            return discover_llama_cpp_model_artifacts(resolved)
-        return str(resolved), None
+        absolute = Path(os.path.abspath(str(path)))
+        if backend.model_artifact == "file" and absolute.is_dir():
+            return discover_llama_cpp_model_artifacts(absolute)
+        return str(absolute), None
 
     def _ensure_supported_model_artifact(self, backend: BackendSpec, model_path: str) -> None:
         target = Path(model_path)
@@ -363,7 +363,7 @@ class RuntimeManager:
                 if not backend.models_dir:
                     raise ValueError("relative mmproj path requires a configured models_dir or an absolute mmproj path")
                 path = Path(backend.models_dir) / path
-            resolved = str(path.resolve())
+            resolved = str(Path(os.path.abspath(str(path))))
             if not Path(resolved).is_file():
                 raise FileNotFoundError(f"mmproj file not found: {resolved}")
             return resolved

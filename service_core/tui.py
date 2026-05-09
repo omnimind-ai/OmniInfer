@@ -85,7 +85,7 @@ def _choose_model() -> Path:
 def _prompt_model_path() -> Path:
     while True:
         text = _prompt("Model path")
-        path = Path(text).expanduser().resolve()
+        path = Path(os.path.abspath(os.path.expanduser(text)))
         if path.exists():
             try:
                 linked = commands.link_model_into_managed_models(path)
