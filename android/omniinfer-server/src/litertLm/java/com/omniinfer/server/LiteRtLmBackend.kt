@@ -14,9 +14,14 @@ import com.google.ai.edge.litertlm.ExperimentalApi
 import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.OpenApiTool
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ToolProvider
+import com.google.ai.edge.litertlm.ToolCall
+import com.google.ai.edge.litertlm.tool
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -68,6 +73,7 @@ internal class LiteRtLmBackend private constructor(
                 Log.i(TAG, "generate_parsed messages=${messages.size}")
 
                 val sampler = samplerConfig(request)
+                val toolConfig = toolConfig(request)
                 Log.i(
                     TAG,
                     "sampler_config source=${sampler.source} top_k=${sampler.topK ?: ""} " +
@@ -77,8 +83,10 @@ internal class LiteRtLmBackend private constructor(
                 Log.i(TAG, "conversation_create_start initialMessages=${(messages.size - 1).coerceAtLeast(0)}")
                 conversation = engine.createConversation(
                     ConversationConfig(
-                        initialMessages = messages.dropLast(1),
+                        initialMessages = toolConfig.initialMessages(messages.dropLast(1)),
+                        tools = toolConfig.tools,
                         samplerConfig = sampler.config,
+                        automaticToolCalling = false,
                     )
                 )
                 activeConversation = conversation
@@ -96,7 +104,7 @@ internal class LiteRtLmBackend private constructor(
                     maxTokens = maxTokens,
                     callback = callback,
                 )
-                Log.i(TAG, "send_message_done outputChars=${result.length}")
+                Log.i(TAG, "send_message_done outputChars=${result.length} tools=${toolConfig.tools.size} choice=${toolConfig.choice}")
                 val generateMs = elapsedMs(sendStartNs)
                 val totalMs = elapsedMs(totalStartNs)
                 val benchmarkInfo = runCatching { conversation.getBenchmarkInfo() }.getOrNull()
@@ -161,8 +169,13 @@ internal class LiteRtLmBackend private constructor(
                 add(
                     when (role) {
                         "system" -> Message.system(contents)
-                        "assistant", "model" -> Message.model(contents)
-                        "tool" -> Message.tool(contents)
+                        "assistant", "model" -> {
+                            Message.model(
+                                contents = contents,
+                                toolCalls = parseToolCalls(obj.optJSONArray("tool_calls")),
+                            )
+                        }
+                        "tool" -> Message.user(Contents.of(toolResponseText(obj, text)))
                         else -> Message.user(contents)
                     }
                 )
@@ -196,6 +209,113 @@ internal class LiteRtLmBackend private constructor(
             cursor = markerIndex + IMAGE_MARKER.length
         }
         return Contents.of(parts)
+    }
+
+    private data class EffectiveToolConfig(
+        val tools: List<ToolProvider>,
+        val choice: String?,
+        val forcedFunctionName: String?,
+    ) {
+        fun initialMessages(messages: List<Message>): List<Message> {
+            if (tools.isEmpty()) return messages
+            val instruction = when {
+                forcedFunctionName != null ->
+                    "You must call the function named \"$forcedFunctionName\" when answering the next user message. Do not answer directly."
+                choice == "required" ->
+                    "You must call one of the available tools when answering the next user message. Do not answer directly."
+                else -> null
+            }
+            return if (instruction == null) messages else listOf(Message.system(instruction)) + messages
+        }
+    }
+
+    private class HttpOpenApiTool(private val definition: JSONObject) : OpenApiTool {
+        override fun getToolDescriptionJsonString(): String = definition.toString()
+
+        override fun execute(paramsJsonString: String): String {
+            return JSONObject()
+                .put("error", "OmniInfer HTTP tool calls are client-executed. Re-submit a tool role message with the tool result.")
+                .put("arguments", JSONObject(paramsJsonString))
+                .toString()
+        }
+    }
+
+    private fun toolConfig(request: JSONObject): EffectiveToolConfig {
+        val toolsArray = request.optJSONArray("tools")
+        val rawChoice = request.optString("tool_choice", "").takeIf { it.isNotBlank() }
+        if (toolsArray == null || rawChoice == "none") {
+            return EffectiveToolConfig(emptyList(), rawChoice, null)
+        }
+
+        val forcedFunctionName = rawChoice
+            ?.takeIf { it.startsWith("function:") }
+            ?.removePrefix("function:")
+            ?.takeIf { it.isNotBlank() }
+        val providers = mutableListOf<ToolProvider>()
+        for (i in 0 until toolsArray.length()) {
+            val toolObject = toolsArray.optJSONObject(i) ?: continue
+            if (toolObject.optString("type", "function") != "function") continue
+            val function = toolObject.optJSONObject("function") ?: continue
+            val name = function.optString("name", "")
+            if (name.isBlank()) continue
+            if (forcedFunctionName != null && name != forcedFunctionName) continue
+            providers.add(tool(HttpOpenApiTool(function)))
+        }
+        return EffectiveToolConfig(
+            tools = providers,
+            choice = rawChoice ?: if (providers.isNotEmpty()) "auto" else null,
+            forcedFunctionName = forcedFunctionName,
+        )
+    }
+
+    private fun parseToolCalls(array: JSONArray?): List<ToolCall> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (i in 0 until array.length()) {
+                val obj = array.optJSONObject(i) ?: continue
+                val function = obj.optJSONObject("function") ?: continue
+                val name = function.optString("name", "")
+                if (name.isBlank()) continue
+                add(ToolCall(name, jsonObjectToMap(parseArguments(function.opt("arguments")))))
+            }
+        }
+    }
+
+    private fun parseArguments(value: Any?): JSONObject {
+        return when (value) {
+            is JSONObject -> value
+            is String -> runCatching { JSONTokener(value).nextValue() as? JSONObject }.getOrNull() ?: JSONObject()
+            else -> JSONObject()
+        }
+    }
+
+    private fun jsonObjectToMap(obj: JSONObject): Map<String, Any?> {
+        return buildMap {
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                put(key, jsonValueToKotlin(obj.opt(key)))
+            }
+        }
+    }
+
+    private fun jsonValueToKotlin(value: Any?): Any? {
+        return when (value) {
+            null, JSONObject.NULL -> null
+            is JSONObject -> jsonObjectToMap(value)
+            is JSONArray -> List(value.length()) { index -> jsonValueToKotlin(value.opt(index)) }
+            else -> value
+        }
+    }
+
+    private fun toolResponseText(obj: JSONObject, fallbackText: String): String {
+        val name = obj.optString("name", "")
+        val content = obj.optString("content", fallbackText)
+        return if (name.isBlank()) {
+            "Tool result: $content"
+        } else {
+            "Tool result for function \"$name\": $content"
+        }
     }
 
     private data class EffectiveSamplerConfig(
@@ -249,11 +369,15 @@ internal class LiteRtLmBackend private constructor(
             message,
             object : MessageCallback {
                 override fun onMessage(message: Message) {
-                    val chunk = message.toString()
+                    val chunk = if (message.toolCalls.isNotEmpty()) {
+                        formatToolCallsJson(message.toolCalls)
+                    } else {
+                        message.toString()
+                    }
                     if (chunk.isNotEmpty()) {
                         synchronized(output) { output.append(chunk) }
-                        callback?.onToken(chunk)
-                        if (chunkCount.incrementAndGet() >= maxTokens) {
+                        if (message.toolCalls.isEmpty()) callback?.onToken(chunk)
+                        if (message.toolCalls.isEmpty() && chunkCount.incrementAndGet() >= maxTokens) {
                             Thread { runCatching { conversation.cancelProcess() } }.start()
                         }
                     }
@@ -279,6 +403,61 @@ internal class LiteRtLmBackend private constructor(
         }
         errorRef.get()?.let { throw it }
         return synchronized(output) { output.toString() }
+    }
+
+    private fun formatToolCallsJson(toolCalls: List<ToolCall>): String {
+        return JSONObject()
+            .put(
+                "tool_calls",
+                JSONArray().also { array ->
+                    toolCalls.forEachIndexed { index, call ->
+                        array.put(
+                            JSONObject()
+                                .put("id", "call_$index")
+                                .put("type", "function")
+                                .put(
+                                    "function",
+                                    JSONObject()
+                                        .put("name", call.name)
+                                        .put("arguments", jsonObjectFromMap(call.arguments))
+                                )
+                        )
+                    }
+                },
+            )
+            .toString()
+    }
+
+    private fun jsonObjectFromMap(map: Map<String, Any?>): JSONObject {
+        return JSONObject().also { obj ->
+            map.forEach { (key, value) -> obj.put(key, toJsonCompatibleValue(value)) }
+        }
+    }
+
+    private fun toJsonCompatibleValue(value: Any?): Any {
+        return when (value) {
+            null -> JSONObject.NULL
+            is Map<*, *> -> JSONObject().also { obj ->
+                value.forEach { (key, nestedValue) ->
+                    if (key != null) obj.put(key.toString(), toJsonCompatibleValue(nestedValue))
+                }
+            }
+            is List<*> -> JSONArray().also { array ->
+                value.forEach { item -> array.put(toJsonCompatibleValue(item)) }
+            }
+            is Number -> jsonNumber(value)
+            is Boolean, is String -> value
+            else -> value.toString()
+        }
+    }
+
+    private fun jsonNumber(value: Number): Any {
+        val text = value.toString()
+        return if (text.contains('.') || text.contains('e', ignoreCase = true)) {
+            text.toDoubleOrNull() ?: text
+        } else {
+            text.toLongOrNull() ?: text.toDoubleOrNull() ?: text
+        }
     }
 
     private fun buildDiagnostics(

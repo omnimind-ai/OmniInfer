@@ -110,9 +110,19 @@ Important LiteRT-LM details:
 - The host app does not need to declare `com.google.ai.edge.litertlm:litertlm-android`; `:omniinfer-server` owns that dependency when `omniinfer.backend.litert_lm=true`.
 - Some `.litertlm` files do not store max-context metadata. Always pass explicit `nCtx` for long-context use.
 - OmniInfer uses LiteRT-LM `0.11.0+` for Gemma 4 multimodal support. Older LiteRT-LM `0.10.2` cannot initialize Gemma 4 E2B's three-signature vision encoder.
+- OpenAI-compatible HTTP tool calling is supported through LiteRT-LM's official `ConversationConfig.tools` / `OpenApiTool` path. OmniInfer returns structured `choices[0].message.tool_calls`; it does not execute app tools on the server side.
 - For multimodal, OmniInfer passes images as `Content.ImageBytes(...)` and creates the app cache directory before `Engine.initialize()`.
 - Speculative decoding is a load-time engine setting. Use `extraConfig["enable_speculative_decoding"] = "true"` before model load; changing it per request requires unloading/reloading the LiteRT-LM engine.
 - Do not use LiteRT-LM's public `benchmark()` helper to validate SD-on behavior in `0.11.0`; that helper uses `nativeCreateBenchmark(...)`, whose public Kotlin/JNI signature does not pass the SD flag. Normal chat generation uses `Engine.initialize()` and `Conversation.getBenchmarkInfo()`, which does report the SD-on path.
+
+LiteRT-LM tool calling notes:
+
+- `tool_choice = "none"` disables tools for that request.
+- `tool_choice = "auto"` passes all provided tools to LiteRT-LM.
+- `tool_choice = "required"` passes all tools and adds a lightweight instruction that the model must call a tool.
+- OpenAI object form, for example `{"type":"function","function":{"name":"product"}}`, is accepted. OmniInfer passes only that function to LiteRT-LM and adds a lightweight instruction that the model must call it.
+- Tool-result follow-up requests should include the previous assistant `tool_calls` message plus a `role = "tool"` message. OmniInfer converts the tool result into LiteRT-LM-readable context before continuing generation.
+- Required/forced behavior still depends on the model obeying the tool instruction. For hard guarantees, callers should validate that `finish_reason == "tool_calls"` and retry or handle fallback when needed.
 
 Speculative decoding GPU load example:
 

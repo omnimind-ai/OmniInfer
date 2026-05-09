@@ -179,7 +179,7 @@ class OmniInferService : Service() {
 
         // Tools support.
         val toolsJson = req["tools"]?.jsonArray?.toString()
-        val toolChoice = req["tool_choice"]?.jsonPrimitive?.contentOrNull
+        val toolChoice = normalizeToolChoice(req["tool_choice"])
 
         // Build normalized messages and extract all images in one pass.
         // Image positions are preserved as <image> placeholders in the content text.
@@ -559,6 +559,28 @@ class OmniInferService : Service() {
                     put("finish_reason", JsonNull)
                 }
             }
+        }
+    }
+
+    private fun normalizeToolChoice(element: JsonElement?): String? {
+        return when (element) {
+            null, JsonNull -> null
+            is JsonPrimitive -> element.contentOrNull
+            is JsonObject -> {
+                val type = element["type"]?.jsonPrimitive?.contentOrNull
+                val functionName = element["function"]
+                    ?.jsonObject
+                    ?.get("name")
+                    ?.jsonPrimitive
+                    ?.contentOrNull
+                when {
+                    type == "function" && !functionName.isNullOrBlank() -> "function:$functionName"
+                    type == "none" -> "none"
+                    type == "required" -> "required"
+                    else -> "auto"
+                }
+            }
+            else -> null
         }
     }
 
