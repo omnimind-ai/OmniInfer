@@ -29,29 +29,50 @@ def backend_profile_dir(app_root: Path | None = None) -> Path:
 
 
 def state_file(app_root: Path | None = None) -> Path:
+    return local_config_dir(app_root) / "state.json"
+
+
+def legacy_state_file(app_root: Path | None = None) -> Path:
     return local_config_dir(app_root) / "cli_state.json"
 
 
 def load_state(app_root: Path | None = None) -> dict[str, Any]:
     path = state_file(app_root)
-    if not path.is_file():
-        return {}
+    legacy_path = legacy_state_file(app_root)
+    source = path
+    should_migrate = False
+    if not source.is_file():
+        if not legacy_path.is_file():
+            return {}
+        source = legacy_path
+        should_migrate = True
     try:
-        with path.open("r", encoding="utf-8") as handle:
+        with source.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return {}
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    if should_migrate:
+        save_state(payload, app_root)
+    return payload
 
 
 def save_state(payload: dict[str, Any], app_root: Path | None = None) -> None:
     target = state_file(app_root)
+    legacy = legacy_state_file(app_root)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-    tmp.replace(target)
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        tmp.replace(target)
+        if legacy.is_file():
+            legacy.unlink()
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def load_selected_backend(app_root: Path | None = None) -> str | None:

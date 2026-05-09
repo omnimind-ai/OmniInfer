@@ -14,7 +14,7 @@ from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
 from service_core.backends.base import BackendSpec
 from service_core.cli import build_parser
-from service_core.local_state import load_selected_backend, save_selected_backend, state_file
+from service_core.local_state import legacy_state_file, load_selected_backend, save_selected_backend, state_file
 from service_core.runtime import RuntimeManager
 
 
@@ -109,11 +109,20 @@ class LocalStateTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_state_file_lives_under_project_local_config(self) -> None:
-        self.assertEqual(state_file(self.app_root), self.app_root / ".local" / "config" / "cli_state.json")
+        self.assertEqual(state_file(self.app_root), self.app_root / ".local" / "config" / "state.json")
 
     def test_selected_backend_round_trips_through_local_state(self) -> None:
         save_selected_backend("ik_llama.cpp-linux-cuda", self.app_root)
         self.assertEqual(load_selected_backend(self.app_root), "ik_llama.cpp-linux-cuda")
+
+    def test_legacy_cli_state_migrates_to_shared_state_file(self) -> None:
+        legacy = legacy_state_file(self.app_root)
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text('{"selected_backend": "llama.cpp-linux-cuda"}\n', encoding="utf-8")
+
+        self.assertEqual(load_selected_backend(self.app_root), "llama.cpp-linux-cuda")
+        self.assertTrue(state_file(self.app_root).is_file())
+        self.assertFalse(legacy.is_file())
 
     def test_runtime_manager_prefers_persisted_backend(self) -> None:
         save_selected_backend("ik_llama.cpp-linux-cuda", self.app_root)

@@ -25,7 +25,7 @@ from service_core.backend_configs import (
     load_backend_profile,
     profile_path_for_backend,
 )
-from service_core.local_state import local_dir, local_logs_dir
+from service_core.local_state import local_dir, local_logs_dir, save_selected_backend
 from service_core.runtime import RuntimeManager
 from service_core.service import APP_ROOT, REPO_ROOT, load_app_config
 
@@ -339,6 +339,7 @@ def select_backend(name: str) -> BackendSelectResult:
     if name not in available_backends:
         raise SystemExit(f"Unsupported backend: {name}\nAvailable backends: {', '.join(available)}")
     _status, payload, _ = request_json("POST", "/omni/backend/select", payload={"backend": name}, timeout=30.0)
+    save_selected_backend(name, Path(APP_ROOT))
     models_dir = payload.get("models_dir") if isinstance(payload, dict) else None
     profile_path, created = ensure_backend_profile_template(available_backends[name])
     return BackendSelectResult(
@@ -363,8 +364,10 @@ def require_selected_backend() -> AutoSelectResult:
             "  omniinfer backend list\n"
             "  omniinfer backend select <backend>"
         )
-    request_json("POST", "/omni/backend/select", payload={"backend": str(recommended)}, timeout=30.0)
-    return AutoSelectResult(backend=str(recommended), auto_selected=True)
+    backend_id = str(recommended)
+    request_json("POST", "/omni/backend/select", payload={"backend": backend_id}, timeout=30.0)
+    save_selected_backend(backend_id, Path(APP_ROOT))
+    return AutoSelectResult(backend=backend_id, auto_selected=True)
 
 
 def resolve_model_reference(path_text: str) -> Path:

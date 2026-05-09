@@ -284,7 +284,7 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 ## Useful Notes
 
-- `backend select` stores your current backend choice for later runs under `.local/config/cli_state.json`.
+- `backend select` stores your current backend choice for later CLI and TUI runs under `.local/config/state.json`.
 - `backend select` also creates a backend-specific config JSON template for advanced backend-native parameters.
 - Running `./omniinfer` with no arguments opens the TUI only in an interactive terminal; non-interactive usage prints CLI help instead of blocking for input.
 - The TUI auto-discovers models only from OmniInfer-managed `.local` model directories. It does not scan user directories such as `~/models`; use manual path input for those models.
