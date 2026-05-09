@@ -25,7 +25,13 @@ from service_core.backend_configs import (
     load_backend_profile,
     profile_path_for_backend,
 )
-from service_core.local_state import local_dir, local_logs_dir, save_selected_backend
+from service_core.local_state import (
+    load_selected_model,
+    local_dir,
+    local_logs_dir,
+    save_selected_backend,
+    save_selected_model,
+)
 from service_core.runtime import RuntimeManager
 from service_core.service import APP_ROOT, REPO_ROOT, load_app_config
 
@@ -483,7 +489,33 @@ def load_model(
     response = stream_model_load(payload, progress=progress, timeout=timeout)
     if not isinstance(response, dict):
         raise SystemExit("Failed to load the model.")
+    selected_backend = response.get("selected_backend")
+    if isinstance(selected_backend, str) and selected_backend.strip():
+        save_selected_backend(selected_backend, Path(APP_ROOT))
+    save_selected_model(
+        str(payload["model"]),
+        Path(APP_ROOT),
+        mmproj=str(payload["mmproj"]) if payload.get("mmproj") else None,
+        ctx_size=response.get("selected_ctx_size") if isinstance(response.get("selected_ctx_size"), int) else None,
+    )
     return response, backend_selection
+
+
+def remembered_model_load_options() -> ModelLoadOptions | None:
+    remembered = load_selected_model(Path(APP_ROOT))
+    if not remembered:
+        return None
+    model = Path(remembered["model"]).expanduser()
+    if not model.exists():
+        return None
+    mmproj = remembered.get("mmproj")
+    if mmproj and not Path(mmproj).expanduser().exists():
+        mmproj = None
+    return ModelLoadOptions(
+        model=str(model),
+        mmproj=mmproj,
+        ctx_size=remembered.get("ctx_size") if isinstance(remembered.get("ctx_size"), int) else None,
+    )
 
 
 def stream_model_load(

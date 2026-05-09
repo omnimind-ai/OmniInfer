@@ -90,3 +90,42 @@ def save_selected_backend(name: str, app_root: Path | None = None) -> None:
     payload = load_state(app_root)
     payload["selected_backend"] = text
     save_state(payload, app_root)
+
+
+def load_selected_model(app_root: Path | None = None) -> dict[str, Any] | None:
+    payload = load_state(app_root)
+    model = payload.get("selected_model")
+    if model is None or not str(model).strip():
+        return None
+    result: dict[str, Any] = {"model": str(model).strip()}
+    mmproj = payload.get("selected_mmproj")
+    if mmproj is not None and str(mmproj).strip():
+        result["mmproj"] = str(mmproj).strip()
+    ctx_size = payload.get("selected_ctx_size")
+    if isinstance(ctx_size, int) and ctx_size > 0:
+        result["ctx_size"] = ctx_size
+    return result
+
+
+def save_selected_model(
+    model: str,
+    app_root: Path | None = None,
+    *,
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+) -> None:
+    text = str(model).strip()
+    if not text:
+        return
+    payload = load_state(app_root)
+    payload["selected_model"] = text
+    mmproj_text = str(mmproj).strip() if mmproj is not None else ""
+    if mmproj_text:
+        payload["selected_mmproj"] = mmproj_text
+    else:
+        payload.pop("selected_mmproj", None)
+    if ctx_size is not None and ctx_size > 0:
+        payload["selected_ctx_size"] = int(ctx_size)
+    else:
+        payload.pop("selected_ctx_size", None)
+    save_state(payload, app_root)

@@ -16,9 +16,17 @@ def run_tui() -> int:
     _clear()
     print("OmniInfer")
     print()
-    backend = _choose_backend()
-    model = _choose_model()
-    _load_model(model)
+    remembered = commands.remembered_model_load_options()
+    if remembered is not None:
+        backend = _try_load_remembered_model(remembered)
+        if backend is None:
+            backend = _choose_backend()
+            model = _choose_model()
+            backend = _load_model(commands.ModelLoadOptions(model=str(model))) or backend
+    else:
+        backend = _choose_backend()
+        model = _choose_model()
+        backend = _load_model(commands.ModelLoadOptions(model=str(model))) or backend
     _chat_loop(backend)
     return 0
 
@@ -90,9 +98,22 @@ def _prompt_model_path() -> Path:
         print(f"Model path does not exist: {path}")
 
 
-def _load_model(model: Path) -> None:
+def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None:
+    print(f"Loading previous model: {options.model}")
+    try:
+        backend = _load_model(options)
+    except SystemExit as exc:
+        print(f"Could not load previous model: {exc}")
+        print()
+        return None
+    if backend:
+        return backend
+    return commands.selected_backend() or ""
+
+
+def _load_model(options: commands.ModelLoadOptions) -> str | None:
     print()
-    print(f"Loading model: {model}")
+    print(f"Loading model: {options.model}")
 
     def on_progress(event: dict[str, Any]) -> None:
         event_type = event.get("type")
@@ -106,13 +127,15 @@ def _load_model(model: Path) -> None:
             print(f"  Backend ready ({elapsed}s)" if elapsed is not None else "  Backend ready")
 
     response, selection = commands.load_model(
-        commands.ModelLoadOptions(model=str(model)),
+        options,
         progress=on_progress,
     )
     if selection.auto_selected:
         print(f"Auto-selected backend: {selection.backend}")
-    print(f"Model loaded: {response.get('selected_model') or model}")
+    print(f"Model loaded: {response.get('selected_model') or options.model}")
     print()
+    backend = response.get("selected_backend")
+    return str(backend) if backend else None
 
 
 def _chat_loop(backend: str) -> None:
@@ -131,7 +154,9 @@ def _chat_loop(backend: str) -> None:
             continue
         if message == "/model":
             model = _choose_model()
-            _load_model(model)
+            loaded_backend = _load_model(commands.ModelLoadOptions(model=str(model)))
+            if loaded_backend:
+                current_backend = loaded_backend
             continue
 
         print("Assistant")

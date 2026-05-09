@@ -14,7 +14,14 @@ from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
 from service_core.backends.base import BackendSpec
 from service_core.cli import build_parser
-from service_core.local_state import legacy_state_file, load_selected_backend, save_selected_backend, state_file
+from service_core.local_state import (
+    legacy_state_file,
+    load_selected_backend,
+    load_selected_model,
+    save_selected_backend,
+    save_selected_model,
+    state_file,
+)
 from service_core.runtime import RuntimeManager
 from service_core.tui import _consume_visible_text
 
@@ -115,6 +122,23 @@ class LocalStateTests(unittest.TestCase):
     def test_selected_backend_round_trips_through_local_state(self) -> None:
         save_selected_backend("ik_llama.cpp-linux-cuda", self.app_root)
         self.assertEqual(load_selected_backend(self.app_root), "ik_llama.cpp-linux-cuda")
+
+    def test_selected_model_round_trips_through_local_state(self) -> None:
+        save_selected_model(
+            "/models/demo.gguf",
+            self.app_root,
+            mmproj="/models/mmproj.gguf",
+            ctx_size=4096,
+        )
+
+        self.assertEqual(
+            load_selected_model(self.app_root),
+            {
+                "model": "/models/demo.gguf",
+                "mmproj": "/models/mmproj.gguf",
+                "ctx_size": 4096,
+            },
+        )
 
     def test_legacy_cli_state_migrates_to_shared_state_file(self) -> None:
         legacy = legacy_state_file(self.app_root)
@@ -223,6 +247,43 @@ class CommandHelperTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0].path, linked)
             self.assertEqual(rows[0].label, "model.gguf")
+
+    def test_remembered_model_load_options_require_existing_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model = root / "model.gguf"
+            model.write_bytes(b"gguf")
+            save_selected_model(str(model), root, ctx_size=2048)
+
+            with patch("service_core.commands.APP_ROOT", root):
+                options = commands.remembered_model_load_options()
+
+        self.assertIsNotNone(options)
+        self.assertEqual(options.model, str(model))
+        self.assertEqual(options.ctx_size, 2048)
+
+    def test_remembered_model_load_options_ignore_missing_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            save_selected_model(str(root / "missing.gguf"), root)
+
+            with patch("service_core.commands.APP_ROOT", root):
+                options = commands.remembered_model_load_options()
+
+        self.assertIsNone(options)
+
+    def test_remembered_model_load_options_drop_missing_mmproj(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model = root / "model.gguf"
+            model.write_bytes(b"gguf")
+            save_selected_model(str(model), root, mmproj=str(root / "missing-mmproj.gguf"))
+
+            with patch("service_core.commands.APP_ROOT", root):
+                options = commands.remembered_model_load_options()
+
+        self.assertIsNotNone(options)
+        self.assertEqual(options.mmproj, None)
 
     def test_tui_suppresses_initial_thinking_block(self) -> None:
         output, buffer, visible = _consume_visible_text("<think>hidden", visible_started=False)
