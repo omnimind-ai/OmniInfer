@@ -357,6 +357,20 @@ class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
         self.assertIn("none", launch.cmd)
         self.assertNotIn("--no-webui", launch.cmd)
 
+    def test_ik_launch_keeps_reasoning_jinja_defaults(self) -> None:
+        backend = self._backend("ik_llama.cpp-linux-cuda")
+        backend.default_args = ["--jinja", "--reasoning-format", "deepseek", "-ngl", "999"]
+
+        launch = self.manager._prepare_external_runtime_launch(
+            backend,
+            model_path="/tmp/model.gguf",
+            mmproj_path=None,
+        )
+
+        self.assertIn("--jinja", launch.cmd)
+        self.assertIn("--reasoning-format", launch.cmd)
+        self.assertIn("deepseek", launch.cmd)
+
     def test_llama_launch_keeps_no_webui_arg(self) -> None:
         launch = self.manager._prepare_external_runtime_launch(
             self._backend("llama.cpp-linux-cuda"),

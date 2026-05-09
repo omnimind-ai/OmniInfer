@@ -13,6 +13,7 @@ LINUX_IK_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
         description="ik_llama.cpp Linux CPU backend managed by OmniInfer",
         capabilities=("chat", "vision", "stream", "cpu", "linux"),
         env_prefix="OMNIINFER_IK_LLAMA_CPP_LINUX",
+        default_extra_args=("--jinja", "--reasoning-format", "deepseek"),
     ),
     BackendTemplate(
         id="ik_llama.cpp-linux-cuda",
@@ -24,6 +25,7 @@ LINUX_IK_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
         capabilities=("chat", "vision", "stream", "gpu", "cuda", "linux"),
         env_prefix="OMNIINFER_IK_LLAMA_CPP_LINUX_CUDA",
         default_ngl="999",
+        default_extra_args=("--jinja", "--reasoning-format", "deepseek"),
     ),
 )
 
@@ -38,6 +40,7 @@ WINDOWS_IK_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
         description="ik_llama.cpp CPU backend managed by OmniInfer",
         capabilities=("chat", "vision", "stream", "cpu"),
         env_prefix="OMNIINFER_IK_LLAMA_CPP_CPU",
+        default_extra_args=("--jinja", "--reasoning-format", "deepseek"),
     ),
     BackendTemplate(
         id="ik_llama.cpp-cuda",
@@ -49,5 +52,6 @@ WINDOWS_IK_LLAMA_CPP_TEMPLATES: tuple[BackendTemplate, ...] = (
         capabilities=("chat", "vision", "stream", "gpu", "cuda"),
         env_prefix="OMNIINFER_IK_LLAMA_CPP_CUDA",
         default_ngl="999",
+        default_extra_args=("--jinja", "--reasoning-format", "deepseek"),
     ),
 )

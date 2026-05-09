@@ -114,6 +114,19 @@ class PlatformRegistrationTests(unittest.TestCase):
         for expected in ["llama.cpp-linux", "mnn-linux"]:
             self.assertIn(expected, ids)
 
+    def test_ik_templates_enable_jinja_reasoning_parser(self) -> None:
+        templates = {
+            t.id: t
+            for t in LinuxPlatform().backend_templates
+            if t.id.startswith("ik_llama.cpp")
+        }
+
+        for backend_id in ["ik_llama.cpp-linux", "ik_llama.cpp-linux-cuda"]:
+            default_args = templates[backend_id].default_extra_args
+            self.assertIn("--jinja", default_args)
+            self.assertIn("--reasoning-format", default_args)
+            self.assertIn("deepseek", default_args)
+
     def test_all_templates_have_unique_ids(self) -> None:
         for platform_cls in [MacPlatform, LinuxPlatform]:
             templates = platform_cls().backend_templates

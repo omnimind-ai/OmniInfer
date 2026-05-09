@@ -436,6 +436,7 @@ Both backends support:
 - KV cache prefix reuse (automatic, no config needed)
 - Multimodal / vision (model must include vision encoder files)
 - Thinking / reasoning mode (`chat_template_kwargs.enable_thinking`, `reasoning_effort`, or `reasoning.effort` parameter)
+- `ik_llama.cpp` thinking templates require Jinja mode for native reasoning extraction. OmniInfer's built-in ik backends start with `--jinja --reasoning-format deepseek` by default; if `launch_args` fully replaces the startup args, keep equivalent flags when `reasoning_content` is needed.
 - Thinking output is normalized into `message.reasoning_content` for non-streaming responses and `delta.reasoning_content` for streaming responses, while final answer text remains in `content`.
 - Tool calling (llama.cpp: all models with tool templates; MNN: Qwen3.5, Qwen3, Hunyuan families)
 
