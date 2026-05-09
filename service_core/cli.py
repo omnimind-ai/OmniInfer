@@ -349,16 +349,21 @@ def print_backend_list(scope: str = "compatible", json_output: bool = False) -> 
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
-    print("Available backends")
+    title_by_scope = {
+        "compatible": "Compatible backends",
+        "installed": "Installed backends",
+        "all": "Available backends",
+    }
+    print(title_by_scope.get(scope, "Available backends"))
     backend_width = max(len("Backend"), *(len(str(item.get("id", ""))) for item in rows))
     header = f"{'Backend':<{backend_width}}  Selected  Installed"
     print(header)
     print(f"{'-' * backend_width}  --------  ---------")
     for item in rows:
         backend_id = str(item.get("id", ""))
-        selected = "yes" if item.get("selected") else "no"
-        installed = "yes" if item.get("binary_exists") else "no"
-        print(f"{backend_id:<{backend_width}}  {selected:<8}  {installed:<9}")
+        selected = "yes" if item.get("selected") else ""
+        installed = "yes" if item.get("binary_exists") else ""
+        print(f"{backend_id:<{backend_width}}  {selected:<8}  {installed:<9}".rstrip())
     return 0
 
 
