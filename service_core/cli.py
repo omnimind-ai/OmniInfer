@@ -49,23 +49,24 @@ Common commands:
   omniinfer backend list
   omniinfer backend select <backend>
   omniinfer status
-  omniinfer model load -m /path/to/model.gguf
-  omniinfer model load -m /path/to/model.gguf --config
-  omniinfer chat --message "Introduce yourself in one sentence."
-  omniinfer chat --message "Describe this image." --image photo.png
+  omniinfer load -m /path/to/model.gguf
+  omniinfer load -m /path/to/model.gguf --config
+  omniinfer chat "Introduce yourself in one sentence."
+  omniinfer chat "Describe this image." --image photo.png
   omniinfer shutdown
 
 Design notes:
   1. The CLI automatically starts the service and selects the best backend when needed.
   2. Host and port details are hidden by default; the CLI uses local app configuration automatically.
   3. `omniinfer backend select <backend>` persists the current backend selection.
-  4. `omniinfer chat` requires a model to be loaded first via `omniinfer model load`.
+  4. `omniinfer chat` requires a model to be loaded first via `omniinfer load`.
   5. `omniinfer chat` streams tokens to stdout by default. Use `--no-stream` for batch output.
 
 Command map:
   backend list              -> show available backends
   backend select <backend>  -> choose a backend
   status                    -> show service status, selected backend, and loaded model
+  load                      -> load a model
   model list                -> show models supported on the current system
   model load                -> load a model, optionally with a backend config JSON
   thinking show/set         -> show or change the default think setting
@@ -334,7 +335,7 @@ def format_bool(value: bool | None) -> str:
     return "unknown"
 
 
-def print_backend_list(scope: str = "all", json_output: bool = False) -> int:
+def print_backend_list(scope: str = "compatible", json_output: bool = False) -> int:
     ensure_service_running()
     _status, payload, _ = request_json("GET", f"/omni/backends?scope={scope}", timeout=10.0)
     rows = payload.get("data") if isinstance(payload, dict) else None
@@ -349,14 +350,15 @@ def print_backend_list(scope: str = "all", json_output: bool = False) -> int:
         return 0
 
     print("Available backends")
+    backend_width = max(len("Backend"), *(len(str(item.get("id", ""))) for item in rows))
+    header = f"{'Backend':<{backend_width}}  Selected  Installed"
+    print(header)
+    print(f"{'-' * backend_width}  --------  ---------")
     for item in rows:
         backend_id = str(item.get("id", ""))
         selected = "yes" if item.get("selected") else "no"
-        marker = "* " if selected == "yes" else "  "
-        runtime_available = "yes" if item.get("binary_exists") else "no"
-        print(f"{marker}{backend_id}")
-        print(f"    Selected: {selected}")
-        print(f"    Runtime available: {runtime_available}")
+        installed = "yes" if item.get("binary_exists") else "no"
+        print(f"{backend_id:<{backend_width}}  {selected:<8}  {installed:<9}")
     return 0
 
 
@@ -743,6 +745,19 @@ def print_model_load(args: argparse.Namespace) -> int:
     return 0
 
 
+def add_model_load_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("-m", "--model", help="Path to the model file or model directory")
+    parser.add_argument("-mm", "--mmproj", help="Path to the mmproj file")
+    parser.add_argument("--ctx-size", type=int, help="Optional llama.cpp context length override for this load")
+    parser.add_argument(
+        "--config",
+        nargs="?",
+        const="",
+        help="Use the selected backend config JSON, or pass an explicit config path",
+    )
+    parser.add_argument("--verbose", action="store_true", help="Show full backend log output during loading")
+
+
 _SPINNER_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
 _SPINNER_INTERVAL = 0.08  # ~12 fps
 
@@ -1034,12 +1049,14 @@ def chat(args: argparse.Namespace) -> int:
     if not state.get("model"):
         raise SystemExit(
             "No model is currently loaded.\n"
-            "Run `omniinfer model load -m <model>` first."
+            "Run `omniinfer load -m <model>` first."
         )
 
-    message_text = args.message
+    if args.message and args.prompt:
+        raise SystemExit("Use either positional prompt or --message, not both.")
+    message_text = args.message or args.prompt
     if not message_text:
-        raise SystemExit("Please provide --message.")
+        raise SystemExit("Please provide a message, for example: omniinfer chat \"Hello\".")
 
     image_input = args.image
     messages = [{"role": "user", "content": message_text}]
@@ -1132,7 +1149,7 @@ def handle_hidden_completion(argv: list[str]) -> int:
     current = words[cword] if 0 <= cword < len(words) else ""
     previous = words[cword - 1] if cword - 1 >= 0 else ""
 
-    top_level = ["backend", "status", "ps", "model", "thinking", "chat", "shutdown", "serve", "completion"]
+    top_level = ["backend", "status", "ps", "model", "load", "thinking", "chat", "shutdown", "serve", "completion"]
     backend_sub = ["list", "select", "stop"]
     model_sub = ["list", "load"]
     thinking_sub = ["show", "set"]
@@ -1179,7 +1196,7 @@ def build_parser() -> argparse.ArgumentParser:
     backend = sub.add_parser("backend", help="Backend commands")
     backend_sub = backend.add_subparsers(dest="backend_command")
     backend_list = backend_sub.add_parser("list", help="List backends available on this system")
-    backend_list.add_argument("--scope", choices=("installed", "compatible", "all"), default="all", help="Filter backends by scope (default: all)")
+    backend_list.add_argument("--scope", choices=("installed", "compatible", "all"), default="compatible", help="Filter backends by scope (default: compatible)")
     backend_list.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON (for scripting)")
     backend_select = backend_sub.add_parser("select", help="Select a backend")
     backend_select.add_argument("backend_name", help="Backend name")
@@ -1196,16 +1213,10 @@ def build_parser() -> argparse.ArgumentParser:
     model_list.add_argument("--system", choices=SYSTEM_CHOICES, default=detect_system_name(), help="Target system, defaults to the current system")
     model_list.add_argument("--all-backends", action="store_true", help="Show the raw backend-grouped view")
     model_load = model_sub.add_parser("load", help="Load a model")
-    model_load.add_argument("-m", "--model", help="Path to the model file or model directory")
-    model_load.add_argument("-mm", "--mmproj", help="Path to the mmproj file")
-    model_load.add_argument("--ctx-size", type=int, help="Optional llama.cpp context length override for this load")
-    model_load.add_argument(
-        "--config",
-        nargs="?",
-        const="",
-        help="Use the selected backend config JSON, or pass an explicit config path",
-    )
-    model_load.add_argument("--verbose", action="store_true", help="Show full backend log output during loading")
+    add_model_load_arguments(model_load)
+
+    load_alias = sub.add_parser("load", help="Load a model")
+    add_model_load_arguments(load_alias)
 
     thinking = sub.add_parser("thinking", help="Default thinking controls")
     thinking_sub = thinking.add_subparsers(dest="thinking_command")
@@ -1214,6 +1225,7 @@ def build_parser() -> argparse.ArgumentParser:
     thinking_set.add_argument("value", choices=("on", "off"), help="on or off")
 
     chat_cmd = sub.add_parser("chat", help="Run inference on the loaded model")
+    chat_cmd.add_argument("prompt", nargs="?", help="User message")
     chat_cmd.add_argument("--message", help="User message")
     stream_group = chat_cmd.add_mutually_exclusive_group()
     stream_group.add_argument("--stream", dest="stream", action="store_true", default=None, help="Stream tokens to stdout")
@@ -1283,6 +1295,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.model_command == "load":
             return print_model_load(args)
         parser.error("model requires a subcommand: list / load")
+    if args.command == "load":
+        return print_model_load(args)
     if args.command == "thinking":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")

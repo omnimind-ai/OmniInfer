@@ -12,6 +12,7 @@ from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
 from service_core.backends.base import BackendSpec
+from service_core.cli import build_parser
 from service_core.local_state import load_selected_backend, save_selected_backend, state_file
 from service_core.runtime import RuntimeManager
 
@@ -126,6 +127,31 @@ class LocalStateTests(unittest.TestCase):
         )
 
         self.assertEqual(manager.snapshot()["backend"], "ik_llama.cpp-linux-cuda")
+
+
+# ---------------------------------------------------------------------------
+# CLI parser
+# ---------------------------------------------------------------------------
+
+
+class CliParserTests(unittest.TestCase):
+    def test_backend_list_defaults_to_compatible_scope(self) -> None:
+        args = build_parser().parse_args(["backend", "list"])
+        self.assertEqual(args.scope, "compatible")
+
+    def test_top_level_load_alias_parses_like_model_load(self) -> None:
+        args = build_parser().parse_args(["load", "-m", "model.gguf"])
+        self.assertEqual(args.command, "load")
+        self.assertEqual(args.model, "model.gguf")
+
+    def test_chat_accepts_positional_prompt(self) -> None:
+        args = build_parser().parse_args(["chat", "hello"])
+        self.assertEqual(args.command, "chat")
+        self.assertEqual(args.prompt, "hello")
+
+    def test_top_level_select_is_not_a_command(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["select", "llama.cpp-linux"])
 
 
 # ---------------------------------------------------------------------------

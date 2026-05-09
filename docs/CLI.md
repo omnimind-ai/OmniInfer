@@ -93,6 +93,7 @@ Android:
 
 The human-readable output shows the selected backend and runtime availability.
 Use `./omniinfer backend list --json` when automation needs full backend metadata such as capabilities and descriptions.
+By default, `backend list` shows compatible backends only. Use `--scope installed` or `--scope all` for a narrower or broader view.
 
 ### 2. Select a backend
 
@@ -120,7 +121,7 @@ When you select a desktop backend, OmniInfer also creates a backend-specific JSO
 - `.local/config/backend_profiles/<backend>.json`
 
 This file is the advanced path for backend-native parameters only.
-Keep basic user inputs such as `-m/--model`, `-mm/--mmproj`, `--message`, and `--image` on the CLI.
+Keep basic user inputs such as `-m/--model`, `-mm/--mmproj`, chat prompts, and `--image` on the CLI.
 
 Example:
 
@@ -143,7 +144,7 @@ Example:
 Default path:
 
 ```sh
-./omniinfer model load -m /path/to/model-directory
+./omniinfer load -m /path/to/model-directory
 ```
 
 For `llama.cpp-*`, OmniInfer accepts either a model file or a model directory. If you pass a directory, OmniInfer auto-discovers:
@@ -173,44 +174,44 @@ OmniInfer also auto-discovers `tokenizer.json` beside the selected `.pte` file w
 Explicit file path:
 
 ```sh
-./omniinfer model load -m /path/to/model.gguf
+./omniinfer load -m /path/to/model.gguf
 ```
 
 Advanced path with backend config JSON:
 
 ```sh
 ./omniinfer backend select llama.cpp-vulkan
-./omniinfer model load -m /path/to/model-directory --config
+./omniinfer load -m /path/to/model-directory --config
 ```
 
 Windows:
 
 ```powershell
-.\omniinfer.cmd model load -m C:\path\to\model-directory
+.\omniinfer.cmd load -m C:\path\to\model-directory
 ```
 
 Vision-language model:
 
 ```sh
-./omniinfer model load -m /path/to/model.gguf -mm /path/to/mmproj.gguf
+./omniinfer load -m /path/to/model.gguf -mm /path/to/mmproj.gguf
 ```
 
 Android OmniInfer Native QNN:
 
 ```sh
 ./omniinfer backend select omniinfer-native
-./omniinfer model load -m /data/local/tmp/syf/executorch/static_llm
-./omniinfer chat --message "你好啊，你是谁？"
+./omniinfer load -m /data/local/tmp/syf/executorch/static_llm
+./omniinfer chat "你好啊，你是谁？"
 ```
 
 For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or `mmproj` sidecar:
 
 ```sh
 ./omniinfer backend select mlx-mac
-./omniinfer model load -m /path/to/mlx-vlm-model-directory
+./omniinfer load -m /path/to/mlx-vlm-model-directory
 ./omniinfer chat \
   --image /path/to/image.jpg \
-  --message "Describe this image in one sentence."
+  "Describe this image in one sentence."
 ```
 
 The backend config JSON is where advanced users should put backend-native launch parameters such as `-ngl`, `--threads`, and other backend-specific options.
@@ -220,8 +221,8 @@ You can also skip `--config` entirely and pass backend-native extra args directl
 Example:
 
 ```powershell
-.\omniinfer.cmd select llama.cpp-vulkan
-.\omniinfer.cmd model load -m C:\models\Qwen3 -ngl 99 -t 8
+.\omniinfer.cmd backend select llama.cpp-vulkan
+.\omniinfer.cmd load -m C:\models\Qwen3 -ngl 99 -t 8
 ```
 
 ### 4. Chat
@@ -229,7 +230,7 @@ Example:
 Text chat:
 
 ```sh
-./omniinfer chat --message "Introduce yourself in one sentence."
+./omniinfer chat "Introduce yourself in one sentence."
 ```
 
 Vision-language chat:
@@ -237,25 +238,26 @@ Vision-language chat:
 ```sh
 ./omniinfer chat \
   --image /path/to/image.jpg \
-  --message "Describe this image in one sentence."
+  "Describe this image in one sentence."
 ```
 
 Windows:
 
 ```powershell
-.\omniinfer.cmd chat --message "Introduce yourself in one sentence."
+.\omniinfer.cmd chat "Introduce yourself in one sentence."
 ```
 
 Advanced path with backend config JSON:
 
 ```sh
-./omniinfer chat --message "Hello" --config
+./omniinfer load -m /path/to/model-directory --config
+./omniinfer chat "Hello"
 ```
 
 You can also pass backend-native extra args directly:
 
 ```powershell
-.\omniinfer.cmd chat --message "Hello" -- --top-k 40 --top-p 0.9
+.\omniinfer.cmd chat "Hello" -- --top-k 40 --top-p 0.9
 ```
 
 ## Common Commands
@@ -265,12 +267,11 @@ You can also pass backend-native extra args directly:
 ./omniinfer backend select <backend>
 ./omniinfer status
 ./omniinfer model list
-./omniinfer model load -m /path/to/model-directory
-./omniinfer model load -m /path/to/model-directory --config
+./omniinfer load -m /path/to/model-directory
+./omniinfer load -m /path/to/model-directory --config
 ./omniinfer thinking show
 ./omniinfer thinking set on
-./omniinfer chat --message "Hello"
-./omniinfer chat --message "Hello" --config
+./omniinfer chat "Hello"
 ./omniinfer shutdown
 ./omniinfer completion bash
 ```
@@ -279,19 +280,19 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 ## Useful Notes
 
-- `select` stores your current backend choice for later runs under `.local/config/cli_state.json`.
-- `select` also creates a backend-specific config JSON template for advanced backend-native parameters.
-- `--config` without a path means "use the selected backend profile under `.local/config/backend_profiles/`".
+- `backend select` stores your current backend choice for later runs under `.local/config/cli_state.json`.
+- `backend select` also creates a backend-specific config JSON template for advanced backend-native parameters.
+- `load --config` without a path means "use the selected backend profile under `.local/config/backend_profiles/`".
 - Backend profile JSON files should only hold backend-native extra parameters. Keep model paths, prompts/messages, and images on the CLI.
-- `model load` stores the current model path, optional `mmproj`, optional `ctx-size`, and any request defaults loaded from backend-native extra args.
+- `load` is the short form of `model load`; both store the current model path, optional `mmproj`, optional `ctx-size`, and any request defaults loaded from backend-native extra args.
 - `llama.cpp-*` backends accept either a model file such as `.gguf` or a model directory. Passing a model directory is the simplest cross-backend habit.
 - If a `llama.cpp-*` model directory contains multiple text GGUF files or multiple `mmproj` GGUF files, OmniInfer stops and asks you to make the choice explicit.
 - `turboquant-mac` uses the same `llama-server` HTTP protocol family as `llama.cpp-*`, but it remains a separate backend id.
 - `mlx-mac` supports both text model directories and vision-language model directories.
 - `mlx-mac` does not use `-mm/--mmproj`; multimodal support comes from the selected MLX model directory itself.
-- `chat` streams output by default. Backend-native request defaults can come from `--config` or from backend-specific extra args typed directly on the CLI.
+- `chat` streams output by default. Backend-native request defaults can come from the profile used during `load --config` or from backend-specific extra args typed directly on the CLI.
 - Load-time backend-native extra args are broadly passthrough for `llama.cpp-*` and `turboquant-mac`. Chat-time backend-native extra args support many common official flags plus generic long-form request overrides, but they are still interpreted through the current backend family rather than exposed as a blind global flag bag.
-- Do not combine `--auto` with backend-native extra args or `--config`, because those flows need a concrete selected backend to interpret flags correctly.
+- Do not combine `--auto` with backend-native extra args or load profiles, because those flows need a concrete selected backend to interpret flags correctly.
 - `status` shows the current backend, model, and thinking state.
 - `shutdown` stops the local desktop service. On Android it just confirms that direct mode has no background gateway.
 
