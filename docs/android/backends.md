@@ -104,6 +104,45 @@ LiteRT-LM settings:
 | `nCtx` | Passed to `EngineConfig.maxNumTokens` |
 | request `max_tokens` | OmniInfer cancels LiteRT-LM after the response budget is reached |
 
+### LiteRT-LM Load-Time Options
+
+`backend_type`, `vision_backend`, `max_images`, and `enable_speculative_decoding`
+are **model-load options**, not per-request HTTP fields. Pass them in
+`OmniInferServer.loadModel(..., extraConfig = ...)` before the LiteRT-LM
+`Engine` is initialized.
+
+If the same `modelPath` and `backend` are already loaded, `loadModel()` returns
+the existing session and does not rebuild the LiteRT-LM engine just because
+`extraConfig` changed. To switch text-only to multimodal, SD-off to SD-on, CPU to
+GPU, or one vision backend to another, unload first:
+
+```kotlin
+OmniInferServer.unloadModel()
+
+OmniInferServer.loadModel(
+    modelPath = "/sdcard/models/gemma-4-E2B-it.litertlm",
+    backend = "litert",
+    nCtx = 4096,
+    extraConfig = mapOf(
+        "backend_type" to "gpu",
+        "vision_backend" to "gpu",
+        "max_images" to "1",
+        "enable_speculative_decoding" to "true",
+    ),
+)
+```
+
+LiteRT-LM logs the effective configuration after a successful load. Check
+logcat for a line like:
+
+```text
+created backend=litert-lm/GPU visionBackend=GPU nCtx=4096 ... speculativeDecoding=true
+```
+
+If the line says `visionBackend=none`, image requests will fail even if the
+`.litertlm` file contains vision assets. If it says `speculativeDecoding=false`,
+SD was not enabled for that engine instance.
+
 Important LiteRT-LM details:
 
 - The host app must use Kotlin Gradle plugin `2.3.0+`.
@@ -113,6 +152,7 @@ Important LiteRT-LM details:
 - OpenAI-compatible HTTP tool calling is supported through LiteRT-LM's official `ConversationConfig.tools` / `OpenApiTool` path. OmniInfer returns structured `choices[0].message.tool_calls`; it does not execute app tools on the server side.
 - For multimodal, OmniInfer passes images as `Content.ImageBytes(...)` and creates the app cache directory before `Engine.initialize()`.
 - Speculative decoding is a load-time engine setting. Use `extraConfig["enable_speculative_decoding"] = "true"` before model load; changing it per request requires unloading/reloading the LiteRT-LM engine.
+- SD does not require the app to pass a separate draft-model path. The `.litertlm` package itself must support Multi Token Prediction / speculative decoding, for example by including LiteRT-LM MTP sections. If the package does not support it, turning on the flag cannot create an acceleration path.
 - Do not use LiteRT-LM's public `benchmark()` helper to validate SD-on behavior in `0.11.0`; that helper uses `nativeCreateBenchmark(...)`, whose public Kotlin/JNI signature does not pass the SD flag. Normal chat generation uses `Engine.initialize()` and `Conversation.getBenchmarkInfo()`, which does report the SD-on path.
 
 LiteRT-LM tool calling notes:
@@ -153,6 +193,24 @@ OmniInferServer.loadModel(
 )
 ```
 
+Multimodal plus SD example:
+
+```kotlin
+OmniInferServer.unloadModel()
+
+OmniInferServer.loadModel(
+    modelPath = "/sdcard/models/gemma-4-E2B-it.litertlm",
+    backend = "litert",
+    nCtx = 4096,
+    extraConfig = mapOf(
+        "backend_type" to "gpu",
+        "vision_backend" to "gpu",
+        "max_images" to "1",
+        "enable_speculative_decoding" to "true",
+    ),
+)
+```
+
 ### LiteRT-LM Smoke Test
 
 After the host app loads a LiteRT-LM model, verify the local HTTP path with a short non-streaming request:
@@ -178,6 +236,12 @@ curl -sS -H "Content-Type: application/json" \
 ```
 
 For GPU smoke tests, load the model with `extraConfig = mapOf("backend_type" to "gpu")` and an explicit `nCtx` before sending the request. A successful response should include normal usage metrics and a `performance` object; check logcat if you need to confirm that LiteRT-LM selected the GPU backend.
+
+Common LiteRT-LM load mistakes:
+
+- **Image request returns `LiteRT-LM image input requires loading the model with extraConfig vision_backend=cpu|gpu|npu`:** the model was loaded without `vision_backend`. Call `OmniInferServer.unloadModel()`, then load again with `extraConfig["vision_backend"] = "gpu"` or `"cpu"`. The request body alone cannot fix this.
+- **Changing Gallery-like settings appears to reload the model:** this is expected for load-time options such as backend, vision backend, SD, and max context. They affect `EngineConfig` / `ExperimentalFlags` and require a fresh LiteRT-LM engine.
+- **SD flag is set but no speedup is visible:** first verify logcat contains `speculativeDecoding=true` or native `enable_speculative_decoding: true`; then use a model/package with MTP support and a decode-heavy prompt. Very short outputs often hide the benefit.
 
 On devices with OEM install guards, `adb install` or `pm install` may open an interactive unknown-source confirmation page and appear to hang. Check the device screen, `dumpsys activity`, or a screenshot; after confirming the install, verify the package with `adb shell pm list packages <package>`.
 
