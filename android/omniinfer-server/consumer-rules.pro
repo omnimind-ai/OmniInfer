@@ -19,3 +19,9 @@
 -keep class com.google.ai.edge.litertlm.LiteRtLmJni$JniInferenceCallback { *; }
 -keep class com.google.ai.edge.litertlm.Conversation$JniMessageCallbackImpl { *; }
 -keep class com.google.ai.edge.litertlm.Session$JniInferenceCallbackImpl { *; }
+
+# Conversation.getBenchmarkInfo() constructs BenchmarkInfo from native code.
+# Preserve its Java name and constructor for apps that opt in to LiteRT-LM
+# benchmark metrics; otherwise R8 can remove the constructor and ART aborts
+# with "JNI DETECTED ERROR IN APPLICATION: mid == null".
+-keep class com.google.ai.edge.litertlm.BenchmarkInfo { *; }
