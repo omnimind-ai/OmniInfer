@@ -3,10 +3,14 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 from service_core import commands
+
+_LOADING_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
+_LOADING_INTERVAL = 0.08
 
 
 def run_tui() -> int:
@@ -121,22 +125,32 @@ def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None
 def _load_model(options: commands.ModelLoadOptions) -> str | None:
     print()
     print(f"Loading model: {options.model}")
+    spinner = _LoadingSpinner("Preparing model...")
+    ready_printed = False
 
     def on_progress(event: dict[str, Any]) -> None:
+        nonlocal ready_printed
         event_type = event.get("type")
         message = event.get("message")
         if event_type == "status" and message:
-            print(f"  {message}")
+            spinner.update(str(message))
         elif event_type == "log" and message:
             return
         elif event_type == "done":
-            elapsed = event.get("elapsed_s")
-            print(f"  Backend ready ({elapsed}s)" if elapsed is not None else "  Backend ready")
+            spinner.stop()
+            ready_printed = True
+            print("  Backend ready")
 
-    response, selection = commands.load_model(
-        options,
-        progress=on_progress,
-    )
+    spinner.start()
+    try:
+        response, selection = commands.load_model(
+            options,
+            progress=on_progress,
+        )
+    finally:
+        spinner.stop()
+    if not ready_printed:
+        print("  Backend ready")
     if selection.auto_selected:
         print(f"Auto-selected backend: {selection.backend}")
     print(f"Model loaded: {response.get('selected_model') or options.model}")
@@ -211,6 +225,48 @@ def _shutdown_service_for_tui() -> None:
         return
     if stopped:
         print("OmniInfer service stopped")
+
+
+class _LoadingSpinner:
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._active = False
+        self._is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+    def start(self) -> None:
+        if not self._is_tty:
+            return
+        self._active = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def update(self, text: str) -> None:
+        with self._lock:
+            self._text = text
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join()
+            self._thread = None
+        if self._active:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+            self._active = False
+
+    def _run(self) -> None:
+        index = 0
+        while not self._stop_event.is_set():
+            with self._lock:
+                text = self._text
+            frame = _LOADING_FRAMES[index % len(_LOADING_FRAMES)]
+            index += 1
+            sys.stdout.write(f"\r  {frame} {text}\033[K")
+            sys.stdout.flush()
+            self._stop_event.wait(_LOADING_INTERVAL)
 
 
 def _consume_visible_text(buffer: str, visible_started: bool, final: bool = False) -> tuple[str, str, bool]:
