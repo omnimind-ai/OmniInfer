@@ -90,6 +90,8 @@ LiteRT-LM details:
 - The app cache directory is created before `Engine.initialize()` so LiteRT-LM can place GPU/vision cache files.
 - Use LiteRT-LM `0.11.0+` for Gemma 4 E2B/E4B vision models. `0.10.2` cannot initialize Gemma 4 E2B's `vision_70` / `vision_140` / `vision_280` encoder signatures.
 - `nCtx` is passed to `EngineConfig.maxNumTokens`; image inputs consume prompt tokens, so keep enough context for image + text + output.
+- `vision_backend` is a load-time option. If the model is already loaded as text-only, call `OmniInferServer.unloadModel()` and load it again with `extraConfig["vision_backend"] = "cpu"` or `"gpu"` before sending image requests.
+- Confirm the effective load in logcat. The LiteRT-LM backend should log `visionBackend=GPU` or `visionBackend=CPU`; `visionBackend=none` means the current engine is text-only.
 
 ## Request Shape
 
@@ -132,7 +134,9 @@ val json = """
 
 ## Troubleshooting
 
-**Model says it cannot see the image:** verify the backend actually loaded vision files. For llama.cpp, the `mmproj*.gguf` must be in the same directory as the model GGUF. For MNN, check `config.json` references `visual.mnn`. For LiteRT-LM, load with `extraConfig["vision_backend"] = "cpu"` or `"gpu"`.
+**Model says it cannot see the image:** verify the backend actually loaded vision files. For llama.cpp, the `mmproj*.gguf` must be in the same directory as the model GGUF. For MNN, check `config.json` references `visual.mnn`. For LiteRT-LM, load with `extraConfig["vision_backend"] = "cpu"` or `"gpu"` and verify logcat says `visionBackend=CPU` or `visionBackend=GPU`.
+
+**LiteRT-LM returns `image input requires loading the model with extraConfig vision_backend=cpu|gpu|npu`:** the current LiteRT-LM engine was initialized without a vision backend. This is a load-time configuration problem, not an OpenAI request-body problem. Call `OmniInferServer.unloadModel()` and then `loadModel()` again with `vision_backend` in `extraConfig`.
 
 **Image request works on one backend but not another:** check the backend support table above. ExecuTorch QNN is currently text-only through OmniInfer Android.
 

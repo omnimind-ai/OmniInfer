@@ -246,9 +246,29 @@ extraConfig = mapOf("backend_type" to "cpu")
 // LiteRT-LM GPU
 extraConfig = mapOf("backend_type" to "gpu")
 
+// LiteRT-LM GPU + multimodal
+extraConfig = mapOf(
+    "backend_type" to "gpu",
+    "vision_backend" to "gpu",
+    "max_images" to "1",
+)
+
+// LiteRT-LM GPU + speculative decoding
+extraConfig = mapOf(
+    "backend_type" to "gpu",
+    "enable_speculative_decoding" to "true",
+)
+
 // ExecuTorch QNN
 extraConfig = mapOf("decoder_model_version" to "qwen3")
 ```
+
+For LiteRT-LM, `backend_type`, `vision_backend`, `max_images`, and
+`enable_speculative_decoding` are load-time options. They are consumed when
+`Engine.initialize()` runs and cannot be changed by adding fields to an
+OpenAI-compatible HTTP request. If the same `modelPath` and `backend` are
+already loaded, call `OmniInferServer.unloadModel()` before loading again with
+different LiteRT-LM options.
 
 See [backends.md](./backends.md) for the full backend table.
 
@@ -351,6 +371,8 @@ Before shipping the integration, check:
 | Service | Manifest merge keeps `OmniInferService` and foreground service permissions |
 | Shutdown | Call `unloadModel()` or `stop()` from your feature lifecycle |
 | LiteRT long context | Pass explicit `nCtx`; do not rely on `.litertlm` metadata defaults |
+| LiteRT multimodal | Load with `extraConfig["vision_backend"]`; verify logcat does not say `visionBackend=none` |
+| LiteRT speculative decoding | Load with `extraConfig["enable_speculative_decoding"] = "true"` and a `.litertlm` package that supports MTP/SD |
 | QNN | Keep `android:extractNativeLibs="true"` if ExecuTorch QNN is enabled |
 
 ## Updating OmniInfer Later
@@ -380,6 +402,16 @@ Do not use `--recursive`; it downloads Android-irrelevant framework submodules.
 **HTTP request times out and logcat says JSON input is empty:** verify the client sends a body; for adb tests use `curl --data-binary @request.json`.
 
 **LiteRT-LM fails around 4k context:** pass `nCtx` explicitly in `loadModel()`; some `.litertlm` files do not store max-context metadata.
+
+**LiteRT-LM image request returns a `vision_backend` error:** unload the model
+and load it again with `extraConfig["vision_backend"] = "cpu"` or `"gpu"`.
+`vision_backend` is not a per-request HTTP field.
+
+**LiteRT-LM SD flag appears ignored:** unload and reload with
+`extraConfig["enable_speculative_decoding"] = "true"`, then check logcat for
+`speculativeDecoding=true` or native `enable_speculative_decoding: true`. The
+model package itself must support MTP/speculative decoding; no separate draft
+model path is passed by the app.
 
 **Foreground service fails on Android 14+:** ensure manifest merge keeps `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, and `OmniInferService`.
 
