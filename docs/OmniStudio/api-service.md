@@ -106,6 +106,7 @@ Response:
       "index": 0,
       "message": {
         "role": "assistant",
+        "reasoning_content": "Optional thinking text",
         "content": "2 + 2 = 4."
       },
       "finish_reason": "stop"
@@ -377,6 +378,7 @@ The response is Server-Sent Events (SSE):
 
 ```text
 data: {"choices":[{"delta":{"role":"assistant","content":""},"index":0,"finish_reason":null}]}
+data: {"choices":[{"delta":{"reasoning_content":"Optional thinking text","content":null},"index":0,"finish_reason":null}]}
 data: {"choices":[{"delta":{"content":"Lines"},"index":0,"finish_reason":null}]}
 data: {"choices":[{"delta":{"content":" of"},"index":0,"finish_reason":null}]}
 ...
@@ -433,7 +435,9 @@ Both backends support:
 - Multi-turn conversation
 - KV cache prefix reuse (automatic, no config needed)
 - Multimodal / vision (model must include vision encoder files)
-- Thinking / reasoning mode (`enable_thinking` or `reasoning_effort` parameter)
+- Thinking / reasoning mode (`chat_template_kwargs.enable_thinking`, `reasoning_effort`, or `reasoning.effort` parameter)
+- `ik_llama.cpp` thinking templates require Jinja mode for native reasoning extraction. OmniInfer's built-in ik backends start with `--jinja --reasoning-format deepseek` by default; if `launch_args` fully replaces the startup args, keep equivalent flags when `reasoning_content` is needed.
+- Thinking output is normalized into `message.reasoning_content` for non-streaming responses and `delta.reasoning_content` for streaming responses, while final answer text remains in `content`.
 - Tool calling (llama.cpp: all models with tool templates; MNN: Qwen3.5, Qwen3, Hunyuan families)
 
 ### Stop the Service

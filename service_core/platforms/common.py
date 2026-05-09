@@ -32,10 +32,10 @@ def resolve_input_path(value: str, base_dir: Path) -> str:
 
 
 def display_path_reference(path: str, root_dir: str | None) -> str:
-    target = Path(path).resolve()
+    target = Path(os.path.abspath(os.path.expanduser(path)))
     if not root_dir:
         return str(target)
-    root = Path(root_dir).resolve()
+    root = Path(os.path.abspath(os.path.expanduser(root_dir)))
     try:
         return target.relative_to(root).as_posix()
     except ValueError:
@@ -433,11 +433,11 @@ def current_system_name() -> str:
 
 
 def discover_llama_cpp_model_artifacts(model_dir: str | Path) -> tuple[str, str | None]:
-    root = Path(model_dir).expanduser().resolve()
+    root = Path(os.path.abspath(os.path.expanduser(str(model_dir))))
     if not root.is_dir():
         raise FileNotFoundError(f"model directory not found: {root}")
 
-    gguf_files = sorted(path.resolve() for path in root.rglob("*.gguf") if path.is_file())
+    gguf_files = sorted(Path(os.path.abspath(str(path))) for path in root.rglob("*.gguf") if path.is_file())
     if not gguf_files:
         raise FileNotFoundError(f"no GGUF files were found under model directory: {root}")
 

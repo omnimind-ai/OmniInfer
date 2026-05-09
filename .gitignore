@@ -23,10 +23,8 @@ QWEN.md
 .env
 .env.*
 
-# OmniInfer runtime files
-/\.local/runtime
-/\.local/toolchains
-/\.local/logs
+# OmniInfer local runtime, config, logs, and toolchains
+/\.local/
 /platform
 
 /tmp

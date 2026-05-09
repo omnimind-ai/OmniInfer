@@ -106,6 +106,7 @@ curl -X POST http://127.0.0.1:9000/v1/chat/completions \
       "index": 0,
       "message": {
         "role": "assistant",
+        "reasoning_content": "可选思考内容",
         "content": "1 + 1 = 2。"
       },
       "finish_reason": "stop"
@@ -377,6 +378,7 @@ curl -X POST http://127.0.0.1:9099/v1/chat/completions \
 
 ```text
 data: {"choices":[{"delta":{"role":"assistant","content":""},"index":0,"finish_reason":null}]}
+data: {"choices":[{"delta":{"reasoning_content":"可选思考内容","content":null},"index":0,"finish_reason":null}]}
 data: {"choices":[{"delta":{"content":"代码"},"index":0,"finish_reason":null}]}
 data: {"choices":[{"delta":{"content":"如诗"},"index":0,"finish_reason":null}]}
 ...
@@ -433,7 +435,9 @@ for chunk in response:
 - 多轮对话
 - KV 缓存前缀复用（自动生效，无需配置）
 - 多模态 / 视觉（模型需包含视觉编码器文件）
-- 思考 / 推理模式（`enable_thinking` 或 `reasoning_effort` 参数）
+- 思考 / 推理模式（`chat_template_kwargs.enable_thinking`、`reasoning_effort` 或 `reasoning.effort` 参数）
+- `ik_llama.cpp` 的 thinking 模板需要 Jinja 模式才能原生提取推理内容。OmniInfer 内置 ik 后端默认使用 `--jinja --reasoning-format deepseek` 启动；如果通过 `launch_args` 完全替换启动参数，并且需要 `reasoning_content`，请保留等价参数。
+- 思考输出会被归一化到非流式响应的 `message.reasoning_content` 和流式响应的 `delta.reasoning_content`，最终回答仍放在 `content`。
 - 工具调用（llama.cpp：所有含工具模板的模型；MNN：Qwen3.5、Qwen3、Hunyuan 系列）
 
 ### 停止服务

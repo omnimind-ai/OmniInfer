@@ -159,6 +159,28 @@ std::string JoinPath(const std::string& lhs, const std::string& rhs) {
   return lhs + "/" + rhs;
 }
 
+std::string DirName(std::string path) {
+  while (path.size() > 1 && path.back() == '/') {
+    path.pop_back();
+  }
+  const size_t pos = path.find_last_of('/');
+  if (pos == std::string::npos) {
+    return ".";
+  }
+  if (pos == 0) {
+    return "/";
+  }
+  return path.substr(0, pos);
+}
+
+std::string RuntimeProjectRoot(const Session& session) {
+  const std::string runtime_bin_dir = DirName(session.runtime_script_path);
+  const std::string runtime_root = DirName(runtime_bin_dir);
+  const std::string runtime_parent = DirName(runtime_root);
+  const std::string local_root = DirName(runtime_parent);
+  return DirName(local_root);
+}
+
 std::optional<std::string> ExtractJsonString(const std::string& json, const std::string& key) {
   const std::string token = "\"" + key + "\"";
   size_t key_pos = json.find(token);
@@ -551,7 +573,7 @@ MetricsSummary ParseMetrics(const Session& session) {
 
 bool ApplyModelLoad(Session& session) {
   EnsureDir(session.home_dir);
-  EnsureDir(JoinPath(session.home_dir, ".config"));
+  EnsureDir(JoinPath(session.home_dir, ".local"));
 
   const std::vector<std::string> select_args = {
       session.runtime_script_path,
@@ -700,7 +722,7 @@ jstring NativeGenerate(
   }
   const CommandResult chat_result = RunCommand(session, chat_args);
 
-  const std::string state_root = JoinPath(session.home_dir, ".config/omniinfer");
+  const std::string state_root = JoinPath(JoinPath(JoinPath(RuntimeProjectRoot(session), ".local"), "config"), "android");
   session.last_output_path = JoinPath(JoinPath(state_root, "qnn-outputs"), "outputs.txt");
   session.last_perf_path = JoinPath(JoinPath(state_root, "qnn-outputs"), "inference_speed.txt");
   session.last_stdout_path = JoinPath(JoinPath(state_root, "qnn-outputs"), "stdout.txt");

@@ -348,6 +348,10 @@ Request body:
   },
   "ctx_size": 4096,
   "think": false,
+  "reasoning_effort": "none",
+  "reasoning": {
+    "effort": "none"
+  },
   "messages": [
     {
       "role": "user",
@@ -365,6 +369,8 @@ Notes:
 - If a model is already loaded, `model` is optional.
 - `ctx_size` is optional.
 - `launch_args` and `request_defaults` are optional OmniInfer extensions for backend-specific config-driven flows.
+- `reasoning_effort` and `reasoning.effort` are accepted as thinking hints. OmniInfer maps them to the local thinking on/off switch only; it does not implement effort-specific reasoning budgets.
+- `ik_llama.cpp` thinking templates require Jinja mode for native reasoning extraction. OmniInfer's built-in ik backends start `llama-server` with `--jinja --reasoning-format deepseek` by default; if you replace `launch_args`, include equivalent flags when you need `reasoning_content`.
 - If `stream=true`, the response uses Server-Sent Events (SSE).
 
 ### Non-stream response shape
@@ -380,6 +386,7 @@ Notes:
       "index": 0,
       "message": {
         "role": "assistant",
+        "reasoning_content": "Thinking...",
         "content": "Hello!"
       },
       "finish_reason": "stop"
@@ -400,6 +407,7 @@ Each SSE frame starts with `data:`.
 Example:
 
 ```text
+data: {"choices":[{"delta":{"reasoning_content":"Thinking...","content":null}}]}
 data: {"choices":[{"delta":{"content":"Hel"}}]}
 data: {"choices":[{"delta":{"content":"lo"}}]}
 data: {"usage":{"prompt_tokens":13,"completion_tokens":12,"total_tokens":25}}

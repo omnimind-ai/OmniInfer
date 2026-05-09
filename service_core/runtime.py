@@ -19,6 +19,7 @@ logger = logging.getLogger("runtime")
 
 from service_core.backends import BACKEND_PRIORITY, BackendSpec
 from service_core.drivers import EmbeddedBackendDriver, get_embedded_backend_driver
+from service_core.local_state import load_selected_backend, save_selected_backend
 from service_core.model_catalog import SupportedModelCatalog
 from service_core.platforms import (
     HostPlatform,
@@ -166,8 +167,13 @@ class RuntimeManager:
             min(installed_backend_ids, key=lambda bid: BACKEND_PRIORITY.get(bid, 999))
             if installed_backend_ids else None
         )
+        persisted_backend = self._normalize_backend_id(load_selected_backend(self.app_root))
         resolved_default_backend = self._normalize_backend_id(default_backend_id)
-        self.selected_backend_id = best_installed or resolved_default_backend or next(iter(self.backends))
+        self.selected_backend_id = self._initial_backend_id(
+            persisted_backend,
+            best_installed,
+            resolved_default_backend,
+        )
         self.loaded_runtime: LoadedRuntime | None = None
         logger.info("RuntimeManager initialized: platform=%s runtime_root=%s", self.platform.system_name, self.runtime_root)
         logger.info("Installed backends: %s", ", ".join(installed_backend_ids) or "(none)")
@@ -177,6 +183,16 @@ class RuntimeManager:
         if not backend_id:
             return None
         return self.platform.resolve_catalog_backend_id(backend_id)
+
+    def _initial_backend_id(self, *candidates: str | None) -> str:
+        for backend_id in candidates:
+            if backend_id and backend_id in self.backends:
+                return backend_id
+        return next(iter(self.backends))
+
+    def _set_selected_backend_locked(self, backend_id: str) -> None:
+        self.selected_backend_id = backend_id
+        save_selected_backend(backend_id, self.app_root)
 
     def _extract_server_arg_value(self, args: list[str], flags: tuple[str, ...]) -> str | None:
         value: str | None = None
@@ -308,10 +324,10 @@ class RuntimeManager:
             if not backend.models_dir:
                 raise ValueError("relative model path requires a configured models_dir or an absolute model path")
             path = Path(backend.models_dir) / path
-        resolved = path.resolve()
-        if backend.model_artifact == "file" and resolved.is_dir():
-            return discover_llama_cpp_model_artifacts(resolved)
-        return str(resolved), None
+        absolute = Path(os.path.abspath(str(path)))
+        if backend.model_artifact == "file" and absolute.is_dir():
+            return discover_llama_cpp_model_artifacts(absolute)
+        return str(absolute), None
 
     def _ensure_supported_model_artifact(self, backend: BackendSpec, model_path: str) -> None:
         target = Path(model_path)
@@ -347,7 +363,7 @@ class RuntimeManager:
                 if not backend.models_dir:
                     raise ValueError("relative mmproj path requires a configured models_dir or an absolute mmproj path")
                 path = Path(backend.models_dir) / path
-            resolved = str(path.resolve())
+            resolved = str(Path(os.path.abspath(str(path))))
             if not Path(resolved).is_file():
                 raise FileNotFoundError(f"mmproj file not found: {resolved}")
             return resolved
@@ -501,7 +517,7 @@ class RuntimeManager:
 
         logger.info("Backend %s started (PID %d), waiting for health check on port %d...", backend.id, proc.pid, launch.port)
         if on_progress:
-            on_progress({"type": "status", "message": f"Starting backend {backend.id}..."})
+            on_progress({"type": "status", "message": f"Starting backend {backend.id} and loading model..."})
         _health_start = time.perf_counter()
         if on_progress:
             ready = wait_http_ready_with_progress(
@@ -667,7 +683,7 @@ class RuntimeManager:
             if self.selected_backend_id != backend.id:
                 logger.info("Switching backend: %s -> %s", self.selected_backend_id, backend.id)
                 self._stop_runtime_locked()
-            self.selected_backend_id = backend.id
+            self._set_selected_backend_locked(backend.id)
             return {
                 "ok": True,
                 "selected_backend": backend.id,
@@ -754,7 +770,7 @@ class RuntimeManager:
                     backend = self._get_backend(current_runtime.backend_id)
                     if not backend.supports_ctx_size:
                         raise ValueError(f"{backend.id} does not support ctx_size overrides")
-                    self.selected_backend_id = backend.id
+                    self._set_selected_backend_locked(backend.id)
                     self._stop_runtime_locked()
                     return self._start_runtime_locked(
                         backend,
@@ -771,7 +787,11 @@ class RuntimeManager:
             preferred_backend = self._get_backend(requested_backend_id) if requested_backend_id else self._get_backend()
             if ctx_size is not None and not preferred_backend.supports_ctx_size:
                 raise ValueError(f"{preferred_backend.id} does not support ctx_size overrides")
+            if on_progress:
+                on_progress({"type": "status", "message": "Resolving model files..."})
             model_path, auto_mmproj_path = self._resolve_model_path(preferred_backend, model)
+            if on_progress:
+                on_progress({"type": "status", "message": "Checking model artifact..."})
             self._ensure_supported_model_artifact(preferred_backend, model_path)
             mmproj_path = self._resolve_mmproj_path(
                 preferred_backend,
@@ -784,6 +804,8 @@ class RuntimeManager:
             elif preferred_backend.runtime_mode == "embedded":
                 resolved_backend_id = preferred_backend.id
             else:
+                if on_progress:
+                    on_progress({"type": "status", "message": "Selecting backend for this model..."})
                 try:
                     resolved_backend_id = self.catalog.auto_select_backend_for_model(model_path, mmproj_path)
                 except Exception:
@@ -798,7 +820,7 @@ class RuntimeManager:
             backend = self._get_backend(resolved_backend_id)
             if ctx_size is not None and not backend.supports_ctx_size:
                 raise ValueError(f"{backend.id} does not support ctx_size overrides")
-            self.selected_backend_id = backend.id
+            self._set_selected_backend_locked(backend.id)
             effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
             effective_request_defaults = dict(request_defaults or {})
 
@@ -826,6 +848,8 @@ class RuntimeManager:
                     and compare_current_launch_args == compare_wanted_launch_args
                 ):
                     current.request_defaults = effective_request_defaults
+                    if on_progress:
+                        on_progress({"type": "status", "message": "Reusing loaded backend."})
                     return current
 
             # Actually loading — log diagnostic info
@@ -841,7 +865,11 @@ class RuntimeManager:
             except Exception:
                 pass
 
+            if self.loaded_runtime and on_progress:
+                on_progress({"type": "status", "message": "Stopping previous backend..."})
             self._stop_runtime_locked()
+            if on_progress:
+                on_progress({"type": "status", "message": f"Loading model with {backend.id}..."})
             return self._start_runtime_locked(
                 backend,
                 model_path,

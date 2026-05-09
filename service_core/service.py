@@ -133,11 +133,28 @@ def parse_optional_positive_int_field(
     return parsed
 
 
+_DISABLED_REASONING_EFFORTS = {"none", "off", "disabled", "false", "0"}
+_THINK_START = "<think>"
+_THINK_END = "</think>"
+
+
+def reasoning_effort_enabled(payload: dict[str, Any]) -> bool | None:
+    effort = payload.pop("reasoning_effort", None)
+    if effort not in (None, ""):
+        return str(effort).strip().lower() not in _DISABLED_REASONING_EFFORTS
+
+    reasoning = payload.pop("reasoning", None)
+    if not isinstance(reasoning, dict):
+        return None
+    effort = reasoning.get("effort")
+    if effort in (None, ""):
+        return None
+    return str(effort).strip().lower() not in _DISABLED_REASONING_EFFORTS
+
+
 def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
     requested = payload.pop("think", None)
-    enabled: bool | None = None
-    if requested is not None:
-        enabled = parse_boolish(requested)
+    reasoning_enabled = reasoning_effort_enabled(payload)
 
     chat_template_kwargs = payload.get("chat_template_kwargs")
     if chat_template_kwargs is None:
@@ -145,6 +162,12 @@ def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
         payload["chat_template_kwargs"] = chat_template_kwargs
     elif not isinstance(chat_template_kwargs, dict):
         return
+
+    enabled: bool | None = None
+    if requested is not None:
+        enabled = parse_boolish(requested)
+    elif "enable_thinking" not in chat_template_kwargs:
+        enabled = reasoning_enabled
 
     if enabled is not None:
         chat_template_kwargs["enable_thinking"] = enabled
@@ -154,6 +177,147 @@ def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
     final_enabled = chat_template_kwargs.get("enable_thinking")
     if isinstance(final_enabled, bool) and final_enabled is False and "reasoning_format" not in payload:
         payload["reasoning_format"] = "none"
+
+
+def split_thinking_text(text: str) -> tuple[str | None, str] | None:
+    start = text.find(_THINK_START)
+    if start < 0:
+        return None
+
+    before = text[:start]
+    remainder = text[start + len(_THINK_START) :]
+    end = remainder.find(_THINK_END)
+    if end < 0:
+        return remainder.strip(), before.rstrip()
+
+    reasoning = remainder[:end].strip()
+    content = (before + remainder[end + len(_THINK_END) :]).lstrip()
+    return reasoning, content
+
+
+def normalize_chat_completion_reasoning(payload: dict[str, Any]) -> dict[str, Any]:
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return payload
+
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        parsed = split_thinking_text(content)
+        if parsed is None:
+            continue
+        reasoning, answer = parsed
+        message["reasoning_content"] = reasoning
+        message["content"] = answer
+    return payload
+
+
+def normalize_chat_completion_body(body: bytes) -> bytes:
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return body
+    if not isinstance(payload, dict):
+        return body
+    return json_dumps(normalize_chat_completion_reasoning(payload))
+
+
+class ChatReasoningStreamNormalizer:
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._in_reasoning = False
+
+    def _consume_text(self, text: str, *, final: bool = False) -> list[tuple[str, str]]:
+        self._buffer += text
+        out: list[tuple[str, str]] = []
+
+        while self._buffer:
+            if self._in_reasoning:
+                end = self._buffer.find(_THINK_END)
+                if end >= 0:
+                    reasoning = self._buffer[:end]
+                    if reasoning.strip():
+                        out.append(("reasoning", reasoning))
+                    self._buffer = self._buffer[end + len(_THINK_END) :].lstrip()
+                    self._in_reasoning = False
+                    continue
+
+                keep = 0 if final else max(len(_THINK_END) - 1, 0)
+                if len(self._buffer) > keep:
+                    split_at = len(self._buffer) - keep
+                    reasoning = self._buffer[:split_at]
+                    if reasoning.strip():
+                        out.append(("reasoning", reasoning))
+                    self._buffer = self._buffer[split_at:]
+                break
+
+            start = self._buffer.find(_THINK_START)
+            if start >= 0:
+                if start > 0:
+                    out.append(("content", self._buffer[:start]))
+                self._buffer = self._buffer[start + len(_THINK_START) :]
+                self._in_reasoning = True
+                continue
+
+            keep = 0 if final else max(len(_THINK_START) - 1, 0)
+            if len(self._buffer) > keep:
+                split_at = len(self._buffer) - keep
+                out.append(("content", self._buffer[:split_at]))
+                self._buffer = self._buffer[split_at:]
+            break
+
+        return out
+
+    def _with_delta(self, event: dict[str, Any], kind: str, text: str) -> dict[str, Any]:
+        copied = dict(event)
+        choices = event.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return event
+        copied_choices = list(choices)
+        choice = dict(choices[0]) if isinstance(choices[0], dict) else {}
+        delta = dict(choice.get("delta")) if isinstance(choice.get("delta"), dict) else {}
+        if kind == "reasoning":
+            delta["reasoning_content"] = text
+            delta["content"] = None
+        else:
+            delta["content"] = text
+        choice["delta"] = delta
+        copied_choices[0] = choice
+        copied["choices"] = copied_choices
+        return copied
+
+    def transform_event(self, event: dict[str, Any]) -> list[dict[str, Any]]:
+        choices = event.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            return [event]
+        choice = choices[0]
+        delta = choice.get("delta")
+        if not isinstance(delta, dict):
+            return [event]
+        content = delta.get("content")
+        if not isinstance(content, str) or not content:
+            if choice.get("finish_reason") is not None:
+                flushed = self.flush(event)
+                return flushed if flushed else [event]
+            return [event]
+
+        parts = self._consume_text(content)
+        transformed = [self._with_delta(event, kind, text) for kind, text in parts if text]
+        if choice.get("finish_reason") is not None:
+            transformed.extend(self.flush(event))
+        return transformed
+
+    def flush(self, template: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        parts = self._consume_text("", final=True)
+        if not template:
+            return []
+        return [self._with_delta(template, kind, text) for kind, text in parts if text]
 
 
 _request_log_counter = 0
@@ -283,6 +447,7 @@ def stream_http_request(
     url: str,
     payload: dict[str, Any] | None = None,
     timeout: float = 600.0,
+    normalize_reasoning: bool = False,
 ) -> bytes | None:
     """Stream an HTTP request to the client, returning the last SSE data line (for usage extraction)."""
     headers = {"Accept": "text/event-stream, application/json"}
@@ -308,12 +473,41 @@ def stream_http_request(
             handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             handler.end_headers()
 
-            while True:
-                chunk = resp.read(4096)
+            normalizer = ChatReasoningStreamNormalizer() if normalize_reasoning else None
+            last_event: dict[str, Any] | None = None
+            for chunk in resp:
                 if not chunk:
-                    break
+                    continue
                 tail_buf = (tail_buf + chunk)[-4096:]
-                handler.wfile.write(chunk)
+                if normalizer is None or not chunk.startswith(b"data:"):
+                    handler.wfile.write(chunk)
+                    handler.wfile.flush()
+                    continue
+
+                prefix, _sep, data_bytes = chunk.partition(b":")
+                data = data_bytes.strip()
+                if data == b"[DONE]":
+                    for event in normalizer.flush(last_event):
+                        handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
+                    handler.wfile.write(chunk)
+                    handler.wfile.flush()
+                    continue
+
+                try:
+                    event = json.loads(data.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    handler.wfile.write(chunk)
+                    handler.wfile.flush()
+                    continue
+
+                if not isinstance(event, dict):
+                    handler.wfile.write(chunk)
+                    handler.wfile.flush()
+                    continue
+
+                last_event = event
+                for transformed in normalizer.transform_event(event):
+                    handler.wfile.write(prefix + b": " + json_dumps(transformed) + b"\n\n")
                 handler.wfile.flush()
     except urllib.error.HTTPError as e:
         body = e.read()
@@ -353,6 +547,7 @@ def stream_http_request(
 def stream_embedded_events(
     handler: BaseHTTPRequestHandler,
     events: list[dict[str, Any]],
+    normalize_reasoning: bool = True,
 ) -> None:
     handler.send_response(200)
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -364,10 +559,17 @@ def stream_embedded_events(
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     handler.end_headers()
     try:
+        normalizer = ChatReasoningStreamNormalizer() if normalize_reasoning else None
+        last_event: dict[str, Any] | None = None
         for event in events:
-            body = json.dumps(event, ensure_ascii=False).encode("utf-8")
-            handler.wfile.write(b"data: " + body + b"\n\n")
+            pending = [event] if normalizer is None else normalizer.transform_event(event)
+            last_event = event
+            for item in pending:
+                handler.wfile.write(b"data: " + json_dumps(item) + b"\n\n")
             handler.wfile.flush()
+        if normalizer is not None:
+            for event in normalizer.flush(last_event):
+                handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
         handler.wfile.write(b"data: [DONE]\n\n")
         handler.wfile.flush()
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
@@ -798,7 +1000,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                         _log_completion(200, _resp_body, _elapsed, "embedded stream")
                         _save_request_response(_original_request_json, _resp_body, 200, _elapsed, "embedded stream")
                         return
-                    response = self.manager.chat_completion(payload)
+                    response = normalize_chat_completion_reasoning(self.manager.chat_completion(payload))
                 except ValueError as e:
                     self._send_json(400, {"error": {"message": str(e)}})
                     return
@@ -826,6 +1028,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                     f"http://{host}:{port}/v1/chat/completions",
                     payload=payload,
                     timeout=3600,
+                    normalize_reasoning=True,
                 )
                 _elapsed = time.perf_counter() - _req_start
                 _log_completion(200, last_data, _elapsed, "proxy stream")
@@ -840,6 +1043,8 @@ class OmniHandler(BaseHTTPRequestHandler):
             )
             if code == 400:
                 body = _enrich_context_overflow_error(body, _n_messages)
+            elif code == 200:
+                body = normalize_chat_completion_body(body)
             _elapsed = time.perf_counter() - _req_start
             _log_completion(code, body, _elapsed, "proxy")
             _save_request_response(_original_request_json, body, code, _elapsed, "proxy")

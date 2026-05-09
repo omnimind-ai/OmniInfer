@@ -8,11 +8,24 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from service_core import commands, tui
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
+from service_core.platforms.common import display_path_reference
+from service_core.platforms.registry import default_backend_for_current_host
 from service_core.backends.base import BackendSpec
+from service_core.cli import build_parser
+from service_core.local_state import (
+    legacy_state_file,
+    load_selected_backend,
+    load_selected_model,
+    save_selected_backend,
+    save_selected_model,
+    state_file,
+)
 from service_core.runtime import RuntimeManager
+from service_core.tui import _consume_visible_text
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +103,302 @@ class RuntimeRootResolutionTests(unittest.TestCase):
                 app_root=self.app_root,
             )
             self.assertEqual(resolved.name, expected_name, f"{platform_cls.__name__} folder")
+
+
+# ---------------------------------------------------------------------------
+# Local state
+# ---------------------------------------------------------------------------
+
+
+class LocalStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.app_root = Path(self.temp_dir.name)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_state_file_lives_under_project_local_config(self) -> None:
+        self.assertEqual(state_file(self.app_root), self.app_root / ".local" / "config" / "state.json")
+
+    def test_selected_backend_round_trips_through_local_state(self) -> None:
+        save_selected_backend("ik_llama.cpp-linux-cuda", self.app_root)
+        self.assertEqual(load_selected_backend(self.app_root), "ik_llama.cpp-linux-cuda")
+
+    def test_selected_model_round_trips_through_local_state(self) -> None:
+        save_selected_model(
+            "/models/demo.gguf",
+            self.app_root,
+            mmproj="/models/mmproj.gguf",
+            ctx_size=4096,
+        )
+
+        self.assertEqual(
+            load_selected_model(self.app_root),
+            {
+                "model": "/models/demo.gguf",
+                "mmproj": "/models/mmproj.gguf",
+                "ctx_size": 4096,
+            },
+        )
+
+    def test_legacy_cli_state_migrates_to_shared_state_file(self) -> None:
+        legacy = legacy_state_file(self.app_root)
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text('{"selected_backend": "llama.cpp-linux-cuda"}\n', encoding="utf-8")
+
+        self.assertEqual(load_selected_backend(self.app_root), "llama.cpp-linux-cuda")
+        self.assertTrue(state_file(self.app_root).is_file())
+        self.assertFalse(legacy.is_file())
+
+    def test_runtime_manager_prefers_persisted_backend(self) -> None:
+        persisted_backend = default_backend_for_current_host()
+        save_selected_backend(persisted_backend, self.app_root)
+
+        manager = RuntimeManager(
+            repo_root=str(self.app_root),
+            app_root=str(self.app_root),
+            backend_host="127.0.0.1",
+            backend_port=0,
+            startup_timeout_s=10,
+            default_backend_id="definitely-not-a-backend",
+        )
+
+        self.assertEqual(manager.snapshot()["backend"], persisted_backend)
+
+
+# ---------------------------------------------------------------------------
+# CLI parser
+# ---------------------------------------------------------------------------
+
+
+class CliParserTests(unittest.TestCase):
+    def test_backend_list_defaults_to_compatible_scope(self) -> None:
+        args = build_parser().parse_args(["backend", "list"])
+        self.assertEqual(args.scope, "compatible")
+
+    def test_top_level_load_alias_parses_like_model_load(self) -> None:
+        args = build_parser().parse_args(["load", "-m", "model.gguf"])
+        self.assertEqual(args.command, "load")
+        self.assertEqual(args.model, "model.gguf")
+
+    def test_chat_accepts_positional_prompt(self) -> None:
+        args = build_parser().parse_args(["chat", "hello"])
+        self.assertEqual(args.command, "chat")
+        self.assertEqual(args.prompt, "hello")
+
+    def test_top_level_select_is_not_a_command(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["select", "llama.cpp-linux"])
+
+
+# ---------------------------------------------------------------------------
+# Shared command helpers
+# ---------------------------------------------------------------------------
+
+
+class CommandHelperTests(unittest.TestCase):
+    def test_backend_models_dir_defaults_to_shared_local_models_on_all_desktop_platforms(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for platform_cls, runtime_name in [
+                (LinuxPlatform, "linux"),
+                (MacPlatform, "macos"),
+                (WindowsPlatform, "windows"),
+            ]:
+                platform = platform_cls()
+                backends = platform.build_backends(
+                    app_root=root,
+                    runtime_root=root / ".local" / "runtime" / runtime_name,
+                    backend_overrides=None,
+                )
+
+                for backend in backends.values():
+                    self.assertEqual(
+                        Path(backend.models_dir or "").resolve(),
+                        (root / ".local" / "models").resolve(),
+                        f"{platform_cls.__name__} {backend.id}",
+                    )
+
+    def test_discovers_models_in_local_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model = root / "qwen" / "model.gguf"
+            model.parent.mkdir()
+            model.write_bytes(b"gguf")
+            (model.parent / "ignore.txt").write_text("not a model", encoding="utf-8")
+
+            rows = commands.discover_models_in_roots([root])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].label, "qwen/model.gguf")
+
+    def test_links_manual_model_into_managed_models_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external = root / "downloads" / "model.gguf"
+            external.parent.mkdir()
+            external.write_bytes(b"gguf")
+
+            with patch("service_core.commands.APP_ROOT", root):
+                linked = commands.link_model_into_managed_models(external)
+                rows = commands.discover_models_in_roots([commands.managed_models_dir()])
+
+            self.assertEqual(linked.parent.resolve(), (root / ".local" / "models" / "downloads").resolve())
+            self.assertTrue(linked.is_symlink())
+            self.assertEqual(linked.resolve(), external.resolve())
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].path.resolve(), linked.resolve())
+            self.assertEqual(rows[0].label, "downloads/model.gguf")
+
+    def test_model_reference_preserves_managed_symlink_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external = root / "downloads" / "model.gguf"
+            external.parent.mkdir()
+            external.write_bytes(b"gguf")
+
+            with patch("service_core.commands.APP_ROOT", root):
+                linked = commands.link_model_into_managed_models(external)
+                resolved = commands.resolve_model_reference(str(linked))
+
+            self.assertEqual(resolved, linked)
+            self.assertEqual(resolved.resolve(), external.resolve())
+
+    def test_display_path_reference_preserves_symlink_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external = root / "downloads" / "model.gguf"
+            managed = root / ".local" / "models" / "downloads" / "model.gguf"
+            external.parent.mkdir()
+            managed.parent.mkdir(parents=True)
+            external.write_bytes(b"gguf")
+            managed.symlink_to(external)
+
+            ref = display_path_reference(str(managed), str(root / ".local" / "models"))
+
+            self.assertEqual(ref, "downloads/model.gguf")
+
+    def test_remembered_model_load_options_require_existing_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model = root / "model.gguf"
+            model.write_bytes(b"gguf")
+            save_selected_model(str(model), root, ctx_size=2048)
+
+            with patch("service_core.commands.APP_ROOT", root):
+                options = commands.remembered_model_load_options()
+
+        self.assertIsNotNone(options)
+        self.assertEqual(options.model, str(model))
+        self.assertEqual(options.ctx_size, 2048)
+
+    def test_remembered_model_load_options_ignore_missing_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            save_selected_model(str(root / "missing.gguf"), root)
+
+            with patch("service_core.commands.APP_ROOT", root):
+                options = commands.remembered_model_load_options()
+
+        self.assertIsNone(options)
+
+    def test_remembered_model_load_options_drop_missing_mmproj(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model = root / "model.gguf"
+            model.write_bytes(b"gguf")
+            save_selected_model(str(model), root, mmproj=str(root / "missing-mmproj.gguf"))
+
+            with patch("service_core.commands.APP_ROOT", root):
+                options = commands.remembered_model_load_options()
+
+        self.assertIsNotNone(options)
+        self.assertEqual(options.mmproj, None)
+
+    def test_shutdown_service_posts_shutdown_when_running(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def fake_is_running() -> bool:
+            return len(calls) == 0
+
+        def fake_request_json(method: str, endpoint: str, **_kwargs):
+            calls.append((method, endpoint))
+            return 200, {"ok": True}, b"{}"
+
+        with (
+            patch("service_core.commands.is_service_running", side_effect=fake_is_running),
+            patch("service_core.commands.request_json", side_effect=fake_request_json),
+        ):
+            stopped = commands.shutdown_service(wait_timeout_s=0.1)
+
+        self.assertTrue(stopped)
+        self.assertEqual(calls, [("POST", "/omni/shutdown")])
+
+    def test_shutdown_service_skips_when_not_running(self) -> None:
+        with (
+            patch("service_core.commands.is_service_running", return_value=False),
+            patch("service_core.commands.request_json") as request,
+        ):
+            stopped = commands.shutdown_service(wait_timeout_s=0.1)
+
+        self.assertFalse(stopped)
+        request.assert_not_called()
+
+    def test_tui_suppresses_initial_thinking_block(self) -> None:
+        output, buffer, visible = _consume_visible_text("<think>hidden", visible_started=False)
+        self.assertEqual(output, "")
+        self.assertEqual(buffer, "<think>hidden")
+        self.assertFalse(visible)
+
+        output, buffer, visible = _consume_visible_text("<think>hidden</think>\nanswer", visible_started=False)
+        self.assertEqual(output, "answer")
+        self.assertEqual(buffer, "")
+        self.assertTrue(visible)
+
+    def test_tui_chat_prompt_records_readline_history(self) -> None:
+        class FakeReadline:
+            def __init__(self) -> None:
+                self.items: list[str] = []
+
+            def clear_history(self) -> None:
+                self.items.clear()
+
+            def add_history(self, value: str) -> None:
+                self.items.append(value)
+
+        fake = FakeReadline()
+        with (
+            patch("service_core.tui._readline", fake),
+            patch("service_core.tui._CHAT_HISTORY", []),
+            patch("builtins.input", return_value="你好啊你是谁"),
+        ):
+            result = tui._prompt("You", history=True)
+
+        self.assertEqual(result, "你好啊你是谁")
+        self.assertEqual(fake.items, ["你好啊你是谁"])
+
+    def test_tui_menu_prompt_does_not_record_readline_history(self) -> None:
+        class FakeReadline:
+            def __init__(self) -> None:
+                self.items: list[str] = []
+
+            def clear_history(self) -> None:
+                self.items.clear()
+
+            def add_history(self, value: str) -> None:
+                self.items.append(value)
+
+        fake = FakeReadline()
+        with (
+            patch("service_core.tui._readline", fake),
+            patch("service_core.tui._CHAT_HISTORY", ["previous chat"]),
+            patch("builtins.input", return_value=""),
+        ):
+            result = tui._prompt("Select backend", default="1")
+
+        self.assertEqual(result, "1")
+        self.assertEqual(fake.items, [])
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +561,20 @@ class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
         self.assertIn("--webui", launch.cmd)
         self.assertIn("none", launch.cmd)
         self.assertNotIn("--no-webui", launch.cmd)
+
+    def test_ik_launch_keeps_reasoning_jinja_defaults(self) -> None:
+        backend = self._backend("ik_llama.cpp-linux-cuda")
+        backend.default_args = ["--jinja", "--reasoning-format", "deepseek", "-ngl", "999"]
+
+        launch = self.manager._prepare_external_runtime_launch(
+            backend,
+            model_path="/tmp/model.gguf",
+            mmproj_path=None,
+        )
+
+        self.assertIn("--jinja", launch.cmd)
+        self.assertIn("--reasoning-format", launch.cmd)
+        self.assertIn("deepseek", launch.cmd)
 
     def test_llama_launch_keeps_no_webui_arg(self) -> None:
         launch = self.manager._prepare_external_runtime_launch(

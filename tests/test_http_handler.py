@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from service_core.service import OmniHandler
+from service_core.service import (
+    ChatReasoningStreamNormalizer,
+    OmniHandler,
+    apply_thinking_mode,
+    normalize_chat_completion_reasoning,
+    split_thinking_text,
+)
 
 
 def _create_test_server() -> tuple[ThreadingHTTPServer, str]:
@@ -167,6 +173,100 @@ class HttpHandlerTests(unittest.TestCase):
         req = urllib.request.Request(f"{self.base_url}/v1/chat/completions", method="OPTIONS")
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertEqual(r.getcode(), 204)
+
+
+class ThinkingModeTests(unittest.TestCase):
+    def test_reasoning_effort_enables_thinking(self) -> None:
+        payload: dict[str, Any] = {"reasoning": {"effort": "high"}}
+        apply_thinking_mode(payload, default_enabled=False)
+        self.assertNotIn("reasoning", payload)
+        self.assertTrue(payload["chat_template_kwargs"]["enable_thinking"])
+        self.assertNotIn("reasoning_format", payload)
+
+    def test_top_level_reasoning_effort_enables_thinking(self) -> None:
+        payload: dict[str, Any] = {"reasoning_effort": "high"}
+        apply_thinking_mode(payload, default_enabled=False)
+        self.assertNotIn("reasoning_effort", payload)
+        self.assertTrue(payload["chat_template_kwargs"]["enable_thinking"])
+        self.assertNotIn("reasoning_format", payload)
+
+    def test_reasoning_effort_none_disables_thinking(self) -> None:
+        payload: dict[str, Any] = {"reasoning": {"effort": "none"}}
+        apply_thinking_mode(payload, default_enabled=True)
+        self.assertNotIn("reasoning", payload)
+        self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
+        self.assertEqual(payload["reasoning_format"], "none")
+
+    def test_think_overrides_reasoning_effort(self) -> None:
+        payload: dict[str, Any] = {"think": False, "reasoning": {"effort": "high"}}
+        apply_thinking_mode(payload, default_enabled=True)
+        self.assertNotIn("reasoning", payload)
+        self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
+
+    def test_chat_template_kwargs_override_reasoning_effort(self) -> None:
+        payload: dict[str, Any] = {
+            "reasoning": {"effort": "high"},
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        apply_thinking_mode(payload, default_enabled=True)
+        self.assertNotIn("reasoning", payload)
+        self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
+
+
+class ReasoningContentTests(unittest.TestCase):
+    def test_split_empty_thinking_block(self) -> None:
+        self.assertEqual(split_thinking_text("<think>\n\n</think>\n\nhello"), ("", "hello"))
+
+    def test_normalizes_non_stream_message_content(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "<think>\nplan\n</think>\n\nanswer",
+                    }
+                }
+            ]
+        }
+        normalize_chat_completion_reasoning(payload)
+        message = payload["choices"][0]["message"]
+        self.assertEqual(message["reasoning_content"], "plan")
+        self.assertEqual(message["content"], "answer")
+
+    def test_stream_normalizer_splits_reasoning_delta(self) -> None:
+        normalizer = ChatReasoningStreamNormalizer()
+        event = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "<think>plan</think>answer"},
+                    "finish_reason": None,
+                }
+            ],
+        }
+        chunks = normalizer.transform_event(event)
+        self.assertEqual(chunks[0]["choices"][0]["delta"]["reasoning_content"], "plan")
+        self.assertIsNone(chunks[0]["choices"][0]["delta"]["content"])
+        flushed = normalizer.flush(event)
+        self.assertEqual(flushed[0]["choices"][0]["delta"]["content"], "answer")
+
+    def test_stream_normalizer_suppresses_empty_thinking_block(self) -> None:
+        normalizer = ChatReasoningStreamNormalizer()
+        event = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "<think>\n\n</think>\n\nanswer"},
+                    "finish_reason": None,
+                }
+            ],
+        }
+        chunks = normalizer.transform_event(event)
+        flushed = normalizer.flush(event)
+        self.assertEqual(chunks, [])
+        self.assertEqual(flushed[0]["choices"][0]["delta"]["content"], "answer")
 
 
 # ---------------------------------------------------------------------------

@@ -95,7 +95,7 @@ LLAMA_ROOT="${REPO_ROOT}/framework/llama.cpp"
 BUILD_ROOT="${PACKAGE_ROOT}/build/llama.cpp-linux-openvino"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
-MODELS_ROOT="${PACKAGE_ROOT}/models"
+MODELS_ROOT="${REPO_ROOT}/.local/models"
 OPENVINO_ROOT=""
 
 require_command() {
