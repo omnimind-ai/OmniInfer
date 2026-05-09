@@ -104,6 +104,101 @@ curl -sS -H "Content-Type: application/json" \
 
 Use `--data-binary @request.json` for repeatable tests. It avoids shell quoting problems and prevents accidentally sending an empty request body.
 
+## Tool Calling
+
+OmniInfer accepts OpenAI-compatible `tools` requests on supported backends, including llama.cpp, MNN, and LiteRT-LM.
+
+```json
+{
+  "model": "local",
+  "messages": [
+    {"role": "user", "content": "What is the product of 12.34 and 98.76?"}
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "product",
+        "description": "Get the product of a list of numbers.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "numbers": {
+              "type": "array",
+              "items": {"type": "number"}
+            }
+          },
+          "required": ["numbers"]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "stream": false
+}
+```
+
+When the model chooses a tool, the response contains structured tool calls:
+
+```json
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_0",
+            "type": "function",
+            "function": {
+              "name": "product",
+              "arguments": {"numbers": [12.34, 98.76]}
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ]
+}
+```
+
+Run the tool in the host app, then send the tool result back:
+
+```json
+{
+  "model": "local",
+  "messages": [
+    {"role": "user", "content": "What is the product of 12.34 and 98.76?"},
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_0",
+          "type": "function",
+          "function": {
+            "name": "product",
+            "arguments": "{\"numbers\":[12.34,98.76]}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_0",
+      "name": "product",
+      "content": "1218.6984"
+    }
+  ],
+  "tool_choice": "none",
+  "stream": false
+}
+```
+
+`tool_choice` may be `"none"`, `"auto"`, `"required"`, or the OpenAI object form `{"type":"function","function":{"name":"product"}}`.
+
 ## Streaming Metrics
 
 The final SSE chunk includes `usage` and `performance` fields:
