@@ -13,6 +13,7 @@ from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
 from service_core.platforms.common import display_path_reference
+from service_core.platforms.registry import default_backend_for_current_host
 from service_core.backends.base import BackendSpec
 from service_core.cli import build_parser
 from service_core.local_state import (
@@ -151,7 +152,8 @@ class LocalStateTests(unittest.TestCase):
         self.assertFalse(legacy.is_file())
 
     def test_runtime_manager_prefers_persisted_backend(self) -> None:
-        save_selected_backend("ik_llama.cpp-linux-cuda", self.app_root)
+        persisted_backend = default_backend_for_current_host()
+        save_selected_backend(persisted_backend, self.app_root)
 
         manager = RuntimeManager(
             repo_root=str(self.app_root),
@@ -159,10 +161,10 @@ class LocalStateTests(unittest.TestCase):
             backend_host="127.0.0.1",
             backend_port=0,
             startup_timeout_s=10,
-            default_backend_id="llama.cpp-linux",
+            default_backend_id="definitely-not-a-backend",
         )
 
-        self.assertEqual(manager.snapshot()["backend"], "ik_llama.cpp-linux-cuda")
+        self.assertEqual(manager.snapshot()["backend"], persisted_backend)
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +215,8 @@ class CommandHelperTests(unittest.TestCase):
 
                 for backend in backends.values():
                     self.assertEqual(
-                        Path(backend.models_dir or ""),
-                        root / ".local" / "models",
+                        Path(backend.models_dir or "").resolve(),
+                        (root / ".local" / "models").resolve(),
                         f"{platform_cls.__name__} {backend.id}",
                     )
 
@@ -242,7 +244,7 @@ class CommandHelperTests(unittest.TestCase):
                 linked = commands.link_model_into_managed_models(external)
                 rows = commands.discover_models_in_roots([commands.managed_models_dir()])
 
-            self.assertEqual(linked.parent, root / ".local" / "models" / "downloads")
+            self.assertEqual(linked.parent.resolve(), (root / ".local" / "models" / "downloads").resolve())
             self.assertTrue(linked.is_symlink())
             self.assertEqual(linked.resolve(), external.resolve())
             self.assertEqual(len(rows), 1)

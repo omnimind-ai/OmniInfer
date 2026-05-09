@@ -801,9 +801,9 @@ def _is_under_local_dir(path: Path) -> bool:
 
 def _model_label(root: Path, path: Path) -> str:
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def _managed_model_directory_name(source: Path) -> str:
