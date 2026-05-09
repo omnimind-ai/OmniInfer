@@ -807,10 +807,9 @@ def backend_stop() -> int:
 
 
 def shutdown_service() -> int:
-    if not is_service_running():
+    if not commands.shutdown_service():
         print("OmniInfer service is not running")
         return 0
-    request_json("POST", "/omni/shutdown", timeout=30.0)
     print("OmniInfer service stopped")
     return 0
 

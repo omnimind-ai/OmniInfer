@@ -313,6 +313,18 @@ def ensure_service_running() -> None:
     wait_for_service_ready(timeout_s=max(int(get_service_config().get("startup_timeout", 60)), 10))
 
 
+def shutdown_service(wait_timeout_s: float = 10.0) -> bool:
+    if not is_service_running():
+        return False
+    request_json("POST", "/omni/shutdown", timeout=30.0)
+    deadline = time.time() + max(wait_timeout_s, 0.0)
+    while time.time() < deadline:
+        if not is_service_running():
+            return True
+        time.sleep(0.2)
+    return True
+
+
 def current_runtime_state() -> dict[str, Any]:
     _status, payload, _ = request_json("GET", "/omni/state", timeout=10.0)
     if not isinstance(payload, dict):

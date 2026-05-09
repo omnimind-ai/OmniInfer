@@ -314,6 +314,35 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIsNotNone(options)
         self.assertEqual(options.mmproj, None)
 
+    def test_shutdown_service_posts_shutdown_when_running(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def fake_is_running() -> bool:
+            return len(calls) == 0
+
+        def fake_request_json(method: str, endpoint: str, **_kwargs):
+            calls.append((method, endpoint))
+            return 200, {"ok": True}, b"{}"
+
+        with (
+            patch("service_core.commands.is_service_running", side_effect=fake_is_running),
+            patch("service_core.commands.request_json", side_effect=fake_request_json),
+        ):
+            stopped = commands.shutdown_service(wait_timeout_s=0.1)
+
+        self.assertTrue(stopped)
+        self.assertEqual(calls, [("POST", "/omni/shutdown")])
+
+    def test_shutdown_service_skips_when_not_running(self) -> None:
+        with (
+            patch("service_core.commands.is_service_running", return_value=False),
+            patch("service_core.commands.request_json") as request,
+        ):
+            stopped = commands.shutdown_service(wait_timeout_s=0.1)
+
+        self.assertFalse(stopped)
+        request.assert_not_called()
+
     def test_tui_suppresses_initial_thinking_block(self) -> None:
         output, buffer, visible = _consume_visible_text("<think>hidden", visible_started=False)
         self.assertEqual(output, "")

@@ -13,22 +13,29 @@ def run_tui() -> int:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise SystemExit("OmniInfer TUI requires an interactive terminal.")
 
-    _clear()
-    print("OmniInfer")
-    print()
-    remembered = commands.remembered_model_load_options()
-    if remembered is not None:
-        backend = _try_load_remembered_model(remembered)
-        if backend is None:
+    interrupted = False
+    try:
+        _clear()
+        print("OmniInfer")
+        print()
+        remembered = commands.remembered_model_load_options()
+        if remembered is not None:
+            backend = _try_load_remembered_model(remembered)
+            if backend is None:
+                backend = _choose_backend()
+                model = _choose_model()
+                backend = _load_model(commands.ModelLoadOptions(model=str(model))) or backend
+        else:
             backend = _choose_backend()
             model = _choose_model()
             backend = _load_model(commands.ModelLoadOptions(model=str(model))) or backend
-    else:
-        backend = _choose_backend()
-        model = _choose_model()
-        backend = _load_model(commands.ModelLoadOptions(model=str(model))) or backend
-    _chat_loop(backend)
-    return 0
+        _chat_loop(backend)
+    except KeyboardInterrupt:
+        interrupted = True
+        print()
+    finally:
+        _shutdown_service_for_tui()
+    return 130 if interrupted else 0
 
 
 def _choose_backend() -> str:
@@ -194,6 +201,16 @@ def _print_short_performance(payload: dict[str, Any]) -> None:
         pieces.append(f"speed={timings.get('predicted_per_second')} tok/s")
     if pieces:
         print("[" + ", ".join(pieces) + "]")
+
+
+def _shutdown_service_for_tui() -> None:
+    try:
+        stopped = commands.shutdown_service()
+    except SystemExit as exc:
+        print(f"Could not stop OmniInfer service: {exc}")
+        return
+    if stopped:
+        print("OmniInfer service stopped")
 
 
 def _consume_visible_text(buffer: str, visible_started: bool, final: bool = False) -> tuple[str, str, bool]:
