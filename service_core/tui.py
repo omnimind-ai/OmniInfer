@@ -79,7 +79,14 @@ def _prompt_model_path() -> Path:
         text = _prompt("Model path")
         path = Path(text).expanduser().resolve()
         if path.exists():
-            return path
+            try:
+                linked = commands.link_model_into_managed_models(path)
+            except OSError as exc:
+                print(f"Could not link model into {commands.managed_models_dir()}: {exc}")
+                return path
+            if linked != path:
+                print(f"Linked model: {linked}")
+            return linked
         print(f"Model path does not exist: {path}")
 
 

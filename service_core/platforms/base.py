@@ -169,7 +169,7 @@ class HostPlatform(ABC):
                 app_root=app_root,
                 override=override,
                 env_var=f"{template.env_prefix}_MODELS_DIR",
-                default_root=runtime_dir / "models",
+                default_root=app_root / ".local" / "models",
             )
             launcher_path: str | None = None
             if template.launcher_name:

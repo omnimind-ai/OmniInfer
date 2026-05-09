@@ -665,6 +665,45 @@ def discover_local_models() -> list[LocalModel]:
     return discover_models_in_roots(roots)
 
 
+def managed_models_dir() -> Path:
+    return local_dir(Path(APP_ROOT)) / "models"
+
+
+def link_model_into_managed_models(model_path: Path) -> Path:
+    source = Path(model_path).expanduser().resolve()
+    if not source.exists():
+        raise FileNotFoundError(f"model path does not exist: {source}")
+    if not source.is_file():
+        return source
+
+    target_root = managed_models_dir().resolve()
+    try:
+        source.relative_to(target_root)
+        return source
+    except ValueError:
+        pass
+
+    target_root.mkdir(parents=True, exist_ok=True)
+    target = target_root / source.name
+    if _link_points_to(target, source):
+        return target
+    if target.exists() or target.is_symlink():
+        stem = source.stem
+        suffix = source.suffix
+        index = 2
+        while True:
+            candidate = target_root / f"{stem}-{index}{suffix}"
+            if _link_points_to(candidate, source):
+                return candidate
+            if not candidate.exists() and not candidate.is_symlink():
+                target = candidate
+                break
+            index += 1
+
+    os.symlink(source, target)
+    return target
+
+
 def discover_models_in_roots(roots: list[Path]) -> list[LocalModel]:
     seen: set[Path] = set()
     models: list[LocalModel] = []
@@ -674,11 +713,11 @@ def discover_models_in_roots(roots: list[Path]) -> list[LocalModel]:
         for candidate in root.rglob("*"):
             if not candidate.is_file() or candidate.suffix.lower() not in MODEL_SUFFIXES:
                 continue
-            path = candidate.resolve()
-            if path in seen:
+            resolved = candidate.resolve()
+            if resolved in seen:
                 continue
-            seen.add(path)
-            models.append(LocalModel(path=path, label=_model_label(root, path)))
+            seen.add(resolved)
+            models.append(LocalModel(path=candidate, label=_model_label(root, candidate)))
     return sorted(models, key=lambda item: item.label.lower())
 
 
@@ -696,3 +735,12 @@ def _model_label(root: Path, path: Path) -> str:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
+
+
+def _link_points_to(path: Path, source: Path) -> bool:
+    if not path.exists() and not path.is_symlink():
+        return False
+    try:
+        return path.resolve(strict=True) == source
+    except FileNotFoundError:
+        return False

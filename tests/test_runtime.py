@@ -171,6 +171,26 @@ class CliParserTests(unittest.TestCase):
 
 
 class CommandHelperTests(unittest.TestCase):
+    def test_backend_models_dir_defaults_to_shared_local_models(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / ".local" / "runtime" / "linux"
+
+            backends = LinuxPlatform().build_backends(
+                app_root=root,
+                runtime_root=runtime_root,
+                backend_overrides=None,
+            )
+
+        self.assertEqual(
+            Path(backends["llama.cpp-linux-cuda"].models_dir or ""),
+            root / ".local" / "models",
+        )
+        self.assertEqual(
+            Path(backends["ik_llama.cpp-linux-cuda"].models_dir or ""),
+            root / ".local" / "models",
+        )
+
     def test_discovers_models_in_local_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -183,6 +203,24 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].label, "qwen/model.gguf")
+
+    def test_links_manual_model_into_managed_models_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external = root / "downloads" / "model.gguf"
+            external.parent.mkdir()
+            external.write_bytes(b"gguf")
+
+            with patch("service_core.commands.APP_ROOT", root):
+                linked = commands.link_model_into_managed_models(external)
+                rows = commands.discover_models_in_roots([commands.managed_models_dir()])
+
+            self.assertEqual(linked.parent, root / ".local" / "models")
+            self.assertTrue(linked.is_symlink())
+            self.assertEqual(linked.resolve(), external.resolve())
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].path, linked)
+            self.assertEqual(rows[0].label, "model.gguf")
 
     def test_tui_suppresses_initial_thinking_block(self) -> None:
         output, buffer, visible = _consume_visible_text("<think>hidden", visible_started=False)

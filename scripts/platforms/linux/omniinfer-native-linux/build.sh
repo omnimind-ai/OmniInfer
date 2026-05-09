@@ -105,7 +105,7 @@ LLAMA_ROOT="${REPO_ROOT}/framework/omniinfer-native"
 BUILD_ROOT="${PACKAGE_ROOT}/build/omniinfer-native-linux"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
-MODELS_ROOT="${PACKAGE_ROOT}/models"
+MODELS_ROOT="${REPO_ROOT}/.local/models"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then

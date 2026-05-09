@@ -110,7 +110,7 @@ LLAMA_ROOT="${REPO_ROOT}/framework/ik_llama.cpp"
 BUILD_ROOT="${PACKAGE_ROOT}/build/ik_llama.cpp-linux-cuda"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
-MODELS_ROOT="${PACKAGE_ROOT}/models"
+MODELS_ROOT="${REPO_ROOT}/.local/models"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
