@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from service_core.service import OmniHandler
+from service_core.service import OmniHandler, apply_thinking_mode
 
 
 def _create_test_server() -> tuple[ThreadingHTTPServer, str]:
@@ -167,6 +167,37 @@ class HttpHandlerTests(unittest.TestCase):
         req = urllib.request.Request(f"{self.base_url}/v1/chat/completions", method="OPTIONS")
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertEqual(r.getcode(), 204)
+
+
+class ThinkingModeTests(unittest.TestCase):
+    def test_reasoning_effort_enables_thinking(self) -> None:
+        payload: dict[str, Any] = {"reasoning": {"effort": "high"}}
+        apply_thinking_mode(payload, default_enabled=False)
+        self.assertNotIn("reasoning", payload)
+        self.assertTrue(payload["chat_template_kwargs"]["enable_thinking"])
+        self.assertNotIn("reasoning_format", payload)
+
+    def test_reasoning_effort_none_disables_thinking(self) -> None:
+        payload: dict[str, Any] = {"reasoning": {"effort": "none"}}
+        apply_thinking_mode(payload, default_enabled=True)
+        self.assertNotIn("reasoning", payload)
+        self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
+        self.assertEqual(payload["reasoning_format"], "none")
+
+    def test_think_overrides_reasoning_effort(self) -> None:
+        payload: dict[str, Any] = {"think": False, "reasoning": {"effort": "high"}}
+        apply_thinking_mode(payload, default_enabled=True)
+        self.assertNotIn("reasoning", payload)
+        self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
+
+    def test_chat_template_kwargs_override_reasoning_effort(self) -> None:
+        payload: dict[str, Any] = {
+            "reasoning": {"effort": "high"},
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        apply_thinking_mode(payload, default_enabled=True)
+        self.assertNotIn("reasoning", payload)
+        self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
 
 
 # ---------------------------------------------------------------------------

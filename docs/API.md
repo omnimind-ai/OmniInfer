@@ -348,6 +348,9 @@ Request body:
   },
   "ctx_size": 4096,
   "think": false,
+  "reasoning": {
+    "effort": "none"
+  },
   "messages": [
     {
       "role": "user",
@@ -365,6 +368,7 @@ Notes:
 - If a model is already loaded, `model` is optional.
 - `ctx_size` is optional.
 - `launch_args` and `request_defaults` are optional OmniInfer extensions for backend-specific config-driven flows.
+- `reasoning.effort` is accepted as an OpenAI Responses-style thinking hint. OmniInfer maps it to the local thinking on/off switch only; it does not implement effort-specific reasoning budgets.
 - If `stream=true`, the response uses Server-Sent Events (SSE).
 
 ### Non-stream response shape

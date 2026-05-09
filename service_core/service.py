@@ -133,11 +133,22 @@ def parse_optional_positive_int_field(
     return parsed
 
 
+_DISABLED_REASONING_EFFORTS = {"none", "off", "disabled", "false", "0"}
+
+
+def reasoning_effort_enabled(payload: dict[str, Any]) -> bool | None:
+    reasoning = payload.pop("reasoning", None)
+    if not isinstance(reasoning, dict):
+        return None
+    effort = reasoning.get("effort")
+    if effort in (None, ""):
+        return None
+    return str(effort).strip().lower() not in _DISABLED_REASONING_EFFORTS
+
+
 def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
     requested = payload.pop("think", None)
-    enabled: bool | None = None
-    if requested is not None:
-        enabled = parse_boolish(requested)
+    reasoning_enabled = reasoning_effort_enabled(payload)
 
     chat_template_kwargs = payload.get("chat_template_kwargs")
     if chat_template_kwargs is None:
@@ -145,6 +156,12 @@ def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
         payload["chat_template_kwargs"] = chat_template_kwargs
     elif not isinstance(chat_template_kwargs, dict):
         return
+
+    enabled: bool | None = None
+    if requested is not None:
+        enabled = parse_boolish(requested)
+    elif "enable_thinking" not in chat_template_kwargs:
+        enabled = reasoning_enabled
 
     if enabled is not None:
         chat_template_kwargs["enable_thinking"] = enabled
