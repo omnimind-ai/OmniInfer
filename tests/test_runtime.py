@@ -499,7 +499,7 @@ class CommandHelperTests(unittest.TestCase):
             4096,
         )
 
-        self.assertEqual(result, "prompt=13, completion=12, context=25/4096 (0.6%)")
+        self.assertEqual(result, "input=13, output=12, total=25/4096 (0.6%)")
 
     def test_tui_context_usage_requires_usage_payload(self) -> None:
         self.assertEqual(tui._format_context_usage(None, 4096), "not available yet")

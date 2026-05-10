@@ -450,10 +450,10 @@ def _format_context_size(ctx_size: int | None, *, loaded: bool) -> str:
 def _format_context_usage(usage: dict[str, Any] | None, ctx_size: Any) -> str:
     if not usage:
         return "not available yet"
-    prompt_tokens = usage.get("prompt_tokens", "-")
-    completion_tokens = usage.get("completion_tokens", "-")
+    input_tokens = usage.get("prompt_tokens", "-")
+    output_tokens = usage.get("completion_tokens", "-")
     total_tokens = usage.get("total_tokens")
-    pieces = [f"prompt={prompt_tokens}", f"completion={completion_tokens}"]
+    pieces = [f"input={input_tokens}", f"output={output_tokens}"]
     if isinstance(total_tokens, int):
         try:
             ctx_int = int(ctx_size)
@@ -461,7 +461,7 @@ def _format_context_usage(usage: dict[str, Any] | None, ctx_size: Any) -> str:
             ctx_int = 0
         if ctx_int > 0:
             percent = total_tokens / ctx_int * 100
-            pieces.append(f"context={total_tokens}/{ctx_int} ({percent:.1f}%)")
+            pieces.append(f"total={total_tokens}/{ctx_int} ({percent:.1f}%)")
         else:
             pieces.append(f"total={total_tokens}")
     return ", ".join(pieces)
