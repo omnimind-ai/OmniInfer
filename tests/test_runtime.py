@@ -651,9 +651,9 @@ class CommandHelperTests(unittest.TestCase):
                 print("Assistant: hello")
 
         rendered = output.getvalue()
-        self.assertIn("\033[1;20r", rendered)
+        self.assertIn("\0337\033[1;20r\0338", rendered)
         self.assertIn("backend demo", rendered)
-        self.assertIn("\033[r", rendered)
+        self.assertIn("\0337\033[r\0338", rendered)
 
     def test_tui_notice_capture_routes_notices_to_status(self) -> None:
         center = tui._NoticeCenter()
