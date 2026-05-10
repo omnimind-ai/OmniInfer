@@ -564,6 +564,32 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertEqual(payload["max_tokens"], 2048)
 
+    def test_tui_backend_switch_reloads_remembered_model(self) -> None:
+        options = commands.ModelLoadOptions(model="/models/demo.gguf")
+        with (
+            patch("service_core.commands.remembered_model_load_options", return_value=options),
+            patch("service_core.tui._load_model", return_value="ik_llama.cpp-linux-cuda") as load_model,
+            patch("service_core.tui._choose_model") as choose_model,
+        ):
+            backend = tui._load_model_after_backend_switch()
+
+        self.assertEqual(backend, "ik_llama.cpp-linux-cuda")
+        load_model.assert_called_once_with(options)
+        choose_model.assert_not_called()
+
+    def test_tui_backend_switch_prompts_when_no_remembered_model(self) -> None:
+        model = Path("/models/demo.gguf")
+        with (
+            patch("service_core.commands.remembered_model_load_options", return_value=None),
+            patch("service_core.tui._choose_model", return_value=model),
+            patch("service_core.tui._load_model", return_value="llama.cpp-linux-cuda") as load_model,
+        ):
+            backend = tui._load_model_after_backend_switch()
+
+        self.assertEqual(backend, "llama.cpp-linux-cuda")
+        load_model.assert_called_once()
+        self.assertEqual(load_model.call_args.args[0].model, str(model))
+
 
 # ---------------------------------------------------------------------------
 # Embedded backend lifecycle

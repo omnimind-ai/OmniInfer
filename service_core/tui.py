@@ -235,6 +235,21 @@ def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None
     return commands.selected_backend() or ""
 
 
+def _load_model_after_backend_switch() -> str | None:
+    remembered = commands.remembered_model_load_options()
+    if remembered is not None:
+        try:
+            return _load_model(remembered)
+        except SystemExit as exc:
+            _print_notice(f"Could not reload previous model: {exc}", kind="warning")
+            print()
+
+    model = _choose_model()
+    if model is None:
+        return None
+    return _load_model(commands.ModelLoadOptions(model=str(model)))
+
+
 def _load_model(options: commands.ModelLoadOptions) -> str | None:
     print()
     _print_kv("Loading model", options.model)
@@ -289,6 +304,9 @@ def _chat_loop(backend: str) -> None:
                 current_backend = selected_backend
                 messages.clear()
                 last_usage = None
+                loaded_backend = _load_model_after_backend_switch()
+                if loaded_backend:
+                    current_backend = loaded_backend
             _print_chat_header(current_backend)
             continue
         if message == "/model":
@@ -322,17 +340,22 @@ def _chat_loop(backend: str) -> None:
         buffer = ""
         assistant_text = ""
         visible_started = False
-        payload = _build_conversation_payload(message, messages)
-        for chunk in commands.iter_chat_stream_payload(payload):
-            if chunk.text:
-                buffer += chunk.text
-                output, buffer, visible_started = _consume_visible_text(buffer, visible_started)
-                if output:
-                    assistant_text += output
-                    sys.stdout.write(output)
-                    sys.stdout.flush()
-            if chunk.final_payload:
-                final_payload = chunk.final_payload
+        try:
+            payload = _build_conversation_payload(message, messages)
+            for chunk in commands.iter_chat_stream_payload(payload):
+                if chunk.text:
+                    buffer += chunk.text
+                    output, buffer, visible_started = _consume_visible_text(buffer, visible_started)
+                    if output:
+                        assistant_text += output
+                        sys.stdout.write(output)
+                        sys.stdout.flush()
+                if chunk.final_payload:
+                    final_payload = chunk.final_payload
+        except SystemExit as exc:
+            _print_notice(str(exc), kind="warning")
+            print()
+            continue
         if buffer:
             output, _buffer, _visible_started = _consume_visible_text(buffer, visible_started, final=True)
             if output:
