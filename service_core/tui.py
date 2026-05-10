@@ -704,41 +704,39 @@ def _read_menu_key_windows() -> str:
 
 
 def _read_menu_key_posix() -> str:
-    import select
     import termios
     import tty
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     try:
-        tty.setcbreak(fd)
-        char = sys.stdin.read(1)
+        tty.setraw(fd)
+        char = os.read(fd, 1).decode(errors="ignore")
         if char == "\x03":
             raise KeyboardInterrupt
         if char in {"\r", "\n"}:
             return "enter"
         if char != "\x1b":
             return char
-        ready, _, _ = select.select([sys.stdin], [], [], 0.05)
-        if not ready:
-            return "esc"
-        seq = _read_escape_sequence()
-        return _decode_escape_sequence(seq)
+        seq = _read_escape_sequence(fd, initial_timeout_s=0.2)
+        return _decode_escape_sequence(seq) or "esc"
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def _read_escape_sequence(timeout_s: float = 0.02) -> str:
+def _read_escape_sequence(fd: int, *, initial_timeout_s: float = 0.2, continuation_timeout_s: float = 0.03) -> str:
     import select
 
     parts: list[str] = []
     while len(parts) < 8:
-        ready, _, _ = select.select([sys.stdin], [], [], timeout_s)
+        timeout_s = initial_timeout_s if not parts else continuation_timeout_s
+        ready, _, _ = select.select([fd], [], [], timeout_s)
         if not ready:
             break
-        char = sys.stdin.read(1)
-        if not char:
+        data = os.read(fd, 1)
+        if not data:
             break
+        char = data.decode(errors="ignore")
         parts.append(char)
         if char.isalpha() or char == "~":
             break

@@ -6,6 +6,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 import io
+import os
+import pty
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -459,6 +463,35 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(tui._decode_escape_sequence("[B"), "down")
         self.assertEqual(tui._decode_escape_sequence("OB"), "down")
         self.assertEqual(tui._decode_escape_sequence("[Z"), "")
+
+    @unittest.skipIf(os.name == "nt", "PTY test is POSIX-only")
+    def test_tui_reads_delayed_arrow_sequence_from_pty(self) -> None:
+        master_fd, slave_fd = pty.openpty()
+        slave = os.fdopen(slave_fd, "rb", buffering=0)
+
+        class FakeStdin:
+            def fileno(self) -> int:
+                return slave.fileno()
+
+        result: list[str] = []
+
+        def read_key() -> None:
+            with patch("sys.stdin", FakeStdin()):
+                result.append(tui._read_menu_key_posix())
+
+        reader = threading.Thread(target=read_key)
+        reader.start()
+        try:
+            time.sleep(0.05)
+            os.write(master_fd, b"\x1b")
+            time.sleep(0.1)
+            os.write(master_fd, b"[B")
+            reader.join(timeout=1)
+            self.assertEqual(result, ["down"])
+        finally:
+            reader.join(timeout=1)
+            slave.close()
+            os.close(master_fd)
 
     def test_tui_formats_last_context_usage(self) -> None:
         result = tui._format_context_usage(
