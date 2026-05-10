@@ -753,7 +753,34 @@ def detect_model_files_in_directory(directory: Path) -> list[LocalModel]:
     return sorted(models, key=lambda item: (_model_file_rank(item.path), item.label.lower()))
 
 
-def link_model_into_managed_models(model_path: Path, *, model_root: Path | None = None) -> Path:
+def infer_managed_model_root(model_path: Path, search_root: Path) -> Path:
+    source = Path(os.path.abspath(os.path.expanduser(str(model_path)))).resolve()
+    root = Path(os.path.abspath(os.path.expanduser(str(search_root)))).resolve()
+    parent = source.parent
+    try:
+        parent.relative_to(root)
+    except ValueError:
+        return parent
+
+    for candidate in [parent, *parent.parents]:
+        if candidate == root.parent:
+            break
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        name = _safe_path_component(candidate.name)
+        if _is_useful_model_directory_name(name):
+            return candidate
+    return parent
+
+
+def link_model_into_managed_models(
+    model_path: Path,
+    *,
+    model_root: Path | None = None,
+    preserve_relative_path: bool = True,
+) -> Path:
     requested = Path(os.path.abspath(os.path.expanduser(str(model_path))))
     source = requested.resolve() if requested.is_symlink() else requested
     if not source.exists():
@@ -770,13 +797,24 @@ def link_model_into_managed_models(model_path: Path, *, model_root: Path | None 
             pass
 
     target_root.mkdir(parents=True, exist_ok=True)
-    target = _managed_model_target(source, target_root, model_root=model_root)
+    target = _managed_model_target(
+        source,
+        target_root,
+        model_root=model_root,
+        preserve_relative_path=preserve_relative_path,
+    )
     if _link_points_to(target, source):
         return target
     if target.exists() or target.is_symlink():
         index = 2
         while True:
-            candidate = _managed_model_target(source, target_root, model_root=model_root, root_suffix=f"-{index}")
+            candidate = _managed_model_target(
+                source,
+                target_root,
+                model_root=model_root,
+                preserve_relative_path=preserve_relative_path,
+                root_suffix=f"-{index}",
+            )
             if _link_points_to(candidate, source):
                 return candidate
             if not candidate.exists() and not candidate.is_symlink():
@@ -837,6 +875,7 @@ def _managed_model_target(
     target_root: Path,
     *,
     model_root: Path | None,
+    preserve_relative_path: bool,
     root_suffix: str = "",
 ) -> Path:
     if model_root is None:
@@ -844,11 +883,38 @@ def _managed_model_target(
 
     root = Path(os.path.abspath(os.path.expanduser(str(model_root))))
     root_name = _safe_path_component(root.name) or _managed_model_directory_name(source)
+    if not preserve_relative_path:
+        return target_root / f"{root_name}{root_suffix}" / source.name
     try:
         relative_parent = source.parent.relative_to(root.resolve())
     except ValueError:
         relative_parent = Path()
     return target_root / f"{root_name}{root_suffix}" / relative_parent / source.name
+
+
+def _is_useful_model_directory_name(name: str) -> bool:
+    if not name:
+        return False
+    lowered = name.lower()
+    generic_names = {
+        "model",
+        "models",
+        "gguf",
+        "ggml",
+        "weights",
+        "weight",
+        "checkpoint",
+        "checkpoints",
+        "snapshot",
+        "snapshots",
+        "resolve",
+        "main",
+    }
+    if lowered in generic_names:
+        return False
+    if re.fullmatch(r"[0-9a-f]{8,}", lowered):
+        return False
+    return True
 
 
 def _is_mmproj_file(path: Path) -> bool:

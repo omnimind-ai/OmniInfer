@@ -13,6 +13,7 @@ logger = logging.getLogger("platform")
 from service_core.platforms.common import (
     bytes_to_gib,
     get_available_cuda_memory_bytes,
+    get_idle_cuda_device_index,
     get_available_memory_bytes,
     get_available_rocm_memory_bytes,
     is_vulkan_gpu_present,
@@ -150,6 +151,15 @@ class HostPlatform(ABC):
     def prepare_runtime_env(self, env: dict[str, str], backend: BackendSpec) -> dict[str, str]:
         if self.system_name != "windows" and backend.launcher_path:
             prepend_env_path(env, "LD_LIBRARY_PATH", str(Path(backend.launcher_path).resolve().parent))
+        if "cuda" in set(backend.capabilities):
+            requested_devices = env.get("OMNIINFER_CUDA_VISIBLE_DEVICES")
+            if requested_devices:
+                env["CUDA_VISIBLE_DEVICES"] = requested_devices
+            elif not env.get("CUDA_VISIBLE_DEVICES"):
+                device_index = get_idle_cuda_device_index()
+                if device_index is not None:
+                    env["CUDA_VISIBLE_DEVICES"] = device_index
+                    logger.info("Selected CUDA device %s for backend %s", device_index, backend.id)
         return env
 
     def build_backends(

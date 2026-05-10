@@ -287,6 +287,45 @@ class CommandHelperTests(unittest.TestCase):
             self.assertTrue(linked.is_symlink())
             self.assertEqual(linked.resolve(), external.resolve())
 
+    def test_manual_directory_model_link_uses_detected_model_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manual_root = root / "models"
+            external = manual_root / "gguf" / "qwen" / "qwen3.5-9b" / "Qwen3.5-9B-Q4_K_M.gguf"
+            external.parent.mkdir(parents=True)
+            external.write_bytes(b"gguf")
+
+            with patch("service_core.commands.APP_ROOT", root):
+                model_root = commands.infer_managed_model_root(external, manual_root)
+                linked = commands.link_model_into_managed_models(
+                    external,
+                    model_root=model_root,
+                    preserve_relative_path=False,
+                )
+
+            self.assertEqual(model_root, external.parent.resolve())
+            self.assertEqual(linked, root / ".local" / "models" / "qwen3.5-9b" / external.name)
+            self.assertTrue(linked.is_symlink())
+            self.assertEqual(linked.resolve(), external.resolve())
+
+    def test_manual_directory_model_root_skips_snapshot_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manual_root = root / "models"
+            external = (
+                manual_root
+                / "Qwen3.5-4B"
+                / "snapshots"
+                / "0123456789abcdef"
+                / "Qwen3.5-4B-Q4_K_M.gguf"
+            )
+            external.parent.mkdir(parents=True)
+            external.write_bytes(b"gguf")
+
+            model_root = commands.infer_managed_model_root(external, manual_root)
+
+            self.assertEqual(model_root, (manual_root / "Qwen3.5-4B").resolve())
+
     def test_model_reference_preserves_managed_symlink_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -57,7 +57,7 @@ Linux and macOS:
 ./omniinfer --help
 ```
 
-Run `./omniinfer` without arguments in an interactive terminal to open the basic TUI. On first use, the TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop. Later TUI launches automatically reload the last selected backend and model when the model path still exists.
+Run `./omniinfer` without arguments in an interactive terminal to open the basic TUI. On first use, the TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop. When a manual directory is scanned, the selected model is linked into `.local/models/<detected-model-dir>/<model-file>` instead of preserving unrelated parent folders. Later TUI launches automatically reload the last selected backend and model when the model path still exists.
 
 Windows:
 
@@ -315,6 +315,7 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 - The CLI uses the Python entrypoint in [omniinfer.py](../omniinfer.py).
 - The desktop CLI auto-starts the local OmniInfer gateway when required.
+- CUDA desktop backends default to one GPU. If `CUDA_VISIBLE_DEVICES` is unset, OmniInfer picks the visible GPU with the most free memory and lowest utilization before launching the backend. Set `CUDA_VISIBLE_DEVICES` or `OMNIINFER_CUDA_VISIBLE_DEVICES` to override this.
 - If you use `mlx-mac`, keep the same Python interpreter for both the CLI and the auto-started gateway. `OMNIINFER_PYTHON` is the safest way to enforce that.
 - If you want to run the gateway in the foreground, use:
 

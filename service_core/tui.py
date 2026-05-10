@@ -187,10 +187,14 @@ def _prompt_model_path() -> Path | None:
                 selected = _select_model_from_directory(directory)
                 if selected is None:
                     return None
-                model_root = directory
+                model_root = commands.infer_managed_model_root(selected, directory)
                 path = selected
             try:
-                linked = commands.link_model_into_managed_models(path, model_root=model_root)
+                linked = commands.link_model_into_managed_models(
+                    path,
+                    model_root=model_root,
+                    preserve_relative_path=False,
+                )
             except OSError as exc:
                 _print_notice(f"Could not link model into {commands.managed_models_dir()}: {exc}", kind="warning")
                 return path
