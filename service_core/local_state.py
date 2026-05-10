@@ -92,6 +92,25 @@ def save_selected_backend(name: str, app_root: Path | None = None) -> None:
     save_state(payload, app_root)
 
 
+def load_default_thinking(app_root: Path | None = None) -> bool | None:
+    value = load_state(app_root).get("default_thinking")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"on", "true", "1", "yes", "enabled"}:
+            return True
+        if lowered in {"off", "false", "0", "no", "disabled"}:
+            return False
+    return None
+
+
+def save_default_thinking(enabled: bool, app_root: Path | None = None) -> None:
+    payload = load_state(app_root)
+    payload["default_thinking"] = "on" if enabled else "off"
+    save_state(payload, app_root)
+
+
 def load_selected_model(app_root: Path | None = None) -> dict[str, Any] | None:
     payload = load_state(app_root)
     model = payload.get("selected_model")

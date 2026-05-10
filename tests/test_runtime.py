@@ -23,13 +23,16 @@ from service_core.backends.base import BackendSpec
 from service_core.cli import build_parser
 from service_core.local_state import (
     legacy_state_file,
+    load_default_thinking,
     load_selected_backend,
     load_selected_model,
+    save_default_thinking,
     save_selected_backend,
     save_selected_model,
     state_file,
 )
 from service_core.runtime import RuntimeManager
+from service_core.service import load_app_config
 from service_core.tui import _consume_visible_text
 
 
@@ -129,6 +132,20 @@ class LocalStateTests(unittest.TestCase):
     def test_selected_backend_round_trips_through_local_state(self) -> None:
         save_selected_backend("ik_llama.cpp-linux-cuda", self.app_root)
         self.assertEqual(load_selected_backend(self.app_root), "ik_llama.cpp-linux-cuda")
+
+    def test_default_thinking_round_trips_through_local_state(self) -> None:
+        save_default_thinking(True, self.app_root)
+        self.assertEqual(load_default_thinking(self.app_root), True)
+
+        save_default_thinking(False, self.app_root)
+        self.assertEqual(load_default_thinking(self.app_root), False)
+
+    def test_app_config_uses_persisted_default_thinking(self) -> None:
+        save_default_thinking(True, self.app_root)
+
+        config = load_app_config(self.app_root)
+
+        self.assertEqual(config["default_thinking"], "on")
 
     def test_selected_model_round_trips_through_local_state(self) -> None:
         save_selected_model(
@@ -639,6 +656,22 @@ class CommandHelperTests(unittest.TestCase):
             tui._handle_thinking_command("/think off")
 
         set_default.assert_called_once_with(False)
+
+    def test_set_default_thinking_persists_local_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with (
+                patch("service_core.commands.APP_ROOT", root),
+                patch("service_core.commands.ensure_service_running"),
+                patch(
+                    "service_core.commands.request_json",
+                    return_value=(200, {"default_enabled": True}, b"{}"),
+                ),
+            ):
+                enabled = commands.set_default_thinking(True)
+
+            self.assertTrue(enabled)
+            self.assertEqual(load_default_thinking(root), True)
 
     def test_tui_backend_switch_reloads_remembered_model(self) -> None:
         options = commands.ModelLoadOptions(model="/models/demo.gguf")

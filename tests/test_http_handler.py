@@ -11,7 +11,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from service_core.service import (
     ChatReasoningStreamNormalizer,
@@ -165,6 +165,16 @@ class HttpHandlerTests(unittest.TestCase):
         code, body = _post(self.base_url, "/omni/thinking/select", {})
         self.assertEqual(code, 400)
         self.assertIn("required", body["error"]["message"])
+
+    def test_thinking_select_persists_state(self) -> None:
+        with patch("service_core.service.save_default_thinking") as save:
+            code, body = _post(self.base_url, "/omni/thinking/select", {"enabled": True})
+
+        self.assertEqual(code, 200)
+        self.assertTrue(body["default_enabled"])
+        save.assert_called_once()
+        self.assertTrue(save.call_args.args[0])
+        self.server.default_thinking = False
 
     def test_model_select_missing_model(self) -> None:
         code, body = _post(self.base_url, "/omni/model/select", {})
