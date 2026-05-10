@@ -504,6 +504,11 @@ class CommandHelperTests(unittest.TestCase):
     def test_tui_context_usage_requires_usage_payload(self) -> None:
         self.assertEqual(tui._format_context_usage(None, 4096), "not available yet")
 
+    def test_tui_formats_speed_with_two_decimals(self) -> None:
+        self.assertEqual(tui._format_speed(141.4599104824004), "141.46")
+        self.assertEqual(tui._format_speed("8"), "8.00")
+        self.assertEqual(tui._format_speed(None), "-")
+
     def test_tui_extracts_context_size_from_runtime_props(self) -> None:
         self.assertEqual(tui._context_size_from_runtime_props({"n_ctx": 8192}), 8192)
         self.assertEqual(

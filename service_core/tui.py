@@ -367,9 +367,16 @@ def _print_short_performance(payload: dict[str, Any]) -> None:
     if usage:
         pieces.append(f"tokens={usage.get('total_tokens', '-')}")
     if isinstance(timings, dict) and "predicted_per_second" in timings:
-        pieces.append(f"speed={timings.get('predicted_per_second')} tok/s")
+        pieces.append(f"speed={_format_speed(timings.get('predicted_per_second'))} tok/s")
     if pieces:
         print(_THEME.dim("[" + ", ".join(pieces) + "]"))
+
+
+def _format_speed(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "-"
 
 
 def _print_status(*, last_usage: dict[str, Any] | None, messages: list[dict[str, str]]) -> None:
