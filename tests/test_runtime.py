@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import io
 from pathlib import Path
 from unittest.mock import patch
 
@@ -399,6 +400,27 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertEqual(result, "1")
         self.assertEqual(fake.items, [])
+
+    def test_tui_menu_prompt_accepts_cancel(self) -> None:
+        with (
+            patch("service_core.tui._can_use_interactive_menu", return_value=False),
+            patch("builtins.input", return_value="esc"),
+            patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            result = tui._select_menu(
+                title="Models",
+                subtitle="Pick a model",
+                items=[tui._MenuItem(label="demo.gguf")],
+            )
+
+        self.assertIsNone(result)
+
+    def test_tui_load_progress_hides_backend_start_detail(self) -> None:
+        self.assertEqual(
+            tui._model_load_progress_text("Starting backend llama.cpp-linux-cuda and loading model..."),
+            "Loading model...",
+        )
+        self.assertEqual(tui._model_load_progress_text("Waiting for OmniInfer gateway..."), "Waiting for OmniInfer gateway...")
 
 
 # ---------------------------------------------------------------------------

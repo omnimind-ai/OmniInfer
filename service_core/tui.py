@@ -78,11 +78,23 @@ def run_tui() -> int:
             backend = _try_load_remembered_model(remembered)
             if backend is None:
                 backend = _choose_backend()
+                if backend is None:
+                    _print_notice("No backend selected.", kind="warning")
+                    return 1
                 model = _choose_model()
+                if model is None:
+                    _print_notice("No model selected.", kind="warning")
+                    return 1
                 backend = _load_model(commands.ModelLoadOptions(model=str(model))) or backend
         else:
             backend = _choose_backend()
+            if backend is None:
+                _print_notice("No backend selected.", kind="warning")
+                return 1
             model = _choose_model()
+            if model is None:
+                _print_notice("No model selected.", kind="warning")
+                return 1
             backend = _load_model(commands.ModelLoadOptions(model=str(model))) or backend
         _chat_loop(backend)
     except KeyboardInterrupt:
@@ -93,31 +105,34 @@ def run_tui() -> int:
     return 130 if interrupted else 0
 
 
-def _choose_backend() -> str:
+def _choose_backend() -> str | None:
     while True:
         payload = commands.list_backends(scope="installed")
         rows = payload.get("data") if isinstance(payload.get("data"), list) else []
         if not rows:
             raise SystemExit("No installed backends are available.")
 
-        _print_section("Backends", "Choose the runtime used for model loading")
-        for index, item in enumerate(rows, 1):
+        items: list[_MenuItem] = []
+        for item in rows:
             installed = "installed" if item.get("binary_exists") else "not installed"
             capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), list) else []
             details = [installed, *[str(value) for value in capabilities[:4]]]
-            _print_menu_item(
-                index=index,
-                label=str(item.get("id") or ""),
-                details=details,
-                selected=bool(item.get("selected")),
+            items.append(
+                _MenuItem(
+                    label=str(item.get("id") or ""),
+                    details=details,
+                    selected=bool(item.get("selected")),
+                )
             )
-        print()
-        choice = _prompt("Select backend", default=_default_selected_index(rows))
-        index = _parse_choice(choice, len(rows))
+        index = _select_menu(
+            title="Backends",
+            subtitle="Choose the runtime used for model loading",
+            items=items,
+            default_index=_default_selected_index(rows),
+        )
         if index is None:
-            _print_notice("Invalid selection.", kind="warning")
-            continue
-        backend_id = str(rows[index - 1].get("id", ""))
+            return None
+        backend_id = str(rows[index].get("id", ""))
         if not backend_id:
             _print_notice("Invalid backend.", kind="warning")
             continue
@@ -129,24 +144,35 @@ def _choose_backend() -> str:
         return backend_id
 
 
-def _choose_model() -> Path:
+def _choose_model() -> Path | None:
     while True:
         models = commands.discover_local_models()
-        _print_section("Models", "Pick a managed model or link a new local file")
+        items: list[_MenuItem] = []
         if models:
-            for index, model in enumerate(models, 1):
-                _print_menu_item(index=index, label=model.label)
-            _print_menu_item(index=0, label="Enter path manually", details=["link into .local/models"])
-            choice = _prompt("Select model", default="1")
-            if choice == "0":
+            for model in models:
+                items.append(_MenuItem(label=model.label))
+            items.append(_MenuItem(label="Enter path manually", details=["link into .local/models"]))
+            index = _select_menu(
+                title="Models",
+                subtitle="Pick a managed model or link a new local file",
+                items=items,
+                default_index=0,
+            )
+            if index is None:
+                return None
+            if index == len(models):
                 return _prompt_model_path()
-            index = _parse_choice(choice, len(models))
-            if index is not None:
-                return models[index - 1].path
-            _print_notice("Invalid selection.", kind="warning")
-            continue
+            return models[index].path
 
         _print_notice("No models found in OmniInfer .local model directories.", kind="warning")
+        index = _select_menu(
+            title="Models",
+            subtitle="No managed models were found",
+            items=[_MenuItem(label="Enter path manually", details=["link into .local/models"])],
+            default_index=0,
+        )
+        if index is None:
+            return None
         return _prompt_model_path()
 
 
@@ -183,7 +209,7 @@ def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None
 def _load_model(options: commands.ModelLoadOptions) -> str | None:
     print()
     _print_kv("Loading model", options.model)
-    spinner = _LoadingSpinner("Preparing model...")
+    spinner = _LoadingSpinner("Loading model...")
     ready_printed = False
 
     def on_progress(event: dict[str, Any]) -> None:
@@ -191,7 +217,7 @@ def _load_model(options: commands.ModelLoadOptions) -> str | None:
         event_type = event.get("type")
         message = event.get("message")
         if event_type == "status" and message:
-            spinner.update(str(message))
+            spinner.update(_model_load_progress_text(str(message)))
         elif event_type == "log" and message:
             return
         elif event_type == "done":
@@ -227,11 +253,16 @@ def _chat_loop(backend: str) -> None:
         if message == "/exit":
             return
         if message == "/backend":
-            current_backend = _choose_backend()
+            selected_backend = _choose_backend()
+            if selected_backend:
+                current_backend = selected_backend
             _print_chat_header(current_backend)
             continue
         if message == "/model":
             model = _choose_model()
+            if model is None:
+                _print_chat_header(current_backend)
+                continue
             loaded_backend = _load_model(commands.ModelLoadOptions(model=str(model)))
             if loaded_backend:
                 current_backend = loaded_backend
@@ -370,6 +401,191 @@ def _print_help() -> None:
         _print_kv(name, description)
 
 
+class _MenuItem:
+    def __init__(self, label: str, details: list[str] | None = None, selected: bool = False) -> None:
+        self.label = label
+        self.details = details or []
+        self.selected = selected
+
+
+def _select_menu(
+    *,
+    title: str,
+    subtitle: str,
+    items: list[_MenuItem],
+    default_index: int = 0,
+) -> int | None:
+    if not items:
+        return None
+    default_index = max(0, min(default_index, len(items) - 1))
+    if _can_use_interactive_menu():
+        return _select_menu_interactive(title=title, subtitle=subtitle, items=items, default_index=default_index)
+    return _select_menu_prompt(title=title, subtitle=subtitle, items=items, default_index=default_index)
+
+
+def _select_menu_prompt(
+    *,
+    title: str,
+    subtitle: str,
+    items: list[_MenuItem],
+    default_index: int,
+) -> int | None:
+    _print_section(title, subtitle)
+    for index, item in enumerate(items, 1):
+        _print_menu_item(index=index, label=item.label, details=item.details, selected=item.selected)
+    print(_THEME.dim("Press Enter to keep the default, or type Esc to cancel."))
+    print()
+    while True:
+        choice = _prompt(f"Select {title.lower()[:-1] if title.endswith('s') else title.lower()}", default=str(default_index + 1))
+        if choice.lower() in {"esc", "cancel", "q"}:
+            return None
+        index = _parse_choice(choice, len(items))
+        if index is not None:
+            return index - 1
+        _print_notice("Invalid selection.", kind="warning")
+
+
+def _select_menu_interactive(
+    *,
+    title: str,
+    subtitle: str,
+    items: list[_MenuItem],
+    default_index: int,
+) -> int | None:
+    index = default_index
+    rendered_lines = 0
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+    try:
+        while True:
+            if rendered_lines:
+                sys.stdout.write(f"\033[{rendered_lines}A\033[J")
+            rendered = _render_menu(title, subtitle, items, index)
+            rendered_lines = len(rendered.splitlines())
+            sys.stdout.write(rendered)
+            sys.stdout.flush()
+            key = _read_menu_key()
+            if key == "up":
+                index = (index - 1) % len(items)
+            elif key == "down":
+                index = (index + 1) % len(items)
+            elif key == "home":
+                index = 0
+            elif key == "end":
+                index = len(items) - 1
+            elif key == "enter":
+                sys.stdout.write(f"\033[{rendered_lines}A\033[J")
+                return index
+            elif key == "esc":
+                sys.stdout.write(f"\033[{rendered_lines}A\033[J")
+                _print_notice("Selection cancelled.", kind="warning")
+                print()
+                return None
+            elif key and key.isdigit():
+                number = int(key)
+                if 1 <= number <= min(len(items), 9):
+                    index = number - 1
+    finally:
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+
+
+def _render_menu(title: str, subtitle: str, items: list[_MenuItem], active_index: int) -> str:
+    lines: list[str] = []
+    width = _content_width()
+    lines.append(_THEME.accent(title))
+    if subtitle:
+        lines.append(_THEME.dim(_truncate(subtitle, width)))
+    lines.append(_THEME.dim("─" * min(width, max(len(title), 24))))
+    for index, item in enumerate(items):
+        selected = "●" if item.selected else "○"
+        cursor = "›" if index == active_index else " "
+        detail = ""
+        if item.details:
+            clean_details = [value for value in item.details if value]
+            if clean_details:
+                detail = "  " + _THEME.dim(" · ".join(clean_details))
+        prefix = f" {cursor} {selected} "
+        budget = max(width - len(_strip_ansi(prefix)) - len(_strip_ansi(detail)), 18)
+        label = _truncate(item.label, budget)
+        if index == active_index:
+            label = _THEME.paint(label, "7")
+        lines.append(f"{prefix}{label}{detail}")
+    lines.append(_THEME.dim("  ↑/↓ move   Enter select   Esc back"))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _can_use_interactive_menu() -> bool:
+    return bool(
+        getattr(sys.stdin, "isatty", lambda: False)()
+        and getattr(sys.stdout, "isatty", lambda: False)()
+    )
+
+
+def _read_menu_key() -> str:
+    if os.name == "nt":
+        return _read_menu_key_windows()
+    return _read_menu_key_posix()
+
+
+def _read_menu_key_windows() -> str:
+    import msvcrt
+
+    char = msvcrt.getwch()
+    if char == "\x03":
+        raise KeyboardInterrupt
+    if char in {"\r", "\n"}:
+        return "enter"
+    if char == "\x1b":
+        return "esc"
+    if char in {"\x00", "\xe0"}:
+        code = msvcrt.getwch()
+        return {
+            "H": "up",
+            "P": "down",
+            "G": "home",
+            "O": "end",
+        }.get(code, "")
+    return char
+
+
+def _read_menu_key_posix() -> str:
+    import select
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        char = sys.stdin.read(1)
+        if char == "\x03":
+            raise KeyboardInterrupt
+        if char in {"\r", "\n"}:
+            return "enter"
+        if char != "\x1b":
+            return char
+        ready, _, _ = select.select([sys.stdin], [], [], 0.05)
+        if not ready:
+            return "esc"
+        seq = sys.stdin.read(2)
+        return {
+            "[A": "up",
+            "[B": "down",
+            "[H": "home",
+            "[F": "end",
+        }.get(seq, "esc")
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _model_load_progress_text(message: str) -> str:
+    if re.fullmatch(r"Starting backend .+ and loading model\.\.\.", message):
+        return "Loading model..."
+    return message
+
+
 def _content_width() -> int:
     size = shutil.get_terminal_size(fallback=(80, 24))
     return max(_MIN_WIDTH, min(_MAX_WIDTH, size.columns))
@@ -491,11 +707,11 @@ def _parse_choice(value: str, count: int) -> int | None:
     return None
 
 
-def _default_selected_index(rows: list[dict[str, Any]]) -> str:
+def _default_selected_index(rows: list[dict[str, Any]]) -> int:
     for index, item in enumerate(rows, 1):
         if item.get("selected"):
-            return str(index)
-    return "1"
+            return index - 1
+    return 0
 
 
 def _clear() -> None:
