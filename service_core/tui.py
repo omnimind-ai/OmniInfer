@@ -7,6 +7,7 @@ import shutil
 import sys
 import threading
 import unicodedata
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -293,11 +294,41 @@ def _load_model(options: commands.ModelLoadOptions) -> str | None:
     return str(backend) if backend else None
 
 
-def _chat_loop(backend: str) -> None:
-    current_backend = backend
+@dataclass
+class _ChatSessionState:
+    backend: str
+    messages: list[dict[str, str]] = field(default_factory=list)
     last_usage: dict[str, Any] | None = None
-    messages: list[dict[str, str]] = []
-    _print_chat_header(current_backend)
+
+    def switch_backend(self, backend: str) -> None:
+        self.backend = backend
+        self.clear_conversation()
+
+    def clear_conversation(self) -> None:
+        self.messages.clear()
+        self.last_usage = None
+
+
+class _TranscriptView:
+    def render_header(self, session: _ChatSessionState) -> None:
+        _print_chat_header(session.backend)
+
+    def render_assistant_header(self) -> None:
+        print(_THEME.role_assistant("Assistant"))
+
+    def render_status(self, session: _ChatSessionState) -> None:
+        _print_status(last_usage=session.last_usage, messages=session.messages)
+        print()
+
+    def render_help(self) -> None:
+        _print_help()
+        print()
+
+
+def _chat_loop(backend: str) -> None:
+    session = _ChatSessionState(backend=backend)
+    transcript = _TranscriptView()
+    transcript.render_header(session)
     while True:
         message = _prompt(_THEME.role_user("You"), history=True)
         if not message:
@@ -307,53 +338,47 @@ def _chat_loop(backend: str) -> None:
         if message == "/backend":
             selected_backend = _choose_backend()
             if selected_backend:
-                current_backend = selected_backend
-                messages.clear()
-                last_usage = None
+                session.switch_backend(selected_backend)
                 loaded_backend = _load_model_after_backend_switch()
                 if loaded_backend:
-                    current_backend = loaded_backend
-            _print_chat_header(current_backend)
+                    session.backend = loaded_backend
+            transcript.render_header(session)
             continue
         if message == "/model":
             model = _choose_model()
             if model is None:
-                _print_chat_header(current_backend)
+                transcript.render_header(session)
                 continue
             loaded_backend = _load_model(commands.ModelLoadOptions(model=str(model)))
             if loaded_backend:
-                current_backend = loaded_backend
-                messages.clear()
-                last_usage = None
-            _print_chat_header(current_backend)
+                session.switch_backend(loaded_backend)
+            transcript.render_header(session)
             continue
         if message == "/clear":
             _clear()
             _print_header("OmniInfer", "Local inference console")
-            _print_chat_header(current_backend)
+            transcript.render_header(session)
             continue
         if message == "/status":
-            _print_status(last_usage=last_usage, messages=messages)
-            print()
+            transcript.render_status(session)
             continue
         if message == "/help":
-            _print_help()
-            print()
+            transcript.render_help()
             continue
         if message == "/think" or message == "/thinking" or message.startswith("/think ") or message.startswith("/thinking "):
             _handle_thinking_command(message)
             print()
-            _print_chat_header(current_backend)
+            transcript.render_header(session)
             continue
 
-        print(_THEME.role_assistant("Assistant"))
+        transcript.render_assistant_header()
         final_payload: dict[str, Any] | None = None
         buffer = ""
         assistant_text = ""
         visible_started = False
         thinking_spinner = _LoadingSpinner("Thinking...")
         try:
-            payload = _build_conversation_payload(message, messages)
+            payload = _build_conversation_payload(message, session.messages)
             for chunk in commands.iter_chat_stream_payload(payload):
                 if chunk.reasoning_text and not visible_started and not thinking_spinner.active:
                     thinking_spinner.start()
@@ -387,13 +412,12 @@ def _chat_loop(backend: str) -> None:
         if final_payload:
             usage = final_payload.get("usage") if isinstance(final_payload.get("usage"), dict) else None
             if usage:
-                last_usage = usage
+                session.last_usage = usage
             _print_short_performance(final_payload)
         if assistant_text:
-            messages.append({"role": "user", "content": message})
-            messages.append({"role": "assistant", "content": assistant_text})
+            session.messages.append({"role": "user", "content": message})
+            session.messages.append({"role": "assistant", "content": assistant_text})
         print()
-        _ = current_backend
 
 
 def _build_conversation_payload(message: str, messages: list[dict[str, str]]) -> dict[str, Any]:
