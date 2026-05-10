@@ -349,6 +349,27 @@ def current_backend_props() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def get_default_thinking() -> bool:
+    ensure_service_running()
+    _status, payload, _ = request_json("GET", "/omni/thinking", timeout=10.0)
+    if not isinstance(payload, dict):
+        raise SystemExit("Unable to read the thinking state.")
+    return bool(payload.get("default_enabled"))
+
+
+def set_default_thinking(enabled: bool) -> bool:
+    ensure_service_running()
+    _status, payload, _ = request_json(
+        "POST",
+        "/omni/thinking/select",
+        payload={"enabled": enabled},
+        timeout=10.0,
+    )
+    if not isinstance(payload, dict):
+        raise SystemExit("Unable to update the thinking state.")
+    return bool(payload.get("default_enabled"))
+
+
 def selected_backend() -> str | None:
     ensure_service_running()
     payload = current_runtime_state()
@@ -655,11 +676,8 @@ def build_chat_payload(options: ChatOptions) -> dict[str, Any]:
     payload["temperature"] = options.temperature if options.temperature is not None else payload.get("temperature", 0.2)
     payload["max_tokens"] = options.max_tokens if options.max_tokens is not None else payload.get("max_tokens", DEFAULT_CHAT_MAX_TOKENS)
     payload["stream"] = options.stream if options.stream is not None else payload.get("stream", True)
-    payload["think"] = (
-        parse_boolish(options.think)
-        if options.think is not None
-        else payload.get("think", False)
-    )
+    if options.think is not None:
+        payload["think"] = parse_boolish(options.think)
     return payload
 
 

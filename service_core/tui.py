@@ -338,6 +338,11 @@ def _chat_loop(backend: str) -> None:
             _print_help()
             print()
             continue
+        if message == "/think" or message == "/thinking" or message.startswith("/think ") or message.startswith("/thinking "):
+            _handle_thinking_command(message)
+            print()
+            _print_chat_header(current_backend)
+            continue
 
         print(_THEME.role_assistant("Assistant"))
         final_payload: dict[str, Any] | None = None
@@ -423,6 +428,9 @@ def _print_status(*, last_usage: dict[str, Any] | None, messages: list[dict[str,
     _print_kv("Context size", _format_context_size(ctx_size, loaded=bool(state.get("backend_ready"))))
 
     defaults = state.get("request_defaults") if isinstance(state.get("request_defaults"), dict) else {}
+    thinking = state.get("thinking") if isinstance(state.get("thinking"), dict) else {}
+    if "default_enabled" in thinking:
+        _print_kv("Thinking", _format_on_off(bool(thinking.get("default_enabled"))))
     if defaults:
         default_bits = [
             f"{key}={defaults[key]}"
@@ -564,12 +572,14 @@ def _print_kv(label: str, value: str) -> None:
 
 
 def _print_command_bar() -> None:
-    commands_text = " /backend  /model  /status  /clear  /help  /exit "
+    commands_text = " /backend  /model  /think  /status  /clear  /help  /exit "
     print(_THEME.dim("Commands") + _THEME.accent(commands_text))
 
 
 def _print_chat_header(backend: str) -> None:
-    _print_section("Chat", f"Backend: {backend}")
+    thinking = _current_thinking_label()
+    suffix = f" · Thinking: {thinking}" if thinking else ""
+    _print_section("Chat", f"Backend: {backend}{suffix}")
     _print_command_bar()
     print()
 
@@ -579,6 +589,7 @@ def _print_help() -> None:
     commands_table = [
         ("/backend", "switch the selected runtime"),
         ("/model", "load a different managed model"),
+        ("/think", "toggle thinking mode; use /think on or /think off to set it"),
         ("/status", "show backend, model, request defaults, and conversation context usage"),
         ("/clear", "clear the terminal and redraw the chat header"),
         ("/help", "show this command reference"),
@@ -586,6 +597,30 @@ def _print_help() -> None:
     ]
     for name, description in commands_table:
         _print_kv(name, description)
+
+
+def _handle_thinking_command(message: str) -> None:
+    parts = message.split()
+    if len(parts) == 1:
+        enabled = not commands.get_default_thinking()
+    elif len(parts) == 2 and parts[1].lower() in {"on", "off"}:
+        enabled = parts[1].lower() == "on"
+    else:
+        _print_notice("Usage: /think, /think on, or /think off", kind="warning")
+        return
+    new_value = commands.set_default_thinking(enabled)
+    _print_notice(f"Thinking mode: {_format_on_off(new_value)}", kind="success")
+
+
+def _current_thinking_label() -> str | None:
+    try:
+        return _format_on_off(commands.get_default_thinking())
+    except SystemExit:
+        return None
+
+
+def _format_on_off(enabled: bool) -> str:
+    return "on" if enabled else "off"
 
 
 class _MenuItem:

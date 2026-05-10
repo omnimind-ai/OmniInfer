@@ -602,6 +602,38 @@ class CommandHelperTests(unittest.TestCase):
             payload = commands.build_chat_payload(commands.ChatOptions(message="hello"))
 
         self.assertEqual(payload["max_tokens"], 2048)
+        self.assertNotIn("think", payload)
+
+    def test_chat_payload_includes_explicit_thinking_override(self) -> None:
+        with (
+            patch("service_core.commands.ensure_service_running"),
+            patch(
+                "service_core.commands.current_runtime_state",
+                return_value={"model": "demo.gguf", "request_defaults": {}},
+            ),
+        ):
+            payload = commands.build_chat_payload(commands.ChatOptions(message="hello", think="on"))
+
+        self.assertTrue(payload["think"])
+
+    def test_tui_thinking_command_toggles_default(self) -> None:
+        with (
+            patch("service_core.commands.get_default_thinking", return_value=False),
+            patch("service_core.commands.set_default_thinking", return_value=True) as set_default,
+            patch("sys.stdout", io.StringIO()),
+        ):
+            tui._handle_thinking_command("/think")
+
+        set_default.assert_called_once_with(True)
+
+    def test_tui_thinking_command_sets_explicit_value(self) -> None:
+        with (
+            patch("service_core.commands.set_default_thinking", return_value=False) as set_default,
+            patch("sys.stdout", io.StringIO()),
+        ):
+            tui._handle_thinking_command("/think off")
+
+        set_default.assert_called_once_with(False)
 
     def test_tui_backend_switch_reloads_remembered_model(self) -> None:
         options = commands.ModelLoadOptions(model="/models/demo.gguf")
