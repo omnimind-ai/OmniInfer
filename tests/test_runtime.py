@@ -453,6 +453,13 @@ class CommandHelperTests(unittest.TestCase):
         )
         self.assertEqual(tui._model_load_progress_text("Waiting for OmniInfer gateway..."), "Waiting for OmniInfer gateway...")
 
+    def test_tui_decodes_common_arrow_escape_sequences(self) -> None:
+        self.assertEqual(tui._decode_escape_sequence("[A"), "up")
+        self.assertEqual(tui._decode_escape_sequence("OA"), "up")
+        self.assertEqual(tui._decode_escape_sequence("[B"), "down")
+        self.assertEqual(tui._decode_escape_sequence("OB"), "down")
+        self.assertEqual(tui._decode_escape_sequence("[Z"), "")
+
     def test_tui_formats_last_context_usage(self) -> None:
         result = tui._format_context_usage(
             {"prompt_tokens": 13, "completion_tokens": 12, "total_tokens": 25},

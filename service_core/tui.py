@@ -656,15 +656,42 @@ def _read_menu_key_posix() -> str:
         ready, _, _ = select.select([sys.stdin], [], [], 0.05)
         if not ready:
             return "esc"
-        seq = sys.stdin.read(2)
-        return {
-            "[A": "up",
-            "[B": "down",
-            "[H": "home",
-            "[F": "end",
-        }.get(seq, "esc")
+        seq = _read_escape_sequence()
+        return _decode_escape_sequence(seq)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _read_escape_sequence(timeout_s: float = 0.02) -> str:
+    import select
+
+    parts: list[str] = []
+    while len(parts) < 8:
+        ready, _, _ = select.select([sys.stdin], [], [], timeout_s)
+        if not ready:
+            break
+        char = sys.stdin.read(1)
+        if not char:
+            break
+        parts.append(char)
+        if char.isalpha() or char == "~":
+            break
+    return "".join(parts)
+
+
+def _decode_escape_sequence(seq: str) -> str:
+    return {
+        "[A": "up",
+        "OA": "up",
+        "[B": "down",
+        "OB": "down",
+        "[H": "home",
+        "OH": "home",
+        "[1~": "home",
+        "[F": "end",
+        "OF": "end",
+        "[4~": "end",
+    }.get(seq, "")
 
 
 def _model_load_progress_text(message: str) -> str:
