@@ -765,16 +765,7 @@ def _print_chat_header(backend: str) -> None:
 
 def _print_help() -> None:
     _print_section("Help", "Conversation commands")
-    commands_table = [
-        ("/backend", "switch the selected runtime"),
-        ("/model", "load a different managed model"),
-        ("/think", "toggle thinking mode; use /think on or /think off to set it"),
-        ("/status", "show backend, model, request defaults, and conversation context usage"),
-        ("/clear", "clear the terminal and redraw the chat header"),
-        ("/help", "show this command reference"),
-        ("/exit", "stop the OmniInfer service and leave the TUI"),
-    ]
-    for name, description in commands_table:
+    for name, description in _COMMAND_TABLE:
         _print_kv(name, description)
 
 
@@ -807,6 +798,17 @@ class _MenuItem:
         self.label = label
         self.details = details or []
         self.selected = selected
+
+
+_COMMAND_TABLE = [
+    ("/backend", "switch the selected runtime"),
+    ("/model", "load a different managed model"),
+    ("/think", "toggle thinking mode; use /think on or /think off to set it"),
+    ("/status", "show backend, model, request defaults, and conversation context usage"),
+    ("/clear", "clear the terminal and redraw the chat header"),
+    ("/help", "show this command reference"),
+    ("/exit", "stop the OmniInfer service and leave the TUI"),
+]
 
 
 def _select_menu(
@@ -853,7 +855,8 @@ def _select_menu_interactive(
     items: list[_MenuItem],
     default_index: int,
 ) -> int | None:
-    index = default_index
+    selected_index = default_index
+    query = ""
     rendered_lines = 0
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
@@ -861,44 +864,86 @@ def _select_menu_interactive(
         while True:
             if rendered_lines:
                 sys.stdout.write(f"\033[{rendered_lines}A\033[J")
-            rendered = _render_menu(title, subtitle, items, index)
+            visible = _filter_menu_indices(items, query)
+            if visible and selected_index not in visible:
+                selected_index = visible[0]
+            rendered = _render_menu(title, subtitle, items, selected_index, query=query, visible_indices=visible)
             rendered_lines = len(rendered.splitlines())
             sys.stdout.write(rendered)
             sys.stdout.flush()
             key = _read_menu_key()
+            if key in {"backspace", "delete"}:
+                query = query[:-1]
+                continue
+            if key == "ctrl_u":
+                query = ""
+                continue
             if key == "up":
-                index = (index - 1) % len(items)
+                selected_index = _move_visible_selection(visible, selected_index, -1)
             elif key == "down":
-                index = (index + 1) % len(items)
+                selected_index = _move_visible_selection(visible, selected_index, 1)
             elif key == "home":
-                index = 0
+                selected_index = visible[0] if visible else selected_index
             elif key == "end":
-                index = len(items) - 1
+                selected_index = visible[-1] if visible else selected_index
             elif key == "enter":
-                sys.stdout.write(f"\033[{rendered_lines}A\033[J")
-                return index
+                if visible:
+                    sys.stdout.write(f"\033[{rendered_lines}A\033[J")
+                    return selected_index
             elif key == "esc":
                 sys.stdout.write(f"\033[{rendered_lines}A\033[J")
-                _print_notice("Selection cancelled.", kind="warning")
-                print()
                 return None
-            elif key and key.isdigit():
-                number = int(key)
-                if 1 <= number <= min(len(items), 9):
-                    index = number - 1
+            elif key and len(key) == 1 and key.isprintable():
+                query += key
     finally:
         sys.stdout.write("\033[?25h")
         sys.stdout.flush()
 
 
-def _render_menu(title: str, subtitle: str, items: list[_MenuItem], active_index: int) -> str:
+def _filter_menu_indices(items: list[_MenuItem], query: str) -> list[int]:
+    needle = query.strip().lower()
+    if not needle:
+        return list(range(len(items)))
+    result: list[int] = []
+    for index, item in enumerate(items):
+        haystack = " ".join([item.label, *item.details]).lower()
+        if all(part in haystack for part in needle.split()):
+            result.append(index)
+    return result
+
+
+def _move_visible_selection(visible: list[int], selected_index: int, direction: int) -> int:
+    if not visible:
+        return selected_index
+    try:
+        position = visible.index(selected_index)
+    except ValueError:
+        position = 0
+    return visible[(position + direction) % len(visible)]
+
+
+def _render_menu(
+    title: str,
+    subtitle: str,
+    items: list[_MenuItem],
+    active_index: int,
+    *,
+    query: str = "",
+    visible_indices: list[int] | None = None,
+) -> str:
     lines: list[str] = []
     width = _content_width()
     lines.append(_THEME.accent(title))
     if subtitle:
         lines.append(_THEME.dim(_truncate(subtitle, width)))
     lines.append(_THEME.dim("─" * min(width, max(len(title), 24))))
-    for index, item in enumerate(items):
+    search = f"Search: {query}" if query else "Search: "
+    lines.append(_THEME.dim(_truncate(search, width)))
+    visible = visible_indices if visible_indices is not None else list(range(len(items)))
+    if not visible:
+        lines.append(_THEME.warning("  No matches"))
+    for index in visible:
+        item = items[index]
         selected = "●" if item.selected else "○"
         cursor = "›" if index == active_index else " "
         detail = ""
@@ -912,7 +957,7 @@ def _render_menu(title: str, subtitle: str, items: list[_MenuItem], active_index
         if index == active_index:
             label = _THEME.paint(label, "7")
         lines.append(f"{prefix}{label}{detail}")
-    lines.append(_THEME.dim("  ↑/↓ move   Enter select   Esc back"))
+    lines.append(_THEME.dim("  type to filter   ↑/↓ move   Enter select   Esc back"))
     lines.append("")
     return "\n".join(lines)
 
@@ -940,6 +985,10 @@ def _read_menu_key_windows() -> str:
         return "enter"
     if char == "\x1b":
         return "esc"
+    if char in {"\x7f", "\b"}:
+        return "backspace"
+    if char == "\x15":
+        return "ctrl_u"
     if char in {"\x00", "\xe0"}:
         code = msvcrt.getwch()
         return {
@@ -964,6 +1013,12 @@ def _read_menu_key_posix() -> str:
             raise KeyboardInterrupt
         if char in {"\r", "\n"}:
             return "enter"
+        if char in {"\x7f", "\b"}:
+            return "backspace"
+        if char == "\x04":
+            return "delete"
+        if char == "\x15":
+            return "ctrl_u"
         if char != "\x1b":
             return char
         seq = _read_escape_sequence(fd, initial_timeout_s=0.2)

@@ -512,6 +512,36 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_tui_menu_filter_matches_label_and_details(self) -> None:
+        items = [
+            tui._MenuItem(label="llama.cpp-linux", details=["cpu"]),
+            tui._MenuItem(label="llama.cpp-linux-cuda", details=["gpu", "cuda"]),
+            tui._MenuItem(label="ik_llama.cpp-linux-cuda", details=["gpu", "cuda"]),
+        ]
+
+        self.assertEqual(tui._filter_menu_indices(items, "ik cuda"), [2])
+        self.assertEqual(tui._filter_menu_indices(items, "gpu"), [1, 2])
+
+    def test_tui_menu_moves_within_filtered_items(self) -> None:
+        visible = [1, 3, 4]
+
+        self.assertEqual(tui._move_visible_selection(visible, 1, 1), 3)
+        self.assertEqual(tui._move_visible_selection(visible, 1, -1), 4)
+        self.assertEqual(tui._move_visible_selection(visible, 0, 1), 3)
+
+    def test_tui_menu_render_includes_search_prompt(self) -> None:
+        rendered = tui._render_menu(
+            "Backends",
+            "Choose backend",
+            [tui._MenuItem(label="llama.cpp-linux-cuda", details=["installed"])],
+            0,
+            query="cuda",
+            visible_indices=[0],
+        )
+
+        self.assertIn("Search: cuda", rendered)
+        self.assertIn("type to filter", rendered)
+
     def test_tui_load_progress_hides_backend_start_detail(self) -> None:
         self.assertEqual(
             tui._model_load_progress_text("Starting backend llama.cpp-linux-cuda and loading model..."),
