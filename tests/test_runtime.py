@@ -453,6 +453,17 @@ class CommandHelperTests(unittest.TestCase):
         )
         self.assertEqual(tui._model_load_progress_text("Waiting for OmniInfer gateway..."), "Waiting for OmniInfer gateway...")
 
+    def test_tui_formats_last_context_usage(self) -> None:
+        result = tui._format_context_usage(
+            {"prompt_tokens": 13, "completion_tokens": 12, "total_tokens": 25},
+            4096,
+        )
+
+        self.assertEqual(result, "prompt=13, completion=12, context=25/4096 (0.6%)")
+
+    def test_tui_context_usage_requires_usage_payload(self) -> None:
+        self.assertEqual(tui._format_context_usage(None, 4096), "not available yet")
+
 
 # ---------------------------------------------------------------------------
 # Embedded backend lifecycle

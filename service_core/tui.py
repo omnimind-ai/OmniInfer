@@ -274,6 +274,7 @@ def _load_model(options: commands.ModelLoadOptions) -> str | None:
 
 def _chat_loop(backend: str) -> None:
     current_backend = backend
+    last_usage: dict[str, Any] | None = None
     _print_chat_header(current_backend)
     while True:
         message = _prompt(_THEME.role_user("You"), history=True)
@@ -302,6 +303,10 @@ def _chat_loop(backend: str) -> None:
             _print_header("OmniInfer", "Local inference console")
             _print_chat_header(current_backend)
             continue
+        if message == "/status":
+            _print_status(last_usage=last_usage)
+            print()
+            continue
         if message == "/help":
             _print_help()
             print()
@@ -327,6 +332,9 @@ def _chat_loop(backend: str) -> None:
                 sys.stdout.flush()
         print()
         if final_payload:
+            usage = final_payload.get("usage") if isinstance(final_payload.get("usage"), dict) else None
+            if usage:
+                last_usage = usage
             _print_short_performance(final_payload)
         print()
         _ = current_backend
@@ -342,6 +350,55 @@ def _print_short_performance(payload: dict[str, Any]) -> None:
         pieces.append(f"speed={timings.get('predicted_per_second')} tok/s")
     if pieces:
         print(_THEME.dim("[" + ", ".join(pieces) + "]"))
+
+
+def _print_status(*, last_usage: dict[str, Any] | None) -> None:
+    try:
+        state = commands.current_runtime_state()
+    except SystemExit as exc:
+        _print_notice(f"Could not read status: {exc}", kind="warning")
+        return
+
+    _print_section("Status", "Current OmniInfer session")
+    _print_kv("Backend", str(state.get("backend") or "-"))
+    _print_kv("Backend ready", "yes" if state.get("backend_ready") else "no")
+    _print_kv("Model", str(state.get("model") or "-"))
+    if state.get("mmproj"):
+        _print_kv("MMProj", str(state.get("mmproj")))
+    _print_kv("Context size", str(state.get("ctx_size") or "-"))
+
+    defaults = state.get("request_defaults") if isinstance(state.get("request_defaults"), dict) else {}
+    if defaults:
+        default_bits = [
+            f"{key}={defaults[key]}"
+            for key in ("temperature", "max_tokens", "stream", "think")
+            if key in defaults
+        ]
+        if default_bits:
+            _print_kv("Request defaults", ", ".join(default_bits))
+
+    usage_text = _format_context_usage(last_usage, state.get("ctx_size"))
+    _print_kv("Last context usage", usage_text)
+
+
+def _format_context_usage(usage: dict[str, Any] | None, ctx_size: Any) -> str:
+    if not usage:
+        return "not available yet"
+    prompt_tokens = usage.get("prompt_tokens", "-")
+    completion_tokens = usage.get("completion_tokens", "-")
+    total_tokens = usage.get("total_tokens")
+    pieces = [f"prompt={prompt_tokens}", f"completion={completion_tokens}"]
+    if isinstance(total_tokens, int):
+        try:
+            ctx_int = int(ctx_size)
+        except (TypeError, ValueError):
+            ctx_int = 0
+        if ctx_int > 0:
+            percent = total_tokens / ctx_int * 100
+            pieces.append(f"context={total_tokens}/{ctx_int} ({percent:.1f}%)")
+        else:
+            pieces.append(f"total={total_tokens}")
+    return ", ".join(pieces)
 
 
 def _shutdown_service_for_tui() -> None:
@@ -407,7 +464,7 @@ def _print_kv(label: str, value: str) -> None:
 
 
 def _print_command_bar() -> None:
-    commands_text = " /backend  /model  /clear  /help  /exit "
+    commands_text = " /backend  /model  /status  /clear  /help  /exit "
     print(_THEME.dim("Commands") + _THEME.accent(commands_text))
 
 
@@ -422,6 +479,7 @@ def _print_help() -> None:
     commands_table = [
         ("/backend", "switch the selected runtime"),
         ("/model", "load a different managed model"),
+        ("/status", "show backend, model, request defaults, and last context usage"),
         ("/clear", "clear the terminal and redraw the chat header"),
         ("/help", "show this command reference"),
         ("/exit", "stop the OmniInfer service and leave the TUI"),
