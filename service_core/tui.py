@@ -364,7 +364,8 @@ class _TranscriptView:
         _print_chat_header(session.backend)
 
     def render_assistant_header(self) -> None:
-        print(_THEME.role_assistant("Assistant"))
+        sys.stdout.write(f"\r{_THEME.role_assistant('Assistant')}:\n")
+        sys.stdout.flush()
 
     def render_status(self, session: _ChatSessionState) -> None:
         _print_status(last_usage=session.last_usage, messages=session.messages)
@@ -396,6 +397,36 @@ class _StatusLine:
         if usage:
             pieces.append(usage)
         return "  ".join(pieces)
+
+
+class _FixedPromptDuringOutput:
+    def __init__(self, label: str, status: str) -> None:
+        self._label = label
+        self._status = status
+        self._active = False
+
+    def __enter__(self) -> "_FixedPromptDuringOutput":
+        if not _can_use_fixed_input_box():
+            return self
+        rows = shutil.get_terminal_size(fallback=(80, 24)).lines
+        scroll_bottom = max(1, rows - _PROMPT_BOX_ROWS)
+        sys.stdout.write(f"\033[1;{scroll_bottom}r")
+        self._active = True
+        self.redraw(self._status)
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        if not self._active:
+            return
+        sys.stdout.write("\033[r\033[?25h")
+        sys.stdout.flush()
+
+    def redraw(self, status: str | None = None) -> None:
+        if not self._active:
+            return
+        if status is not None:
+            self._status = status
+        _draw_prompt_placeholder(self._label, status=self._status)
 
 
 def _chat_loop(backend: str) -> None:
@@ -444,58 +475,61 @@ def _chat_loop(backend: str) -> None:
             continue
 
         session.notices.clear()
-        final_payload: dict[str, Any] | None = None
-        buffer = ""
-        assistant_text = ""
-        visible_started = False
-        assistant_header_printed = False
-        thinking_spinner = _LoadingSpinner("Thinking...")
-        try:
-            payload = _build_conversation_payload(message, session.messages)
-            for chunk in commands.iter_chat_stream_payload(payload):
-                if chunk.reasoning_text and not visible_started and not thinking_spinner.active:
-                    thinking_spinner.start()
-                if chunk.text:
-                    buffer += chunk.text
-                    output, buffer, visible_started = _consume_visible_text(buffer, visible_started)
-                    if output and thinking_spinner.active:
-                        thinking_spinner.stop()
-                    elif _is_hidden_thinking_pending(buffer, visible_started) and not thinking_spinner.active:
+        with _FixedPromptDuringOutput(_THEME.role_user("You"), status_line.text(session)) as fixed_prompt:
+            final_payload: dict[str, Any] | None = None
+            buffer = ""
+            assistant_text = ""
+            visible_started = False
+            assistant_header_printed = False
+            thinking_spinner = _LoadingSpinner("Thinking...")
+            try:
+                payload = _build_conversation_payload(message, session.messages)
+                for chunk in commands.iter_chat_stream_payload(payload):
+                    if chunk.reasoning_text and not visible_started and not thinking_spinner.active:
                         thinking_spinner.start()
-                    if output:
-                        if not assistant_header_printed:
-                            transcript.render_assistant_header()
-                            assistant_header_printed = True
-                        assistant_text += output
-                        sys.stdout.write(output)
-                        sys.stdout.flush()
-                if chunk.final_payload:
-                    final_payload = chunk.final_payload
-        except SystemExit as exc:
-            thinking_spinner.stop()
-            session.notices.push(str(exc), kind="warning")
-            continue
-        if buffer:
-            output, _buffer, _visible_started = _consume_visible_text(buffer, visible_started, final=True)
-            if output:
+                    if chunk.text:
+                        buffer += chunk.text
+                        output, buffer, visible_started = _consume_visible_text(buffer, visible_started)
+                        if output and thinking_spinner.active:
+                            thinking_spinner.stop()
+                        elif _is_hidden_thinking_pending(buffer, visible_started) and not thinking_spinner.active:
+                            thinking_spinner.start()
+                        if output:
+                            if not assistant_header_printed:
+                                transcript.render_assistant_header()
+                                assistant_header_printed = True
+                            assistant_text += output
+                            sys.stdout.write(output)
+                            sys.stdout.flush()
+                    if chunk.final_payload:
+                        final_payload = chunk.final_payload
+            except SystemExit as exc:
                 thinking_spinner.stop()
-                if not assistant_header_printed:
-                    transcript.render_assistant_header()
-                    assistant_header_printed = True
-                assistant_text += output
-                sys.stdout.write(output)
-                sys.stdout.flush()
-        thinking_spinner.stop()
-        print()
-        if final_payload:
-            usage = final_payload.get("usage") if isinstance(final_payload.get("usage"), dict) else None
-            if usage:
-                session.last_usage = usage
-            _print_short_performance(final_payload)
-        if assistant_text:
-            session.messages.append({"role": "user", "content": message})
-            session.messages.append({"role": "assistant", "content": assistant_text})
-        print()
+                session.notices.push(str(exc), kind="warning")
+                fixed_prompt.redraw(status_line.text(session))
+                continue
+            if buffer:
+                output, _buffer, _visible_started = _consume_visible_text(buffer, visible_started, final=True)
+                if output:
+                    thinking_spinner.stop()
+                    if not assistant_header_printed:
+                        transcript.render_assistant_header()
+                        assistant_header_printed = True
+                    assistant_text += output
+                    sys.stdout.write(output)
+                    sys.stdout.flush()
+            thinking_spinner.stop()
+            print()
+            if final_payload:
+                usage = final_payload.get("usage") if isinstance(final_payload.get("usage"), dict) else None
+                if usage:
+                    session.last_usage = usage
+                _print_short_performance(final_payload)
+            if assistant_text:
+                session.messages.append({"role": "user", "content": message})
+                session.messages.append({"role": "assistant", "content": assistant_text})
+            fixed_prompt.redraw(status_line.text(session))
+            print()
 
 
 def _build_conversation_payload(message: str, messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -1128,7 +1162,7 @@ def _prompt_chat_box(label: str, *, status: str | None = None) -> str:
             if data in {b"\r", b"\n"}:
                 result = state.text.strip()
                 _clear_input_box(restore=True)
-                sys.stdout.write(f"{label}: {result}\n")
+                sys.stdout.write(f"\r{label}: {result}\n")
                 sys.stdout.flush()
                 finished = True
                 return result
@@ -1246,6 +1280,13 @@ def _draw_input_box(label: str, state: _InputBoxState, *, status: str | None = N
     sys.stdout.write(f"\033[{top + 3};1H\033[2K{_THEME.dim('╰' + '─' * border_width + '╯')}")
     cursor_col = min(width, 3 + _display_width(f"{label_text}: ") + _input_cursor_prefix_width(rendered))
     sys.stdout.write(f"\033[{top + 1};{cursor_col}H")
+    sys.stdout.flush()
+
+
+def _draw_prompt_placeholder(label: str, *, status: str | None = None) -> None:
+    sys.stdout.write("\033[s\033[?25l")
+    _draw_input_box(label, _InputBoxState(history=[]), status=status)
+    sys.stdout.write("\033[u")
     sys.stdout.flush()
 
 

@@ -635,6 +635,26 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("think on", result)
         self.assertIn("ctx 25/4096 0.6%", result)
 
+    def test_tui_assistant_header_starts_at_line_beginning(self) -> None:
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            tui._TranscriptView().render_assistant_header()
+
+        self.assertEqual(output.getvalue(), "\rAssistant:\n")
+
+    def test_tui_fixed_prompt_during_output_uses_scroll_region(self) -> None:
+        with (
+            patch("service_core.tui._can_use_fixed_input_box", return_value=True),
+            patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24))),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            with tui._FixedPromptDuringOutput("You", "backend demo"):
+                print("Assistant: hello")
+
+        rendered = output.getvalue()
+        self.assertIn("\033[1;20r", rendered)
+        self.assertIn("backend demo", rendered)
+        self.assertIn("\033[r", rendered)
+
     def test_tui_notice_capture_routes_notices_to_status(self) -> None:
         center = tui._NoticeCenter()
 
