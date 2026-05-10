@@ -471,6 +471,21 @@ class CommandHelperTests(unittest.TestCase):
     def test_tui_context_usage_requires_usage_payload(self) -> None:
         self.assertEqual(tui._format_context_usage(None, 4096), "not available yet")
 
+    def test_tui_extracts_context_size_from_runtime_props(self) -> None:
+        self.assertEqual(tui._context_size_from_runtime_props({"n_ctx": 8192}), 8192)
+        self.assertEqual(
+            tui._context_size_from_runtime_props({"default_generation_settings": {"n_ctx": 4096}}),
+            4096,
+        )
+        self.assertEqual(
+            tui._context_size_from_runtime_props({"default_generation_settings": {"params": {"n_ctx": 2048}}}),
+            2048,
+        )
+
+    def test_tui_formats_missing_context_size_explicitly(self) -> None:
+        self.assertEqual(tui._format_context_size(None, loaded=True), "backend default (unreported)")
+        self.assertEqual(tui._format_context_size(None, loaded=False), "not loaded")
+
 
 # ---------------------------------------------------------------------------
 # Embedded backend lifecycle

@@ -763,6 +763,10 @@ class OmniHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"default_enabled": self.default_thinking})
             return
 
+        if path == "/omni/backend/props":
+            self._send_json(200, self.manager.backend_props())
+            return
+
         if path == "/omni/models":
             self._send_json(
                 410,

@@ -34,6 +34,7 @@ def _create_test_server() -> tuple[ThreadingHTTPServer, str]:
         "backend_ready": False,
     }
     manager.list_backends.return_value = ([], None)
+    manager.backend_props.return_value = {}
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), OmniHandler)
     server.manager = manager
@@ -103,6 +104,13 @@ class HttpHandlerTests(unittest.TestCase):
         code, body = _get(self.base_url, "/omni/thinking")
         self.assertEqual(code, 200)
         self.assertIn("default_enabled", body)
+
+    def test_backend_props(self) -> None:
+        self.server.manager.backend_props.return_value = {"n_ctx": 4096}
+        code, body = _get(self.base_url, "/omni/backend/props")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["n_ctx"], 4096)
+        self.server.manager.backend_props.return_value = {}
 
     def test_v1_models_empty(self) -> None:
         code, body = _get(self.base_url, "/v1/models")

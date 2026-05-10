@@ -365,7 +365,8 @@ def _print_status(*, last_usage: dict[str, Any] | None) -> None:
     _print_kv("Model", str(state.get("model") or "-"))
     if state.get("mmproj"):
         _print_kv("MMProj", str(state.get("mmproj")))
-    _print_kv("Context size", str(state.get("ctx_size") or "-"))
+    ctx_size = _resolve_context_size(state)
+    _print_kv("Context size", _format_context_size(ctx_size, loaded=bool(state.get("backend_ready"))))
 
     defaults = state.get("request_defaults") if isinstance(state.get("request_defaults"), dict) else {}
     if defaults:
@@ -377,8 +378,52 @@ def _print_status(*, last_usage: dict[str, Any] | None) -> None:
         if default_bits:
             _print_kv("Request defaults", ", ".join(default_bits))
 
-    usage_text = _format_context_usage(last_usage, state.get("ctx_size"))
+    usage_text = _format_context_usage(last_usage, ctx_size)
     _print_kv("Last context usage", usage_text)
+
+
+def _resolve_context_size(state: dict[str, Any]) -> int | None:
+    state_ctx = _positive_int(state.get("ctx_size"))
+    if state_ctx:
+        return state_ctx
+    if not state.get("backend_ready"):
+        return None
+    try:
+        props = commands.current_backend_props()
+    except SystemExit:
+        return None
+    return _context_size_from_runtime_props(props)
+
+
+def _context_size_from_runtime_props(props: dict[str, Any]) -> int | None:
+    direct = _positive_int(props.get("n_ctx"))
+    if direct:
+        return direct
+    settings = props.get("default_generation_settings")
+    if isinstance(settings, dict):
+        nested = _positive_int(settings.get("n_ctx"))
+        if nested:
+            return nested
+        params = settings.get("params")
+        if isinstance(params, dict):
+            return _positive_int(params.get("n_ctx"))
+    return None
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _format_context_size(ctx_size: int | None, *, loaded: bool) -> str:
+    if ctx_size:
+        return str(ctx_size)
+    return "backend default (unreported)" if loaded else "not loaded"
 
 
 def _format_context_usage(usage: dict[str, Any] | None, ctx_size: Any) -> str:

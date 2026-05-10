@@ -343,6 +343,11 @@ def current_runtime_state() -> dict[str, Any]:
     return payload
 
 
+def current_backend_props() -> dict[str, Any]:
+    _status, payload, _ = request_json("GET", "/omni/backend/props", timeout=10.0)
+    return payload if isinstance(payload, dict) else {}
+
+
 def selected_backend() -> str | None:
     ensure_service_running()
     payload = current_runtime_state()
