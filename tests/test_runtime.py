@@ -8,7 +8,6 @@ import unittest
 import io
 import json
 import os
-import pty
 import threading
 import time
 from pathlib import Path
@@ -309,10 +308,16 @@ class CommandHelperTests(unittest.TestCase):
             with patch("service_core.commands.APP_ROOT", root):
                 linked = commands.link_model_into_managed_models(external, model_root=external_root)
 
-            self.assertEqual(
-                linked,
-                root / ".local" / "models" / "Qwen3.5-4B" / "snapshots" / "Qwen3.5-4B-Q4_K_M.gguf",
+            expected = (
+                root
+                / ".local"
+                / "models"
+                / "Qwen3.5-4B"
+                / "snapshots"
+                / "Qwen3.5-4B-Q4_K_M.gguf"
             )
+            self.assertEqual(linked.parent.resolve(), expected.parent.resolve())
+            self.assertEqual(linked.name, expected.name)
             self.assertTrue(linked.is_symlink())
             self.assertEqual(linked.resolve(), external.resolve())
 
@@ -333,7 +338,9 @@ class CommandHelperTests(unittest.TestCase):
                 )
 
             self.assertEqual(model_root, external.parent.resolve())
-            self.assertEqual(linked, root / ".local" / "models" / "qwen3.5-9b" / external.name)
+            expected = root / ".local" / "models" / "qwen3.5-9b" / external.name
+            self.assertEqual(linked.parent.resolve(), expected.parent.resolve())
+            self.assertEqual(linked.name, expected.name)
             self.assertTrue(linked.is_symlink())
             self.assertEqual(linked.resolve(), external.resolve())
 
@@ -620,6 +627,8 @@ class CommandHelperTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "PTY test is POSIX-only")
     def test_tui_reads_delayed_arrow_sequence_from_pty(self) -> None:
+        import pty
+
         master_fd, slave_fd = pty.openpty()
         slave = os.fdopen(slave_fd, "rb", buffering=0)
 
