@@ -363,9 +363,15 @@ class _TranscriptView:
     def render_header(self, session: _ChatSessionState) -> None:
         _print_chat_header(session.backend)
 
+    def render_user_message(self, message: str) -> None:
+        _print_message_block("You", message, kind="user")
+
     def render_assistant_header(self) -> None:
-        sys.stdout.write(f"\r{_THEME.role_assistant('Assistant')}:\n")
+        _print_message_header("Assistant", kind="assistant")
         sys.stdout.flush()
+
+    def assistant_writer(self) -> "_MessageBlockWriter":
+        return _MessageBlockWriter(kind="assistant")
 
     def render_status(self, session: _ChatSessionState) -> None:
         _print_status(last_usage=session.last_usage, messages=session.messages)
@@ -447,7 +453,7 @@ def _chat_loop(backend: str) -> None:
     status_line = _StatusLine()
     transcript.render_header(session)
     while True:
-        message = _prompt(_THEME.role_user("You"), history=True, status=status_line.text(session))
+        message = _prompt(_THEME.role_user("You"), history=True, status=status_line.text(session), echo=False)
         if not message:
             continue
         if message == "/exit":
@@ -487,12 +493,15 @@ def _chat_loop(backend: str) -> None:
             continue
 
         session.notices.clear()
+        if _can_use_fixed_input_box():
+            transcript.render_user_message(message)
         with _FixedPromptDuringOutput(_THEME.role_user("You"), status_line.text(session)) as fixed_prompt:
             final_payload: dict[str, Any] | None = None
             buffer = ""
             assistant_text = ""
             visible_started = False
             assistant_header_printed = False
+            assistant_writer = transcript.assistant_writer()
             thinking_spinner = _LoadingSpinner("Thinking...")
             try:
                 payload = _build_conversation_payload(message, session.messages)
@@ -511,8 +520,7 @@ def _chat_loop(backend: str) -> None:
                                 transcript.render_assistant_header()
                                 assistant_header_printed = True
                             assistant_text += output
-                            sys.stdout.write(output)
-                            sys.stdout.flush()
+                            assistant_writer.write(output)
                     if chunk.final_payload:
                         final_payload = chunk.final_payload
             except SystemExit as exc:
@@ -528,10 +536,10 @@ def _chat_loop(backend: str) -> None:
                         transcript.render_assistant_header()
                         assistant_header_printed = True
                     assistant_text += output
-                    sys.stdout.write(output)
-                    sys.stdout.flush()
+                    assistant_writer.write(output)
             thinking_spinner.stop()
-            print()
+            if assistant_header_printed:
+                assistant_writer.finish()
             if final_payload:
                 usage = final_payload.get("usage") if isinstance(final_payload.get("usage"), dict) else None
                 if usage:
@@ -807,6 +815,56 @@ def _print_notice(message: str, *, kind: str = "info") -> None:
     }
     paint = colors.get(kind, _THEME.accent)
     print(f"  {paint('•')} {_truncate(message, _content_width() - 4)}")
+
+
+def _print_message_header(label: str, *, kind: str) -> None:
+    role_paint = {
+        "user": _THEME.role_user,
+        "assistant": _THEME.role_assistant,
+        "reasoning": _THEME.dim,
+        "error": _THEME.error,
+    }.get(kind, _THEME.accent)
+    sys.stdout.write(f"\r{role_paint(label)}:\n")
+
+
+def _message_prefix(kind: str) -> str:
+    if kind == "error":
+        return f"  {_THEME.error('│')} "
+    if kind == "reasoning":
+        return f"  {_THEME.dim('│')} "
+    return f"  {_THEME.dim('│')} "
+
+
+def _print_message_block(label: str, text: str, *, kind: str) -> None:
+    _print_message_header(label, kind=kind)
+    writer = _MessageBlockWriter(kind=kind)
+    writer.write(text or "")
+    writer.finish()
+
+
+class _MessageBlockWriter:
+    def __init__(self, *, kind: str) -> None:
+        self._kind = kind
+        self._line_start = True
+
+    def write(self, text: str) -> None:
+        if not text:
+            return
+        prefix = _message_prefix(self._kind)
+        for part in text.splitlines(keepends=True):
+            if self._line_start:
+                sys.stdout.write(prefix)
+                self._line_start = False
+            sys.stdout.write(part)
+            if part.endswith("\n"):
+                self._line_start = True
+        sys.stdout.flush()
+
+    def finish(self) -> None:
+        if self._line_start:
+            sys.stdout.write(_message_prefix(self._kind))
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 
 def _print_kv(label: str, value: str) -> None:
@@ -1248,9 +1306,16 @@ def _is_hidden_thinking_pending(buffer: str, visible_started: bool) -> bool:
     return stripped.startswith("<think>")
 
 
-def _prompt(label: str, default: str | None = None, *, history: bool = False, status: str | None = None) -> str:
+def _prompt(
+    label: str,
+    default: str | None = None,
+    *,
+    history: bool = False,
+    status: str | None = None,
+    echo: bool = True,
+) -> str:
     if history and default is None and _can_use_fixed_input_box():
-        result = _prompt_chat_box(label, status=status)
+        result = _prompt_chat_box(label, status=status, echo=echo)
         if result:
             _remember_chat_input(result)
         return result
@@ -1279,7 +1344,7 @@ def _can_use_fixed_input_box() -> bool:
     )
 
 
-def _prompt_chat_box(label: str, *, status: str | None = None) -> str:
+def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True) -> str:
     import termios
     import tty
 
@@ -1302,7 +1367,8 @@ def _prompt_chat_box(label: str, *, status: str | None = None) -> str:
             if data in {b"\r", b"\n"}:
                 result = state.text.strip()
                 _clear_input_box(restore=True)
-                sys.stdout.write(f"\r{label}: {result}\n")
+                if echo:
+                    sys.stdout.write(f"\r{label}: {result}\n")
                 sys.stdout.flush()
                 finished = True
                 return result

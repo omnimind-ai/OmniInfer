@@ -700,6 +700,14 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertEqual(output.getvalue(), "\rAssistant:\n")
 
+    def test_tui_message_writer_keeps_multiline_output_in_block(self) -> None:
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            writer = tui._MessageBlockWriter(kind="assistant")
+            writer.write("hello\nworld")
+            writer.finish()
+
+        self.assertEqual(output.getvalue(), "  │ hello\n  │ world\n")
+
     def test_tui_fixed_prompt_during_output_uses_scroll_region(self) -> None:
         with (
             patch("service_core.tui._can_use_fixed_input_box", return_value=True),
