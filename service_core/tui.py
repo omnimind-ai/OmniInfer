@@ -382,7 +382,7 @@ class _TranscriptView:
         return _MessageBlockWriter(kind="reasoning")
 
     def render_status(self, session: _ChatSessionState) -> None:
-        _print_status(last_usage=session.last_usage, messages=session.messages)
+        _print_status(session=session)
         print()
 
     def render_help(self) -> None:
@@ -630,7 +630,7 @@ def _format_speed(value: Any) -> str:
         return "-"
 
 
-def _print_status(*, last_usage: dict[str, Any] | None, messages: list[dict[str, str]]) -> None:
+def _print_status(*, session: _ChatSessionState) -> None:
     try:
         state = commands.current_runtime_state()
     except SystemExit as exc:
@@ -638,30 +638,64 @@ def _print_status(*, last_usage: dict[str, Any] | None, messages: list[dict[str,
         return
 
     _print_section("Status", "Current OmniInfer session")
-    _print_kv("Backend", str(state.get("backend") or "-"))
-    _print_kv("Backend ready", "yes" if state.get("backend_ready") else "no")
-    _print_kv("Model", str(state.get("model") or "-"))
-    if state.get("mmproj"):
-        _print_kv("MMProj", str(state.get("mmproj")))
     ctx_size = _resolve_context_size(state)
-    _print_kv("Context size", _format_context_size(ctx_size, loaded=bool(state.get("backend_ready"))))
 
     defaults = state.get("request_defaults") if isinstance(state.get("request_defaults"), dict) else {}
     thinking = state.get("thinking") if isinstance(state.get("thinking"), dict) else {}
-    if "default_enabled" in thinking:
-        _print_kv("Thinking", _format_on_off(bool(thinking.get("default_enabled"))))
-    if defaults:
-        default_bits = [
-            f"{key}={defaults[key]}"
-            for key in ("temperature", "max_tokens", "stream", "think")
-            if key in defaults
-        ]
-        if default_bits:
-            _print_kv("Request defaults", ", ".join(default_bits))
+    backend = str(state.get("backend") or session.backend or "-")
 
-    _print_kv("Conversation messages", str(len(messages)))
-    usage_text = _format_context_usage(last_usage, ctx_size)
-    _print_kv("Context usage", usage_text)
+    runtime_rows = [
+        ("Backend", backend),
+        ("State", "ready" if state.get("backend_ready") else "not ready"),
+        ("Runtime", str(state.get("runtime_mode") or "-")),
+        ("Port", str(state.get("backend_port")) if state.get("backend_port") else "-"),
+        ("Device", _format_status_device(backend) or "-"),
+        ("Threads", _format_status_threads(state.get("launch_args")) or "-"),
+    ]
+    _print_status_group("Runtime", runtime_rows)
+
+    model_rows = [
+        ("Model", str(state.get("model") or "-")),
+        ("Context size", _format_context_size(ctx_size, loaded=bool(state.get("backend_ready")))),
+    ]
+    if state.get("mmproj"):
+        model_rows.insert(1, ("MMProj", str(state.get("mmproj"))))
+    _print_status_group("Model", model_rows)
+
+    generation_rows = [
+        (
+            "Thinking",
+            _format_on_off(bool(thinking.get("default_enabled"))) if "default_enabled" in thinking else "-",
+        ),
+        ("Reasoning display", "show" if session.reasoning_visible else "hide"),
+    ]
+    if defaults:
+        default_bits = _format_request_defaults(defaults)
+        if default_bits:
+            generation_rows.append(("Request defaults", default_bits))
+    _print_status_group("Generation", generation_rows)
+
+    conversation_rows = [
+        ("Messages", str(len(session.messages))),
+        ("Context usage", _format_context_usage(session.last_usage, ctx_size)),
+    ]
+    _print_status_group("Conversation", conversation_rows)
+
+
+def _print_status_group(title: str, rows: list[tuple[str, str]]) -> None:
+    print()
+    print(f"  {_THEME.accent(title)}")
+    for label, value in rows:
+        _print_kv(label, value)
+
+
+def _format_request_defaults(defaults: dict[str, Any]) -> str:
+    default_bits = [
+        f"{key}={defaults[key]}"
+        for key in ("temperature", "max_tokens", "stream", "think")
+        if key in defaults
+    ]
+    return ", ".join(default_bits)
 
 
 def _resolve_context_size(state: dict[str, Any]) -> int | None:

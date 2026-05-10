@@ -716,6 +716,42 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("t 16", result)
         self.assertIn("ctx 25/4096 0.6%", result)
 
+    def test_tui_status_view_groups_runtime_and_conversation_details(self) -> None:
+        session = tui._ChatSessionState(
+            backend="llama.cpp-linux-cuda",
+            reasoning_visible=True,
+            messages=[{"role": "user", "content": "hi"}],
+            last_usage={"prompt_tokens": 13, "completion_tokens": 12, "total_tokens": 25},
+        )
+
+        with (
+            patch(
+                "service_core.commands.current_runtime_state",
+                return_value={
+                    "backend": "llama.cpp-linux-cuda",
+                    "backend_ready": True,
+                    "runtime_mode": "external_server",
+                    "backend_port": 12345,
+                    "model": "/tmp/demo.gguf",
+                    "ctx_size": 4096,
+                    "launch_args": ["-t", "16"],
+                    "request_defaults": {"max_tokens": 2048},
+                    "thinking": {"default_enabled": True},
+                },
+            ),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            tui._print_status(session=session)
+
+        rendered = output.getvalue()
+        self.assertIn("Runtime", rendered)
+        self.assertIn("Model", rendered)
+        self.assertIn("Generation", rendered)
+        self.assertIn("Conversation", rendered)
+        self.assertIn("Reasoning display", rendered)
+        self.assertIn("show", rendered)
+        self.assertIn("input=13, output=12, total=25/4096 (0.6%)", rendered)
+
     def test_tui_assistant_header_starts_at_line_beginning(self) -> None:
         with patch("sys.stdout", new_callable=io.StringIO) as output:
             tui._TranscriptView().render_assistant_header()
