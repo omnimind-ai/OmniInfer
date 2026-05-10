@@ -627,34 +627,36 @@ class CommandHelperTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "PTY test is POSIX-only")
     def test_tui_reads_delayed_arrow_sequence_from_pty(self) -> None:
-        import pty
-
-        master_fd, slave_fd = pty.openpty()
-        slave = os.fdopen(slave_fd, "rb", buffering=0)
+        read_fd, write_fd = os.pipe()
 
         class FakeStdin:
             def fileno(self) -> int:
-                return slave.fileno()
+                return read_fd
 
         result: list[str] = []
 
         def read_key() -> None:
-            with patch("sys.stdin", FakeStdin()):
+            with (
+                patch("sys.stdin", FakeStdin()),
+                patch("termios.tcgetattr", return_value=[]),
+                patch("termios.tcsetattr"),
+                patch("tty.setraw"),
+            ):
                 result.append(tui._read_menu_key_posix())
 
         reader = threading.Thread(target=read_key)
         reader.start()
         try:
             time.sleep(0.05)
-            os.write(master_fd, b"\x1b")
+            os.write(write_fd, b"\x1b")
             time.sleep(0.1)
-            os.write(master_fd, b"[B")
+            os.write(write_fd, b"[B")
             reader.join(timeout=1)
             self.assertEqual(result, ["down"])
         finally:
             reader.join(timeout=1)
-            slave.close()
-            os.close(master_fd)
+            os.close(read_fd)
+            os.close(write_fd)
 
     def test_tui_formats_last_context_usage(self) -> None:
         result = tui._format_context_usage(

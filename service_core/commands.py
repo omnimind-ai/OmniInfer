@@ -922,7 +922,7 @@ def _managed_model_target(
     if not preserve_relative_path:
         return target_root / f"{root_name}{root_suffix}" / source.name
     try:
-        relative_parent = source.parent.relative_to(root.resolve())
+        relative_parent = source.parent.resolve().relative_to(root.resolve())
     except ValueError:
         relative_parent = Path()
     return target_root / f"{root_name}{root_suffix}" / relative_parent / source.name
