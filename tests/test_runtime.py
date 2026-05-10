@@ -635,6 +635,17 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("think on", result)
         self.assertIn("ctx 25/4096 0.6%", result)
 
+    def test_tui_notice_capture_routes_notices_to_status(self) -> None:
+        center = tui._NoticeCenter()
+
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            with center.capture():
+                tui._print_notice("Model loaded", kind="success")
+                tui._print_kv("Backend", "llama.cpp-linux-cuda")
+
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(center.status_text(), "info: Backend: llama.cpp-linux-cuda")
+
     def test_tui_context_usage_requires_usage_payload(self) -> None:
         self.assertEqual(tui._format_context_usage(None, 4096), "not available yet")
 
@@ -773,6 +784,32 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(len(spinners), 1)
         self.assertEqual(spinners[0].starts, 1)
         self.assertGreaterEqual(spinners[0].stops, 1)
+
+    def test_tui_chat_loop_routes_stream_errors_to_prompt_status(self) -> None:
+        prompts: list[str | None] = []
+        inputs = iter(["hello", "/exit"])
+
+        def fake_prompt(_label: str, **kwargs: Any) -> str:
+            prompts.append(kwargs.get("status"))
+            return next(inputs)
+
+        def fake_stream(_payload: dict[str, Any]):
+            raise SystemExit("No model is currently loaded.")
+            yield
+
+        with (
+            patch("service_core.tui._prompt", side_effect=fake_prompt),
+            patch("service_core.tui._print_chat_header"),
+            patch("service_core.commands.current_runtime_state", return_value={"model": "demo.gguf"}),
+            patch("service_core.commands.get_default_thinking", return_value=False),
+            patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
+            patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            tui._chat_loop("llama.cpp-linux-cuda")
+
+        self.assertNotIn("Assistant", output.getvalue())
+        self.assertIn("warn: No model is currently loaded.", prompts[-1] or "")
 
     def test_tui_thinking_command_toggles_default(self) -> None:
         with (

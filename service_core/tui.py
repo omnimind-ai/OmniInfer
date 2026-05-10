@@ -23,6 +23,7 @@ _LOADING_INTERVAL = 0.08
 _MIN_WIDTH = 64
 _MAX_WIDTH = 100
 _PROMPT_BOX_ROWS = 4
+_ACTIVE_NOTICE_CENTER: _NoticeCenter | None = None
 
 
 class _Theme:
@@ -67,6 +68,53 @@ if _readline is not None:
         _readline.set_history_length(200)
     except (AttributeError, OSError):
         pass
+
+
+@dataclass
+class _Notice:
+    message: str
+    kind: str = "info"
+
+
+class _NoticeCenter:
+    def __init__(self) -> None:
+        self.current: _Notice | None = None
+
+    def push(self, message: str, *, kind: str = "info") -> None:
+        self.current = _Notice(message=message, kind=kind)
+
+    def clear(self) -> None:
+        self.current = None
+
+    def status_text(self) -> str:
+        if not self.current:
+            return ""
+        prefix = {
+            "success": "ok",
+            "warning": "warn",
+            "error": "error",
+            "info": "info",
+        }.get(self.current.kind, "info")
+        return f"{prefix}: {self.current.message}"
+
+    def capture(self) -> "_NoticeCapture":
+        return _NoticeCapture(self)
+
+
+class _NoticeCapture:
+    def __init__(self, center: _NoticeCenter) -> None:
+        self._center = center
+        self._previous: _NoticeCenter | None = None
+
+    def __enter__(self) -> _NoticeCenter:
+        global _ACTIVE_NOTICE_CENTER
+        self._previous = _ACTIVE_NOTICE_CENTER
+        _ACTIVE_NOTICE_CENTER = self._center
+        return self._center
+
+    def __exit__(self, *_args: object) -> None:
+        global _ACTIVE_NOTICE_CENTER
+        _ACTIVE_NOTICE_CENTER = self._previous
 
 
 def run_tui() -> int:
@@ -300,6 +348,7 @@ class _ChatSessionState:
     backend: str
     messages: list[dict[str, str]] = field(default_factory=list)
     last_usage: dict[str, Any] | None = None
+    notices: _NoticeCenter = field(default_factory=_NoticeCenter)
 
     def switch_backend(self, backend: str) -> None:
         self.backend = backend
@@ -340,6 +389,9 @@ class _StatusLine:
             f"model {model}",
             f"think {thinking}",
         ]
+        notice = session.notices.status_text()
+        if notice:
+            pieces.insert(0, notice)
         usage = _format_status_usage(session.last_usage, _resolve_context_size(state) if state else None)
         if usage:
             pieces.append(usage)
@@ -358,23 +410,22 @@ def _chat_loop(backend: str) -> None:
         if message == "/exit":
             return
         if message == "/backend":
-            selected_backend = _choose_backend()
-            if selected_backend:
-                session.switch_backend(selected_backend)
-                loaded_backend = _load_model_after_backend_switch()
-                if loaded_backend:
-                    session.backend = loaded_backend
-            transcript.render_header(session)
+            with session.notices.capture():
+                selected_backend = _choose_backend()
+                if selected_backend:
+                    session.switch_backend(selected_backend)
+                    loaded_backend = _load_model_after_backend_switch()
+                    if loaded_backend:
+                        session.backend = loaded_backend
             continue
         if message == "/model":
-            model = _choose_model()
-            if model is None:
-                transcript.render_header(session)
-                continue
-            loaded_backend = _load_model(commands.ModelLoadOptions(model=str(model)))
-            if loaded_backend:
-                session.switch_backend(loaded_backend)
-            transcript.render_header(session)
+            with session.notices.capture():
+                model = _choose_model()
+                if model is None:
+                    continue
+                loaded_backend = _load_model(commands.ModelLoadOptions(model=str(model)))
+                if loaded_backend:
+                    session.switch_backend(loaded_backend)
             continue
         if message == "/clear":
             _clear()
@@ -388,16 +439,16 @@ def _chat_loop(backend: str) -> None:
             transcript.render_help()
             continue
         if message == "/think" or message == "/thinking" or message.startswith("/think ") or message.startswith("/thinking "):
-            _handle_thinking_command(message)
-            print()
-            transcript.render_header(session)
+            with session.notices.capture():
+                _handle_thinking_command(message)
             continue
 
-        transcript.render_assistant_header()
+        session.notices.clear()
         final_payload: dict[str, Any] | None = None
         buffer = ""
         assistant_text = ""
         visible_started = False
+        assistant_header_printed = False
         thinking_spinner = _LoadingSpinner("Thinking...")
         try:
             payload = _build_conversation_payload(message, session.messages)
@@ -412,6 +463,9 @@ def _chat_loop(backend: str) -> None:
                     elif _is_hidden_thinking_pending(buffer, visible_started) and not thinking_spinner.active:
                         thinking_spinner.start()
                     if output:
+                        if not assistant_header_printed:
+                            transcript.render_assistant_header()
+                            assistant_header_printed = True
                         assistant_text += output
                         sys.stdout.write(output)
                         sys.stdout.flush()
@@ -419,13 +473,15 @@ def _chat_loop(backend: str) -> None:
                     final_payload = chunk.final_payload
         except SystemExit as exc:
             thinking_spinner.stop()
-            _print_notice(str(exc), kind="warning")
-            print()
+            session.notices.push(str(exc), kind="warning")
             continue
         if buffer:
             output, _buffer, _visible_started = _consume_visible_text(buffer, visible_started, final=True)
             if output:
                 thinking_spinner.stop()
+                if not assistant_header_printed:
+                    transcript.render_assistant_header()
+                    assistant_header_printed = True
                 assistant_text += output
                 sys.stdout.write(output)
                 sys.stdout.flush()
@@ -639,6 +695,9 @@ def _print_menu_item(
 
 
 def _print_notice(message: str, *, kind: str = "info") -> None:
+    if _ACTIVE_NOTICE_CENTER is not None:
+        _ACTIVE_NOTICE_CENTER.push(message, kind=kind)
+        return
     colors = {
         "success": _THEME.success,
         "warning": _THEME.warning,
@@ -650,6 +709,9 @@ def _print_notice(message: str, *, kind: str = "info") -> None:
 
 
 def _print_kv(label: str, value: str) -> None:
+    if _ACTIVE_NOTICE_CENTER is not None:
+        _ACTIVE_NOTICE_CENTER.push(f"{label}: {value}", kind="info")
+        return
     width = _content_width()
     prefix = f"{_THEME.dim(label + ':')} "
     print(f"  {prefix}{_truncate(value, max(width - len(label) - 4, 16))}")
