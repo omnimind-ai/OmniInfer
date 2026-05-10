@@ -547,6 +547,18 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(payload["stream_options"], {"include_usage": True})
         self.assertEqual(payload["temperature"], 0.1)
 
+    def test_chat_payload_defaults_to_longer_completion_budget(self) -> None:
+        with (
+            patch("service_core.commands.ensure_service_running"),
+            patch(
+                "service_core.commands.current_runtime_state",
+                return_value={"model": "demo.gguf", "request_defaults": {}},
+            ),
+        ):
+            payload = commands.build_chat_payload(commands.ChatOptions(message="hello"))
+
+        self.assertEqual(payload["max_tokens"], 2048)
+
 
 # ---------------------------------------------------------------------------
 # Embedded backend lifecycle

@@ -41,6 +41,7 @@ CLI_LOG_DIR = local_logs_dir(Path(APP_ROOT))
 CLI_LOG_FILE = CLI_LOG_DIR / "gateway.log"
 SYSTEM_CHOICES = ("linux", "mac", "windows")
 MODEL_SUFFIXES = (".gguf",)
+DEFAULT_CHAT_MAX_TOKENS = 2048
 
 _port_override: int | None = None
 
@@ -652,7 +653,7 @@ def build_chat_payload(options: ChatOptions) -> dict[str, Any]:
     payload: dict[str, Any] = dict(runtime_request_defaults)
     payload["messages"] = messages
     payload["temperature"] = options.temperature if options.temperature is not None else payload.get("temperature", 0.2)
-    payload["max_tokens"] = options.max_tokens if options.max_tokens is not None else payload.get("max_tokens", 128)
+    payload["max_tokens"] = options.max_tokens if options.max_tokens is not None else payload.get("max_tokens", DEFAULT_CHAT_MAX_TOKENS)
     payload["stream"] = options.stream if options.stream is not None else payload.get("stream", True)
     payload["think"] = (
         parse_boolish(options.think)

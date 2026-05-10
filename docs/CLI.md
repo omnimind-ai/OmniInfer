@@ -303,6 +303,7 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - `mlx-mac` supports both text model directories and vision-language model directories.
 - `mlx-mac` does not use `-mm/--mmproj`; multimodal support comes from the selected MLX model directory itself.
 - `chat` streams output by default. Backend-native request defaults can come from the profile used during `load --config` or from backend-specific extra args typed directly on the CLI.
+- Unless overridden by `--max-tokens` or a backend profile request default, chat requests use a default completion budget of 2048 tokens.
 - Load-time backend-native extra args are broadly passthrough for `llama.cpp-*` and `turboquant-mac`. Chat-time backend-native extra args support many common official flags plus generic long-form request overrides, but they are still interpreted through the current backend family rather than exposed as a blind global flag bag.
 - Do not combine `--auto` with backend-native extra args or load profiles, because those flows need a concrete selected backend to interpret flags correctly.
 - `status` shows the current backend, model, and thinking state.
