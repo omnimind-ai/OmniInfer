@@ -353,6 +353,8 @@ def _chat_loop(backend: str) -> None:
         try:
             payload = _build_conversation_payload(message, messages)
             for chunk in commands.iter_chat_stream_payload(payload):
+                if chunk.reasoning_text and not visible_started and not thinking_spinner.active:
+                    thinking_spinner.start()
                 if chunk.text:
                     buffer += chunk.text
                     output, buffer, visible_started = _consume_visible_text(buffer, visible_started)

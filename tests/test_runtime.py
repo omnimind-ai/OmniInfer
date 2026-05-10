@@ -6,6 +6,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import io
+import json
 import os
 import pty
 import threading
@@ -637,6 +638,69 @@ class CommandHelperTests(unittest.TestCase):
             payload = commands.build_chat_payload(commands.ChatOptions(message="hello", think="on"))
 
         self.assertTrue(payload["think"])
+
+    def test_stream_parser_yields_reasoning_content(self) -> None:
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def __iter__(self):
+                events = [
+                    {"choices": [{"delta": {"reasoning_content": "plan"}}]},
+                    {"choices": [{"delta": {"content": "answer"}}]},
+                    {"usage": {"total_tokens": 3}},
+                ]
+                for event in events:
+                    yield f"data: {json.dumps(event)}\n".encode("utf-8")
+                yield b"data: [DONE]\n"
+
+        with patch("service_core.commands.urllib.request.urlopen", return_value=FakeResponse()):
+            chunks = list(commands.iter_chat_stream_payload({"messages": [], "stream": True}))
+
+        self.assertEqual(chunks[0].reasoning_text, "plan")
+        self.assertEqual(chunks[1].text, "answer")
+        self.assertEqual(chunks[2].final_payload, {"usage": {"total_tokens": 3}})
+
+    def test_tui_chat_loop_starts_spinner_for_reasoning_chunks(self) -> None:
+        spinners: list[Any] = []
+
+        class FakeSpinner:
+            def __init__(self, text: str) -> None:
+                self.text = text
+                self.active = False
+                self.starts = 0
+                self.stops = 0
+                spinners.append(self)
+
+            def start(self) -> None:
+                self.active = True
+                self.starts += 1
+
+            def stop(self) -> None:
+                self.active = False
+                self.stops += 1
+
+        def fake_stream(_payload: dict[str, Any]):
+            yield commands.ChatStreamChunk(reasoning_text="plan")
+            yield commands.ChatStreamChunk(text="answer")
+            yield commands.ChatStreamChunk(final_payload={"usage": {"total_tokens": 2}})
+
+        with (
+            patch("service_core.tui._LoadingSpinner", FakeSpinner),
+            patch("service_core.tui._print_chat_header"),
+            patch("service_core.tui._prompt", side_effect=["hello", "/exit"]),
+            patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
+            patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
+            patch("sys.stdout", io.StringIO()),
+        ):
+            tui._chat_loop("llama.cpp-linux-cuda")
+
+        self.assertEqual(len(spinners), 1)
+        self.assertEqual(spinners[0].starts, 1)
+        self.assertGreaterEqual(spinners[0].stops, 1)
 
     def test_tui_thinking_command_toggles_default(self) -> None:
         with (

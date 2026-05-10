@@ -90,6 +90,7 @@ class ChatOptions:
 @dataclass(frozen=True)
 class ChatStreamChunk:
     text: str = ""
+    reasoning_text: str = ""
     final_payload: dict[str, Any] | None = None
 
 
@@ -734,6 +735,9 @@ def iter_chat_stream_payload(payload: dict[str, Any]) -> Iterator[ChatStreamChun
                         content = delta.get("content")
                         if isinstance(content, str):
                             yield ChatStreamChunk(text=content)
+                        reasoning = delta.get("reasoning_content")
+                        if isinstance(reasoning, str):
+                            yield ChatStreamChunk(reasoning_text=reasoning)
                 if isinstance(event, dict) and "usage" in event:
                     yield ChatStreamChunk(final_payload=event)
     except urllib.error.HTTPError as exc:
