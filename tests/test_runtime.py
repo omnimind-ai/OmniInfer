@@ -431,6 +431,11 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(buffer, "")
         self.assertTrue(visible)
 
+    def test_tui_detects_hidden_thinking_wait_state(self) -> None:
+        self.assertTrue(tui._is_hidden_thinking_pending("<think>hidden", visible_started=False))
+        self.assertFalse(tui._is_hidden_thinking_pending("answer", visible_started=False))
+        self.assertFalse(tui._is_hidden_thinking_pending("<think>hidden", visible_started=True))
+
     def test_tui_chat_prompt_records_readline_history(self) -> None:
         class FakeReadline:
             def __init__(self) -> None:

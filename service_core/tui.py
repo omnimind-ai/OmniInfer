@@ -349,12 +349,17 @@ def _chat_loop(backend: str) -> None:
         buffer = ""
         assistant_text = ""
         visible_started = False
+        thinking_spinner = _LoadingSpinner("Thinking...")
         try:
             payload = _build_conversation_payload(message, messages)
             for chunk in commands.iter_chat_stream_payload(payload):
                 if chunk.text:
                     buffer += chunk.text
                     output, buffer, visible_started = _consume_visible_text(buffer, visible_started)
+                    if output and thinking_spinner.active:
+                        thinking_spinner.stop()
+                    elif _is_hidden_thinking_pending(buffer, visible_started) and not thinking_spinner.active:
+                        thinking_spinner.start()
                     if output:
                         assistant_text += output
                         sys.stdout.write(output)
@@ -362,15 +367,18 @@ def _chat_loop(backend: str) -> None:
                 if chunk.final_payload:
                     final_payload = chunk.final_payload
         except SystemExit as exc:
+            thinking_spinner.stop()
             _print_notice(str(exc), kind="warning")
             print()
             continue
         if buffer:
             output, _buffer, _visible_started = _consume_visible_text(buffer, visible_started, final=True)
             if output:
+                thinking_spinner.stop()
                 assistant_text += output
                 sys.stdout.write(output)
                 sys.stdout.flush()
+        thinking_spinner.stop()
         print()
         if final_payload:
             usage = final_payload.get("usage") if isinstance(final_payload.get("usage"), dict) else None
@@ -862,6 +870,9 @@ class _LoadingSpinner:
     def start(self) -> None:
         if not self._is_tty:
             return
+        if self._active:
+            return
+        self._stop_event.clear()
         self._active = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -891,6 +902,10 @@ class _LoadingSpinner:
             sys.stdout.flush()
             self._stop_event.wait(_LOADING_INTERVAL)
 
+    @property
+    def active(self) -> bool:
+        return self._active
+
 
 def _consume_visible_text(buffer: str, visible_started: bool, final: bool = False) -> tuple[str, str, bool]:
     if visible_started:
@@ -908,6 +923,13 @@ def _consume_visible_text(buffer: str, visible_started: bool, final: bool = Fals
     after = stripped[close_index + len("</think>") :]
     after = re.sub(r"^\s*", "", after)
     return after, "", bool(after)
+
+
+def _is_hidden_thinking_pending(buffer: str, visible_started: bool) -> bool:
+    if visible_started:
+        return False
+    stripped = buffer.lstrip()
+    return stripped.startswith("<think>")
 
 
 def _prompt(label: str, default: str | None = None, *, history: bool = False) -> str:
