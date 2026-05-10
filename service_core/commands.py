@@ -28,10 +28,13 @@ from service_core.backend_configs import (
 )
 from service_core.local_state import (
     load_selected_model,
+    load_tui_show_reasoning,
     local_dir,
     local_logs_dir,
+    save_default_thinking,
     save_selected_backend,
     save_selected_model,
+    save_tui_show_reasoning,
 )
 from service_core.runtime import RuntimeManager
 from service_core.service import APP_ROOT, REPO_ROOT, load_app_config
@@ -41,6 +44,7 @@ CLI_LOG_DIR = local_logs_dir(Path(APP_ROOT))
 CLI_LOG_FILE = CLI_LOG_DIR / "gateway.log"
 SYSTEM_CHOICES = ("linux", "mac", "windows")
 MODEL_SUFFIXES = (".gguf",)
+DEFAULT_CHAT_MAX_TOKENS = 2048
 
 _port_override: int | None = None
 
@@ -88,6 +92,7 @@ class ChatOptions:
 @dataclass(frozen=True)
 class ChatStreamChunk:
     text: str = ""
+    reasoning_text: str = ""
     final_payload: dict[str, Any] | None = None
 
 
@@ -341,6 +346,43 @@ def current_runtime_state() -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise SystemExit("Unable to read the current runtime state.")
     return payload
+
+
+def current_backend_props() -> dict[str, Any]:
+    _status, payload, _ = request_json("GET", "/omni/backend/props", timeout=10.0)
+    return payload if isinstance(payload, dict) else {}
+
+
+def get_default_thinking() -> bool:
+    ensure_service_running()
+    _status, payload, _ = request_json("GET", "/omni/thinking", timeout=10.0)
+    if not isinstance(payload, dict):
+        raise SystemExit("Unable to read the thinking state.")
+    return bool(payload.get("default_enabled"))
+
+
+def set_default_thinking(enabled: bool) -> bool:
+    ensure_service_running()
+    _status, payload, _ = request_json(
+        "POST",
+        "/omni/thinking/select",
+        payload={"enabled": enabled},
+        timeout=10.0,
+    )
+    if not isinstance(payload, dict):
+        raise SystemExit("Unable to update the thinking state.")
+    saved_value = bool(payload.get("default_enabled"))
+    save_default_thinking(saved_value, Path(APP_ROOT))
+    return saved_value
+
+
+def get_tui_show_reasoning() -> bool:
+    return load_tui_show_reasoning(Path(APP_ROOT))
+
+
+def set_tui_show_reasoning(enabled: bool) -> bool:
+    save_tui_show_reasoning(enabled, Path(APP_ROOT))
+    return enabled
 
 
 def selected_backend() -> str | None:
@@ -647,13 +689,10 @@ def build_chat_payload(options: ChatOptions) -> dict[str, Any]:
     payload: dict[str, Any] = dict(runtime_request_defaults)
     payload["messages"] = messages
     payload["temperature"] = options.temperature if options.temperature is not None else payload.get("temperature", 0.2)
-    payload["max_tokens"] = options.max_tokens if options.max_tokens is not None else payload.get("max_tokens", 128)
+    payload["max_tokens"] = options.max_tokens if options.max_tokens is not None else payload.get("max_tokens", DEFAULT_CHAT_MAX_TOKENS)
     payload["stream"] = options.stream if options.stream is not None else payload.get("stream", True)
-    payload["think"] = (
-        parse_boolish(options.think)
-        if options.think is not None
-        else payload.get("think", False)
-    )
+    if options.think is not None:
+        payload["think"] = parse_boolish(options.think)
     return payload
 
 
@@ -707,6 +746,9 @@ def iter_chat_stream_payload(payload: dict[str, Any]) -> Iterator[ChatStreamChun
                         content = delta.get("content")
                         if isinstance(content, str):
                             yield ChatStreamChunk(text=content)
+                        reasoning = delta.get("reasoning_content")
+                        if isinstance(reasoning, str):
+                            yield ChatStreamChunk(reasoning_text=reasoning)
                 if isinstance(event, dict) and "usage" in event:
                     yield ChatStreamChunk(final_payload=event)
     except urllib.error.HTTPError as exc:
@@ -733,7 +775,48 @@ def managed_models_dir() -> Path:
     return local_dir(Path(APP_ROOT)) / "models"
 
 
-def link_model_into_managed_models(model_path: Path) -> Path:
+def detect_model_files_in_directory(directory: Path) -> list[LocalModel]:
+    root = Path(os.path.abspath(os.path.expanduser(str(directory))))
+    if not root.is_dir():
+        return []
+    models: list[LocalModel] = []
+    for candidate in root.rglob("*"):
+        if not candidate.is_file() or candidate.suffix.lower() not in MODEL_SUFFIXES:
+            continue
+        if _is_mmproj_file(candidate):
+            continue
+        models.append(LocalModel(path=candidate, label=_model_label(root, candidate)))
+    return sorted(models, key=lambda item: (_model_file_rank(item.path), item.label.lower()))
+
+
+def infer_managed_model_root(model_path: Path, search_root: Path) -> Path:
+    source = Path(os.path.abspath(os.path.expanduser(str(model_path)))).resolve()
+    root = Path(os.path.abspath(os.path.expanduser(str(search_root)))).resolve()
+    parent = source.parent
+    try:
+        parent.relative_to(root)
+    except ValueError:
+        return parent
+
+    for candidate in [parent, *parent.parents]:
+        if candidate == root.parent:
+            break
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        name = _safe_path_component(candidate.name)
+        if _is_useful_model_directory_name(name):
+            return candidate
+    return parent
+
+
+def link_model_into_managed_models(
+    model_path: Path,
+    *,
+    model_root: Path | None = None,
+    preserve_relative_path: bool = True,
+) -> Path:
     requested = Path(os.path.abspath(os.path.expanduser(str(model_path))))
     source = requested.resolve() if requested.is_symlink() else requested
     if not source.exists():
@@ -750,15 +833,24 @@ def link_model_into_managed_models(model_path: Path) -> Path:
             pass
 
     target_root.mkdir(parents=True, exist_ok=True)
-    directory_name = _managed_model_directory_name(source)
-    target_dir = target_root / directory_name
-    target = target_dir / source.name
+    target = _managed_model_target(
+        source,
+        target_root,
+        model_root=model_root,
+        preserve_relative_path=preserve_relative_path,
+    )
     if _link_points_to(target, source):
         return target
     if target.exists() or target.is_symlink():
         index = 2
         while True:
-            candidate = target_root / f"{directory_name}-{index}" / source.name
+            candidate = _managed_model_target(
+                source,
+                target_root,
+                model_root=model_root,
+                preserve_relative_path=preserve_relative_path,
+                root_suffix=f"-{index}",
+            )
             if _link_points_to(candidate, source):
                 return candidate
             if not candidate.exists() and not candidate.is_symlink():
@@ -812,6 +904,64 @@ def _managed_model_directory_name(source: Path) -> str:
         return parent_name
     stem_name = _safe_path_component(source.stem)
     return stem_name or "model"
+
+
+def _managed_model_target(
+    source: Path,
+    target_root: Path,
+    *,
+    model_root: Path | None,
+    preserve_relative_path: bool,
+    root_suffix: str = "",
+) -> Path:
+    if model_root is None:
+        return target_root / f"{_managed_model_directory_name(source)}{root_suffix}" / source.name
+
+    root = Path(os.path.abspath(os.path.expanduser(str(model_root))))
+    root_name = _safe_path_component(root.name) or _managed_model_directory_name(source)
+    if not preserve_relative_path:
+        return target_root / f"{root_name}{root_suffix}" / source.name
+    try:
+        relative_parent = source.parent.resolve().relative_to(root.resolve())
+    except ValueError:
+        relative_parent = Path()
+    return target_root / f"{root_name}{root_suffix}" / relative_parent / source.name
+
+
+def _is_useful_model_directory_name(name: str) -> bool:
+    if not name:
+        return False
+    lowered = name.lower()
+    generic_names = {
+        "model",
+        "models",
+        "gguf",
+        "ggml",
+        "weights",
+        "weight",
+        "checkpoint",
+        "checkpoints",
+        "snapshot",
+        "snapshots",
+        "resolve",
+        "main",
+    }
+    if lowered in generic_names:
+        return False
+    if re.fullmatch(r"[0-9a-f]{8,}", lowered):
+        return False
+    return True
+
+
+def _is_mmproj_file(path: Path) -> bool:
+    return "mmproj" in path.name.lower()
+
+
+def _model_file_rank(path: Path) -> tuple[int, int, str]:
+    name = path.name.lower()
+    quant_order = ["q4_k_m", "q4_0", "q5_k_m", "q6_k", "q8_0", "f16", "q3_k_m", "q2_k"]
+    quant_rank = next((index for index, quant in enumerate(quant_order) if quant in name), len(quant_order))
+    return (len(path.parts), quant_rank, name)
 
 
 def _safe_path_component(value: str) -> str:

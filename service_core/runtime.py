@@ -723,6 +723,20 @@ class RuntimeManager:
         logger.info("KV cache cleared (slot 0 erased)")
         return {"ok": True, "message": "KV cache cleared"}
 
+    def backend_props(self) -> dict[str, Any]:
+        target = self.current_proxy_target()
+        if target is None:
+            return {}
+        host, port = target
+        url = f"http://{host}:{port}/props"
+        req = urllib.request.Request(url=url, method="GET", headers={"Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                payload = json.loads(resp.read().decode("utf-8-sig"))
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
     def list_supported_models(self, system_name: str) -> dict[str, Any]:
         return self.catalog.list_supported_models(system_name)
 
@@ -946,6 +960,9 @@ class RuntimeManager:
             "ctx_size": runtime.ctx_size if runtime else None,
             "request_defaults": dict(runtime.request_defaults) if runtime else {},
             "backend_ready": bool(runtime),
+            "runtime_mode": runtime.runtime_mode if runtime else None,
+            "backend_port": runtime.port if runtime else None,
+            "launch_args": list(runtime.launch_args) if runtime else [],
         }
 
     def backend_health(self) -> dict[str, Any]:

@@ -11,7 +11,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from service_core.service import (
     ChatReasoningStreamNormalizer,
@@ -34,6 +34,7 @@ def _create_test_server() -> tuple[ThreadingHTTPServer, str]:
         "backend_ready": False,
     }
     manager.list_backends.return_value = ([], None)
+    manager.backend_props.return_value = {}
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), OmniHandler)
     server.manager = manager
@@ -104,6 +105,13 @@ class HttpHandlerTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn("default_enabled", body)
 
+    def test_backend_props(self) -> None:
+        self.server.manager.backend_props.return_value = {"n_ctx": 4096}
+        code, body = _get(self.base_url, "/omni/backend/props")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["n_ctx"], 4096)
+        self.server.manager.backend_props.return_value = {}
+
     def test_v1_models_empty(self) -> None:
         code, body = _get(self.base_url, "/v1/models")
         self.assertEqual(code, 200)
@@ -157,6 +165,16 @@ class HttpHandlerTests(unittest.TestCase):
         code, body = _post(self.base_url, "/omni/thinking/select", {})
         self.assertEqual(code, 400)
         self.assertIn("required", body["error"]["message"])
+
+    def test_thinking_select_persists_state(self) -> None:
+        with patch("service_core.service.save_default_thinking") as save:
+            code, body = _post(self.base_url, "/omni/thinking/select", {"enabled": True})
+
+        self.assertEqual(code, 200)
+        self.assertTrue(body["default_enabled"])
+        save.assert_called_once()
+        self.assertTrue(save.call_args.args[0])
+        self.server.default_thinking = False
 
     def test_model_select_missing_model(self) -> None:
         code, body = _post(self.base_url, "/omni/model/select", {})

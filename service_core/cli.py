@@ -662,21 +662,13 @@ class _Spinner:
 
 
 def print_thinking_show() -> int:
-    ensure_service_running()
-    _status, payload, _ = request_json("GET", "/omni/thinking", timeout=10.0)
-    if not isinstance(payload, dict):
-        raise SystemExit("Unable to read the thinking state.")
-    print(f"Default thinking: {format_bool(payload.get('default_enabled'))}")
+    print(f"Default thinking: {format_bool(commands.get_default_thinking())}")
     return 0
 
 
 def print_thinking_set(value: str) -> int:
-    ensure_service_running()
     enabled = value == "on"
-    _status, payload, _ = request_json("POST", "/omni/thinking/select", payload={"enabled": enabled}, timeout=10.0)
-    if not isinstance(payload, dict):
-        raise SystemExit("Unable to update the thinking state.")
-    print(f"Default thinking set to: {format_bool(payload.get('default_enabled'))}")
+    print(f"Default thinking set to: {format_bool(commands.set_default_thinking(enabled))}")
     return 0
 
 

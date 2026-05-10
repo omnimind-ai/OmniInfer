@@ -98,6 +98,10 @@ Example response:
 }
 ```
 
+### `GET /omni/backend/props`
+
+Returns the active external backend's `/props` payload when the selected backend exposes it. llama.cpp-compatible backends include context information such as `n_ctx` in this payload. If no external backend is loaded or the backend does not expose props, OmniInfer returns `{}`.
+
 ## 3. List backends
 
 ### `GET /omni/backends[?scope=installed|compatible|all]`

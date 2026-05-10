@@ -57,7 +57,7 @@ Linux and macOS:
 ./omniinfer --help
 ```
 
-Run `./omniinfer` without arguments in an interactive terminal to open the basic TUI. On first use, the TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop. Later TUI launches automatically reload the last selected backend and model when the model path still exists.
+Run `./omniinfer` without arguments in an interactive terminal to open the basic TUI. On first use, the TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop. When a manual directory is scanned, the selected model is linked into `.local/models/<detected-model-dir>/<model-file>` instead of preserving unrelated parent folders. Later TUI launches automatically reload the last selected backend and model when the model path still exists.
 
 Windows:
 
@@ -287,11 +287,17 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - `backend select` stores your current backend choice for later CLI and TUI runs under `.local/config/state.json`.
 - `backend select` also creates a backend-specific config JSON template for advanced backend-native parameters.
 - Running `./omniinfer` with no arguments opens the TUI only in an interactive terminal; non-interactive usage prints CLI help instead of blocking for input.
-- The TUI auto-discovers models from the shared OmniInfer-managed `.local/models` directory. When you enter a model file path manually, the TUI creates a model subdirectory under `.local/models` and places the symlink inside that directory so the model appears in later TUI runs.
+- The TUI auto-discovers models from the shared OmniInfer-managed `.local/models` directory. When you enter a model file path manually, the TUI creates a model subdirectory under `.local/models` and places the symlink inside that directory so the model appears in later TUI runs. When you enter a directory, the TUI scans it recursively for non-`mmproj` GGUF model files and links the selected file under a `.local/models/<directory-name>/` folder.
 - After a successful model load, the TUI stores the selected backend, model path, optional `mmproj`, and optional `ctx-size` under `.local/config/state.json`; the next TUI launch reloads them and enters chat directly when the model still exists.
-- The TUI chat commands are `/backend`, `/model`, `/clear`, `/help`, and `/exit`.
+- The TUI chat commands are `/backend`, `/model`, `/think`, `/reasoning`, `/status`, `/clear`, `/help`, and `/exit`. Use `/think` to toggle the gateway default thinking mode, or `/think on` / `/think off` to set it explicitly. The thinking choice is saved under `.local/config/state.json` and reused the next time the gateway starts. Typing `/` in the chat prompt shows inline command hints.
+- Use `/reasoning` to toggle whether streamed reasoning is shown in the transcript, or `/reasoning on` / `/reasoning off` to set it explicitly. This only changes TUI display; `/think` controls whether requests ask the backend to think. The reasoning display choice is saved under `.local/config/state.json`.
+- The TUI backend, model, and command menus are searchable overlays in interactive terminals. Type to filter, use Up/Down to move, Enter to select, and Esc to return to chat.
+- The TUI keeps a fixed bottom input bar during chat and while responses stream so the conversation history stays visible above the prompt. The prompt area also shows a compact status line with the active backend, loaded model, thinking mode, runtime readiness/port, context size or recent context usage, backend device class, launch thread settings when available, and transient notices from backend/model/thinking commands.
+- TUI system notices such as backend switches, model load completion, and chat-stream errors are routed through the prompt status line instead of being appended as assistant chat content.
+- TUI chat keeps an in-memory multi-turn `messages` list for the current backend/model session. Each turn sends the full accumulated user/assistant history plus the new user message. Switching backend or model clears this in-memory conversation.
+- TUI transcript output uses lightweight role blocks for user, assistant, and optional reasoning content. TUI `/status` shows grouped runtime, model, generation, and conversation details, including context usage after a chat response returns a `usage` payload.
 - On terminals with readline support, the TUI chat prompt supports Unicode-aware editing and Up/Down input history.
-- The TUI suppresses a leading `<think>...</think>` block in streamed model output and shows only the visible answer text.
+- By default, the TUI suppresses a leading `<think>...</think>` block in streamed model output and shows only the visible answer text; `/reasoning on` shows that reasoning block when the backend provides it.
 - `load --config` without a path means "use the selected backend profile under `.local/config/backend_profiles/`".
 - Backend profile JSON files should only hold backend-native extra parameters. Keep model paths, prompts/messages, and images on the CLI.
 - `load` is the short form of `model load`; both store the current model path, optional `mmproj`, optional `ctx-size`, and any request defaults loaded from backend-native extra args.
@@ -301,6 +307,7 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 - `mlx-mac` supports both text model directories and vision-language model directories.
 - `mlx-mac` does not use `-mm/--mmproj`; multimodal support comes from the selected MLX model directory itself.
 - `chat` streams output by default. Backend-native request defaults can come from the profile used during `load --config` or from backend-specific extra args typed directly on the CLI.
+- Unless overridden by `--max-tokens` or a backend profile request default, chat requests use a default completion budget of 2048 tokens.
 - Load-time backend-native extra args are broadly passthrough for `llama.cpp-*` and `turboquant-mac`. Chat-time backend-native extra args support many common official flags plus generic long-form request overrides, but they are still interpreted through the current backend family rather than exposed as a blind global flag bag.
 - Do not combine `--auto` with backend-native extra args or load profiles, because those flows need a concrete selected backend to interpret flags correctly.
 - `status` shows the current backend, model, and thinking state.
@@ -312,6 +319,7 @@ On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
 
 - The CLI uses the Python entrypoint in [omniinfer.py](../omniinfer.py).
 - The desktop CLI auto-starts the local OmniInfer gateway when required.
+- CUDA desktop backends default to one GPU. If `CUDA_VISIBLE_DEVICES` is unset, OmniInfer picks the visible GPU with the most free memory and lowest utilization before launching the backend. Set `CUDA_VISIBLE_DEVICES` or `OMNIINFER_CUDA_VISIBLE_DEVICES` to override this.
 - If you use `mlx-mac`, keep the same Python interpreter for both the CLI and the auto-started gateway. `OMNIINFER_PYTHON` is the safest way to enforce that.
 - If you want to run the gateway in the foreground, use:
 

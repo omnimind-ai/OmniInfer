@@ -133,6 +133,59 @@ class PlatformRegistrationTests(unittest.TestCase):
             ids = [t.id for t in templates]
             self.assertEqual(len(ids), len(set(ids)), f"duplicate IDs in {platform_cls.__name__}")
 
+    def test_cuda_backend_env_defaults_to_idle_single_device(self) -> None:
+        backend = BackendSpec(
+            id="llama.cpp-linux-cuda",
+            label="llama.cpp Linux CUDA",
+            family="llama.cpp",
+            runtime_dir=".",
+            launcher_path="/tmp/llama-server",
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=["cuda"],
+        )
+
+        with patch("service_core.platforms.base.get_idle_cuda_device_index", return_value="3"):
+            env = LinuxPlatform().prepare_runtime_env({}, backend)
+
+        self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "3")
+
+    def test_cuda_backend_env_respects_existing_visible_devices(self) -> None:
+        backend = BackendSpec(
+            id="llama.cpp-linux-cuda",
+            label="llama.cpp Linux CUDA",
+            family="llama.cpp",
+            runtime_dir=".",
+            launcher_path="/tmp/llama-server",
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=["cuda"],
+        )
+
+        with patch("service_core.platforms.base.get_idle_cuda_device_index", return_value="3"):
+            env = LinuxPlatform().prepare_runtime_env({"CUDA_VISIBLE_DEVICES": "1"}, backend)
+
+        self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "1")
+
+    def test_cuda_backend_env_supports_omniinfer_device_override(self) -> None:
+        backend = BackendSpec(
+            id="llama.cpp-linux-cuda",
+            label="llama.cpp Linux CUDA",
+            family="llama.cpp",
+            runtime_dir=".",
+            launcher_path="/tmp/llama-server",
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=["cuda"],
+        )
+
+        env = LinuxPlatform().prepare_runtime_env({"OMNIINFER_CUDA_VISIBLE_DEVICES": "2"}, backend)
+
+        self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "2")
+
 
 # ---------------------------------------------------------------------------
 # Launch command construction

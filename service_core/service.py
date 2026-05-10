@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from service_core.logger import log_session_header, resolve_log_level, setup_logging
+from service_core.local_state import load_default_thinking, save_default_thinking
 from service_core.platforms import current_host_platform, default_backend_for_current_host, parse_extra_args
 from service_core.runtime import RuntimeManager
 
@@ -57,6 +58,9 @@ def load_app_config(app_root: Path) -> dict[str, Any]:
     }
     config_path = app_root / "config" / "omniinfer.json"
     if not config_path.is_file():
+        saved_thinking = load_default_thinking(app_root)
+        if saved_thinking is not None:
+            defaults["default_thinking"] = "on" if saved_thinking else "off"
         return defaults
 
     with config_path.open("r", encoding="utf-8") as f:
@@ -64,6 +68,9 @@ def load_app_config(app_root: Path) -> dict[str, Any]:
     if not isinstance(loaded, dict):
         return defaults
     merged = deep_merge(defaults, loaded)
+    saved_thinking = load_default_thinking(app_root)
+    if saved_thinking is not None:
+        merged["default_thinking"] = "on" if saved_thinking else "off"
     _validate_config(merged, config_path)
     return merged
 
@@ -763,6 +770,10 @@ class OmniHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"default_enabled": self.default_thinking})
             return
 
+        if path == "/omni/backend/props":
+            self._send_json(200, self.manager.backend_props())
+            return
+
         if path == "/omni/models":
             self._send_json(
                 410,
@@ -869,6 +880,7 @@ class OmniHandler(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._send_json(400, {"error": {"message": str(e)}})
                 return
+            save_default_thinking(self.default_thinking, APP_ROOT)
             self._send_json(200, {"ok": True, "default_enabled": self.default_thinking})
             return
 

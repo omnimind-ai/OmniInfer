@@ -244,6 +244,46 @@ def get_available_cuda_memory_bytes() -> int | None:
     return max(free_mib_values) * 1024 * 1024
 
 
+def get_idle_cuda_device_index() -> str | None:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,memory.free,memory.used,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=True,
+            **hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    candidates: list[tuple[int, int, int, str]] = []
+    for line in result.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) != 4:
+            continue
+        index, free_mib, used_mib, util_percent = parts
+        try:
+            free = int(free_mib)
+            used = int(used_mib)
+            util = int(util_percent)
+            device_index = int(index)
+        except ValueError:
+            continue
+        candidates.append((-free, util, used, str(device_index)))
+
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][3]
+
+
 def _is_amd_gpu_present_windows() -> bool:
     """Detect AMD GPU on Windows via WMI (Win32_VideoController)."""
     try:
