@@ -733,7 +733,21 @@ def managed_models_dir() -> Path:
     return local_dir(Path(APP_ROOT)) / "models"
 
 
-def link_model_into_managed_models(model_path: Path) -> Path:
+def detect_model_files_in_directory(directory: Path) -> list[LocalModel]:
+    root = Path(os.path.abspath(os.path.expanduser(str(directory))))
+    if not root.is_dir():
+        return []
+    models: list[LocalModel] = []
+    for candidate in root.rglob("*"):
+        if not candidate.is_file() or candidate.suffix.lower() not in MODEL_SUFFIXES:
+            continue
+        if _is_mmproj_file(candidate):
+            continue
+        models.append(LocalModel(path=candidate, label=_model_label(root, candidate)))
+    return sorted(models, key=lambda item: (_model_file_rank(item.path), item.label.lower()))
+
+
+def link_model_into_managed_models(model_path: Path, *, model_root: Path | None = None) -> Path:
     requested = Path(os.path.abspath(os.path.expanduser(str(model_path))))
     source = requested.resolve() if requested.is_symlink() else requested
     if not source.exists():
@@ -750,15 +764,13 @@ def link_model_into_managed_models(model_path: Path) -> Path:
             pass
 
     target_root.mkdir(parents=True, exist_ok=True)
-    directory_name = _managed_model_directory_name(source)
-    target_dir = target_root / directory_name
-    target = target_dir / source.name
+    target = _managed_model_target(source, target_root, model_root=model_root)
     if _link_points_to(target, source):
         return target
     if target.exists() or target.is_symlink():
         index = 2
         while True:
-            candidate = target_root / f"{directory_name}-{index}" / source.name
+            candidate = _managed_model_target(source, target_root, model_root=model_root, root_suffix=f"-{index}")
             if _link_points_to(candidate, source):
                 return candidate
             if not candidate.exists() and not candidate.is_symlink():
@@ -812,6 +824,36 @@ def _managed_model_directory_name(source: Path) -> str:
         return parent_name
     stem_name = _safe_path_component(source.stem)
     return stem_name or "model"
+
+
+def _managed_model_target(
+    source: Path,
+    target_root: Path,
+    *,
+    model_root: Path | None,
+    root_suffix: str = "",
+) -> Path:
+    if model_root is None:
+        return target_root / f"{_managed_model_directory_name(source)}{root_suffix}" / source.name
+
+    root = Path(os.path.abspath(os.path.expanduser(str(model_root))))
+    root_name = _safe_path_component(root.name) or _managed_model_directory_name(source)
+    try:
+        relative_parent = source.parent.relative_to(root.resolve())
+    except ValueError:
+        relative_parent = Path()
+    return target_root / f"{root_name}{root_suffix}" / relative_parent / source.name
+
+
+def _is_mmproj_file(path: Path) -> bool:
+    return "mmproj" in path.name.lower()
+
+
+def _model_file_rank(path: Path) -> tuple[int, int, str]:
+    name = path.name.lower()
+    quant_order = ["q4_k_m", "q4_0", "q5_k_m", "q6_k", "q8_0", "f16", "q3_k_m", "q2_k"]
+    quant_rank = next((index for index, quant in enumerate(quant_order) if quant in name), len(quant_order))
+    return (len(path.parts), quant_rank, name)
 
 
 def _safe_path_component(value: str) -> str:

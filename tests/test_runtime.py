@@ -252,6 +252,37 @@ class CommandHelperTests(unittest.TestCase):
             self.assertEqual(rows[0].path.resolve(), linked.resolve())
             self.assertEqual(rows[0].label, "downloads/model.gguf")
 
+    def test_detects_model_files_in_manual_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model_dir = root / "Qwen3.5-4B"
+            model_dir.mkdir()
+            (model_dir / "Qwen3.5-4B-Q8_0.gguf").write_bytes(b"gguf")
+            (model_dir / "Qwen3.5-4B-Q4_K_M.gguf").write_bytes(b"gguf")
+            (model_dir / "mmproj-F16.gguf").write_bytes(b"gguf")
+
+            rows = commands.detect_model_files_in_directory(model_dir)
+
+        self.assertEqual([row.label for row in rows], ["Qwen3.5-4B-Q4_K_M.gguf", "Qwen3.5-4B-Q8_0.gguf"])
+
+    def test_links_directory_model_under_directory_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external_root = root / "Qwen3.5-4B"
+            external = external_root / "snapshots" / "Qwen3.5-4B-Q4_K_M.gguf"
+            external.parent.mkdir(parents=True)
+            external.write_bytes(b"gguf")
+
+            with patch("service_core.commands.APP_ROOT", root):
+                linked = commands.link_model_into_managed_models(external, model_root=external_root)
+
+            self.assertEqual(
+                linked,
+                root / ".local" / "models" / "Qwen3.5-4B" / "snapshots" / "Qwen3.5-4B-Q4_K_M.gguf",
+            )
+            self.assertTrue(linked.is_symlink())
+            self.assertEqual(linked.resolve(), external.resolve())
+
     def test_model_reference_preserves_managed_symlink_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

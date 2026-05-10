@@ -176,13 +176,21 @@ def _choose_model() -> Path | None:
         return _prompt_model_path()
 
 
-def _prompt_model_path() -> Path:
+def _prompt_model_path() -> Path | None:
     while True:
         text = _prompt("Model path")
         path = Path(os.path.abspath(os.path.expanduser(text)))
         if path.exists():
+            model_root: Path | None = path.parent if path.is_file() else None
+            if path.is_dir():
+                directory = path
+                selected = _select_model_from_directory(directory)
+                if selected is None:
+                    return None
+                model_root = directory
+                path = selected
             try:
-                linked = commands.link_model_into_managed_models(path)
+                linked = commands.link_model_into_managed_models(path, model_root=model_root)
             except OSError as exc:
                 _print_notice(f"Could not link model into {commands.managed_models_dir()}: {exc}", kind="warning")
                 return path
@@ -190,6 +198,27 @@ def _prompt_model_path() -> Path:
                 _print_notice(f"Linked model: {linked}", kind="success")
             return linked
         _print_notice(f"Model path does not exist: {path}", kind="warning")
+
+
+def _select_model_from_directory(directory: Path) -> Path | None:
+    candidates = commands.detect_model_files_in_directory(directory)
+    if not candidates:
+        _print_notice(f"No GGUF model files found under {directory}", kind="warning")
+        return None
+    if len(candidates) == 1:
+        model = candidates[0]
+        _print_notice(f"Detected model: {model.label}", kind="success")
+        return model.path
+
+    index = _select_menu(
+        title="Models",
+        subtitle=f"Detected {len(candidates)} model files under {directory.name}",
+        items=[_MenuItem(label=model.label) for model in candidates],
+        default_index=0,
+    )
+    if index is None:
+        return None
+    return candidates[index].path
 
 
 def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None:
