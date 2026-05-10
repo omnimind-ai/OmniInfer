@@ -524,7 +524,47 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(tui._decode_escape_sequence("OA"), "up")
         self.assertEqual(tui._decode_escape_sequence("[B"), "down")
         self.assertEqual(tui._decode_escape_sequence("OB"), "down")
+        self.assertEqual(tui._decode_escape_sequence("[C"), "right")
+        self.assertEqual(tui._decode_escape_sequence("[D"), "left")
         self.assertEqual(tui._decode_escape_sequence("[Z"), "")
+
+    def test_tui_renders_input_cursor_inline(self) -> None:
+        rendered = tui._render_input_value("你好", 1, 20)
+        self.assertIn("▌", rendered)
+        self.assertTrue(rendered.startswith("你"))
+
+    def test_tui_renders_long_input_with_visible_cursor(self) -> None:
+        rendered = tui._render_input_value("abcdefghijklmnopqrstuvwxyz", 2, 10)
+
+        self.assertIn("▌", rendered)
+        self.assertIn("…", rendered)
+        self.assertLessEqual(tui._display_width(rendered), 10)
+        self.assertLess(tui._input_cursor_prefix_width(rendered), tui._display_width(rendered))
+
+    def test_tui_input_state_handles_unicode_backspace(self) -> None:
+        state = tui._InputBoxState(history=[])
+        for char in "你好啊你是谁":
+            state.insert(char)
+
+        for _ in range(3):
+            state.backspace()
+
+        self.assertEqual(state.text, "你好啊")
+        self.assertEqual(state.cursor, 3)
+
+    def test_tui_input_state_walks_chat_history(self) -> None:
+        state = tui._InputBoxState(history=["first", "second"])
+        for char in "draft":
+            state.insert(char)
+
+        state.history_previous()
+        self.assertEqual(state.text, "second")
+        state.history_previous()
+        self.assertEqual(state.text, "first")
+        state.history_next()
+        self.assertEqual(state.text, "second")
+        state.history_next()
+        self.assertEqual(state.text, "draft")
 
     @unittest.skipIf(os.name == "nt", "PTY test is POSIX-only")
     def test_tui_reads_delayed_arrow_sequence_from_pty(self) -> None:

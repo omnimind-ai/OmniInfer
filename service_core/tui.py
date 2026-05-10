@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import codecs
 import os
 import re
 import shutil
 import sys
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -828,6 +830,10 @@ def _decode_escape_sequence(seq: str) -> str:
         "OA": "up",
         "[B": "down",
         "OB": "down",
+        "[C": "right",
+        "OC": "right",
+        "[D": "left",
+        "OD": "left",
         "[H": "home",
         "OH": "home",
         "[1~": "home",
@@ -935,6 +941,15 @@ def _is_hidden_thinking_pending(buffer: str, visible_started: bool) -> bool:
 
 
 def _prompt(label: str, default: str | None = None, *, history: bool = False) -> str:
+    if history and default is None and _can_use_fixed_input_box():
+        result = _prompt_chat_box(label)
+        if result:
+            _remember_chat_input(result)
+        return result
+    return _prompt_basic(label, default, history=history)
+
+
+def _prompt_basic(label: str, default: str | None = None, *, history: bool = False) -> str:
     suffix = f" [{default}]" if default else ""
     _load_readline_history(_CHAT_HISTORY if history else [])
     try:
@@ -946,6 +961,264 @@ def _prompt(label: str, default: str | None = None, *, history: bool = False) ->
     if history and result:
         _remember_chat_input(result)
     return result
+
+
+def _can_use_fixed_input_box() -> bool:
+    return bool(
+        os.name != "nt"
+        and getattr(sys.stdin, "isatty", lambda: False)()
+        and getattr(sys.stdout, "isatty", lambda: False)()
+    )
+
+
+def _prompt_chat_box(label: str) -> str:
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    state = _InputBoxState(history=list(_CHAT_HISTORY))
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    finished = False
+    sys.stdout.write("\033[s\033[?25l")
+    sys.stdout.flush()
+    _draw_input_box(label, state)
+    try:
+        tty.setraw(fd)
+        while True:
+            data = os.read(fd, 1)
+            if not data:
+                continue
+            if data == b"\x03":
+                raise KeyboardInterrupt
+            if data in {b"\r", b"\n"}:
+                result = state.text.strip()
+                _clear_input_box(restore=True)
+                sys.stdout.write(f"{label}: {result}\n")
+                sys.stdout.flush()
+                finished = True
+                return result
+            if data == b"\x1b":
+                decoder.reset()
+                key = _decode_escape_sequence(_read_escape_sequence(fd, initial_timeout_s=0.05)) or "esc"
+                if key == "esc":
+                    state.text = ""
+                    state.cursor = 0
+                elif key == "up":
+                    state.history_previous()
+                elif key == "down":
+                    state.history_next()
+                elif key == "left":
+                    state.cursor = max(0, state.cursor - 1)
+                elif key == "right":
+                    state.cursor = min(len(state.text), state.cursor + 1)
+                elif key == "home":
+                    state.cursor = 0
+                elif key == "end":
+                    state.cursor = len(state.text)
+                _draw_input_box(label, state)
+                continue
+            if data in {b"\x7f", b"\b"}:
+                decoder.reset()
+                state.backspace()
+                _draw_input_box(label, state)
+                continue
+            if data == b"\x04":
+                decoder.reset()
+                if state.text:
+                    state.delete()
+                    _draw_input_box(label, state)
+                    continue
+                _clear_input_box(restore=True)
+                finished = True
+                return "/exit"
+
+            char = decoder.decode(data)
+            if char and char.isprintable():
+                state.insert(char)
+                _draw_input_box(label, state)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        if not finished:
+            _clear_input_box(restore=True)
+        else:
+            sys.stdout.write("\033[?25h")
+            sys.stdout.flush()
+
+
+class _InputBoxState:
+    def __init__(self, history: list[str]) -> None:
+        self.text = ""
+        self.cursor = 0
+        self._history = history
+        self._history_index: int | None = None
+        self._draft = ""
+
+    def insert(self, value: str) -> None:
+        self.text = self.text[: self.cursor] + value + self.text[self.cursor :]
+        self.cursor += len(value)
+        self._history_index = None
+
+    def backspace(self) -> None:
+        if self.cursor <= 0:
+            return
+        self.text = self.text[: self.cursor - 1] + self.text[self.cursor :]
+        self.cursor -= 1
+        self._history_index = None
+
+    def delete(self) -> None:
+        if self.cursor >= len(self.text):
+            return
+        self.text = self.text[: self.cursor] + self.text[self.cursor + 1 :]
+        self._history_index = None
+
+    def history_previous(self) -> None:
+        if not self._history:
+            return
+        if self._history_index is None:
+            self._draft = self.text
+            self._history_index = len(self._history) - 1
+        else:
+            self._history_index = max(0, self._history_index - 1)
+        self.text = self._history[self._history_index]
+        self.cursor = len(self.text)
+
+    def history_next(self) -> None:
+        if self._history_index is None:
+            return
+        if self._history_index >= len(self._history) - 1:
+            self._history_index = None
+            self.text = self._draft
+        else:
+            self._history_index += 1
+            self.text = self._history[self._history_index]
+        self.cursor = len(self.text)
+
+
+def _draw_input_box(label: str, state: _InputBoxState) -> None:
+    columns, rows = shutil.get_terminal_size(fallback=(80, 24))
+    width = max(20, columns)
+    top = max(1, rows - 2)
+    label_text = _strip_ansi(label)
+    max_value_width = max(width - _display_width(label_text) - 8, 8)
+    rendered = _render_input_value(state.text, state.cursor, max_value_width)
+    prompt = f"{label}: {rendered}"
+    prompt = _pad_display(prompt, width - 4)
+    border_width = max(width - 2, 1)
+    sys.stdout.write(f"\033[{top};1H\033[2K{_THEME.dim('╭' + '─' * border_width + '╮')}")
+    sys.stdout.write(f"\033[{top + 1};1H\033[2K{_THEME.dim('│')} {prompt} {_THEME.dim('│')}")
+    sys.stdout.write(f"\033[{top + 2};1H\033[2K{_THEME.dim('╰' + '─' * border_width + '╯')}")
+    cursor_col = min(width, 3 + _display_width(f"{label_text}: ") + _input_cursor_prefix_width(rendered))
+    sys.stdout.write(f"\033[{top + 1};{cursor_col}H")
+    sys.stdout.flush()
+
+
+def _clear_input_box(*, restore: bool = False) -> None:
+    columns, rows = shutil.get_terminal_size(fallback=(80, 24))
+    del columns
+    top = max(1, rows - 2)
+    for row in range(top, top + 3):
+        sys.stdout.write(f"\033[{row};1H\033[2K")
+    if restore:
+        sys.stdout.write("\033[u")
+    sys.stdout.write("\033[?25h")
+    sys.stdout.flush()
+
+
+def _render_input_value(text: str, cursor: int, max_width: int) -> str:
+    cursor = max(0, min(cursor, len(text)))
+    left_chars = list(text[:cursor])
+    right_chars = list(text[cursor:])
+    cursor_marker = _THEME.accent("▌")
+    left_width = _display_width("".join(left_chars))
+    right_width = _display_width("".join(right_chars))
+    cursor_width = _display_width(cursor_marker)
+    if max_width <= cursor_width:
+        return cursor_marker
+
+    if left_width + cursor_width + right_width <= max_width:
+        return "".join(left_chars) + cursor_marker + "".join(right_chars)
+
+    needs_left_ellipsis = bool(left_chars)
+    needs_right_ellipsis = bool(right_chars)
+    available = max_width - cursor_width
+    if needs_left_ellipsis:
+        available -= 1
+    if needs_right_ellipsis:
+        available -= 1
+    available = max(available, 0)
+
+    left_target = min(left_width, available // 2)
+    right_target = min(right_width, available - left_target)
+    remaining = available - left_target - right_target
+    if remaining > 0:
+        extra_left = min(left_width - left_target, remaining)
+        left_target += extra_left
+        remaining -= extra_left
+        if remaining > 0:
+            right_target += min(right_width - right_target, remaining)
+
+    left_rendered, left_rendered_width = _take_display_suffix(left_chars, left_target)
+    right_rendered, right_rendered_width = _take_display_prefix(right_chars, right_target)
+    rendered = []
+    if needs_left_ellipsis and left_rendered_width < left_width:
+        rendered.append("…")
+    rendered.append(left_rendered)
+    rendered.append(cursor_marker)
+    rendered.append(right_rendered)
+    if needs_right_ellipsis and right_rendered_width < right_width:
+        rendered.append("…")
+    return "".join(rendered)
+
+
+def _input_cursor_prefix_width(rendered: str) -> int:
+    clean = _strip_ansi(rendered)
+    marker_index = clean.find("▌")
+    if marker_index < 0:
+        return _display_width(clean)
+    return _display_width(clean[:marker_index])
+
+
+def _take_display_prefix(chars: list[str], max_width: int) -> tuple[str, int]:
+    width = 0
+    rendered: list[str] = []
+    for char in chars:
+        char_width = _display_width(char)
+        if width + char_width > max_width:
+            break
+        rendered.append(char)
+        width += char_width
+    return "".join(rendered), width
+
+
+def _take_display_suffix(chars: list[str], max_width: int) -> tuple[str, int]:
+    width = 0
+    rendered: list[str] = []
+    for char in reversed(chars):
+        char_width = _display_width(char)
+        if width + char_width > max_width:
+            break
+        rendered.append(char)
+        width += char_width
+    rendered.reverse()
+    return "".join(rendered), width
+
+
+def _pad_display(text: str, width: int) -> str:
+    current = _display_width(text)
+    if current >= width:
+        return text
+    return text + " " * (width - current)
+
+
+def _display_width(text: str) -> int:
+    clean = _strip_ansi(text)
+    width = 0
+    for char in clean:
+        if unicodedata.combining(char):
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1
+    return width
 
 
 def _remember_chat_input(value: str) -> None:
