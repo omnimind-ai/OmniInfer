@@ -960,6 +960,9 @@ class RuntimeManager:
             "ctx_size": runtime.ctx_size if runtime else None,
             "request_defaults": dict(runtime.request_defaults) if runtime else {},
             "backend_ready": bool(runtime),
+            "runtime_mode": runtime.runtime_mode if runtime else None,
+            "backend_port": runtime.port if runtime else None,
+            "launch_args": list(runtime.launch_args) if runtime else [],
         }
 
     def backend_health(self) -> dict[str, Any]:

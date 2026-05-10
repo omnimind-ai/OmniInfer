@@ -641,6 +641,20 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertEqual(result, "in 13  out 12  ctx 25/4096 0.6%")
 
+    def test_tui_formats_status_runtime_device_and_threads(self) -> None:
+        state = {
+            "backend_ready": True,
+            "runtime_mode": "external_server",
+            "backend_port": 12345,
+            "ctx_size": 4096,
+        }
+
+        self.assertEqual(tui._format_status_runtime(state), "ready port 12345")
+        self.assertEqual(tui._format_status_context_size(state), "ctx 4096")
+        with patch.dict(os.environ, {"OMNIINFER_CUDA_VISIBLE_DEVICES": "7"}, clear=False):
+            self.assertEqual(tui._format_status_device("llama.cpp-linux-cuda"), "cuda 7")
+        self.assertEqual(tui._format_status_threads(["-t", "16", "--threads-batch=8"]), "t 16 tb 8")
+
     def test_tui_prompt_status_uses_model_basename(self) -> None:
         self.assertEqual(tui._format_status_model("/tmp/models/demo.gguf"), "demo.gguf")
         self.assertEqual(tui._format_status_model(None), "-")
@@ -660,7 +674,14 @@ class CommandHelperTests(unittest.TestCase):
         with (
             patch(
                 "service_core.commands.current_runtime_state",
-                return_value={"model": "/tmp/demo.gguf", "ctx_size": 4096},
+                return_value={
+                    "model": "/tmp/demo.gguf",
+                    "ctx_size": 4096,
+                    "backend_ready": True,
+                    "runtime_mode": "external_server",
+                    "backend_port": 12345,
+                    "launch_args": ["-t", "16"],
+                },
             ),
             patch("service_core.commands.get_default_thinking", return_value=True),
         ):
@@ -669,6 +690,8 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("backend llama.cpp-linux-cuda", result)
         self.assertIn("model demo.gguf", result)
         self.assertIn("think on", result)
+        self.assertIn("ready port 12345", result)
+        self.assertIn("t 16", result)
         self.assertIn("ctx 25/4096 0.6%", result)
 
     def test_tui_assistant_header_starts_at_line_beginning(self) -> None:
@@ -1040,6 +1063,8 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         snapshot = self.manager.snapshot()
         self.assertEqual(snapshot["backend"], "mlx-mac")
         self.assertTrue(snapshot["backend_ready"])
+        self.assertEqual(snapshot["runtime_mode"], "embedded")
+        self.assertEqual(snapshot["launch_args"], [])
 
     def test_stop_runtime(self) -> None:
         self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")

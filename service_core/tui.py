@@ -390,6 +390,18 @@ class _StatusLine:
             f"model {model}",
             f"think {thinking}",
         ]
+        runtime = _format_status_runtime(state)
+        if runtime:
+            pieces.append(runtime)
+        ctx = _format_status_context_size(state) if not session.last_usage else ""
+        if ctx:
+            pieces.append(ctx)
+        device = _format_status_device(str(state.get("backend") or session.backend))
+        if device:
+            pieces.append(device)
+        threads = _format_status_threads(state.get("launch_args"))
+        if threads:
+            pieces.append(threads)
         notice = session.notices.status_text()
         if notice:
             pieces.insert(0, notice)
@@ -680,6 +692,62 @@ def _format_status_usage(usage: dict[str, Any] | None, ctx_size: Any) -> str:
         else:
             pieces.append(f"ctx {total_tokens}")
     return "  ".join(pieces)
+
+
+def _format_status_runtime(state: dict[str, Any]) -> str:
+    if not state:
+        return ""
+    ready = "ready" if state.get("backend_ready") else "not-ready"
+    mode = state.get("runtime_mode")
+    if mode == "external_server" and state.get("backend_port"):
+        return f"{ready} port {state.get('backend_port')}"
+    if isinstance(mode, str) and mode:
+        return f"{ready} {mode}"
+    return ready
+
+
+def _format_status_context_size(state: dict[str, Any]) -> str:
+    ctx_size = _positive_int(state.get("ctx_size"))
+    return f"ctx {ctx_size}" if ctx_size else ""
+
+
+def _format_status_device(backend: str) -> str:
+    backend_lower = backend.lower()
+    if "cuda" in backend_lower:
+        visible = os.environ.get("OMNIINFER_CUDA_VISIBLE_DEVICES") or os.environ.get("CUDA_VISIBLE_DEVICES")
+        return f"cuda {visible}" if visible else "cuda"
+    if "rocm" in backend_lower or "hip" in backend_lower:
+        return "rocm"
+    if "vulkan" in backend_lower:
+        return "vulkan"
+    if "mlx" in backend_lower:
+        return "mlx"
+    return "cpu" if "cpu" in backend_lower or "linux" in backend_lower or "windows" in backend_lower else ""
+
+
+def _format_status_threads(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    args = [str(item) for item in value]
+    threads = _launch_arg_value(args, ("-t", "--threads"))
+    batch_threads = _launch_arg_value(args, ("--threads-batch",))
+    pieces: list[str] = []
+    if threads:
+        pieces.append(f"t {threads}")
+    if batch_threads:
+        pieces.append(f"tb {batch_threads}")
+    return " ".join(pieces)
+
+
+def _launch_arg_value(args: list[str], flags: tuple[str, ...]) -> str | None:
+    for index, item in enumerate(args):
+        for flag in flags:
+            if item == flag and index + 1 < len(args):
+                return args[index + 1]
+            prefix = f"{flag}="
+            if item.startswith(prefix):
+                return item[len(prefix) :]
+    return None
 
 
 def _shutdown_service_for_tui() -> None:
