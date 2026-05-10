@@ -28,11 +28,13 @@ from service_core.backend_configs import (
 )
 from service_core.local_state import (
     load_selected_model,
+    load_tui_show_reasoning,
     local_dir,
     local_logs_dir,
     save_default_thinking,
     save_selected_backend,
     save_selected_model,
+    save_tui_show_reasoning,
 )
 from service_core.runtime import RuntimeManager
 from service_core.service import APP_ROOT, REPO_ROOT, load_app_config
@@ -372,6 +374,15 @@ def set_default_thinking(enabled: bool) -> bool:
     saved_value = bool(payload.get("default_enabled"))
     save_default_thinking(saved_value, Path(APP_ROOT))
     return saved_value
+
+
+def get_tui_show_reasoning() -> bool:
+    return load_tui_show_reasoning(Path(APP_ROOT))
+
+
+def set_tui_show_reasoning(enabled: bool) -> bool:
+    save_tui_show_reasoning(enabled, Path(APP_ROOT))
+    return enabled
 
 
 def selected_backend() -> str | None:

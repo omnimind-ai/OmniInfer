@@ -27,9 +27,11 @@ from service_core.local_state import (
     load_default_thinking,
     load_selected_backend,
     load_selected_model,
+    load_tui_show_reasoning,
     save_default_thinking,
     save_selected_backend,
     save_selected_model,
+    save_tui_show_reasoning,
     state_file,
 )
 from service_core.runtime import RuntimeManager
@@ -140,6 +142,15 @@ class LocalStateTests(unittest.TestCase):
 
         save_default_thinking(False, self.app_root)
         self.assertEqual(load_default_thinking(self.app_root), False)
+
+    def test_tui_reasoning_display_defaults_hidden_and_round_trips(self) -> None:
+        self.assertFalse(load_tui_show_reasoning(self.app_root))
+
+        save_tui_show_reasoning(True, self.app_root)
+        self.assertTrue(load_tui_show_reasoning(self.app_root))
+
+        save_tui_show_reasoning(False, self.app_root)
+        self.assertFalse(load_tui_show_reasoning(self.app_root))
 
     def test_app_config_uses_persisted_default_thinking(self) -> None:
         save_default_thinking(True, self.app_root)
@@ -448,6 +459,17 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(output, "answer")
         self.assertEqual(buffer, "")
         self.assertTrue(visible)
+
+    def test_tui_extracts_hidden_thinking_for_optional_display(self) -> None:
+        output, buffer, visible, reasoning = tui._consume_visible_text_parts(
+            "<think>hidden</think>\nanswer",
+            visible_started=False,
+        )
+
+        self.assertEqual(output, "answer")
+        self.assertEqual(buffer, "")
+        self.assertTrue(visible)
+        self.assertEqual(reasoning, "hidden")
 
     def test_tui_detects_hidden_thinking_wait_state(self) -> None:
         self.assertTrue(tui._is_hidden_thinking_pending("<think>hidden", visible_started=False))
@@ -874,6 +896,7 @@ class CommandHelperTests(unittest.TestCase):
             patch("service_core.tui._LoadingSpinner", FakeSpinner),
             patch("service_core.tui._print_chat_header"),
             patch("service_core.tui._prompt", side_effect=["hello", "/exit"]),
+            patch("service_core.commands.get_tui_show_reasoning", return_value=False),
             patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
             patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
             patch("sys.stdout", io.StringIO()),
@@ -883,6 +906,26 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(len(spinners), 1)
         self.assertEqual(spinners[0].starts, 1)
         self.assertGreaterEqual(spinners[0].stops, 1)
+
+    def test_tui_chat_loop_can_render_visible_reasoning_chunks(self) -> None:
+        def fake_stream(_payload: dict[str, Any]):
+            yield commands.ChatStreamChunk(reasoning_text="plan")
+            yield commands.ChatStreamChunk(text="answer")
+
+        with (
+            patch("service_core.tui._print_chat_header"),
+            patch("service_core.tui._prompt", side_effect=["hello", "/exit"]),
+            patch("service_core.commands.get_tui_show_reasoning", return_value=True),
+            patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
+            patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            tui._chat_loop("llama.cpp-linux-cuda")
+
+        rendered = output.getvalue()
+        self.assertIn("Reasoning:", rendered)
+        self.assertIn("  │ plan", rendered)
+        self.assertIn("Assistant:", rendered)
 
     def test_tui_chat_loop_routes_stream_errors_to_prompt_status(self) -> None:
         prompts: list[str | None] = []
@@ -899,6 +942,7 @@ class CommandHelperTests(unittest.TestCase):
         with (
             patch("service_core.tui._prompt", side_effect=fake_prompt),
             patch("service_core.tui._print_chat_header"),
+            patch("service_core.commands.get_tui_show_reasoning", return_value=False),
             patch("service_core.commands.current_runtime_state", return_value={"model": "demo.gguf"}),
             patch("service_core.commands.get_default_thinking", return_value=False),
             patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
@@ -928,6 +972,18 @@ class CommandHelperTests(unittest.TestCase):
             tui._handle_thinking_command("/think off")
 
         set_default.assert_called_once_with(False)
+
+    def test_tui_reasoning_command_sets_visible_display(self) -> None:
+        session = tui._ChatSessionState(backend="llama.cpp-linux-cuda", reasoning_visible=False)
+
+        with (
+            patch("service_core.commands.set_tui_show_reasoning", return_value=True) as set_visible,
+            patch("sys.stdout", io.StringIO()),
+        ):
+            tui._handle_reasoning_command(session, "/reasoning on")
+
+        set_visible.assert_called_once_with(True)
+        self.assertTrue(session.reasoning_visible)
 
     def test_set_default_thinking_persists_local_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

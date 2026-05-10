@@ -346,6 +346,7 @@ def _load_model(options: commands.ModelLoadOptions) -> str | None:
 @dataclass
 class _ChatSessionState:
     backend: str
+    reasoning_visible: bool = False
     messages: list[dict[str, str]] = field(default_factory=list)
     last_usage: dict[str, Any] | None = None
     notices: _NoticeCenter = field(default_factory=_NoticeCenter)
@@ -373,6 +374,13 @@ class _TranscriptView:
     def assistant_writer(self) -> "_MessageBlockWriter":
         return _MessageBlockWriter(kind="assistant")
 
+    def render_reasoning_header(self) -> None:
+        _print_message_header("Reasoning", kind="reasoning")
+        sys.stdout.flush()
+
+    def reasoning_writer(self) -> "_MessageBlockWriter":
+        return _MessageBlockWriter(kind="reasoning")
+
     def render_status(self, session: _ChatSessionState) -> None:
         _print_status(last_usage=session.last_usage, messages=session.messages)
         print()
@@ -395,6 +403,7 @@ class _StatusLine:
             f"backend {session.backend}",
             f"model {model}",
             f"think {thinking}",
+            f"reasoning {'show' if session.reasoning_visible else 'hide'}",
         ]
         runtime = _format_status_runtime(state)
         if runtime:
@@ -448,7 +457,7 @@ class _FixedPromptDuringOutput:
 
 
 def _chat_loop(backend: str) -> None:
-    session = _ChatSessionState(backend=backend)
+    session = _ChatSessionState(backend=backend, reasoning_visible=commands.get_tui_show_reasoning())
     transcript = _TranscriptView()
     status_line = _StatusLine()
     transcript.render_header(session)
@@ -491,6 +500,10 @@ def _chat_loop(backend: str) -> None:
             with session.notices.capture():
                 _handle_thinking_command(message)
             continue
+        if message == "/reasoning" or message.startswith("/reasoning "):
+            with session.notices.capture():
+                _handle_reasoning_command(session, message)
+            continue
 
         session.notices.clear()
         if _can_use_fixed_input_box():
@@ -502,21 +515,45 @@ def _chat_loop(backend: str) -> None:
             visible_started = False
             assistant_header_printed = False
             assistant_writer = transcript.assistant_writer()
+            reasoning_header_printed = False
+            reasoning_finished = False
+            reasoning_writer = transcript.reasoning_writer()
             thinking_spinner = _LoadingSpinner("Thinking...")
             try:
                 payload = _build_conversation_payload(message, session.messages)
                 for chunk in commands.iter_chat_stream_payload(payload):
-                    if chunk.reasoning_text and not visible_started and not thinking_spinner.active:
-                        thinking_spinner.start()
+                    if chunk.reasoning_text:
+                        if session.reasoning_visible:
+                            if thinking_spinner.active:
+                                thinking_spinner.stop()
+                            if not reasoning_header_printed:
+                                transcript.render_reasoning_header()
+                                reasoning_header_printed = True
+                            reasoning_writer.write(chunk.reasoning_text)
+                        elif not visible_started and not thinking_spinner.active:
+                            thinking_spinner.start()
                     if chunk.text:
                         buffer += chunk.text
-                        output, buffer, visible_started = _consume_visible_text(buffer, visible_started)
+                        output, buffer, visible_started, hidden_reasoning = _consume_visible_text_parts(
+                            buffer,
+                            visible_started,
+                        )
+                        if hidden_reasoning and session.reasoning_visible:
+                            if thinking_spinner.active:
+                                thinking_spinner.stop()
+                            if not reasoning_header_printed:
+                                transcript.render_reasoning_header()
+                                reasoning_header_printed = True
+                            reasoning_writer.write(hidden_reasoning)
                         if output and thinking_spinner.active:
                             thinking_spinner.stop()
                         elif _is_hidden_thinking_pending(buffer, visible_started) and not thinking_spinner.active:
                             thinking_spinner.start()
                         if output:
                             if not assistant_header_printed:
+                                if reasoning_header_printed and not reasoning_finished:
+                                    reasoning_writer.finish()
+                                    reasoning_finished = True
                                 transcript.render_assistant_header()
                                 assistant_header_printed = True
                             assistant_text += output
@@ -529,15 +566,30 @@ def _chat_loop(backend: str) -> None:
                 fixed_prompt.redraw(status_line.text(session))
                 continue
             if buffer:
-                output, _buffer, _visible_started = _consume_visible_text(buffer, visible_started, final=True)
+                output, _buffer, _visible_started, hidden_reasoning = _consume_visible_text_parts(
+                    buffer,
+                    visible_started,
+                    final=True,
+                )
+                if hidden_reasoning and session.reasoning_visible:
+                    thinking_spinner.stop()
+                    if not reasoning_header_printed:
+                        transcript.render_reasoning_header()
+                        reasoning_header_printed = True
+                    reasoning_writer.write(hidden_reasoning)
                 if output:
                     thinking_spinner.stop()
                     if not assistant_header_printed:
+                        if reasoning_header_printed and not reasoning_finished:
+                            reasoning_writer.finish()
+                            reasoning_finished = True
                         transcript.render_assistant_header()
                         assistant_header_printed = True
                     assistant_text += output
                     assistant_writer.write(output)
             thinking_spinner.stop()
+            if reasoning_header_printed and not reasoning_finished:
+                reasoning_writer.finish()
             if assistant_header_printed:
                 assistant_writer.finish()
             if final_payload:
@@ -877,7 +929,7 @@ def _print_kv(label: str, value: str) -> None:
 
 
 def _print_command_bar() -> None:
-    commands_text = " /backend  /model  /think  /status  /clear  /help  /exit "
+    commands_text = " /backend  /model  /think  /reasoning  /status  /clear  /help  /exit "
     print(_THEME.dim("Commands") + _THEME.accent(commands_text))
 
 
@@ -926,6 +978,19 @@ def _handle_thinking_command(message: str) -> None:
     _print_notice(f"Thinking mode: {_format_on_off(new_value)}", kind="success")
 
 
+def _handle_reasoning_command(session: _ChatSessionState, message: str) -> None:
+    parts = message.split()
+    if len(parts) == 1:
+        enabled = not session.reasoning_visible
+    elif len(parts) == 2 and parts[1].lower() in {"on", "off", "show", "hide"}:
+        enabled = parts[1].lower() in {"on", "show"}
+    else:
+        _print_notice("Usage: /reasoning, /reasoning on, or /reasoning off", kind="warning")
+        return
+    session.reasoning_visible = commands.set_tui_show_reasoning(enabled)
+    _print_notice(f"Reasoning display: {'show' if session.reasoning_visible else 'hide'}", kind="success")
+
+
 def _current_thinking_label() -> str | None:
     try:
         return _format_on_off(commands.get_default_thinking())
@@ -948,6 +1013,7 @@ _COMMAND_TABLE = [
     ("/backend", "switch the selected runtime"),
     ("/model", "load a different managed model"),
     ("/think", "toggle thinking mode; use /think on or /think off to set it"),
+    ("/reasoning", "toggle visible reasoning; use /reasoning on or /reasoning off to set it"),
     ("/status", "show backend, model, request defaults, and conversation context usage"),
     ("/clear", "clear the terminal and redraw the chat header"),
     ("/help", "show this command reference"),
@@ -1282,21 +1348,31 @@ class _LoadingSpinner:
 
 
 def _consume_visible_text(buffer: str, visible_started: bool, final: bool = False) -> tuple[str, str, bool]:
+    output, remaining, visible, _reasoning = _consume_visible_text_parts(buffer, visible_started, final=final)
+    return output, remaining, visible
+
+
+def _consume_visible_text_parts(
+    buffer: str,
+    visible_started: bool,
+    final: bool = False,
+) -> tuple[str, str, bool, str]:
     if visible_started:
-        return buffer, "", True
+        return buffer, "", True, ""
 
     stripped = buffer.lstrip()
-    leading_len = len(buffer) - len(stripped)
     if not stripped.startswith("<think>"):
-        return buffer, "", True
+        return buffer, "", True, ""
 
     close_index = stripped.find("</think>")
     if close_index < 0:
-        return ("", "" if final else buffer, False)
+        reasoning = stripped[len("<think>") :].strip() if final else ""
+        return "", "" if final else buffer, False, reasoning
 
+    reasoning = stripped[len("<think>") : close_index].strip()
     after = stripped[close_index + len("</think>") :]
     after = re.sub(r"^\s*", "", after)
-    return after, "", bool(after)
+    return after, "", bool(after), reasoning
 
 
 def _is_hidden_thinking_pending(buffer: str, visible_started: bool) -> bool:
