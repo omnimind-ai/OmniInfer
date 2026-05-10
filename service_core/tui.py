@@ -22,6 +22,7 @@ _LOADING_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
 _LOADING_INTERVAL = 0.08
 _MIN_WIDTH = 64
 _MAX_WIDTH = 100
+_PROMPT_BOX_ROWS = 4
 
 
 class _Theme:
@@ -325,12 +326,33 @@ class _TranscriptView:
         print()
 
 
+class _StatusLine:
+    def text(self, session: _ChatSessionState) -> str:
+        state: dict[str, Any] = {}
+        try:
+            state = commands.current_runtime_state()
+        except SystemExit:
+            pass
+        model = _format_status_model(state.get("model"))
+        thinking = _current_thinking_label() or "-"
+        pieces = [
+            f"backend {session.backend}",
+            f"model {model}",
+            f"think {thinking}",
+        ]
+        usage = _format_status_usage(session.last_usage, _resolve_context_size(state) if state else None)
+        if usage:
+            pieces.append(usage)
+        return "  ".join(pieces)
+
+
 def _chat_loop(backend: str) -> None:
     session = _ChatSessionState(backend=backend)
     transcript = _TranscriptView()
+    status_line = _StatusLine()
     transcript.render_header(session)
     while True:
-        message = _prompt(_THEME.role_user("You"), history=True)
+        message = _prompt(_THEME.role_user("You"), history=True, status=status_line.text(session))
         if not message:
             continue
         if message == "/exit":
@@ -543,6 +565,32 @@ def _format_context_usage(usage: dict[str, Any] | None, ctx_size: Any) -> str:
         else:
             pieces.append(f"total={total_tokens}")
     return ", ".join(pieces)
+
+
+def _format_status_model(value: Any) -> str:
+    if not value:
+        return "-"
+    return Path(str(value)).name
+
+
+def _format_status_usage(usage: dict[str, Any] | None, ctx_size: Any) -> str:
+    if not usage:
+        return ""
+    input_tokens = usage.get("prompt_tokens", "-")
+    output_tokens = usage.get("completion_tokens", "-")
+    total_tokens = usage.get("total_tokens")
+    pieces = [f"in {input_tokens}", f"out {output_tokens}"]
+    if isinstance(total_tokens, int):
+        try:
+            ctx_int = int(ctx_size)
+        except (TypeError, ValueError):
+            ctx_int = 0
+        if ctx_int > 0:
+            percent = total_tokens / ctx_int * 100
+            pieces.append(f"ctx {total_tokens}/{ctx_int} {percent:.1f}%")
+        else:
+            pieces.append(f"ctx {total_tokens}")
+    return "  ".join(pieces)
 
 
 def _shutdown_service_for_tui() -> None:
@@ -964,9 +1012,9 @@ def _is_hidden_thinking_pending(buffer: str, visible_started: bool) -> bool:
     return stripped.startswith("<think>")
 
 
-def _prompt(label: str, default: str | None = None, *, history: bool = False) -> str:
+def _prompt(label: str, default: str | None = None, *, history: bool = False, status: str | None = None) -> str:
     if history and default is None and _can_use_fixed_input_box():
-        result = _prompt_chat_box(label)
+        result = _prompt_chat_box(label, status=status)
         if result:
             _remember_chat_input(result)
         return result
@@ -995,7 +1043,7 @@ def _can_use_fixed_input_box() -> bool:
     )
 
 
-def _prompt_chat_box(label: str) -> str:
+def _prompt_chat_box(label: str, *, status: str | None = None) -> str:
     import termios
     import tty
 
@@ -1006,7 +1054,7 @@ def _prompt_chat_box(label: str) -> str:
     finished = False
     sys.stdout.write("\033[s\033[?25l")
     sys.stdout.flush()
-    _draw_input_box(label, state)
+    _draw_input_box(label, state, status=status)
     try:
         tty.setraw(fd)
         while True:
@@ -1040,18 +1088,18 @@ def _prompt_chat_box(label: str) -> str:
                     state.cursor = 0
                 elif key == "end":
                     state.cursor = len(state.text)
-                _draw_input_box(label, state)
+                _draw_input_box(label, state, status=status)
                 continue
             if data in {b"\x7f", b"\b"}:
                 decoder.reset()
                 state.backspace()
-                _draw_input_box(label, state)
+                _draw_input_box(label, state, status=status)
                 continue
             if data == b"\x04":
                 decoder.reset()
                 if state.text:
                     state.delete()
-                    _draw_input_box(label, state)
+                    _draw_input_box(label, state, status=status)
                     continue
                 _clear_input_box(restore=True)
                 finished = True
@@ -1060,7 +1108,7 @@ def _prompt_chat_box(label: str) -> str:
             char = decoder.decode(data)
             if char and char.isprintable():
                 state.insert(char)
-                _draw_input_box(label, state)
+                _draw_input_box(label, state, status=status)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
         if not finished:
@@ -1119,19 +1167,21 @@ class _InputBoxState:
         self.cursor = len(self.text)
 
 
-def _draw_input_box(label: str, state: _InputBoxState) -> None:
+def _draw_input_box(label: str, state: _InputBoxState, *, status: str | None = None) -> None:
     columns, rows = shutil.get_terminal_size(fallback=(80, 24))
     width = max(20, columns)
-    top = max(1, rows - 2)
+    top = max(1, rows - _PROMPT_BOX_ROWS + 1)
     label_text = _strip_ansi(label)
     max_value_width = max(width - _display_width(label_text) - 8, 8)
     rendered = _render_input_value(state.text, state.cursor, max_value_width)
     prompt = f"{label}: {rendered}"
     prompt = _pad_display(prompt, width - 4)
+    status_text = _render_prompt_status(status or "", width - 4)
     border_width = max(width - 2, 1)
     sys.stdout.write(f"\033[{top};1H\033[2K{_THEME.dim('╭' + '─' * border_width + '╮')}")
     sys.stdout.write(f"\033[{top + 1};1H\033[2K{_THEME.dim('│')} {prompt} {_THEME.dim('│')}")
-    sys.stdout.write(f"\033[{top + 2};1H\033[2K{_THEME.dim('╰' + '─' * border_width + '╯')}")
+    sys.stdout.write(f"\033[{top + 2};1H\033[2K{_THEME.dim('│')} {status_text} {_THEME.dim('│')}")
+    sys.stdout.write(f"\033[{top + 3};1H\033[2K{_THEME.dim('╰' + '─' * border_width + '╯')}")
     cursor_col = min(width, 3 + _display_width(f"{label_text}: ") + _input_cursor_prefix_width(rendered))
     sys.stdout.write(f"\033[{top + 1};{cursor_col}H")
     sys.stdout.flush()
@@ -1140,8 +1190,8 @@ def _draw_input_box(label: str, state: _InputBoxState) -> None:
 def _clear_input_box(*, restore: bool = False) -> None:
     columns, rows = shutil.get_terminal_size(fallback=(80, 24))
     del columns
-    top = max(1, rows - 2)
-    for row in range(top, top + 3):
+    top = max(1, rows - _PROMPT_BOX_ROWS + 1)
+    for row in range(top, top + _PROMPT_BOX_ROWS):
         sys.stdout.write(f"\033[{row};1H\033[2K")
     if restore:
         sys.stdout.write("\033[u")
@@ -1193,6 +1243,11 @@ def _render_input_value(text: str, cursor: int, max_width: int) -> str:
     if needs_right_ellipsis and right_rendered_width < right_width:
         rendered.append("…")
     return "".join(rendered)
+
+
+def _render_prompt_status(status: str, max_width: int) -> str:
+    text = _THEME.dim(_truncate(status, max_width)) if status else ""
+    return _pad_display(text, max_width)
 
 
 def _input_cursor_prefix_width(rendered: str) -> int:

@@ -603,6 +603,38 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertEqual(result, "input=13, output=12, total=25/4096 (0.6%)")
 
+    def test_tui_formats_prompt_status_usage(self) -> None:
+        result = tui._format_status_usage(
+            {"prompt_tokens": 13, "completion_tokens": 12, "total_tokens": 25},
+            4096,
+        )
+
+        self.assertEqual(result, "in 13  out 12  ctx 25/4096 0.6%")
+
+    def test_tui_prompt_status_uses_model_basename(self) -> None:
+        self.assertEqual(tui._format_status_model("/tmp/models/demo.gguf"), "demo.gguf")
+        self.assertEqual(tui._format_status_model(None), "-")
+
+    def test_tui_status_line_combines_prompt_context(self) -> None:
+        session = tui._ChatSessionState(
+            backend="llama.cpp-linux-cuda",
+            last_usage={"prompt_tokens": 13, "completion_tokens": 12, "total_tokens": 25},
+        )
+
+        with (
+            patch(
+                "service_core.commands.current_runtime_state",
+                return_value={"model": "/tmp/demo.gguf", "ctx_size": 4096},
+            ),
+            patch("service_core.commands.get_default_thinking", return_value=True),
+        ):
+            result = tui._StatusLine().text(session)
+
+        self.assertIn("backend llama.cpp-linux-cuda", result)
+        self.assertIn("model demo.gguf", result)
+        self.assertIn("think on", result)
+        self.assertIn("ctx 25/4096 0.6%", result)
+
     def test_tui_context_usage_requires_usage_payload(self) -> None:
         self.assertEqual(tui._format_context_usage(None, 4096), "not available yet")
 
