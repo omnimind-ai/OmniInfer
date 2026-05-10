@@ -275,6 +275,7 @@ def _load_model(options: commands.ModelLoadOptions) -> str | None:
 def _chat_loop(backend: str) -> None:
     current_backend = backend
     last_usage: dict[str, Any] | None = None
+    messages: list[dict[str, str]] = []
     _print_chat_header(current_backend)
     while True:
         message = _prompt(_THEME.role_user("You"), history=True)
@@ -286,6 +287,8 @@ def _chat_loop(backend: str) -> None:
             selected_backend = _choose_backend()
             if selected_backend:
                 current_backend = selected_backend
+                messages.clear()
+                last_usage = None
             _print_chat_header(current_backend)
             continue
         if message == "/model":
@@ -296,6 +299,8 @@ def _chat_loop(backend: str) -> None:
             loaded_backend = _load_model(commands.ModelLoadOptions(model=str(model)))
             if loaded_backend:
                 current_backend = loaded_backend
+                messages.clear()
+                last_usage = None
             _print_chat_header(current_backend)
             continue
         if message == "/clear":
@@ -304,7 +309,7 @@ def _chat_loop(backend: str) -> None:
             _print_chat_header(current_backend)
             continue
         if message == "/status":
-            _print_status(last_usage=last_usage)
+            _print_status(last_usage=last_usage, messages=messages)
             print()
             continue
         if message == "/help":
@@ -315,12 +320,15 @@ def _chat_loop(backend: str) -> None:
         print(_THEME.role_assistant("Assistant"))
         final_payload: dict[str, Any] | None = None
         buffer = ""
+        assistant_text = ""
         visible_started = False
-        for chunk in commands.iter_chat_stream(commands.ChatOptions(message=message)):
+        payload = _build_conversation_payload(message, messages)
+        for chunk in commands.iter_chat_stream_payload(payload):
             if chunk.text:
                 buffer += chunk.text
                 output, buffer, visible_started = _consume_visible_text(buffer, visible_started)
                 if output:
+                    assistant_text += output
                     sys.stdout.write(output)
                     sys.stdout.flush()
             if chunk.final_payload:
@@ -328,6 +336,7 @@ def _chat_loop(backend: str) -> None:
         if buffer:
             output, _buffer, _visible_started = _consume_visible_text(buffer, visible_started, final=True)
             if output:
+                assistant_text += output
                 sys.stdout.write(output)
                 sys.stdout.flush()
         print()
@@ -336,8 +345,19 @@ def _chat_loop(backend: str) -> None:
             if usage:
                 last_usage = usage
             _print_short_performance(final_payload)
+        if assistant_text:
+            messages.append({"role": "user", "content": message})
+            messages.append({"role": "assistant", "content": assistant_text})
         print()
         _ = current_backend
+
+
+def _build_conversation_payload(message: str, messages: list[dict[str, str]]) -> dict[str, Any]:
+    payload = commands.build_chat_payload(commands.ChatOptions(message=message))
+    payload["messages"] = [*messages, {"role": "user", "content": message}]
+    payload["stream"] = True
+    payload["stream_options"] = {"include_usage": True}
+    return payload
 
 
 def _print_short_performance(payload: dict[str, Any]) -> None:
@@ -352,7 +372,7 @@ def _print_short_performance(payload: dict[str, Any]) -> None:
         print(_THEME.dim("[" + ", ".join(pieces) + "]"))
 
 
-def _print_status(*, last_usage: dict[str, Any] | None) -> None:
+def _print_status(*, last_usage: dict[str, Any] | None, messages: list[dict[str, str]]) -> None:
     try:
         state = commands.current_runtime_state()
     except SystemExit as exc:
@@ -378,8 +398,9 @@ def _print_status(*, last_usage: dict[str, Any] | None) -> None:
         if default_bits:
             _print_kv("Request defaults", ", ".join(default_bits))
 
+    _print_kv("Conversation messages", str(len(messages)))
     usage_text = _format_context_usage(last_usage, ctx_size)
-    _print_kv("Last context usage", usage_text)
+    _print_kv("Context usage", usage_text)
 
 
 def _resolve_context_size(state: dict[str, Any]) -> int | None:
@@ -524,7 +545,7 @@ def _print_help() -> None:
     commands_table = [
         ("/backend", "switch the selected runtime"),
         ("/model", "load a different managed model"),
-        ("/status", "show backend, model, request defaults, and last context usage"),
+        ("/status", "show backend, model, request defaults, and conversation context usage"),
         ("/clear", "clear the terminal and redraw the chat header"),
         ("/help", "show this command reference"),
         ("/exit", "stop the OmniInfer service and leave the TUI"),

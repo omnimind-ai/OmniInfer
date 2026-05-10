@@ -486,6 +486,34 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(tui._format_context_size(None, loaded=True), "backend default (unreported)")
         self.assertEqual(tui._format_context_size(None, loaded=False), "not loaded")
 
+    def test_tui_builds_conversation_payload_with_history(self) -> None:
+        with (
+            patch("service_core.commands.ensure_service_running"),
+            patch(
+                "service_core.commands.current_runtime_state",
+                return_value={"model": "demo.gguf", "request_defaults": {"temperature": 0.1}},
+            ),
+        ):
+            payload = tui._build_conversation_payload(
+                "next",
+                [
+                    {"role": "user", "content": "hello"},
+                    {"role": "assistant", "content": "hi"},
+                ],
+            )
+
+        self.assertEqual(
+            payload["messages"],
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": "next"},
+            ],
+        )
+        self.assertTrue(payload["stream"])
+        self.assertEqual(payload["stream_options"], {"include_usage": True})
+        self.assertEqual(payload["temperature"], 0.1)
+
 
 # ---------------------------------------------------------------------------
 # Embedded backend lifecycle
