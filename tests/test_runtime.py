@@ -645,6 +645,12 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(tui._format_status_model("/tmp/models/demo.gguf"), "demo.gguf")
         self.assertEqual(tui._format_status_model(None), "-")
 
+    def test_tui_prompt_status_shows_slash_command_hints(self) -> None:
+        self.assertIn("/backend", tui._prompt_status_text("/", "backend demo"))
+        self.assertIn("load a different managed model", tui._prompt_status_text("/mo", "backend demo"))
+        self.assertIn("no match", tui._prompt_status_text("/unknown", "backend demo"))
+        self.assertEqual(tui._prompt_status_text("hello", "backend demo"), "backend demo")
+
     def test_tui_status_line_combines_prompt_context(self) -> None:
         session = tui._ChatSessionState(
             backend="llama.cpp-linux-cuda",
@@ -695,6 +701,18 @@ class CommandHelperTests(unittest.TestCase):
 
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(center.status_text(), "info: Backend: llama.cpp-linux-cuda")
+
+    def test_tui_command_menu_sets_selected_command_notice(self) -> None:
+        session = tui._ChatSessionState(backend="llama.cpp-linux-cuda")
+
+        with (
+            patch("service_core.tui._can_use_interactive_menu", return_value=True),
+            patch("service_core.tui._select_menu", return_value=1) as select_menu,
+        ):
+            tui._show_command_menu(session)
+
+        select_menu.assert_called_once()
+        self.assertIn("/model", session.notices.status_text())
 
     def test_tui_context_usage_requires_usage_payload(self) -> None:
         self.assertEqual(tui._format_context_usage(None, 4096), "not available yet")

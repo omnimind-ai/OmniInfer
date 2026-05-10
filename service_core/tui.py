@@ -467,7 +467,7 @@ def _chat_loop(backend: str) -> None:
             transcript.render_status(session)
             continue
         if message == "/help":
-            transcript.render_help()
+            _show_command_menu(session)
             continue
         if message == "/think" or message == "/thinking" or message.startswith("/think ") or message.startswith("/thinking "):
             with session.notices.capture():
@@ -767,6 +767,24 @@ def _print_help() -> None:
     _print_section("Help", "Conversation commands")
     for name, description in _COMMAND_TABLE:
         _print_kv(name, description)
+
+
+def _show_command_menu(session: _ChatSessionState) -> None:
+    if not _can_use_interactive_menu():
+        _print_help()
+        print()
+        return
+    items = [_MenuItem(label=name, details=[description]) for name, description in _COMMAND_TABLE]
+    index = _select_menu(
+        title="Commands",
+        subtitle="Search commands; Esc returns to chat",
+        items=items,
+        default_index=0,
+    )
+    if index is None:
+        return
+    name, description = _COMMAND_TABLE[index]
+    session.notices.push(f"{name}: {description}", kind="info")
 
 
 def _handle_thinking_command(message: str) -> None:
@@ -1326,7 +1344,7 @@ def _draw_input_box(label: str, state: _InputBoxState, *, status: str | None = N
     rendered = _render_input_value(state.text, state.cursor, max_value_width)
     prompt = f"{label}: {rendered}"
     prompt = _pad_display(prompt, width - 4)
-    status_text = _render_prompt_status(status or "", width - 4)
+    status_text = _render_prompt_status(_prompt_status_text(state.text, status or ""), width - 4)
     border_width = max(width - 2, 1)
     sys.stdout.write(f"\033[{top};1H\033[2K{_THEME.dim('╭' + '─' * border_width + '╮')}")
     sys.stdout.write(f"\033[{top + 1};1H\033[2K{_THEME.dim('│')} {prompt} {_THEME.dim('│')}")
@@ -1405,6 +1423,36 @@ def _render_input_value(text: str, cursor: int, max_width: int) -> str:
 def _render_prompt_status(status: str, max_width: int) -> str:
     text = _THEME.dim(_truncate(status, max_width)) if status else ""
     return _pad_display(text, max_width)
+
+
+def _prompt_status_text(input_text: str, default_status: str) -> str:
+    if input_text.startswith("/"):
+        return _slash_command_hint(input_text)
+    return default_status
+
+
+def _slash_command_hint(input_text: str) -> str:
+    query = input_text.strip().lower()
+    if query == "/":
+        names = [name for name, _description in _COMMAND_TABLE[:5]]
+        return "commands: " + "  ".join(names)
+    matches = [
+        (name, description)
+        for name, description in _COMMAND_TABLE
+        if name.startswith(query)
+    ]
+    if not matches:
+        matches = [
+            (name, description)
+            for name, description in _COMMAND_TABLE
+            if query.lstrip("/") in description.lower()
+        ]
+    if not matches:
+        return "commands: no match  /help"
+    if len(matches) == 1:
+        name, description = matches[0]
+        return f"{name}: {description}"
+    return "commands: " + "  ".join(name for name, _description in matches[:5])
 
 
 def _input_cursor_prefix_width(rendered: str) -> int:
