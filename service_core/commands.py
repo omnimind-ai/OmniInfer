@@ -870,8 +870,7 @@ def link_model_into_managed_models(
                 break
             index += 1
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    os.symlink(source, target)
+    _link_model_file(source, target)
     return target
 
 
@@ -883,6 +882,8 @@ def discover_models_in_roots(roots: list[Path]) -> list[LocalModel]:
             continue
         for candidate in root.rglob("*"):
             if not candidate.is_file() or candidate.suffix.lower() not in MODEL_SUFFIXES:
+                continue
+            if _is_mmproj_file(candidate):
                 continue
             if _is_flat_managed_model(root, candidate):
                 continue
@@ -994,6 +995,55 @@ def _link_points_to(path: Path, source: Path) -> bool:
     if not path.exists() and not path.is_symlink():
         return False
     try:
+        if path.exists() and source.exists() and path.samefile(source):
+            return True
+    except OSError:
+        pass
+    try:
         return path.resolve(strict=True) == source
     except FileNotFoundError:
         return False
+
+
+def _is_windows_symlink_privilege_error(exc: OSError) -> bool:
+    return os.name == "nt" and getattr(exc, "winerror", None) == 1314
+
+
+def _create_directory_junction_for_model(source: Path, target: Path) -> None:
+    if os.name != "nt":
+        raise OSError("directory junction fallback is only supported on Windows")
+
+    junction = target.parent
+    if junction.exists() and not junction.is_symlink() and not any(junction.iterdir()):
+        junction.rmdir()
+    if junction.exists() or junction.is_symlink():
+        raise OSError(f"cannot create junction because target directory already exists: {junction}")
+
+    junction.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(source.parent)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "mklink failed").strip()
+        raise OSError(f"could not create junction {junction} -> {source.parent}: {message}")
+    if not target.exists():
+        raise OSError(f"created junction {junction}, but linked model is not visible at {target}")
+
+
+def _link_model_file(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(source, target)
+        return
+    except OSError as symlink_exc:
+        if not _is_windows_symlink_privilege_error(symlink_exc):
+            raise
+
+    try:
+        os.link(source, target)
+        return
+    except OSError:
+        _create_directory_junction_for_model(source, target)

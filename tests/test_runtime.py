@@ -242,13 +242,13 @@ class CliParserTests(unittest.TestCase):
     def test_global_port_override_is_forwarded_to_serve(self) -> None:
         try:
             with patch("service_core.service.main", return_value=0) as service_main:
-                result = cli.main(["--port", "9010", "serve", "--host", "127.0.0.1"])
+                result = cli.main(["--port", "9010", "serve", "--host", "127.0.0.1", "--window-mode", "visible"])
         finally:
             cli._cli_port_override = None
             commands.set_port_override(None)
 
         self.assertEqual(result, 0)
-        service_main.assert_called_once_with(["--host", "127.0.0.1", "--port", "9010"])
+        service_main.assert_called_once_with(["--host", "127.0.0.1", "--window-mode", "visible", "--port", "9010"])
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +257,11 @@ class CliParserTests(unittest.TestCase):
 
 
 class CommandHelperTests(unittest.TestCase):
+    def assertSameFile(self, left: Path, right: Path) -> None:
+        self.assertTrue(left.exists(), f"{left} should exist")
+        self.assertTrue(right.exists(), f"{right} should exist")
+        self.assertTrue(left.samefile(right), f"{left} should reference the same file as {right}")
+
     def test_source_gateway_launch_uses_cli_serve_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
@@ -323,6 +328,7 @@ class CommandHelperTests(unittest.TestCase):
             model.parent.mkdir()
             model.write_bytes(b"gguf")
             (model.parent / "ignore.txt").write_text("not a model", encoding="utf-8")
+            (model.parent / "mmproj-F16.gguf").write_bytes(b"gguf")
 
             rows = commands.discover_models_in_roots([root])
 
@@ -341,10 +347,33 @@ class CommandHelperTests(unittest.TestCase):
                 rows = commands.discover_models_in_roots([commands.managed_models_dir()])
 
             self.assertEqual(linked.parent.resolve(), (root / ".local" / "models" / "downloads").resolve())
-            self.assertTrue(linked.is_symlink())
-            self.assertEqual(linked.resolve(), external.resolve())
+            self.assertSameFile(linked, external)
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0].path.resolve(), linked.resolve())
+            self.assertSameFile(rows[0].path, external)
+            self.assertEqual(rows[0].label, "downloads/model.gguf")
+
+    def test_windows_symlink_privilege_error_falls_back_to_hardlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external = root / "downloads" / "model.gguf"
+            external.parent.mkdir()
+            external.write_bytes(b"gguf")
+            symlink_error = OSError("symbolic link privilege not held")
+            symlink_error.winerror = 1314
+
+            with (
+                patch("service_core.commands.APP_ROOT", root),
+                patch("service_core.commands.os.name", "nt"),
+                patch("service_core.commands.os.symlink", side_effect=symlink_error),
+            ):
+                linked = commands.link_model_into_managed_models(external)
+                linked_again = commands.link_model_into_managed_models(external)
+                rows = commands.discover_models_in_roots([commands.managed_models_dir()])
+
+            self.assertEqual(linked, linked_again)
+            self.assertFalse(linked.is_symlink())
+            self.assertSameFile(linked, external)
+            self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0].label, "downloads/model.gguf")
 
     def test_detects_model_files_in_manual_directory(self) -> None:
@@ -381,8 +410,7 @@ class CommandHelperTests(unittest.TestCase):
             )
             self.assertEqual(linked.parent.resolve(), expected.parent.resolve())
             self.assertEqual(linked.name, expected.name)
-            self.assertTrue(linked.is_symlink())
-            self.assertEqual(linked.resolve(), external.resolve())
+            self.assertSameFile(linked, external)
 
     def test_manual_directory_model_link_uses_detected_model_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -404,8 +432,7 @@ class CommandHelperTests(unittest.TestCase):
             expected = root / ".local" / "models" / "qwen3.5-9b" / external.name
             self.assertEqual(linked.parent.resolve(), expected.parent.resolve())
             self.assertEqual(linked.name, expected.name)
-            self.assertTrue(linked.is_symlink())
-            self.assertEqual(linked.resolve(), external.resolve())
+            self.assertSameFile(linked, external)
 
     def test_manual_directory_model_root_skips_snapshot_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -425,7 +452,7 @@ class CommandHelperTests(unittest.TestCase):
 
             self.assertEqual(model_root, (manual_root / "Qwen3.5-4B").resolve())
 
-    def test_model_reference_preserves_managed_symlink_path(self) -> None:
+    def test_model_reference_preserves_managed_link_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             external = root / "downloads" / "model.gguf"
@@ -437,7 +464,7 @@ class CommandHelperTests(unittest.TestCase):
                 resolved = commands.resolve_model_reference(str(linked))
 
             self.assertEqual(resolved, linked)
-            self.assertEqual(resolved.resolve(), external.resolve())
+            self.assertSameFile(resolved, external)
 
     def test_model_reference_accepts_quoted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -472,15 +499,14 @@ class CommandHelperTests(unittest.TestCase):
             link_model.assert_called_once()
             self.assertEqual(link_model.call_args.args[0].resolve(), model.resolve())
 
-    def test_display_path_reference_preserves_symlink_reference(self) -> None:
+    def test_display_path_reference_preserves_managed_link_reference(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             external = root / "downloads" / "model.gguf"
-            managed = root / ".local" / "models" / "downloads" / "model.gguf"
             external.parent.mkdir()
-            managed.parent.mkdir(parents=True)
             external.write_bytes(b"gguf")
-            managed.symlink_to(external)
+            with patch("service_core.commands.APP_ROOT", root):
+                managed = commands.link_model_into_managed_models(external)
 
             ref = display_path_reference(str(managed), str(root / ".local" / "models"))
 
