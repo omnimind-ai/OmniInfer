@@ -973,6 +973,7 @@ class CommandHelperTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertIn("\033[s\033[1;20r\033[u", rendered)
         self.assertIn("backend demo", rendered)
+        self.assertIn("\033[20;1H", rendered)
         self.assertIn("\033[s\033[r\033[u", rendered)
 
     def test_tui_notice_capture_routes_notices_to_status(self) -> None:

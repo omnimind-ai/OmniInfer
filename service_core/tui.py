@@ -432,12 +432,14 @@ class _FixedPromptDuringOutput:
         self._label = label
         self._status = status
         self._active = False
+        self._output_row = 1
 
     def __enter__(self) -> "_FixedPromptDuringOutput":
         if not _can_use_fixed_input_box():
             return self
         rows = shutil.get_terminal_size(fallback=(80, 24)).lines
         scroll_bottom = max(1, rows - _PROMPT_BOX_ROWS)
+        self._output_row = scroll_bottom
         sys.stdout.write(f"\033[s\033[1;{scroll_bottom}r\033[u")
         self._active = True
         self.redraw(self._status)
@@ -455,6 +457,8 @@ class _FixedPromptDuringOutput:
         if status is not None:
             self._status = status
         _draw_prompt_placeholder(self._label, status=self._status)
+        sys.stdout.write(f"\033[{self._output_row};1H")
+        sys.stdout.flush()
 
 
 def _chat_loop(backend: str) -> None:
