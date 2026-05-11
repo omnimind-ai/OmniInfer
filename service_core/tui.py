@@ -24,6 +24,8 @@ _MIN_WIDTH = 64
 _MAX_WIDTH = 100
 _PROMPT_BOX_ROWS = 4
 _ACTIVE_NOTICE_CENTER: _NoticeCenter | None = None
+_WINDOWS_VT_ENABLED: bool | None = None
+_PROMPT_BOX_LAST_TOP: int | None = None
 
 
 class _Theme:
@@ -281,7 +283,7 @@ def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None
     _print_section("Resume", "Loading your last selected backend and model")
     _print_kv("Model", options.model)
     try:
-        backend = _load_model(options)
+        backend = _load_model(options, show_model=False)
     except SystemExit as exc:
         _print_notice(f"Could not load previous model: {exc}", kind="warning")
         print()
@@ -306,10 +308,11 @@ def _load_model_after_backend_switch() -> str | None:
     return _load_model(commands.ModelLoadOptions(model=str(model)))
 
 
-def _load_model(options: commands.ModelLoadOptions) -> str | None:
+def _load_model(options: commands.ModelLoadOptions, *, show_model: bool = True) -> str | None:
     print()
-    _print_kv("Loading model", options.model)
-    spinner = _LoadingSpinner("Loading model...")
+    if show_model:
+        _print_kv("Model", options.model)
+    spinner = _LoadingSpinner("Preparing model...")
     ready_printed = False
 
     def on_progress(event: dict[str, Any]) -> None:
@@ -431,13 +434,15 @@ class _FixedPromptDuringOutput:
         self._label = label
         self._status = status
         self._active = False
+        self._output_row = 1
 
     def __enter__(self) -> "_FixedPromptDuringOutput":
         if not _can_use_fixed_input_box():
             return self
         rows = shutil.get_terminal_size(fallback=(80, 24)).lines
         scroll_bottom = max(1, rows - _PROMPT_BOX_ROWS)
-        sys.stdout.write(f"\0337\033[1;{scroll_bottom}r\0338")
+        self._output_row = scroll_bottom
+        sys.stdout.write(f"\033[s\033[1;{scroll_bottom}r\033[u")
         self._active = True
         self.redraw(self._status)
         return self
@@ -445,7 +450,7 @@ class _FixedPromptDuringOutput:
     def __exit__(self, *_args: object) -> None:
         if not self._active:
             return
-        sys.stdout.write("\0337\033[r\0338\033[?25h")
+        sys.stdout.write("\033[s\033[r\033[u\033[?25h")
         sys.stdout.flush()
 
     def redraw(self, status: str | None = None) -> None:
@@ -454,6 +459,8 @@ class _FixedPromptDuringOutput:
         if status is not None:
             self._status = status
         _draw_prompt_placeholder(self._label, status=self._status)
+        sys.stdout.write(f"\033[{self._output_row};1H")
+        sys.stdout.flush()
 
 
 def _chat_loop(backend: str) -> None:
@@ -506,9 +513,10 @@ def _chat_loop(backend: str) -> None:
             continue
 
         session.notices.clear()
-        if _can_use_fixed_input_box():
-            transcript.render_user_message(message)
+        show_user_message = _can_use_fixed_input_box()
         with _FixedPromptDuringOutput(_THEME.role_user("You"), status_line.text(session)) as fixed_prompt:
+            if show_user_message:
+                transcript.render_user_message(message)
             final_payload: dict[str, Any] | None = None
             buffer = ""
             assistant_text = ""
@@ -1310,8 +1318,27 @@ def _decode_escape_sequence(seq: str) -> str:
 
 
 def _model_load_progress_text(message: str) -> str:
+    if message in {"Starting OmniInfer gateway...", "Waiting for OmniInfer gateway..."}:
+        return "Starting local service..."
+    if message in {"Connected to OmniInfer gateway.", "OmniInfer gateway ready."}:
+        return "Local service ready."
+    if message in {"Preparing model request...", "Sending model load request..."}:
+        return "Preparing model..."
+    if message == "Resolving model files...":
+        return "Resolving model files..."
+    if message == "Checking model artifact...":
+        return "Checking model file..."
+    if message == "Selecting backend for this model...":
+        return "Selecting backend..."
+    if message == "Stopping previous backend...":
+        return "Stopping previous backend..."
+    load_match = re.fullmatch(r"Loading model with (.+)\.\.\.", message)
+    if load_match:
+        return f"Loading model with {load_match.group(1)}..."
     if re.fullmatch(r"Starting backend .+ and loading model\.\.\.", message):
-        return "Loading model..."
+        return "Starting backend and loading model..."
+    if message == "Reusing loaded backend.":
+        return "Reusing loaded backend."
     return message
 
 
@@ -1447,14 +1474,23 @@ def _prompt_basic(label: str, default: str | None = None, *, history: bool = Fal
 
 
 def _can_use_fixed_input_box() -> bool:
-    return bool(
-        os.name != "nt"
-        and getattr(sys.stdin, "isatty", lambda: False)()
+    if not (
+        getattr(sys.stdin, "isatty", lambda: False)()
         and getattr(sys.stdout, "isatty", lambda: False)()
-    )
+    ):
+        return False
+    if os.name == "nt":
+        return _enable_windows_virtual_terminal()
+    return True
 
 
 def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True) -> str:
+    if os.name == "nt":
+        return _prompt_chat_box_windows(label, status=status, echo=echo)
+    return _prompt_chat_box_posix(label, status=status, echo=echo)
+
+
+def _prompt_chat_box_posix(label: str, *, status: str | None = None, echo: bool = True) -> str:
     import termios
     import tty
 
@@ -1469,12 +1505,9 @@ def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True
     try:
         tty.setraw(fd)
         while True:
-            data = os.read(fd, 1)
-            if not data:
-                continue
-            if data == b"\x03":
-                raise KeyboardInterrupt
-            if data in {b"\r", b"\n"}:
+            key = _read_input_box_key_posix(fd, decoder)
+            action = _apply_input_box_key(state, key)
+            if action == "submit":
                 result = state.text.strip()
                 _clear_input_box(restore=True)
                 if echo:
@@ -1482,45 +1515,11 @@ def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True
                 sys.stdout.flush()
                 finished = True
                 return result
-            if data == b"\x1b":
-                decoder.reset()
-                key = _decode_escape_sequence(_read_escape_sequence(fd, initial_timeout_s=0.05)) or "esc"
-                if key == "esc":
-                    state.text = ""
-                    state.cursor = 0
-                elif key == "up":
-                    state.history_previous()
-                elif key == "down":
-                    state.history_next()
-                elif key == "left":
-                    state.cursor = max(0, state.cursor - 1)
-                elif key == "right":
-                    state.cursor = min(len(state.text), state.cursor + 1)
-                elif key == "home":
-                    state.cursor = 0
-                elif key == "end":
-                    state.cursor = len(state.text)
-                _draw_input_box(label, state, status=status)
-                continue
-            if data in {b"\x7f", b"\b"}:
-                decoder.reset()
-                state.backspace()
-                _draw_input_box(label, state, status=status)
-                continue
-            if data == b"\x04":
-                decoder.reset()
-                if state.text:
-                    state.delete()
-                    _draw_input_box(label, state, status=status)
-                    continue
+            if action == "exit":
                 _clear_input_box(restore=True)
                 finished = True
                 return "/exit"
-
-            char = decoder.decode(data)
-            if char and char.isprintable():
-                state.insert(char)
-                _draw_input_box(label, state, status=status)
+            _draw_input_box(label, state, status=status)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
         if not finished:
@@ -1528,6 +1527,163 @@ def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True
         else:
             sys.stdout.write("\033[?25h")
             sys.stdout.flush()
+
+
+def _prompt_chat_box_windows(label: str, *, status: str | None = None, echo: bool = True) -> str:
+    state = _InputBoxState(history=list(_CHAT_HISTORY))
+    finished = False
+    sys.stdout.write("\033[s\033[?25l")
+    sys.stdout.flush()
+    _draw_input_box(label, state, status=status)
+    try:
+        while True:
+            action = _apply_input_box_key(state, _read_input_box_key_windows())
+            if action == "submit":
+                result = state.text.strip()
+                _clear_input_box(restore=True)
+                if echo:
+                    sys.stdout.write(f"\r{label}: {result}\n")
+                sys.stdout.flush()
+                finished = True
+                return result
+            if action == "exit":
+                _clear_input_box(restore=True)
+                finished = True
+                return "/exit"
+            _draw_input_box(label, state, status=status)
+    finally:
+        if not finished:
+            _clear_input_box(restore=True)
+        else:
+            sys.stdout.write("\033[?25h")
+            sys.stdout.flush()
+
+
+def _read_input_box_key_posix(fd: int, decoder: codecs.IncrementalDecoder) -> str:
+    data = os.read(fd, 1)
+    if not data:
+        return ""
+    if data == b"\x03":
+        return "ctrl_c"
+    if data in {b"\r", b"\n"}:
+        return "enter"
+    if data == b"\x1b":
+        decoder.reset()
+        return _decode_escape_sequence(_read_escape_sequence(fd, initial_timeout_s=0.05)) or "esc"
+    if data in {b"\x7f", b"\b"}:
+        decoder.reset()
+        return "backspace"
+    if data == b"\x04":
+        decoder.reset()
+        return "ctrl_d"
+    return decoder.decode(data)
+
+
+def _read_input_box_key_windows() -> str:
+    import msvcrt
+
+    char = msvcrt.getwch()
+    if char == "\x03":
+        return "ctrl_c"
+    if char in {"\r", "\n"}:
+        return "enter"
+    if char == "\x1b":
+        return "esc"
+    if char in {"\x7f", "\b"}:
+        return "backspace"
+    if char == "\x15":
+        return "ctrl_u"
+    if char == "\x1a":
+        return "ctrl_z"
+    if char in {"\x00", "\xe0"}:
+        code = msvcrt.getwch()
+        return {
+            "H": "up",
+            "P": "down",
+            "K": "left",
+            "M": "right",
+            "G": "home",
+            "O": "end",
+            "S": "delete",
+        }.get(code, "")
+    return char
+
+
+def _apply_input_box_key(state: "_InputBoxState", key: str) -> str | None:
+    if not key:
+        return None
+    if key == "ctrl_c":
+        raise KeyboardInterrupt
+    if key == "enter":
+        return "submit"
+    if key == "esc":
+        state.text = ""
+        state.cursor = 0
+    elif key == "up":
+        state.history_previous()
+    elif key == "down":
+        state.history_next()
+    elif key == "left":
+        state.cursor = max(0, state.cursor - 1)
+    elif key == "right":
+        state.cursor = min(len(state.text), state.cursor + 1)
+    elif key == "home":
+        state.cursor = 0
+    elif key == "end":
+        state.cursor = len(state.text)
+    elif key == "backspace":
+        state.backspace()
+    elif key == "delete":
+        state.delete()
+    elif key in {"ctrl_d", "ctrl_z"}:
+        if state.text:
+            state.delete()
+        else:
+            return "exit"
+    elif key == "ctrl_u":
+        state.text = ""
+        state.cursor = 0
+    elif key.isprintable():
+        state.insert(key)
+    return None
+
+
+def _enable_windows_virtual_terminal() -> bool:
+    global _WINDOWS_VT_ENABLED
+    if os.name != "nt":
+        return True
+    if _WINDOWS_VT_ENABLED is not None:
+        return _WINDOWS_VT_ENABLED
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetConsoleMode.restype = wintypes.BOOL
+        kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.SetConsoleMode.restype = wintypes.BOOL
+        handle = kernel32.GetStdHandle(wintypes.DWORD(-11))
+        invalid_handle = ctypes.c_void_p(-1).value
+        if handle in (None, 0, invalid_handle):
+            _WINDOWS_VT_ENABLED = False
+            return False
+        mode = wintypes.DWORD()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            _WINDOWS_VT_ENABLED = False
+            return False
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        new_mode = mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        if not kernel32.SetConsoleMode(handle, new_mode):
+            _WINDOWS_VT_ENABLED = False
+            return False
+        _WINDOWS_VT_ENABLED = True
+        return True
+    except Exception:
+        _WINDOWS_VT_ENABLED = False
+        return False
 
 
 class _InputBoxState:
@@ -1580,9 +1736,12 @@ class _InputBoxState:
 
 
 def _draw_input_box(label: str, state: _InputBoxState, *, status: str | None = None) -> None:
+    global _PROMPT_BOX_LAST_TOP
     columns, rows = shutil.get_terminal_size(fallback=(80, 24))
     width = max(20, columns)
     top = max(1, rows - _PROMPT_BOX_ROWS + 1)
+    if _PROMPT_BOX_LAST_TOP is not None and _PROMPT_BOX_LAST_TOP != top:
+        _clear_input_box_rows(_PROMPT_BOX_LAST_TOP)
     label_text = _strip_ansi(label)
     max_value_width = max(width - _display_width(label_text) - 8, 8)
     rendered = _render_input_value(state.text, state.cursor, max_value_width)
@@ -1596,26 +1755,35 @@ def _draw_input_box(label: str, state: _InputBoxState, *, status: str | None = N
     sys.stdout.write(f"\033[{top + 3};1H\033[2K{_THEME.dim('╰' + '─' * border_width + '╯')}")
     cursor_col = min(width, 3 + _display_width(f"{label_text}: ") + _input_cursor_prefix_width(rendered))
     sys.stdout.write(f"\033[{top + 1};{cursor_col}H")
+    _PROMPT_BOX_LAST_TOP = top
     sys.stdout.flush()
 
 
 def _draw_prompt_placeholder(label: str, *, status: str | None = None) -> None:
-    sys.stdout.write("\0337\033[?25l")
+    sys.stdout.write("\033[s\033[?25l")
     _draw_input_box(label, _InputBoxState(history=[]), status=status)
-    sys.stdout.write("\0338")
+    sys.stdout.write("\033[u")
     sys.stdout.flush()
 
 
 def _clear_input_box(*, restore: bool = False) -> None:
+    global _PROMPT_BOX_LAST_TOP
     columns, rows = shutil.get_terminal_size(fallback=(80, 24))
     del columns
     top = max(1, rows - _PROMPT_BOX_ROWS + 1)
-    for row in range(top, top + _PROMPT_BOX_ROWS):
-        sys.stdout.write(f"\033[{row};1H\033[2K")
+    _clear_input_box_rows(top)
+    if _PROMPT_BOX_LAST_TOP is not None and _PROMPT_BOX_LAST_TOP != top:
+        _clear_input_box_rows(_PROMPT_BOX_LAST_TOP)
+    _PROMPT_BOX_LAST_TOP = None
     if restore:
         sys.stdout.write("\033[u")
     sys.stdout.write("\033[?25h")
     sys.stdout.flush()
+
+
+def _clear_input_box_rows(top: int) -> None:
+    for row in range(top, top + _PROMPT_BOX_ROWS):
+        sys.stdout.write(f"\033[{row};1H\033[2K")
 
 
 def _render_input_value(text: str, cursor: int, max_width: int) -> str:

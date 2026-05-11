@@ -327,6 +327,39 @@ class ChatReasoningStreamNormalizer:
         return [self._with_delta(template, kind, text) for kind, text in parts if text]
 
 
+class ChatUsageStreamNormalizer:
+    def __init__(self) -> None:
+        self._latest_usage_event: dict[str, Any] | None = None
+        self._emitted_usage_event = False
+
+    def transform_event(self, event: dict[str, Any]) -> list[dict[str, Any]]:
+        if "usage" not in event and "timings" not in event:
+            return [event]
+
+        choices = event.get("choices")
+        if isinstance(choices, list) and choices:
+            self._latest_usage_event = self._to_usage_event(event)
+            stripped = dict(event)
+            stripped.pop("usage", None)
+            stripped.pop("timings", None)
+            return [stripped]
+
+        self._latest_usage_event = self._to_usage_event(event)
+        self._emitted_usage_event = True
+        return [self._latest_usage_event]
+
+    def flush(self) -> list[dict[str, Any]]:
+        if self._emitted_usage_event or self._latest_usage_event is None:
+            return []
+        self._emitted_usage_event = True
+        return [self._latest_usage_event]
+
+    def _to_usage_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        usage_event = dict(event)
+        usage_event["choices"] = []
+        return usage_event
+
+
 _request_log_counter = 0
 _request_log_lock = threading.Lock()
 
@@ -480,13 +513,14 @@ def stream_http_request(
             handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             handler.end_headers()
 
-            normalizer = ChatReasoningStreamNormalizer() if normalize_reasoning else None
+            reasoning_normalizer = ChatReasoningStreamNormalizer() if normalize_reasoning else None
+            usage_normalizer = ChatUsageStreamNormalizer()
             last_event: dict[str, Any] | None = None
             for chunk in resp:
                 if not chunk:
                     continue
                 tail_buf = (tail_buf + chunk)[-4096:]
-                if normalizer is None or not chunk.startswith(b"data:"):
+                if not chunk.startswith(b"data:"):
                     handler.wfile.write(chunk)
                     handler.wfile.flush()
                     continue
@@ -494,7 +528,11 @@ def stream_http_request(
                 prefix, _sep, data_bytes = chunk.partition(b":")
                 data = data_bytes.strip()
                 if data == b"[DONE]":
-                    for event in normalizer.flush(last_event):
+                    if reasoning_normalizer is not None:
+                        for event in reasoning_normalizer.flush(last_event):
+                            for transformed in usage_normalizer.transform_event(event):
+                                handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                    for event in usage_normalizer.flush():
                         handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
                     handler.wfile.write(chunk)
                     handler.wfile.flush()
@@ -513,8 +551,10 @@ def stream_http_request(
                     continue
 
                 last_event = event
-                for transformed in normalizer.transform_event(event):
-                    handler.wfile.write(prefix + b": " + json_dumps(transformed) + b"\n\n")
+                pending = [event] if reasoning_normalizer is None else reasoning_normalizer.transform_event(event)
+                for item in pending:
+                    for transformed in usage_normalizer.transform_event(item):
+                        handler.wfile.write(prefix + b": " + json_dumps(transformed) + b"\n\n")
                 handler.wfile.flush()
     except urllib.error.HTTPError as e:
         body = e.read()
@@ -566,17 +606,22 @@ def stream_embedded_events(
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     handler.end_headers()
     try:
-        normalizer = ChatReasoningStreamNormalizer() if normalize_reasoning else None
+        reasoning_normalizer = ChatReasoningStreamNormalizer() if normalize_reasoning else None
+        usage_normalizer = ChatUsageStreamNormalizer()
         last_event: dict[str, Any] | None = None
         for event in events:
-            pending = [event] if normalizer is None else normalizer.transform_event(event)
+            pending = [event] if reasoning_normalizer is None else reasoning_normalizer.transform_event(event)
             last_event = event
             for item in pending:
-                handler.wfile.write(b"data: " + json_dumps(item) + b"\n\n")
+                for transformed in usage_normalizer.transform_event(item):
+                    handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
             handler.wfile.flush()
-        if normalizer is not None:
-            for event in normalizer.flush(last_event):
-                handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
+        if reasoning_normalizer is not None:
+            for event in reasoning_normalizer.flush(last_event):
+                for transformed in usage_normalizer.transform_event(event):
+                    handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+        for event in usage_normalizer.flush():
+            handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
         handler.wfile.write(b"data: [DONE]\n\n")
         handler.wfile.flush()
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):

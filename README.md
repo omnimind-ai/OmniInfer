@@ -74,7 +74,7 @@ Linux and macOS:
 Windows:
 
 ```powershell
-.\omniinfer.cmd --help
+.\omniinfer.ps1 --help
 ```
 
 Android:
@@ -90,7 +90,7 @@ If you are using a packaged release that already includes `runtime/`, you can ru
 Windows:
 
 ```powershell
-.\omniinfer.cmd --help
+.\omniinfer.ps1 --help
 ```
 
 Linux and macOS:

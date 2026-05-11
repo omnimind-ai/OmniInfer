@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import tempfile
+import types
 import unittest
 import io
 import json
@@ -242,13 +243,13 @@ class CliParserTests(unittest.TestCase):
     def test_global_port_override_is_forwarded_to_serve(self) -> None:
         try:
             with patch("service_core.service.main", return_value=0) as service_main:
-                result = cli.main(["--port", "9010", "serve", "--host", "127.0.0.1"])
+                result = cli.main(["--port", "9010", "serve", "--host", "127.0.0.1", "--window-mode", "visible"])
         finally:
             cli._cli_port_override = None
             commands.set_port_override(None)
 
         self.assertEqual(result, 0)
-        service_main.assert_called_once_with(["--host", "127.0.0.1", "--port", "9010"])
+        service_main.assert_called_once_with(["--host", "127.0.0.1", "--window-mode", "visible", "--port", "9010"])
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +258,11 @@ class CliParserTests(unittest.TestCase):
 
 
 class CommandHelperTests(unittest.TestCase):
+    def assertSameFile(self, left: Path, right: Path) -> None:
+        self.assertTrue(left.exists(), f"{left} should exist")
+        self.assertTrue(right.exists(), f"{right} should exist")
+        self.assertTrue(left.samefile(right), f"{left} should reference the same file as {right}")
+
     def test_source_gateway_launch_uses_cli_serve_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
@@ -323,6 +329,7 @@ class CommandHelperTests(unittest.TestCase):
             model.parent.mkdir()
             model.write_bytes(b"gguf")
             (model.parent / "ignore.txt").write_text("not a model", encoding="utf-8")
+            (model.parent / "mmproj-F16.gguf").write_bytes(b"gguf")
 
             rows = commands.discover_models_in_roots([root])
 
@@ -341,10 +348,33 @@ class CommandHelperTests(unittest.TestCase):
                 rows = commands.discover_models_in_roots([commands.managed_models_dir()])
 
             self.assertEqual(linked.parent.resolve(), (root / ".local" / "models" / "downloads").resolve())
-            self.assertTrue(linked.is_symlink())
-            self.assertEqual(linked.resolve(), external.resolve())
+            self.assertSameFile(linked, external)
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0].path.resolve(), linked.resolve())
+            self.assertSameFile(rows[0].path, external)
+            self.assertEqual(rows[0].label, "downloads/model.gguf")
+
+    def test_windows_symlink_privilege_error_falls_back_to_hardlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            external = root / "downloads" / "model.gguf"
+            external.parent.mkdir()
+            external.write_bytes(b"gguf")
+            symlink_error = OSError("symbolic link privilege not held")
+            symlink_error.winerror = 1314
+
+            with (
+                patch("service_core.commands.APP_ROOT", root),
+                patch("service_core.commands._is_windows", return_value=True),
+                patch("service_core.commands.os.symlink", side_effect=symlink_error),
+            ):
+                linked = commands.link_model_into_managed_models(external)
+                linked_again = commands.link_model_into_managed_models(external)
+                rows = commands.discover_models_in_roots([commands.managed_models_dir()])
+
+            self.assertEqual(linked, linked_again)
+            self.assertFalse(linked.is_symlink())
+            self.assertSameFile(linked, external)
+            self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0].label, "downloads/model.gguf")
 
     def test_detects_model_files_in_manual_directory(self) -> None:
@@ -381,8 +411,7 @@ class CommandHelperTests(unittest.TestCase):
             )
             self.assertEqual(linked.parent.resolve(), expected.parent.resolve())
             self.assertEqual(linked.name, expected.name)
-            self.assertTrue(linked.is_symlink())
-            self.assertEqual(linked.resolve(), external.resolve())
+            self.assertSameFile(linked, external)
 
     def test_manual_directory_model_link_uses_detected_model_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -404,8 +433,7 @@ class CommandHelperTests(unittest.TestCase):
             expected = root / ".local" / "models" / "qwen3.5-9b" / external.name
             self.assertEqual(linked.parent.resolve(), expected.parent.resolve())
             self.assertEqual(linked.name, expected.name)
-            self.assertTrue(linked.is_symlink())
-            self.assertEqual(linked.resolve(), external.resolve())
+            self.assertSameFile(linked, external)
 
     def test_manual_directory_model_root_skips_snapshot_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -425,7 +453,7 @@ class CommandHelperTests(unittest.TestCase):
 
             self.assertEqual(model_root, (manual_root / "Qwen3.5-4B").resolve())
 
-    def test_model_reference_preserves_managed_symlink_path(self) -> None:
+    def test_model_reference_preserves_managed_link_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             external = root / "downloads" / "model.gguf"
@@ -437,7 +465,7 @@ class CommandHelperTests(unittest.TestCase):
                 resolved = commands.resolve_model_reference(str(linked))
 
             self.assertEqual(resolved, linked)
-            self.assertEqual(resolved.resolve(), external.resolve())
+            self.assertSameFile(resolved, external)
 
     def test_model_reference_accepts_quoted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -472,15 +500,14 @@ class CommandHelperTests(unittest.TestCase):
             link_model.assert_called_once()
             self.assertEqual(link_model.call_args.args[0].resolve(), model.resolve())
 
-    def test_display_path_reference_preserves_symlink_reference(self) -> None:
+    def test_display_path_reference_preserves_managed_link_reference(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             external = root / "downloads" / "model.gguf"
-            managed = root / ".local" / "models" / "downloads" / "model.gguf"
             external.parent.mkdir()
-            managed.parent.mkdir(parents=True)
             external.write_bytes(b"gguf")
-            managed.symlink_to(external)
+            with patch("service_core.commands.APP_ROOT", root):
+                managed = commands.link_model_into_managed_models(external)
 
             ref = display_path_reference(str(managed), str(root / ".local" / "models"))
 
@@ -668,11 +695,20 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("type to filter", rendered)
 
     def test_tui_load_progress_hides_backend_start_detail(self) -> None:
+        self.assertEqual(tui._model_load_progress_text("Starting OmniInfer gateway..."), "Starting local service...")
+        self.assertEqual(tui._model_load_progress_text("Waiting for OmniInfer gateway..."), "Starting local service...")
+        self.assertEqual(tui._model_load_progress_text("Preparing model request..."), "Preparing model...")
+        self.assertEqual(tui._model_load_progress_text("Sending model load request..."), "Preparing model...")
+        self.assertEqual(tui._model_load_progress_text("Checking model artifact..."), "Checking model file...")
+        self.assertEqual(tui._model_load_progress_text("Selecting backend for this model..."), "Selecting backend...")
+        self.assertEqual(
+            tui._model_load_progress_text("Loading model with llama.cpp-linux-cuda..."),
+            "Loading model with llama.cpp-linux-cuda...",
+        )
         self.assertEqual(
             tui._model_load_progress_text("Starting backend llama.cpp-linux-cuda and loading model..."),
-            "Loading model...",
+            "Starting backend and loading model...",
         )
-        self.assertEqual(tui._model_load_progress_text("Waiting for OmniInfer gateway..."), "Waiting for OmniInfer gateway...")
 
     def test_tui_decodes_common_arrow_escape_sequences(self) -> None:
         self.assertEqual(tui._decode_escape_sequence("[A"), "up")
@@ -720,6 +756,67 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(state.text, "second")
         state.history_next()
         self.assertEqual(state.text, "draft")
+
+    def test_tui_input_box_key_handler_edits_text_and_history(self) -> None:
+        state = tui._InputBoxState(history=["older"])
+        for key in ["h", "i", "left", "!"]:
+            self.assertIsNone(tui._apply_input_box_key(state, key))
+
+        self.assertEqual(state.text, "h!i")
+        self.assertEqual(state.cursor, 2)
+        self.assertIsNone(tui._apply_input_box_key(state, "right"))
+        self.assertIsNone(tui._apply_input_box_key(state, "backspace"))
+        self.assertEqual(state.text, "h!")
+        self.assertIsNone(tui._apply_input_box_key(state, "up"))
+        self.assertEqual(state.text, "older")
+        self.assertIsNone(tui._apply_input_box_key(state, "down"))
+        self.assertEqual(state.text, "h!")
+        self.assertEqual(tui._apply_input_box_key(state, "enter"), "submit")
+
+    def test_tui_input_box_ctrl_z_exits_only_when_empty(self) -> None:
+        state = tui._InputBoxState(history=[])
+        state.insert("x")
+        state.cursor = 0
+
+        self.assertIsNone(tui._apply_input_box_key(state, "ctrl_z"))
+        self.assertEqual(state.text, "")
+        self.assertEqual(tui._apply_input_box_key(state, "ctrl_z"), "exit")
+
+    def test_tui_can_use_fixed_input_box_on_windows_with_vt(self) -> None:
+        class FakeTTY:
+            def isatty(self) -> bool:
+                return True
+
+        with (
+            patch("service_core.tui.os.name", "nt"),
+            patch("service_core.tui._enable_windows_virtual_terminal", return_value=True),
+            patch("sys.stdin", FakeTTY()),
+            patch("sys.stdout", FakeTTY()),
+        ):
+            self.assertTrue(tui._can_use_fixed_input_box())
+
+    def test_tui_disables_fixed_input_box_on_windows_without_vt(self) -> None:
+        class FakeTTY:
+            def isatty(self) -> bool:
+                return True
+
+        with (
+            patch("service_core.tui.os.name", "nt"),
+            patch("service_core.tui._enable_windows_virtual_terminal", return_value=False),
+            patch("sys.stdin", FakeTTY()),
+            patch("sys.stdout", FakeTTY()),
+        ):
+            self.assertFalse(tui._can_use_fixed_input_box())
+
+    def test_tui_reads_windows_input_box_extended_keys(self) -> None:
+        keys = iter(["\xe0", "K", "\xe0", "M", "\xe0", "S", "\r"])
+        fake_msvcrt = types.SimpleNamespace(getwch=lambda: next(keys))
+
+        with patch.dict("sys.modules", {"msvcrt": fake_msvcrt}):
+            self.assertEqual(tui._read_input_box_key_windows(), "left")
+            self.assertEqual(tui._read_input_box_key_windows(), "right")
+            self.assertEqual(tui._read_input_box_key_windows(), "delete")
+            self.assertEqual(tui._read_input_box_key_windows(), "enter")
 
     @unittest.skipIf(os.name == "nt", "PTY test is POSIX-only")
     def test_tui_reads_delayed_arrow_sequence_from_pty(self) -> None:
@@ -883,9 +980,27 @@ class CommandHelperTests(unittest.TestCase):
                 print("Assistant: hello")
 
         rendered = output.getvalue()
-        self.assertIn("\0337\033[1;20r\0338", rendered)
+        self.assertIn("\033[s\033[1;20r\033[u", rendered)
         self.assertIn("backend demo", rendered)
-        self.assertIn("\0337\033[r\0338", rendered)
+        self.assertIn("\033[20;1H", rendered)
+        self.assertIn("\033[s\033[r\033[u", rendered)
+
+    def test_tui_input_box_clears_previous_rows_after_resize(self) -> None:
+        sizes = iter([os.terminal_size((80, 24)), os.terminal_size((80, 30))])
+
+        with (
+            patch("shutil.get_terminal_size", side_effect=lambda fallback=(80, 24): next(sizes)),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            tui._PROMPT_BOX_LAST_TOP = None
+            tui._draw_input_box("You", tui._InputBoxState(history=[]), status="ready")
+            tui._draw_input_box("You", tui._InputBoxState(history=[]), status="ready")
+            tui._PROMPT_BOX_LAST_TOP = None
+
+        rendered = output.getvalue()
+        self.assertIn("\033[21;1H\033[2K", rendered)
+        self.assertIn("\033[24;1H\033[2K", rendered)
+        self.assertIn("\033[27;1H", rendered)
 
     def test_tui_notice_capture_routes_notices_to_status(self) -> None:
         center = tui._NoticeCenter()
@@ -1069,6 +1184,30 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("Reasoning:", rendered)
         self.assertIn("  │ plan", rendered)
         self.assertIn("Assistant:", rendered)
+
+    def test_tui_chat_loop_renders_user_before_assistant_with_fixed_prompt(self) -> None:
+        def fake_stream(_payload: dict[str, Any]):
+            yield commands.ChatStreamChunk(text="answer")
+
+        with (
+            patch("service_core.tui._print_chat_header"),
+            patch("service_core.tui._prompt", side_effect=["hello", "/exit"]),
+            patch("service_core.tui._can_use_fixed_input_box", return_value=True),
+            patch("service_core.commands.get_tui_show_reasoning", return_value=False),
+            patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
+            patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
+            patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24))),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            tui._chat_loop("llama.cpp-linux-cuda")
+
+        rendered = output.getvalue()
+        user_index = rendered.find("You:")
+        assistant_index = rendered.find("Assistant:")
+        self.assertGreaterEqual(user_index, 0)
+        self.assertGreater(assistant_index, user_index)
+        self.assertIn("  │ hello", rendered)
+        self.assertIn("  │ answer", rendered)
 
     def test_tui_chat_loop_routes_stream_errors_to_prompt_status(self) -> None:
         prompts: list[str | None] = []
@@ -1334,9 +1473,9 @@ class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
         self.assertIn("none", launch.cmd)
         self.assertNotIn("--no-webui", launch.cmd)
 
-    def test_ik_launch_keeps_reasoning_jinja_defaults(self) -> None:
+    def test_ik_launch_uses_jinja_without_unsupported_reasoning_flag(self) -> None:
         backend = self._backend("ik_llama.cpp-linux-cuda")
-        backend.default_args = ["--jinja", "--reasoning-format", "deepseek", "-ngl", "999"]
+        backend.default_args = ["--jinja", "-ngl", "999"]
 
         launch = self.manager._prepare_external_runtime_launch(
             backend,
@@ -1345,8 +1484,7 @@ class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
         )
 
         self.assertIn("--jinja", launch.cmd)
-        self.assertIn("--reasoning-format", launch.cmd)
-        self.assertIn("deepseek", launch.cmd)
+        self.assertNotIn("--reasoning-format", launch.cmd)
 
     def test_llama_launch_keeps_no_webui_arg(self) -> None:
         launch = self.manager._prepare_external_runtime_launch(

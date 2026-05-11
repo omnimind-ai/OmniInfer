@@ -620,7 +620,7 @@ class RuntimeManager:
             *server_args,
         ]
         if mmproj_path:
-            cmd.extend(["-mm", mmproj_path])
+            cmd.extend(["--mmproj", mmproj_path])
 
         return ExternalRuntimeLaunch(
             cmd=cmd,
