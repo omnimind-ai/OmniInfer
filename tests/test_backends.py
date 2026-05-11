@@ -180,6 +180,33 @@ class LaunchCommandTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-mm") + 1], "/tmp/mmproj.gguf")
         self.assertEqual(cmd[cmd.index("-c") + 1], "8192")
 
+    def test_regular_llama_uses_standard_server_flags(self) -> None:
+        backend = self.manager.backends["llama.cpp-mac"]
+        backend.launcher_path = str(self.launcher_path.resolve())
+        launch = self.manager._prepare_external_runtime_launch(
+            backend,
+            model_path="/tmp/qwen3.5-2b.gguf",
+            mmproj_path="/tmp/mmproj.gguf",
+            ctx_size=8192,
+        )
+        self.assertIn("--no-webui", launch.cmd)
+        self.assertNotIn("--webui", launch.cmd)
+        self.assertEqual(launch.cmd[launch.cmd.index("-mm") + 1], "/tmp/mmproj.gguf")
+
+    def test_ik_llama_uses_ik_server_flags(self) -> None:
+        backend = self.manager.backends["llama.cpp-mac"]
+        backend.id = "ik_llama.cpp-linux-cuda"
+        backend.launcher_path = str(self.launcher_path.resolve())
+        launch = self.manager._prepare_external_runtime_launch(
+            backend,
+            model_path="/tmp/qwen3.5-122b.gguf",
+            mmproj_path="/tmp/mmproj.gguf",
+            ctx_size=131072,
+        )
+        self.assertEqual(launch.cmd[launch.cmd.index("--webui") + 1], "none")
+        self.assertNotIn("--no-webui", launch.cmd)
+        self.assertEqual(launch.cmd[launch.cmd.index("--mmproj") + 1], "/tmp/mmproj.gguf")
+
 
 class EmbeddedBackendTests(unittest.TestCase):
     def test_mnn_embedded_backend_properties(self) -> None:

@@ -227,6 +227,7 @@ class RuntimeManager:
             "--host",
             "--port",
             "--no-webui",
+            "--webui",
         }
         i = 0
         while i < len(args):
@@ -237,6 +238,19 @@ class RuntimeManager:
                     f"launch arg {flag_name!r} is managed by OmniInfer and must not be set in backend config"
                 )
             i += 1
+
+    def _uses_ik_llama_server_args(self, backend: BackendSpec) -> bool:
+        return backend.id.startswith("ik_llama.cpp")
+
+    def _webui_disable_args(self, backend: BackendSpec) -> list[str]:
+        if self._uses_ik_llama_server_args(backend):
+            return ["--webui", "none"]
+        return ["--no-webui"]
+
+    def _mmproj_args(self, backend: BackendSpec, mmproj_path: str) -> list[str]:
+        if self._uses_ik_llama_server_args(backend):
+            return ["--mmproj", mmproj_path]
+        return ["-mm", mmproj_path]
 
     def _get_backend(self, backend_id: str | None = None) -> BackendSpec:
         target = self._normalize_backend_id(backend_id) or self.selected_backend_id
@@ -351,6 +365,9 @@ class RuntimeManager:
             if not Path(resolved).is_file():
                 raise FileNotFoundError(f"mmproj file not found: {resolved}")
             return resolved
+
+        if os.environ.get("OMNIINFER_DISABLE_AUTO_MMPROJ", "").strip().lower() in {"1", "true", "yes", "on"}:
+            return None
 
         if auto_mmproj_path:
             return auto_mmproj_path
@@ -596,13 +613,13 @@ class RuntimeManager:
             self.backend_host,
             "--port",
             str(target_port),
-            "--no-webui",
+            *self._webui_disable_args(backend),
             "--slot-save-path",
             str(log_dir),
             *server_args,
         ]
         if mmproj_path:
-            cmd.extend(["-mm", mmproj_path])
+            cmd.extend(self._mmproj_args(backend, mmproj_path))
 
         return ExternalRuntimeLaunch(
             cmd=cmd,
