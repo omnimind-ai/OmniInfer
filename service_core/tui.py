@@ -282,7 +282,7 @@ def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None
     _print_section("Resume", "Loading your last selected backend and model")
     _print_kv("Model", options.model)
     try:
-        backend = _load_model(options)
+        backend = _load_model(options, show_model=False)
     except SystemExit as exc:
         _print_notice(f"Could not load previous model: {exc}", kind="warning")
         print()
@@ -307,10 +307,11 @@ def _load_model_after_backend_switch() -> str | None:
     return _load_model(commands.ModelLoadOptions(model=str(model)))
 
 
-def _load_model(options: commands.ModelLoadOptions) -> str | None:
+def _load_model(options: commands.ModelLoadOptions, *, show_model: bool = True) -> str | None:
     print()
-    _print_kv("Loading model", options.model)
-    spinner = _LoadingSpinner("Loading model...")
+    if show_model:
+        _print_kv("Model", options.model)
+    spinner = _LoadingSpinner("Preparing model...")
     ready_printed = False
 
     def on_progress(event: dict[str, Any]) -> None:
@@ -511,9 +512,10 @@ def _chat_loop(backend: str) -> None:
             continue
 
         session.notices.clear()
-        if _can_use_fixed_input_box():
-            transcript.render_user_message(message)
+        show_user_message = _can_use_fixed_input_box()
         with _FixedPromptDuringOutput(_THEME.role_user("You"), status_line.text(session)) as fixed_prompt:
+            if show_user_message:
+                transcript.render_user_message(message)
             final_payload: dict[str, Any] | None = None
             buffer = ""
             assistant_text = ""
@@ -1315,8 +1317,27 @@ def _decode_escape_sequence(seq: str) -> str:
 
 
 def _model_load_progress_text(message: str) -> str:
+    if message in {"Starting OmniInfer gateway...", "Waiting for OmniInfer gateway..."}:
+        return "Starting local service..."
+    if message in {"Connected to OmniInfer gateway.", "OmniInfer gateway ready."}:
+        return "Local service ready."
+    if message in {"Preparing model request...", "Sending model load request..."}:
+        return "Preparing model..."
+    if message == "Resolving model files...":
+        return "Resolving model files..."
+    if message == "Checking model artifact...":
+        return "Checking model file..."
+    if message == "Selecting backend for this model...":
+        return "Selecting backend..."
+    if message == "Stopping previous backend...":
+        return "Stopping previous backend..."
+    load_match = re.fullmatch(r"Loading model with (.+)\.\.\.", message)
+    if load_match:
+        return f"Loading model with {load_match.group(1)}..."
     if re.fullmatch(r"Starting backend .+ and loading model\.\.\.", message):
-        return "Loading model..."
+        return "Starting backend and loading model..."
+    if message == "Reusing loaded backend.":
+        return "Reusing loaded backend."
     return message
 
 

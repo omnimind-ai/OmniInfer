@@ -695,11 +695,20 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("type to filter", rendered)
 
     def test_tui_load_progress_hides_backend_start_detail(self) -> None:
+        self.assertEqual(tui._model_load_progress_text("Starting OmniInfer gateway..."), "Starting local service...")
+        self.assertEqual(tui._model_load_progress_text("Waiting for OmniInfer gateway..."), "Starting local service...")
+        self.assertEqual(tui._model_load_progress_text("Preparing model request..."), "Preparing model...")
+        self.assertEqual(tui._model_load_progress_text("Sending model load request..."), "Preparing model...")
+        self.assertEqual(tui._model_load_progress_text("Checking model artifact..."), "Checking model file...")
+        self.assertEqual(tui._model_load_progress_text("Selecting backend for this model..."), "Selecting backend...")
+        self.assertEqual(
+            tui._model_load_progress_text("Loading model with llama.cpp-linux-cuda..."),
+            "Loading model with llama.cpp-linux-cuda...",
+        )
         self.assertEqual(
             tui._model_load_progress_text("Starting backend llama.cpp-linux-cuda and loading model..."),
-            "Loading model...",
+            "Starting backend and loading model...",
         )
-        self.assertEqual(tui._model_load_progress_text("Waiting for OmniInfer gateway..."), "Waiting for OmniInfer gateway...")
 
     def test_tui_decodes_common_arrow_escape_sequences(self) -> None:
         self.assertEqual(tui._decode_escape_sequence("[A"), "up")
@@ -1158,6 +1167,30 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("Reasoning:", rendered)
         self.assertIn("  │ plan", rendered)
         self.assertIn("Assistant:", rendered)
+
+    def test_tui_chat_loop_renders_user_before_assistant_with_fixed_prompt(self) -> None:
+        def fake_stream(_payload: dict[str, Any]):
+            yield commands.ChatStreamChunk(text="answer")
+
+        with (
+            patch("service_core.tui._print_chat_header"),
+            patch("service_core.tui._prompt", side_effect=["hello", "/exit"]),
+            patch("service_core.tui._can_use_fixed_input_box", return_value=True),
+            patch("service_core.commands.get_tui_show_reasoning", return_value=False),
+            patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
+            patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
+            patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24))),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            tui._chat_loop("llama.cpp-linux-cuda")
+
+        rendered = output.getvalue()
+        user_index = rendered.find("You:")
+        assistant_index = rendered.find("Assistant:")
+        self.assertGreaterEqual(user_index, 0)
+        self.assertGreater(assistant_index, user_index)
+        self.assertIn("  │ hello", rendered)
+        self.assertIn("  │ answer", rendered)
 
     def test_tui_chat_loop_routes_stream_errors_to_prompt_status(self) -> None:
         prompts: list[str | None] = []
