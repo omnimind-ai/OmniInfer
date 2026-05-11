@@ -456,8 +456,19 @@ def resolve_existing_path(path_text: str, label: str) -> Path:
     return path
 
 
+def normalize_path_text(path_text: str) -> str:
+    text = path_text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        text = text[1:-1].strip()
+    return text
+
+
+def absolute_path_from_text(path_text: str) -> Path:
+    return Path(os.path.abspath(os.path.expanduser(normalize_path_text(path_text))))
+
+
 def _absolute_existing_path(path_text: str) -> Path:
-    return Path(os.path.abspath(os.path.expanduser(path_text)))
+    return absolute_path_from_text(path_text)
 
 
 def resolve_backend_profile_arg(path_text: str | None, selected_backend_id: str | None) -> BackendProfile | None:
