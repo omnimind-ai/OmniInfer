@@ -1202,7 +1202,7 @@ class OmniHandler(BaseHTTPRequestHandler):
         self._send_json(200, anthropic_resp)
 
 
-def parse_args(config: dict[str, Any]) -> argparse.Namespace:
+def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argparse.Namespace:
     backend_names = ", ".join(template.id for template in current_host_platform().backend_templates)
     p = argparse.ArgumentParser(description="OmniInfer unified API service")
     p.add_argument("--host", default=config["host"], help="Gateway bind host")
@@ -1252,7 +1252,7 @@ def parse_args(config: dict[str, Any]) -> argparse.Namespace:
     )
     p.add_argument("--startup-timeout", type=int, default=int(config["startup_timeout"]), help="Backend startup timeout seconds")
     p.add_argument("--log-level", default=None, choices=("DEBUG", "INFO", "WARNING", "ERROR"), help="Log level override")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def _shutdown_existing_gateway(host: str, port: int) -> None:
@@ -1268,9 +1268,9 @@ def _shutdown_existing_gateway(host: str, port: int) -> None:
     time.sleep(2)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     config = load_app_config(APP_ROOT)
-    args = parse_args(config)
+    args = parse_args(config, argv)
 
     # --- Initialize logging ---
     level = args.log_level or resolve_log_level(verbose=args.verbose, debug_body=args.debug_body)

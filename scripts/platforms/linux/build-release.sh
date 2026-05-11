@@ -136,7 +136,9 @@ ensure_pyinstaller() {
 }
 
 require_command python3 "Install Python 3.10+ first."
-ensure_pyinstaller
+if [[ ${DRY_RUN} -eq 0 ]]; then
+  ensure_pyinstaller
+fi
 
 # --- optional backend builds ---
 
@@ -221,33 +223,11 @@ fi
 rm -rf "${RELEASE_ROOT}" "${BUILD_ROOT}"
 mkdir -p "${RUNTIME_ROOT}" "${CONFIG_ROOT}" "${BUILD_ROOT}"
 
-GATEWAY_ENTRY="${REPO_ROOT}/omniinfer_gateway.py"
-CLI_ENTRY="${REPO_ROOT}/service_core/cli.py"
+CLI_ENTRY="${REPO_ROOT}/omniinfer.py"
 
-[[ ! -f "${GATEWAY_ENTRY}" ]] && { echo "ERROR: Gateway entry not found: ${GATEWAY_ENTRY}" >&2; exit 1; }
 [[ ! -f "${CLI_ENTRY}" ]] && { echo "ERROR: CLI entry not found: ${CLI_ENTRY}" >&2; exit 1; }
 
-# --- PyInstaller: gateway (--onedir) ---
-
-echo ""
-echo "Building ${PACKAGE_NAME} (gateway) with PyInstaller..."
-python3 -m PyInstaller \
-  --noconfirm \
-  --clean \
-  --onedir \
-  --name "${PACKAGE_NAME}" \
-  --distpath "${REPO_ROOT}/release/portable/${PLATFORM_TAG}" \
-  --workpath "${BUILD_ROOT}/pyinstaller-work-gateway" \
-  --specpath "${BUILD_ROOT}/pyinstaller-spec-gateway" \
-  "${GATEWAY_ENTRY}"
-
-GATEWAY_BIN="${RELEASE_ROOT}/${PACKAGE_NAME}"
-if [[ ! -f "${GATEWAY_BIN}" ]]; then
-  echo "ERROR: Gateway build succeeded but ${PACKAGE_NAME} not found at ${GATEWAY_BIN}" >&2
-  exit 1
-fi
-
-# --- PyInstaller: CLI (--onefile) ---
+# --- PyInstaller: CLI (--onedir) ---
 
 CLI_DIST="${BUILD_ROOT}/cli-dist"
 echo ""
@@ -255,7 +235,7 @@ echo "Building omniinfer-cli (CLI) with PyInstaller..."
 python3 -m PyInstaller \
   --noconfirm \
   --clean \
-  --onefile \
+  --onedir \
   --console \
   --name "omniinfer-cli" \
   --distpath "${CLI_DIST}" \
@@ -263,13 +243,13 @@ python3 -m PyInstaller \
   --specpath "${BUILD_ROOT}/pyinstaller-spec-cli" \
   "${CLI_ENTRY}"
 
-CLI_BIN="${CLI_DIST}/omniinfer-cli"
+CLI_BIN="${CLI_DIST}/omniinfer-cli/omniinfer-cli"
 if [[ ! -f "${CLI_BIN}" ]]; then
   echo "ERROR: CLI build succeeded but omniinfer-cli not found at ${CLI_BIN}" >&2
   exit 1
 fi
 
-cp "${CLI_BIN}" "${RELEASE_ROOT}/omniinfer-cli"
+cp -a "${CLI_DIST}/omniinfer-cli/." "${RELEASE_ROOT}/"
 chmod +x "${RELEASE_ROOT}/omniinfer-cli"
 
 # --- launcher wrapper ---

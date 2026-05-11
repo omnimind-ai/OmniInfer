@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-from service_core import commands, tui
+from service_core import cli, commands, tui
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
@@ -224,6 +224,32 @@ class CliParserTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["select", "llama.cpp-linux"])
 
+    def test_serve_forwards_service_arguments(self) -> None:
+        try:
+            with patch("service_core.service.main", return_value=0) as service_main:
+                result = cli.main(
+                    ["serve", "--host", "0.0.0.0", "--window-mode", "visible", "--default-backend", "llama.cpp-linux"]
+                )
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        service_main.assert_called_once_with(
+            ["--host", "0.0.0.0", "--window-mode", "visible", "--default-backend", "llama.cpp-linux"]
+        )
+
+    def test_global_port_override_is_forwarded_to_serve(self) -> None:
+        try:
+            with patch("service_core.service.main", return_value=0) as service_main:
+                result = cli.main(["--port", "9010", "serve", "--host", "127.0.0.1"])
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        service_main.assert_called_once_with(["--host", "127.0.0.1", "--port", "9010"])
+
 
 # ---------------------------------------------------------------------------
 # Shared command helpers
@@ -231,6 +257,43 @@ class CliParserTests(unittest.TestCase):
 
 
 class CommandHelperTests(unittest.TestCase):
+    def test_source_gateway_launch_uses_cli_serve_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            with patch("service_core.commands.REPO_ROOT", repo_root):
+                command = commands.gateway_launch_command(
+                    host="127.0.0.1",
+                    port=9000,
+                    startup_timeout=60,
+                    window_mode="hidden",
+                    default_thinking="off",
+                    default_backend="llama.cpp-linux",
+                )
+
+        self.assertEqual(command[1:3], [str(repo_root / "omniinfer.py"), "serve"])
+        self.assertIn("--default-backend", command)
+        self.assertIn("llama.cpp-linux", command)
+
+    def test_packaged_gateway_launch_uses_cli_binary_serve(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            exe_path = Path(temp_dir) / "omniinfer-cli"
+            exe_path.write_text("", encoding="utf-8")
+            with (
+                patch("service_core.commands.sys.executable", str(exe_path)),
+                patch("service_core.commands.sys.frozen", True, create=True),
+            ):
+                command = commands.gateway_launch_command(
+                    host="127.0.0.1",
+                    port=9000,
+                    startup_timeout=60,
+                    window_mode="hidden",
+                    default_thinking="off",
+                    default_backend="",
+                )
+
+            self.assertTrue(Path(command[0]).samefile(exe_path))
+            self.assertEqual(command[1], "serve")
+
     def test_backend_models_dir_defaults_to_shared_local_models_on_all_desktop_platforms(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

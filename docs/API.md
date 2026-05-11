@@ -12,7 +12,7 @@ The port defaults to `9000` and can be changed via `config/omniinfer.json` or th
 
 All requests use JSON unless noted otherwise.
 
-> **Windows note:** `omniinfer_gateway.py` auto-hides its console window by default. To run in the foreground with visible log output, use `python omniinfer_gateway.py --window-mode visible`.
+> **Windows note:** `omniinfer serve` auto-hides its console window by default. To run in the foreground with visible log output, use `python omniinfer.py serve --window-mode visible`.
 
 > **Multi-instance:** You can run multiple gateways on different ports, each serving a different model:
 >

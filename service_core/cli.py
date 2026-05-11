@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import logging
 import os
 import platform
 import re
-import subprocess
 import sys
 import threading
 import textwrap
@@ -18,12 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from service_core import commands
-from service_core.local_state import local_logs_dir
 from service_core.service import APP_ROOT, REPO_ROOT, load_app_config
 
-
-CLI_LOG_DIR = local_logs_dir(Path(APP_ROOT))
-CLI_LOG_FILE = CLI_LOG_DIR / "gateway.log"
 
 _cli_port_override: int | None = None
 DEFAULT_IMAGE_PATH = Path(REPO_ROOT) / "tests" / "pictures" / "test1.png"
@@ -166,122 +162,8 @@ def local_backend_ids() -> list[str]:
     return commands.local_backend_ids()
 
 
-def start_service_background() -> None:
-    config = get_service_config()
-    host = str(config.get("host", "127.0.0.1"))
-    port = int(config.get("port", 9000))
-    startup_timeout = int(config.get("startup_timeout", 60))
-    window_mode = str(config.get("window_mode", "hidden"))
-    default_backend = str(config.get("default_backend", ""))
-    default_thinking = str(config.get("default_thinking", "off"))
-
-    command = gateway_launch_command(
-        host=host,
-        port=port,
-        startup_timeout=startup_timeout,
-        window_mode=window_mode,
-        default_thinking=default_thinking,
-        default_backend=default_backend,
-    )
-
-    logging.getLogger("cli").info("Starting gateway service in background: %s", " ".join(command))
-    CLI_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_handle = CLI_LOG_FILE.open("a", encoding="utf-8")
-    if os.name == "nt":
-        creationflags = (
-            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-            | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-        )
-        subprocess.Popen(
-            command,
-            cwd=str(REPO_ROOT),
-            stdin=subprocess.DEVNULL,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=creationflags,
-        )
-    else:
-        subprocess.Popen(
-            command,
-            cwd=str(REPO_ROOT),
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            text=True,
-            start_new_session=True,
-        )
-    log_handle.close()
-
-
-def wait_for_service_ready(timeout_s: int) -> None:
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        if is_service_running():
-            return
-        time.sleep(0.5)
-    tail = ""
-    if CLI_LOG_FILE.is_file():
-        tail = CLI_LOG_FILE.read_text(encoding="utf-8", errors="replace")[-4000:]
-    raise SystemExit(f"failed to start local OmniInfer service in time\n{tail}")
-
-
-def resolve_gateway_binary() -> Path | None:
-    if not getattr(sys, "frozen", False):
-        return None
-
-    current_exe = Path(sys.executable).resolve()
-    candidates = [
-        current_exe.with_name("OmniInfer.exe"),
-        current_exe.with_name("OmniInfer"),
-    ]
-    for candidate in candidates:
-        if candidate.is_file() and candidate.resolve() != current_exe:
-            return candidate
-    return None
-
-
-def gateway_launch_command(
-    *,
-    host: str,
-    port: int,
-    startup_timeout: int,
-    window_mode: str,
-    default_thinking: str,
-    default_backend: str,
-) -> list[str]:
-    if getattr(sys, "frozen", False):
-        gateway_binary = resolve_gateway_binary()
-        if gateway_binary is None:
-            raise SystemExit("unable to locate the packaged OmniInfer gateway binary next to the CLI")
-        command = [str(gateway_binary)]
-    else:
-        command = [sys.executable, str(Path(REPO_ROOT) / "omniinfer_gateway.py")]
-
-    command.extend(
-        [
-            "--host",
-            host,
-            "--port",
-            str(port),
-            "--startup-timeout",
-            str(startup_timeout),
-            "--window-mode",
-            window_mode,
-            "--default-thinking",
-            default_thinking,
-        ]
-    )
-    if default_backend:
-        command.extend(["--default-backend", default_backend])
-    return command
-
-
 def ensure_service_running() -> None:
-    if is_service_running():
-        return
-    start_service_background()
-    wait_for_service_ready(timeout_s=max(int(get_service_config().get("startup_timeout", 60)), 10))
+    commands.ensure_service_running()
 
 
 def ensure_service_and_selection() -> str | None:
@@ -806,18 +688,74 @@ def shutdown_service() -> int:
     return 0
 
 
-def serve_foreground() -> int:
-    config = get_service_config()
-    command = gateway_launch_command(
-        host=str(config.get("host", "127.0.0.1")),
-        port=int(config.get("port", 9000)),
-        startup_timeout=int(config.get("startup_timeout", 60)),
-        window_mode=str(config.get("window_mode", "hidden")),
-        default_thinking=str(config.get("default_thinking", "off")),
-        default_backend=str(config.get("default_backend", "")),
-    )
-    os.execv(command[0], command)
-    return 0
+def _requested_window_mode(argv: list[str]) -> str:
+    mode = "hidden"
+    for idx, token in enumerate(argv):
+        if token == "--window-mode" and idx + 1 < len(argv):
+            value = argv[idx + 1].strip().lower()
+            if value in {"visible", "hidden"}:
+                mode = value
+        elif token.startswith("--window-mode="):
+            value = token.split("=", 1)[1].strip().lower()
+            if value in {"visible", "hidden"}:
+                mode = value
+    return mode
+
+
+def _has_console() -> bool:
+    try:
+        return bool(ctypes.windll.kernel32.GetConsoleWindow())
+    except Exception:
+        return False
+
+
+def _attach_console_streams() -> None:
+    sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")
+    sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+    sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+
+
+def _ensure_window_mode(argv: list[str]) -> None:
+    if os.name != "nt":
+        return
+
+    mode = _requested_window_mode(argv)
+    child_flag = "OMNIINFER_WINDOW_MODE_CHILD"
+    if mode == "hidden" and os.environ.get(child_flag) != "1" and _has_console():
+        env = os.environ.copy()
+        env[child_flag] = "1"
+        import subprocess
+
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, *sys.argv[1:]]
+        else:
+            command = [sys.executable, str(Path(REPO_ROOT) / "omniinfer.py"), *sys.argv[1:]]
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen(
+            command,
+            env=env,
+            creationflags=creationflags,
+            cwd=str(APP_ROOT),
+        )
+        raise SystemExit(0)
+
+    if mode == "visible" and not _has_console():
+        if ctypes.windll.kernel32.AllocConsole():
+            _attach_console_streams()
+
+
+def serve_foreground(service_args: list[str]) -> int:
+    _ensure_window_mode(service_args)
+    from service_core.service import main as service_main
+
+    return service_main(service_args)
+
+
+def _service_args_from_cli(args: argparse.Namespace, unknown_args: list[str]) -> list[str]:
+    service_args = list(unknown_args)
+    if args.port is not None and not any(item == "--port" or item.startswith("--port=") for item in service_args):
+        service_args.extend(["--port", str(args.port)])
+    return service_args
 
 
 def print_completion(shell: str) -> int:
@@ -933,6 +871,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _cli_port_override
+
     from service_core.logger import setup_logging
 
     setup_logging(level="DEBUG", console=False, log_to_file=True)
@@ -944,11 +884,16 @@ def main(argv: list[str] | None = None) -> int:
         return handle_hidden_completion(argv[1:])
 
     parser = build_parser()
+    if argv and argv[0] == "serve":
+        args, unknown_args = parser.parse_known_args(argv[:1])
+        _cli_port_override = args.port
+        commands.set_port_override(args.port)
+        return serve_foreground(_service_args_from_cli(args, argv[1:]))
+
     args, unknown_args = parser.parse_known_args(argv)
     unknown_args = [item for item in unknown_args if item != "--"]
     setattr(args, "backend_extra_args", unknown_args)
 
-    global _cli_port_override
     if args.port is not None:
         _cli_port_override = args.port
     commands.set_port_override(args.port)
@@ -1005,9 +950,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
         return shutdown_service()
     if args.command == "serve":
-        if unknown_args:
-            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
-        return serve_foreground()
+        return serve_foreground(_service_args_from_cli(args, unknown_args))
     if args.command == "completion":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
