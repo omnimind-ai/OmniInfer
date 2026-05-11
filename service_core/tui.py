@@ -231,7 +231,7 @@ def _choose_model() -> Path | None:
 def _prompt_model_path() -> Path | None:
     while True:
         text = _prompt("Model path")
-        path = Path(os.path.abspath(os.path.expanduser(text)))
+        path = commands.absolute_path_from_text(text)
         if path.exists():
             model_root: Path | None = path.parent if path.is_file() else None
             if path.is_dir():

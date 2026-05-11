@@ -376,6 +376,39 @@ class CommandHelperTests(unittest.TestCase):
             self.assertEqual(resolved, linked)
             self.assertEqual(resolved.resolve(), external.resolve())
 
+    def test_model_reference_accepts_quoted_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model = root / "Qwen3.5-4B-Q4_K_M.gguf"
+            model.write_bytes(b"gguf")
+
+            resolved = commands.resolve_model_reference(f'"{model}"')
+
+            self.assertEqual(resolved.resolve(), model.resolve())
+
+    def test_tui_manual_model_directory_accepts_quoted_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model_dir = root / "Qwen3.5-4B-GGUF"
+            model = model_dir / "Qwen3.5-4B-Q4_K_M.gguf"
+            model_dir.mkdir()
+            model.write_bytes(b"gguf")
+
+            with patch("service_core.commands.APP_ROOT", root), patch(
+                "service_core.tui._prompt",
+                return_value=f'"{model_dir}"',
+            ), patch("service_core.tui._print_notice"), patch(
+                "service_core.commands.link_model_into_managed_models",
+                side_effect=lambda path, **_kwargs: path,
+            ) as link_model:
+                linked = tui._prompt_model_path()
+
+            self.assertIsNotNone(linked)
+            assert linked is not None
+            self.assertEqual(linked.resolve(), model.resolve())
+            link_model.assert_called_once()
+            self.assertEqual(link_model.call_args.args[0].resolve(), model.resolve())
+
     def test_display_path_reference_preserves_symlink_reference(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
