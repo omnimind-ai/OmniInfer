@@ -62,8 +62,10 @@ Run `./omniinfer` without arguments in an interactive terminal to open the basic
 Windows:
 
 ```powershell
-.\omniinfer.cmd --help
+.\omniinfer.ps1 --help
 ```
+
+Packaged Windows releases also keep `.\omniinfer.cmd` for `cmd.exe` compatibility. For interactive TUI use from PowerShell, prefer `.\omniinfer.ps1` or `.\omniinfer-cli.exe`; pressing `Ctrl+C` in a batch wrapper can make `cmd.exe` print `Terminate batch job (Y/N)?`.
 
 Android:
 
@@ -84,7 +86,7 @@ Linux, macOS, Windows:
 Windows:
 
 ```powershell
-.\omniinfer.cmd backend list
+.\omniinfer.ps1 backend list
 ```
 
 Android:
@@ -109,7 +111,7 @@ Always pick a backend from `backend list` on your current device.
 Windows:
 
 ```powershell
-.\omniinfer.cmd backend select <backend>
+.\omniinfer.ps1 backend select <backend>
 ```
 
 Examples:
@@ -190,7 +192,7 @@ Advanced path with backend config JSON:
 Windows:
 
 ```powershell
-.\omniinfer.cmd load -m C:\path\to\model-directory
+.\omniinfer.ps1 load -m C:\path\to\model-directory
 ```
 
 Vision-language model:
@@ -224,8 +226,8 @@ You can also skip `--config` entirely and pass backend-native extra args directl
 Example:
 
 ```powershell
-.\omniinfer.cmd backend select llama.cpp-vulkan
-.\omniinfer.cmd load -m C:\models\Qwen3 -ngl 99 -t 8
+.\omniinfer.ps1 backend select llama.cpp-vulkan
+.\omniinfer.ps1 load -m C:\models\Qwen3 -ngl 99 -t 8
 ```
 
 ### 4. Chat
@@ -247,7 +249,7 @@ Vision-language chat:
 Windows:
 
 ```powershell
-.\omniinfer.cmd chat "Introduce yourself in one sentence."
+.\omniinfer.ps1 chat "Introduce yourself in one sentence."
 ```
 
 Advanced path with backend config JSON:
@@ -260,7 +262,7 @@ Advanced path with backend config JSON:
 You can also pass backend-native extra args directly:
 
 ```powershell
-.\omniinfer.cmd chat "Hello" -- --top-k 40 --top-p 0.9
+.\omniinfer.ps1 chat "Hello" -- --top-k 40 --top-p 0.9
 ```
 
 ## Common Commands
@@ -280,7 +282,7 @@ You can also pass backend-native extra args directly:
 ./omniinfer completion bash
 ```
 
-On Windows, replace `./omniinfer` with `.\omniinfer.cmd`.
+On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in PowerShell. Use `.\omniinfer.cmd` only when you specifically need `cmd.exe` compatibility.
 
 ## Useful Notes
 
