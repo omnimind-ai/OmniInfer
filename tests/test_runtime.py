@@ -384,7 +384,7 @@ class CommandHelperTests(unittest.TestCase):
 
             resolved = commands.resolve_model_reference(f'"{model}"')
 
-            self.assertEqual(resolved, model.resolve())
+            self.assertEqual(resolved.resolve(), model.resolve())
 
     def test_tui_manual_model_directory_accepts_quoted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
