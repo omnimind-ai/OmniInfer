@@ -213,11 +213,12 @@ def resolve_gateway_binary() -> Path | None:
 
     current_exe = Path(sys.executable).resolve()
     candidates = [
-        current_exe.with_name("OmniInfer.exe"),
-        current_exe.with_name("OmniInfer"),
+        current_exe.with_name("omniinfer-cli.exe"),
+        current_exe.with_name("omniinfer-cli"),
+        current_exe,
     ]
     for candidate in candidates:
-        if candidate.is_file() and candidate.resolve() != current_exe:
+        if candidate.is_file():
             return candidate
     return None
 
@@ -234,10 +235,10 @@ def gateway_launch_command(
     if getattr(sys, "frozen", False):
         gateway_binary = resolve_gateway_binary()
         if gateway_binary is None:
-            raise SystemExit("unable to locate the packaged OmniInfer gateway binary next to the CLI")
-        command = [str(gateway_binary)]
+            raise SystemExit("unable to locate the packaged OmniInfer CLI binary")
+        command = [str(gateway_binary), "serve"]
     else:
-        command = [sys.executable, str(Path(REPO_ROOT) / "omniinfer_gateway.py")]
+        command = [sys.executable, str(Path(REPO_ROOT) / "omniinfer.py"), "serve"]
 
     command.extend(
         [

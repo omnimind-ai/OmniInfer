@@ -62,7 +62,7 @@
     <mxCell id="gw_tag" value="OPENAI API" style="label;fontStyle=1;fontSize=8;fontColor=#FFFFFF;fillColor=#F97316;rounded=1;arcSize=40;strokeColor=none;spacingLeft=6;spacingRight=6;" parent="1" vertex="1">
       <mxGeometry x="643" y="201" width="92" height="20" as="geometry" />
     </mxCell>
-    <mxCell id="gw_desc" value="omniinfer_gateway.py -&gt; service_core/service.py" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontColor=#8B82A7;" parent="1" vertex="1">
+    <mxCell id="gw_desc" value="omniinfer.py serve -&gt; service_core/service.py" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontColor=#8B82A7;" parent="1" vertex="1">
       <mxGeometry x="477" y="224" width="245" height="16" as="geometry" />
     </mxCell>
     <mxCell id="gw_body" value="/v1/chat/completions with SSE&lt;br&gt;/v1/models, /v1/embeddings, /health" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#3E3853;" parent="1" vertex="1">

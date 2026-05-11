@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reuse-running", action="store_true", help="Reuse an already running gateway on the target host:port")
     parser.add_argument("--keep-server", action="store_true", help="Do not shut down the gateway if this script launched it")
     parser.add_argument("--keep-artifacts", action="store_true", help="Keep temp logs and response files even when the script succeeds")
-    parser.add_argument("--gateway-program", help="Optional gateway program to launch instead of the repo-root omniinfer_gateway.py")
+    parser.add_argument("--gateway-program", help="Optional gateway program to launch instead of the repo-root omniinfer.py")
     parser.add_argument("--gateway-workdir", help="Optional working directory for the launched gateway process")
     parser.add_argument("--scenario-label", default="", help="Short label printed in logs, for example: linux-source or linux-release")
     return parser.parse_args()
@@ -105,7 +105,7 @@ class FlowRunner:
     def gateway_program(self) -> Path:
         if self.args.gateway_program:
             return Path(self.args.gateway_program).expanduser().resolve()
-        return REPO_ROOT / "omniinfer_gateway.py"
+        return REPO_ROOT / "omniinfer.py"
 
     def gateway_workdir(self) -> Path:
         if self.args.gateway_workdir:
@@ -122,12 +122,13 @@ class FlowRunner:
                 sys.executable,
                 "-u",
                 str(program),
+                "serve",
                 "--host",
                 self.args.host,
                 "--port",
                 str(self.args.port),
             ]
-        return [str(program), "--host", self.args.host, "--port", str(self.args.port)]
+        return [str(program), "serve", "--host", self.args.host, "--port", str(self.args.port)]
 
     def cleanup(self) -> None:
         if self.own_gateway and not self.args.keep_server:
