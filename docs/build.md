@@ -190,10 +190,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 
 ### Windows Packaging Wrapper
 
-`scripts/platforms/windows/build-release.ps1` is a wrapper around the repository's Windows portable packager.
+`scripts/platforms/windows/build-release.ps1` builds the Windows portable package.
 
 - It can prebuild any of the Windows runtimes above before packaging
-- It still expects a repo-specific `release/build_portable.ps1` packager to exist
+- It packages only the requested backends when `-Backends` is provided; otherwise it packages every built backend under `.local/runtime/windows`
+- It builds `omniinfer-cli.exe` with PyInstaller `--onedir` and excludes optional heavyweight scientific/image stacks such as MKL, NumPy, SciPy, PIL, Torch, pandas, and OpenCV from the CLI bundle
+- It writes PowerShell and cmd.exe launchers; use `omniinfer.ps1` from PowerShell and keep `omniinfer.cmd` for cmd.exe compatibility
 
 ## Linux
 
