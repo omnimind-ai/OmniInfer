@@ -32,14 +32,29 @@ def resolve_input_path(value: str, base_dir: Path) -> str:
 
 
 def display_path_reference(path: str, root_dir: str | None) -> str:
-    target = Path(os.path.abspath(os.path.expanduser(path)))
+    target_text = os.path.abspath(os.path.expanduser(path))
+    target = Path(target_text)
     if not root_dir:
         return str(target)
-    root = Path(os.path.abspath(os.path.expanduser(root_dir)))
-    try:
-        return target.relative_to(root).as_posix()
-    except ValueError:
-        return str(target)
+    root_text = os.path.abspath(os.path.expanduser(root_dir))
+
+    for candidate, root in (
+        (target_text, root_text),
+        (
+            os.path.join(os.path.realpath(os.path.dirname(target_text)), os.path.basename(target_text)),
+            os.path.realpath(root_text),
+        ),
+    ):
+        try:
+            relpath = os.path.relpath(candidate, root)
+        except ValueError:
+            continue
+        relpath_norm = os.path.normcase(relpath)
+        parent_norm = os.path.normcase(os.pardir)
+        if relpath_norm != parent_norm and not relpath_norm.startswith(parent_norm + os.sep):
+            return Path(relpath).as_posix()
+
+    return str(target)
 
 
 def prepend_env_path(env: dict[str, str], key: str, value: str) -> None:

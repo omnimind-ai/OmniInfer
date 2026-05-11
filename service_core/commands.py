@@ -49,6 +49,10 @@ DEFAULT_CHAT_MAX_TOKENS = 2048
 _port_override: int | None = None
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 @dataclass(frozen=True)
 class BackendSelectResult:
     backend: str
@@ -273,7 +277,7 @@ def start_service_background() -> None:
     logging.getLogger("cli").info("Starting gateway service in background: %s", " ".join(command))
     CLI_LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_handle = CLI_LOG_FILE.open("a", encoding="utf-8")
-    if os.name == "nt":
+    if _is_windows():
         creationflags = (
             getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -1006,11 +1010,11 @@ def _link_points_to(path: Path, source: Path) -> bool:
 
 
 def _is_windows_symlink_privilege_error(exc: OSError) -> bool:
-    return os.name == "nt" and getattr(exc, "winerror", None) == 1314
+    return _is_windows() and getattr(exc, "winerror", None) == 1314
 
 
 def _create_directory_junction_for_model(source: Path, target: Path) -> None:
-    if os.name != "nt":
+    if not _is_windows():
         raise OSError("directory junction fallback is only supported on Windows")
 
     junction = target.parent

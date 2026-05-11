@@ -364,7 +364,7 @@ class CommandHelperTests(unittest.TestCase):
 
             with (
                 patch("service_core.commands.APP_ROOT", root),
-                patch("service_core.commands.os.name", "nt"),
+                patch("service_core.commands._is_windows", return_value=True),
                 patch("service_core.commands.os.symlink", side_effect=symlink_error),
             ):
                 linked = commands.link_model_into_managed_models(external)
