@@ -374,7 +374,7 @@ Notes:
 - `ctx_size` is optional.
 - `launch_args` and `request_defaults` are optional OmniInfer extensions for backend-specific config-driven flows.
 - `reasoning_effort` and `reasoning.effort` are accepted as thinking hints. OmniInfer maps them to the local thinking on/off switch only; it does not implement effort-specific reasoning budgets.
-- `ik_llama.cpp` thinking templates require Jinja mode for native reasoning extraction. OmniInfer's built-in ik backends start `llama-server` with `--jinja --reasoning-format deepseek` by default; if you replace `launch_args`, include equivalent flags when you need `reasoning_content`.
+- `ik_llama.cpp` thinking templates require Jinja mode, so OmniInfer's built-in ik backends start `llama-server` with `--jinja` by default. Some ik builds also support `--reasoning-format deepseek`, but OmniInfer does not pass it by default for cross-build compatibility.
 - If `stream=true`, the response uses Server-Sent Events (SSE).
 
 ### Non-stream response shape

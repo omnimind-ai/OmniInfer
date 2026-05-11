@@ -436,7 +436,7 @@ for chunk in response:
 - KV 缓存前缀复用（自动生效，无需配置）
 - 多模态 / 视觉（模型需包含视觉编码器文件）
 - 思考 / 推理模式（`chat_template_kwargs.enable_thinking`、`reasoning_effort` 或 `reasoning.effort` 参数）
-- `ik_llama.cpp` 的 thinking 模板需要 Jinja 模式才能原生提取推理内容。OmniInfer 内置 ik 后端默认使用 `--jinja --reasoning-format deepseek` 启动；如果通过 `launch_args` 完全替换启动参数，并且需要 `reasoning_content`，请保留等价参数。
+- `ik_llama.cpp` 的 thinking 模板需要 Jinja 模式，因此 OmniInfer 内置 ik 后端默认使用 `--jinja` 启动。部分 ik 构建也支持 `--reasoning-format deepseek`，但 OmniInfer 为了兼容不同 ik 构建，默认不传这个参数。
 - 思考输出会被归一化到非流式响应的 `message.reasoning_content` 和流式响应的 `delta.reasoning_content`，最终回答仍放在 `content`。
 - 工具调用（llama.cpp：所有含工具模板的模型；MNN：Qwen3.5、Qwen3、Hunyuan 系列）
 
