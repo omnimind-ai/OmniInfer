@@ -438,7 +438,7 @@ class _FixedPromptDuringOutput:
             return self
         rows = shutil.get_terminal_size(fallback=(80, 24)).lines
         scroll_bottom = max(1, rows - _PROMPT_BOX_ROWS)
-        sys.stdout.write(f"\0337\033[1;{scroll_bottom}r\0338")
+        sys.stdout.write(f"\033[s\033[1;{scroll_bottom}r\033[u")
         self._active = True
         self.redraw(self._status)
         return self
@@ -446,7 +446,7 @@ class _FixedPromptDuringOutput:
     def __exit__(self, *_args: object) -> None:
         if not self._active:
             return
-        sys.stdout.write("\0337\033[r\0338\033[?25h")
+        sys.stdout.write("\033[s\033[r\033[u\033[?25h")
         sys.stdout.flush()
 
     def redraw(self, status: str | None = None) -> None:
@@ -1730,9 +1730,9 @@ def _draw_input_box(label: str, state: _InputBoxState, *, status: str | None = N
 
 
 def _draw_prompt_placeholder(label: str, *, status: str | None = None) -> None:
-    sys.stdout.write("\0337\033[?25l")
+    sys.stdout.write("\033[s\033[?25l")
     _draw_input_box(label, _InputBoxState(history=[]), status=status)
-    sys.stdout.write("\0338")
+    sys.stdout.write("\033[u")
     sys.stdout.flush()
 
 
