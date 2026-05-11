@@ -24,6 +24,7 @@ _MIN_WIDTH = 64
 _MAX_WIDTH = 100
 _PROMPT_BOX_ROWS = 4
 _ACTIVE_NOTICE_CENTER: _NoticeCenter | None = None
+_WINDOWS_VT_ENABLED: bool | None = None
 
 
 class _Theme:
@@ -1447,14 +1448,23 @@ def _prompt_basic(label: str, default: str | None = None, *, history: bool = Fal
 
 
 def _can_use_fixed_input_box() -> bool:
-    return bool(
-        os.name != "nt"
-        and getattr(sys.stdin, "isatty", lambda: False)()
+    if not (
+        getattr(sys.stdin, "isatty", lambda: False)()
         and getattr(sys.stdout, "isatty", lambda: False)()
-    )
+    ):
+        return False
+    if os.name == "nt":
+        return _enable_windows_virtual_terminal()
+    return True
 
 
 def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True) -> str:
+    if os.name == "nt":
+        return _prompt_chat_box_windows(label, status=status, echo=echo)
+    return _prompt_chat_box_posix(label, status=status, echo=echo)
+
+
+def _prompt_chat_box_posix(label: str, *, status: str | None = None, echo: bool = True) -> str:
     import termios
     import tty
 
@@ -1469,12 +1479,9 @@ def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True
     try:
         tty.setraw(fd)
         while True:
-            data = os.read(fd, 1)
-            if not data:
-                continue
-            if data == b"\x03":
-                raise KeyboardInterrupt
-            if data in {b"\r", b"\n"}:
+            key = _read_input_box_key_posix(fd, decoder)
+            action = _apply_input_box_key(state, key)
+            if action == "submit":
                 result = state.text.strip()
                 _clear_input_box(restore=True)
                 if echo:
@@ -1482,45 +1489,11 @@ def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True
                 sys.stdout.flush()
                 finished = True
                 return result
-            if data == b"\x1b":
-                decoder.reset()
-                key = _decode_escape_sequence(_read_escape_sequence(fd, initial_timeout_s=0.05)) or "esc"
-                if key == "esc":
-                    state.text = ""
-                    state.cursor = 0
-                elif key == "up":
-                    state.history_previous()
-                elif key == "down":
-                    state.history_next()
-                elif key == "left":
-                    state.cursor = max(0, state.cursor - 1)
-                elif key == "right":
-                    state.cursor = min(len(state.text), state.cursor + 1)
-                elif key == "home":
-                    state.cursor = 0
-                elif key == "end":
-                    state.cursor = len(state.text)
-                _draw_input_box(label, state, status=status)
-                continue
-            if data in {b"\x7f", b"\b"}:
-                decoder.reset()
-                state.backspace()
-                _draw_input_box(label, state, status=status)
-                continue
-            if data == b"\x04":
-                decoder.reset()
-                if state.text:
-                    state.delete()
-                    _draw_input_box(label, state, status=status)
-                    continue
+            if action == "exit":
                 _clear_input_box(restore=True)
                 finished = True
                 return "/exit"
-
-            char = decoder.decode(data)
-            if char and char.isprintable():
-                state.insert(char)
-                _draw_input_box(label, state, status=status)
+            _draw_input_box(label, state, status=status)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
         if not finished:
@@ -1528,6 +1501,163 @@ def _prompt_chat_box(label: str, *, status: str | None = None, echo: bool = True
         else:
             sys.stdout.write("\033[?25h")
             sys.stdout.flush()
+
+
+def _prompt_chat_box_windows(label: str, *, status: str | None = None, echo: bool = True) -> str:
+    state = _InputBoxState(history=list(_CHAT_HISTORY))
+    finished = False
+    sys.stdout.write("\033[s\033[?25l")
+    sys.stdout.flush()
+    _draw_input_box(label, state, status=status)
+    try:
+        while True:
+            action = _apply_input_box_key(state, _read_input_box_key_windows())
+            if action == "submit":
+                result = state.text.strip()
+                _clear_input_box(restore=True)
+                if echo:
+                    sys.stdout.write(f"\r{label}: {result}\n")
+                sys.stdout.flush()
+                finished = True
+                return result
+            if action == "exit":
+                _clear_input_box(restore=True)
+                finished = True
+                return "/exit"
+            _draw_input_box(label, state, status=status)
+    finally:
+        if not finished:
+            _clear_input_box(restore=True)
+        else:
+            sys.stdout.write("\033[?25h")
+            sys.stdout.flush()
+
+
+def _read_input_box_key_posix(fd: int, decoder: codecs.IncrementalDecoder) -> str:
+    data = os.read(fd, 1)
+    if not data:
+        return ""
+    if data == b"\x03":
+        return "ctrl_c"
+    if data in {b"\r", b"\n"}:
+        return "enter"
+    if data == b"\x1b":
+        decoder.reset()
+        return _decode_escape_sequence(_read_escape_sequence(fd, initial_timeout_s=0.05)) or "esc"
+    if data in {b"\x7f", b"\b"}:
+        decoder.reset()
+        return "backspace"
+    if data == b"\x04":
+        decoder.reset()
+        return "ctrl_d"
+    return decoder.decode(data)
+
+
+def _read_input_box_key_windows() -> str:
+    import msvcrt
+
+    char = msvcrt.getwch()
+    if char == "\x03":
+        return "ctrl_c"
+    if char in {"\r", "\n"}:
+        return "enter"
+    if char == "\x1b":
+        return "esc"
+    if char in {"\x7f", "\b"}:
+        return "backspace"
+    if char == "\x15":
+        return "ctrl_u"
+    if char == "\x1a":
+        return "ctrl_z"
+    if char in {"\x00", "\xe0"}:
+        code = msvcrt.getwch()
+        return {
+            "H": "up",
+            "P": "down",
+            "K": "left",
+            "M": "right",
+            "G": "home",
+            "O": "end",
+            "S": "delete",
+        }.get(code, "")
+    return char
+
+
+def _apply_input_box_key(state: "_InputBoxState", key: str) -> str | None:
+    if not key:
+        return None
+    if key == "ctrl_c":
+        raise KeyboardInterrupt
+    if key == "enter":
+        return "submit"
+    if key == "esc":
+        state.text = ""
+        state.cursor = 0
+    elif key == "up":
+        state.history_previous()
+    elif key == "down":
+        state.history_next()
+    elif key == "left":
+        state.cursor = max(0, state.cursor - 1)
+    elif key == "right":
+        state.cursor = min(len(state.text), state.cursor + 1)
+    elif key == "home":
+        state.cursor = 0
+    elif key == "end":
+        state.cursor = len(state.text)
+    elif key == "backspace":
+        state.backspace()
+    elif key == "delete":
+        state.delete()
+    elif key in {"ctrl_d", "ctrl_z"}:
+        if state.text:
+            state.delete()
+        else:
+            return "exit"
+    elif key == "ctrl_u":
+        state.text = ""
+        state.cursor = 0
+    elif key.isprintable():
+        state.insert(key)
+    return None
+
+
+def _enable_windows_virtual_terminal() -> bool:
+    global _WINDOWS_VT_ENABLED
+    if os.name != "nt":
+        return True
+    if _WINDOWS_VT_ENABLED is not None:
+        return _WINDOWS_VT_ENABLED
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetConsoleMode.restype = wintypes.BOOL
+        kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.SetConsoleMode.restype = wintypes.BOOL
+        handle = kernel32.GetStdHandle(wintypes.DWORD(-11))
+        invalid_handle = ctypes.c_void_p(-1).value
+        if handle in (None, 0, invalid_handle):
+            _WINDOWS_VT_ENABLED = False
+            return False
+        mode = wintypes.DWORD()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            _WINDOWS_VT_ENABLED = False
+            return False
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        new_mode = mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        if not kernel32.SetConsoleMode(handle, new_mode):
+            _WINDOWS_VT_ENABLED = False
+            return False
+        _WINDOWS_VT_ENABLED = True
+        return True
+    except Exception:
+        _WINDOWS_VT_ENABLED = False
+        return False
 
 
 class _InputBoxState:

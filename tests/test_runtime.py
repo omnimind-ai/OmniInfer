@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import tempfile
+import types
 import unittest
 import io
 import json
@@ -746,6 +747,67 @@ class CommandHelperTests(unittest.TestCase):
         self.assertEqual(state.text, "second")
         state.history_next()
         self.assertEqual(state.text, "draft")
+
+    def test_tui_input_box_key_handler_edits_text_and_history(self) -> None:
+        state = tui._InputBoxState(history=["older"])
+        for key in ["h", "i", "left", "!"]:
+            self.assertIsNone(tui._apply_input_box_key(state, key))
+
+        self.assertEqual(state.text, "h!i")
+        self.assertEqual(state.cursor, 2)
+        self.assertIsNone(tui._apply_input_box_key(state, "right"))
+        self.assertIsNone(tui._apply_input_box_key(state, "backspace"))
+        self.assertEqual(state.text, "h!")
+        self.assertIsNone(tui._apply_input_box_key(state, "up"))
+        self.assertEqual(state.text, "older")
+        self.assertIsNone(tui._apply_input_box_key(state, "down"))
+        self.assertEqual(state.text, "h!")
+        self.assertEqual(tui._apply_input_box_key(state, "enter"), "submit")
+
+    def test_tui_input_box_ctrl_z_exits_only_when_empty(self) -> None:
+        state = tui._InputBoxState(history=[])
+        state.insert("x")
+        state.cursor = 0
+
+        self.assertIsNone(tui._apply_input_box_key(state, "ctrl_z"))
+        self.assertEqual(state.text, "")
+        self.assertEqual(tui._apply_input_box_key(state, "ctrl_z"), "exit")
+
+    def test_tui_can_use_fixed_input_box_on_windows_with_vt(self) -> None:
+        class FakeTTY:
+            def isatty(self) -> bool:
+                return True
+
+        with (
+            patch("service_core.tui.os.name", "nt"),
+            patch("service_core.tui._enable_windows_virtual_terminal", return_value=True),
+            patch("sys.stdin", FakeTTY()),
+            patch("sys.stdout", FakeTTY()),
+        ):
+            self.assertTrue(tui._can_use_fixed_input_box())
+
+    def test_tui_disables_fixed_input_box_on_windows_without_vt(self) -> None:
+        class FakeTTY:
+            def isatty(self) -> bool:
+                return True
+
+        with (
+            patch("service_core.tui.os.name", "nt"),
+            patch("service_core.tui._enable_windows_virtual_terminal", return_value=False),
+            patch("sys.stdin", FakeTTY()),
+            patch("sys.stdout", FakeTTY()),
+        ):
+            self.assertFalse(tui._can_use_fixed_input_box())
+
+    def test_tui_reads_windows_input_box_extended_keys(self) -> None:
+        keys = iter(["\xe0", "K", "\xe0", "M", "\xe0", "S", "\r"])
+        fake_msvcrt = types.SimpleNamespace(getwch=lambda: next(keys))
+
+        with patch.dict("sys.modules", {"msvcrt": fake_msvcrt}):
+            self.assertEqual(tui._read_input_box_key_windows(), "left")
+            self.assertEqual(tui._read_input_box_key_windows(), "right")
+            self.assertEqual(tui._read_input_box_key_windows(), "delete")
+            self.assertEqual(tui._read_input_box_key_windows(), "enter")
 
     @unittest.skipIf(os.name == "nt", "PTY test is POSIX-only")
     def test_tui_reads_delayed_arrow_sequence_from_pty(self) -> None:
