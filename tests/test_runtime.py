@@ -985,6 +985,23 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("\033[20;1H", rendered)
         self.assertIn("\033[s\033[r\033[u", rendered)
 
+    def test_tui_input_box_clears_previous_rows_after_resize(self) -> None:
+        sizes = iter([os.terminal_size((80, 24)), os.terminal_size((80, 30))])
+
+        with (
+            patch("shutil.get_terminal_size", side_effect=lambda fallback=(80, 24): next(sizes)),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            tui._PROMPT_BOX_LAST_TOP = None
+            tui._draw_input_box("You", tui._InputBoxState(history=[]), status="ready")
+            tui._draw_input_box("You", tui._InputBoxState(history=[]), status="ready")
+            tui._PROMPT_BOX_LAST_TOP = None
+
+        rendered = output.getvalue()
+        self.assertIn("\033[21;1H\033[2K", rendered)
+        self.assertIn("\033[24;1H\033[2K", rendered)
+        self.assertIn("\033[27;1H", rendered)
+
     def test_tui_notice_capture_routes_notices_to_status(self) -> None:
         center = tui._NoticeCenter()
 
@@ -1456,9 +1473,9 @@ class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
         self.assertIn("none", launch.cmd)
         self.assertNotIn("--no-webui", launch.cmd)
 
-    def test_ik_launch_keeps_reasoning_jinja_defaults(self) -> None:
+    def test_ik_launch_uses_jinja_without_unsupported_reasoning_flag(self) -> None:
         backend = self._backend("ik_llama.cpp-linux-cuda")
-        backend.default_args = ["--jinja", "--reasoning-format", "deepseek", "-ngl", "999"]
+        backend.default_args = ["--jinja", "-ngl", "999"]
 
         launch = self.manager._prepare_external_runtime_launch(
             backend,
@@ -1467,8 +1484,7 @@ class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
         )
 
         self.assertIn("--jinja", launch.cmd)
-        self.assertIn("--reasoning-format", launch.cmd)
-        self.assertIn("deepseek", launch.cmd)
+        self.assertNotIn("--reasoning-format", launch.cmd)
 
     def test_llama_launch_keeps_no_webui_arg(self) -> None:
         launch = self.manager._prepare_external_runtime_launch(

@@ -25,6 +25,7 @@ _MAX_WIDTH = 100
 _PROMPT_BOX_ROWS = 4
 _ACTIVE_NOTICE_CENTER: _NoticeCenter | None = None
 _WINDOWS_VT_ENABLED: bool | None = None
+_PROMPT_BOX_LAST_TOP: int | None = None
 
 
 class _Theme:
@@ -1735,9 +1736,12 @@ class _InputBoxState:
 
 
 def _draw_input_box(label: str, state: _InputBoxState, *, status: str | None = None) -> None:
+    global _PROMPT_BOX_LAST_TOP
     columns, rows = shutil.get_terminal_size(fallback=(80, 24))
     width = max(20, columns)
     top = max(1, rows - _PROMPT_BOX_ROWS + 1)
+    if _PROMPT_BOX_LAST_TOP is not None and _PROMPT_BOX_LAST_TOP != top:
+        _clear_input_box_rows(_PROMPT_BOX_LAST_TOP)
     label_text = _strip_ansi(label)
     max_value_width = max(width - _display_width(label_text) - 8, 8)
     rendered = _render_input_value(state.text, state.cursor, max_value_width)
@@ -1751,6 +1755,7 @@ def _draw_input_box(label: str, state: _InputBoxState, *, status: str | None = N
     sys.stdout.write(f"\033[{top + 3};1H\033[2K{_THEME.dim('╰' + '─' * border_width + '╯')}")
     cursor_col = min(width, 3 + _display_width(f"{label_text}: ") + _input_cursor_prefix_width(rendered))
     sys.stdout.write(f"\033[{top + 1};{cursor_col}H")
+    _PROMPT_BOX_LAST_TOP = top
     sys.stdout.flush()
 
 
@@ -1762,15 +1767,23 @@ def _draw_prompt_placeholder(label: str, *, status: str | None = None) -> None:
 
 
 def _clear_input_box(*, restore: bool = False) -> None:
+    global _PROMPT_BOX_LAST_TOP
     columns, rows = shutil.get_terminal_size(fallback=(80, 24))
     del columns
     top = max(1, rows - _PROMPT_BOX_ROWS + 1)
-    for row in range(top, top + _PROMPT_BOX_ROWS):
-        sys.stdout.write(f"\033[{row};1H\033[2K")
+    _clear_input_box_rows(top)
+    if _PROMPT_BOX_LAST_TOP is not None and _PROMPT_BOX_LAST_TOP != top:
+        _clear_input_box_rows(_PROMPT_BOX_LAST_TOP)
+    _PROMPT_BOX_LAST_TOP = None
     if restore:
         sys.stdout.write("\033[u")
     sys.stdout.write("\033[?25h")
     sys.stdout.flush()
+
+
+def _clear_input_box_rows(top: int) -> None:
+    for row in range(top, top + _PROMPT_BOX_ROWS):
+        sys.stdout.write(f"\033[{row};1H\033[2K")
 
 
 def _render_input_value(text: str, cursor: int, max_width: int) -> str:

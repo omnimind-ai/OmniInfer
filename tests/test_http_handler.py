@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 from service_core.service import (
     ChatReasoningStreamNormalizer,
+    ChatUsageStreamNormalizer,
     OmniHandler,
     apply_thinking_mode,
     normalize_chat_completion_reasoning,
@@ -285,6 +286,31 @@ class ReasoningContentTests(unittest.TestCase):
         flushed = normalizer.flush(event)
         self.assertEqual(chunks, [])
         self.assertEqual(flushed[0]["choices"][0]["delta"]["content"], "answer")
+
+    def test_usage_stream_normalizer_moves_usage_to_final_event(self) -> None:
+        normalizer = ChatUsageStreamNormalizer()
+        first = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": "a"}, "finish_reason": None}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+        }
+        second = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": "b"}, "finish_reason": None}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4},
+        }
+
+        transformed = [*normalizer.transform_event(first), *normalizer.transform_event(second), *normalizer.flush()]
+
+        self.assertEqual(len(transformed), 3)
+        self.assertNotIn("usage", transformed[0])
+        self.assertEqual(transformed[0]["choices"][0]["delta"]["content"], "a")
+        self.assertNotIn("usage", transformed[1])
+        self.assertEqual(transformed[1]["choices"][0]["delta"]["content"], "b")
+        self.assertEqual(transformed[2]["choices"], [])
+        self.assertEqual(transformed[2]["usage"]["total_tokens"], 4)
 
 
 # ---------------------------------------------------------------------------

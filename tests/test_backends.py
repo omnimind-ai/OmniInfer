@@ -114,7 +114,7 @@ class PlatformRegistrationTests(unittest.TestCase):
         for expected in ["llama.cpp-linux", "mnn-linux"]:
             self.assertIn(expected, ids)
 
-    def test_ik_templates_enable_jinja_reasoning_parser(self) -> None:
+    def test_ik_templates_enable_jinja_without_unsupported_reasoning_flag(self) -> None:
         templates = {
             t.id: t
             for t in LinuxPlatform().backend_templates
@@ -124,8 +124,7 @@ class PlatformRegistrationTests(unittest.TestCase):
         for backend_id in ["ik_llama.cpp-linux", "ik_llama.cpp-linux-cuda"]:
             default_args = templates[backend_id].default_extra_args
             self.assertIn("--jinja", default_args)
-            self.assertIn("--reasoning-format", default_args)
-            self.assertIn("deepseek", default_args)
+            self.assertNotIn("--reasoning-format", default_args)
 
     def test_all_templates_have_unique_ids(self) -> None:
         for platform_cls in [MacPlatform, LinuxPlatform]:
@@ -243,7 +242,7 @@ class LaunchCommandTests(unittest.TestCase):
 
     def test_model_and_mmproj_flags(self) -> None:
         cmd = self.launch.cmd
-        self.assertEqual(cmd[cmd.index("-mm") + 1], "/tmp/mmproj.gguf")
+        self.assertEqual(cmd[cmd.index("--mmproj") + 1], "/tmp/mmproj.gguf")
         self.assertEqual(cmd[cmd.index("-c") + 1], "8192")
 
 
