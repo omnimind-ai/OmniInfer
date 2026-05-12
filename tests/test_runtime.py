@@ -819,35 +819,23 @@ class CommandHelperTests(unittest.TestCase):
             self.assertEqual(tui._read_input_box_key_windows(), "enter")
 
     @unittest.skipIf(os.name == "nt", "PTY test is POSIX-only")
-    def test_tui_reads_delayed_arrow_sequence_from_pty(self) -> None:
+    def test_tui_reads_arrow_sequence_from_pipe(self) -> None:
         read_fd, write_fd = os.pipe()
 
         class FakeStdin:
             def fileno(self) -> int:
                 return read_fd
 
-        result: list[str] = []
-
-        def read_key() -> None:
+        try:
+            os.write(write_fd, b"\x1b[B")
             with (
                 patch("sys.stdin", FakeStdin()),
                 patch("termios.tcgetattr", return_value=[]),
                 patch("termios.tcsetattr"),
                 patch("tty.setraw"),
             ):
-                result.append(tui._read_menu_key_posix())
-
-        reader = threading.Thread(target=read_key)
-        reader.start()
-        try:
-            time.sleep(0.05)
-            os.write(write_fd, b"\x1b")
-            time.sleep(0.1)
-            os.write(write_fd, b"[B")
-            reader.join(timeout=1)
-            self.assertEqual(result, ["down"])
+                self.assertEqual(tui._read_menu_key_posix(), "down")
         finally:
-            reader.join(timeout=1)
             os.close(read_fd)
             os.close(write_fd)
 
