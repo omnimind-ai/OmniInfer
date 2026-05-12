@@ -95,6 +95,29 @@ function Get-InstalledBackends {
     return $items
 }
 
+function Assert-BackendRuntimeSelfContained {
+    param([string]$Backend, [string]$BinRoot)
+
+    $requiredPatterns = @("llama-server.exe")
+    if ($Backend -like "*cuda*") {
+        $requiredPatterns += @(
+            "cudart64*.dll",
+            "cublas64*.dll",
+            "cublasLt64*.dll",
+            "msvcp140.dll",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "vcomp140.dll"
+        )
+    }
+
+    foreach ($pattern in $requiredPatterns) {
+        if (-not (Get-ChildItem -LiteralPath $BinRoot -Filter $pattern -File -ErrorAction SilentlyContinue)) {
+            throw "Backend '$Backend' is not self-contained: missing $pattern in $BinRoot."
+        }
+    }
+}
+
 if ($BuildCpuBackend) {
     $cpuArgs = @(
         "-NoProfile",
@@ -342,6 +365,7 @@ foreach ($backend in $backends) {
     New-Item -ItemType Directory -Force -Path $targetBin | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $targetRoot "logs") | Out-Null
     Copy-Item -Path (Join-Path $sourceBin "*") -Destination $targetBin -Recurse -Force
+    Assert-BackendRuntimeSelfContained -Backend $backend -BinRoot $targetBin
     $copiedRuntimes += $backend
 }
 

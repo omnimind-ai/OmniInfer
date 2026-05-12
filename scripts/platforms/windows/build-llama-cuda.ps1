@@ -1,6 +1,7 @@
 param(
     [string]$BuildType = "Release",
     [string]$CudaArchitectures = "",
+    [switch]$BuildWebUI,
     [switch]$DryRun
 )
 
@@ -21,6 +22,9 @@ $argsList = @(
 )
 if ($CudaArchitectures) {
     $argsList += @("-CudaArchitectures", $CudaArchitectures)
+}
+if ($BuildWebUI) {
+    $argsList += "-BuildWebUI"
 }
 
 Write-Host "Running CUDA backend build script:"
