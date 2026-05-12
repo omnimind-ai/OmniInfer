@@ -18,12 +18,8 @@ if command -v getprop >/dev/null 2>&1; then
 fi
 
 if [ "$is_android" -eq 1 ]; then
-    android_launcher="$SCRIPT_DIR/.local/runtime/android/bin/omniinfer-android"
-    if [ ! -x "$android_launcher" ]; then
-        echo "Android launcher was not found at $android_launcher" >&2
-        exit 1
-    fi
-    exec "$android_launcher" "$@"
+    echo "The repo-root desktop CLI is not the Android runtime. Use the root android/ Gradle module instead." >&2
+    exit 1
 fi
 
 if [ -n "${OMNIINFER_PYTHON:-}" ] && [ -x "${OMNIINFER_PYTHON}" ]; then

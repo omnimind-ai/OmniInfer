@@ -17,7 +17,7 @@ let package = Package(
     ],
     targets: [
         // Pre-built native library: llama.cpp + OmniInfer C bridge.
-        // Build with: scripts/platforms/ios/llama.cpp-ios/build.sh
+        // Native bridge sources live under ../native.
         .binaryTarget(
             name: "llama",
             path: "Frameworks/llama.xcframework"

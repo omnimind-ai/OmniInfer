@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
-#  OmniInfer interactive installer for macOS / Linux / Android (Termux)
+#  OmniInfer interactive installer for macOS / Linux
 #
 #  Usage:
 #    curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash
@@ -204,25 +204,27 @@ if command -v getprop >/dev/null 2>&1; then
     fi
 fi
 
+if [[ "${IS_ANDROID}" -eq 1 ]]; then
+    fatal "Android/Termux installation via scripts/install.sh is no longer supported. Use the root android/ Gradle module instead."
+fi
+
 # ── Step 1: Check prerequisites ─────────────────────────────
 
 info "Step 1/6: Checking prerequisites ..."
 need_cmd git    "Install from https://git-scm.com/"
-need_cmd cmake  "Termux: pkg install cmake  |  macOS: brew install cmake  |  Linux: apt install cmake"
+need_cmd cmake  "macOS: brew install cmake  |  Linux: apt install cmake"
 PYTHON_CMD=""
-if [[ "${IS_ANDROID}" -eq 0 ]]; then
-    if command -v python3 >/dev/null 2>&1; then
-        PYTHON_CMD="python3"
-        ok "python3"
-    elif command -v python >/dev/null 2>&1; then
-        PYTHON_CMD="python"
-        ok "python"
-    elif command -v uv >/dev/null 2>&1 && uv run python3 --version >/dev/null 2>&1; then
-        PYTHON_CMD="uv run python3"
-        ok "python3 (via uv)"
-    else
-        fatal "'python3' is required but not found. Install from https://python.org/ or use uv: https://docs.astral.sh/uv/"
-    fi
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_CMD="python3"
+    ok "python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_CMD="python"
+    ok "python"
+elif command -v uv >/dev/null 2>&1 && uv run python3 --version >/dev/null 2>&1; then
+    PYTHON_CMD="uv run python3"
+    ok "python3 (via uv)"
+else
+    fatal "'python3' is required but not found. Install from https://python.org/ or use uv: https://docs.astral.sh/uv/"
 fi
 need_cmd curl   "Install curl for your platform"
 # C/C++ compiler (needed for building backends)
@@ -231,8 +233,7 @@ if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || command -v
 else
     fatal "No C/C++ compiler found. Install one of:
   macOS:   xcode-select --install
-  Ubuntu:  sudo apt install build-essential
-  Termux:  pkg install clang"
+  Ubuntu:  sudo apt install build-essential"
 fi
 echo ""
 
@@ -369,87 +370,75 @@ info "Step 3/6: Detecting platform and hardware ..."
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
-IS_ANDROID_PLATFORM=0
-if [[ "${IS_ANDROID}" -eq 1 ]]; then
-    IS_ANDROID_PLATFORM=1
-    info "Platform: Android / Termux (${ARCH})"
-else
-    info "Platform: ${OS} (${ARCH})"
-fi
+info "Platform: ${OS} (${ARCH})"
 echo ""
 
 # Get available backends
 declare -a BACKEND_IDS=()
 declare -a BACKEND_DESCS=()
 
-if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
-    # Android: runtime not installed yet, backends are fixed
-    BACKEND_IDS+=("llama.cpp-llama");  BACKEND_DESCS+=("llama.cpp-llama  —  Text chat")
-    BACKEND_IDS+=("llama.cpp-mtmd");   BACKEND_DESCS+=("llama.cpp-mtmd  —  Multimodal (text + vision)")
-else
-    # Desktop: query gateway API for compatible backends (hardware-matched)
-    # First ensure the service is running, then wait for it to be ready
-    omniinfer_cmd status >/dev/null 2>&1 || true
-    for _i in $(seq 1 30); do
-        _health=$(curl -s -m 2 "http://127.0.0.1:${OMNI_PORT}/health" 2>/dev/null) || _health=""
-        if echo "${_health}" | grep -q '"status"'; then break; fi
-        sleep 1
-    done
+# Query gateway API for compatible backends (hardware-matched).
+# First ensure the service is running, then wait for it to be ready.
+omniinfer_cmd status >/dev/null 2>&1 || true
+for _i in $(seq 1 30); do
+    _health=$(curl -s -m 2 "http://127.0.0.1:${OMNI_PORT}/health" 2>/dev/null) || _health=""
+    if echo "${_health}" | grep -q '"status"'; then break; fi
+    sleep 1
+done
 
-    _backends_json=$(curl -sS --connect-timeout 3 --max-time 5 "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
-    _recommended=$(echo "${_backends_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('recommended',''))" 2>/dev/null) || _recommended=""
+_backends_json=$(curl -sS --connect-timeout 3 --max-time 5 "http://127.0.0.1:${OMNI_PORT}/omni/backends?scope=compatible" 2>/dev/null) || _backends_json=""
+_recommended=$(echo "${_backends_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('recommended',''))" 2>/dev/null) || _recommended=""
 
-    # Parse API response (use process substitution to avoid subshell variable loss)
-    _parsed=$(echo "${_backends_json}" | python3 -c "
+# Parse API response (use process substitution to avoid subshell variable loss).
+_parsed=$(echo "${_backends_json}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 for b in d.get('data', []):
     print(b['id'] + '|' + b.get('description', ''))
 " 2>/dev/null) || _parsed=""
 
-    if [[ -n "${_parsed}" ]]; then
-        while IFS='|' read -r bid bdesc; do
-            [[ -z "${bid}" ]] && continue
-            BACKEND_IDS+=("${bid}")
-            if [[ -n "${bdesc}" ]]; then
-                BACKEND_DESCS+=("${bid}  —  ${bdesc}")
-            else
-                BACKEND_DESCS+=("${bid}")
-            fi
-        done <<< "${_parsed}"
-
-        # Move recommended backend to top
-        if [[ -n "${_recommended}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
-            for i in "${!BACKEND_IDS[@]}"; do
-                if [[ "${BACKEND_IDS[$i]}" == "${_recommended}" ]] && [[ "$i" -gt 0 ]]; then
-                    rec_id="${BACKEND_IDS[$i]}"; rec_desc="${BACKEND_DESCS[$i]}"
-                    unset 'BACKEND_IDS[$i]'; unset 'BACKEND_DESCS[$i]'
-                    BACKEND_IDS=("${rec_id}" "${BACKEND_IDS[@]}")
-                    BACKEND_DESCS=("${rec_desc}  (recommended)" "${BACKEND_DESCS[@]}")
-                    break
-                elif [[ "${BACKEND_IDS[$i]}" == "${_recommended}" ]] && [[ "$i" -eq 0 ]]; then
-                    BACKEND_DESCS[0]="${BACKEND_DESCS[0]}  (recommended)"
-                    break
-                fi
-            done
+if [[ -n "${_parsed}" ]]; then
+    while IFS='|' read -r bid bdesc; do
+        [[ -z "${bid}" ]] && continue
+        BACKEND_IDS+=("${bid}")
+        if [[ -n "${bdesc}" ]]; then
+            BACKEND_DESCS+=("${bid}  —  ${bdesc}")
+        else
+            BACKEND_DESCS+=("${bid}")
         fi
-    fi
+    done <<< "${_parsed}"
 
-    # Fallback: parse CLI text output if API returned nothing
-    if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
-        while IFS= read -r line; do
-            id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
-            if [[ -n "${id}" ]]; then
-                BACKEND_IDS+=("${id}")
-                BACKEND_DESCS+=("${id}")
+    # Move recommended backend to top.
+    if [[ -n "${_recommended}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
+        for i in "${!BACKEND_IDS[@]}"; do
+            if [[ "${BACKEND_IDS[$i]}" == "${_recommended}" ]] && [[ "$i" -gt 0 ]]; then
+                rec_id="${BACKEND_IDS[$i]}"; rec_desc="${BACKEND_DESCS[$i]}"
+                unset 'BACKEND_IDS[$i]'; unset 'BACKEND_DESCS[$i]'
+                BACKEND_IDS=("${rec_id}" "${BACKEND_IDS[@]}")
+                BACKEND_DESCS=("${rec_desc}  (recommended)" "${BACKEND_DESCS[@]}")
+                break
+            elif [[ "${BACKEND_IDS[$i]}" == "${_recommended}" ]] && [[ "$i" -eq 0 ]]; then
+                BACKEND_DESCS[0]="${BACKEND_DESCS[0]}  (recommended)"
+                break
             fi
-            desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
-            if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
-                last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
-                BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
-            fi
-        done <<< "$(omniinfer_cmd backend list --scope compatible 2>/dev/null)"
+        done
     fi
+fi
+
+# Fallback: parse CLI text output if API returned nothing.
+if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
+    while IFS= read -r line; do
+        id=$(echo "${line}" | sed -n 's/^[* ]*\([a-zA-Z0-9._-]*\)$/\1/p')
+        if [[ -n "${id}" ]]; then
+            BACKEND_IDS+=("${id}")
+            BACKEND_DESCS+=("${id}")
+        fi
+        desc=$(echo "${line}" | sed -n 's/^    Description: *//p')
+        if [[ -n "${desc}" ]] && [[ ${#BACKEND_IDS[@]} -gt 0 ]]; then
+            last_idx=$(( ${#BACKEND_IDS[@]} - 1 ))
+            BACKEND_DESCS[$last_idx]="${BACKEND_IDS[$last_idx]}  —  ${desc}"
+        fi
+    done <<< "$(omniinfer_cmd backend list --scope compatible 2>/dev/null)"
 fi
 
 if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
@@ -480,7 +469,7 @@ while true; do
         if [[ "${idx}" -eq $(( ${#_menu_descs[@]} - 1 )) ]]; then
             info "Skipping backend selection. You can install a backend later with:"
             echo "    cd ${INSTALL_DIR} && ./omniinfer backend list --scope compatible"
-            echo "    ./omniinfer select <backend-id>"
+            echo "    ./omniinfer backend select <backend-id>"
             echo "    bash scripts/platforms/${PLATFORM_DIR}/<backend-id>/build.sh"
             SKIP_BUILD=1
             break
@@ -492,15 +481,13 @@ while true; do
     ok "Selected: ${SELECTED_BACKEND}"
     echo ""
 
-    # Select backend via CLI (skip on Android — runtime not installed yet)
-    if [[ "${IS_ANDROID_PLATFORM}" -eq 0 ]]; then
-        omniinfer_cmd select "${SELECTED_BACKEND}"
-    fi
+    # Select backend via CLI.
+    omniinfer_cmd backend select "${SELECTED_BACKEND}"
 
     # ── Pre-build dependency check ──────────────────────────────
     # Verify required build tools BEFORE starting the build.
-    # Skip for Android (no desktop build scripts) and --skip-build.
-    if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]] || [[ "${SKIP_BUILD}" -eq 1 ]]; then
+    # Skip dependency probing when the build step is disabled.
+    if [[ "${SKIP_BUILD}" -eq 1 ]]; then
         break
     fi
 
@@ -667,83 +654,26 @@ done
 
 info "Step 4/6: Building backend ..."
 
-if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
-    # ── Android / Termux: build llama.cpp natively, install via build-runtime.sh ──
-    ANDROID_BUILD_DIR="${INSTALL_DIR}/framework/llama.cpp/build-termux"
-    ANDROID_LIB_DIR="${INSTALL_DIR}/.local/runtime/android/lib/arm64-v8a"
+# ── Desktop: discover and run build script by convention ──
+FULL_BUILD_SCRIPT="${INSTALL_DIR}/scripts/platforms/${PLATFORM_DIR}/${SELECTED_BACKEND}/build.sh"
+if [[ ! -f "${FULL_BUILD_SCRIPT}" ]]; then
+    fatal "Build script not found: ${FULL_BUILD_SCRIPT}"
+fi
 
-    ALREADY_BUILT=0
-    [[ -x "${ANDROID_LIB_DIR}/libllama-cli.so" ]] && ALREADY_BUILT=1
-
-    if [[ "${SKIP_BUILD}" -eq 1 ]]; then
-        info "Skipping build (--skip-build)"
-    elif [[ "${ALREADY_BUILT}" -eq 1 ]]; then
-        ok "Android backend already built, skipping"
-    else
-        # Android/Termux builds llama.cpp directly, need the submodule
-        info "Initializing llama.cpp submodule ..."
-        git -C "${INSTALL_DIR}" submodule update --init --recursive --depth 1 --progress framework/llama.cpp
-        info "Building llama.cpp natively in Termux (this may take a few minutes) ..."
-
-        NPROC=4
-        command -v nproc >/dev/null 2>&1 && NPROC=$(nproc)
-
-        cmake -B "${ANDROID_BUILD_DIR}" \
-              -S "${INSTALL_DIR}/framework/llama.cpp" \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DGGML_OPENMP=OFF 2>&1 | tail -3
-
-        cmake --build "${ANDROID_BUILD_DIR}" --target llama-cli -j"${NPROC}" 2>&1 | tail -5
-
-        # Also try to build mtmd-cli (may not exist in all llama.cpp versions)
-        cmake --build "${ANDROID_BUILD_DIR}" --target llama-mtmd-cli -j"${NPROC}" 2>&1 | tail -3 || true
-
-        ok "Build complete"
-
-        # Find built binaries
-        LLAMA_CLI_BIN=$(find "${ANDROID_BUILD_DIR}" -name "llama-cli" -type f -executable 2>/dev/null | head -1)
-        MTMD_CLI_BIN=$(find "${ANDROID_BUILD_DIR}" -name "llama-mtmd-cli" -type f -executable 2>/dev/null | head -1)
-
-        if [[ -z "${LLAMA_CLI_BIN}" ]]; then
-            fatal "llama-cli binary not found after build"
-        fi
-
-        # Install Android runtime layout
-        RUNTIME_ARGS=("--llama-cli" "${LLAMA_CLI_BIN}")
-        if [[ -n "${MTMD_CLI_BIN}" ]]; then
-            RUNTIME_ARGS+=("--mtmd-cli" "${MTMD_CLI_BIN}")
-        fi
-
-        info "Installing Android runtime layout ..."
-        bash "${INSTALL_DIR}/scripts/platforms/android/build-runtime.sh" "${RUNTIME_ARGS[@]}"
-        ok "Android runtime installed"
-    fi
-
-    # Now that runtime is installed, select the backend
-    omniinfer_cmd select "${SELECTED_BACKEND}"
-
+if [[ "${SKIP_BUILD}" -eq 1 ]]; then
+    info "Skipping build (--skip-build)"
 else
-    # ── Desktop: discover and run build script by convention ──
-    FULL_BUILD_SCRIPT="${INSTALL_DIR}/scripts/platforms/${PLATFORM_DIR}/${SELECTED_BACKEND}/build.sh"
-    if [[ ! -f "${FULL_BUILD_SCRIPT}" ]]; then
-        fatal "Build script not found: ${FULL_BUILD_SCRIPT}"
-    fi
-
-    if [[ "${SKIP_BUILD}" -eq 1 ]]; then
-        info "Skipping build (--skip-build)"
+    # Check if runtime is already available via CLI
+    RUNTIME_AVAILABLE=$(omniinfer_cmd backend list 2>/dev/null | grep -A3 "[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
+    if [[ "${RUNTIME_AVAILABLE}" -gt 0 ]]; then
+        ok "Backend ${SELECTED_BACKEND} already built, skipping"
     else
-        # Check if runtime is already available via CLI
-        RUNTIME_AVAILABLE=$(omniinfer_cmd backend list 2>/dev/null | grep -A3 "[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
-        if [[ "${RUNTIME_AVAILABLE}" -gt 0 ]]; then
-            ok "Backend ${SELECTED_BACKEND} already built, skipping"
-        else
-            info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
-            if ! bash "${FULL_BUILD_SCRIPT}"; then
-                echo ""
-                fatal "Build failed (exit code $?). See the messages above for details."
-            fi
-            ok "Build complete"
+        info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
+        if ! bash "${FULL_BUILD_SCRIPT}"; then
+            echo ""
+            fatal "Build failed (exit code $?). See the messages above for details."
         fi
+        ok "Build complete"
     fi
 fi
 echo ""
@@ -772,9 +702,7 @@ else
             # ── Download recommended model ──────────────────────
             info "Reading bundled model catalog ..."
 
-            if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
-                CATALOG_SYSTEM="linux"
-            elif [[ "${OS}" == "Darwin" ]]; then
+            if [[ "${OS}" == "Darwin" ]]; then
                 CATALOG_SYSTEM="mac"
             else
                 CATALOG_SYSTEM="linux"
@@ -943,7 +871,7 @@ if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
 
   Other useful commands:
     ./omniinfer backend list              # list available backends
-    ./omniinfer select <backend>          # switch backend
+    ./omniinfer backend select <backend>  # switch backend
     ./omniinfer model list                # browse supported models
     ./omniinfer status                    # check current state
     ./omniinfer serve                     # start API server (http://127.0.0.1:${OMNI_PORT})
@@ -998,7 +926,7 @@ else
 
   Other useful commands:
     ./omniinfer backend list              # list available backends
-    ./omniinfer select <backend>          # switch backend
+    ./omniinfer backend select <backend>  # switch backend
     ./omniinfer model list                # browse supported models
     ./omniinfer status                    # check current state
     ./omniinfer serve                     # start API server (http://127.0.0.1:${OMNI_PORT})
