@@ -1,0 +1,2297 @@
+{
+    "llama.cpp-linux": {
+        "gpt-oss": {
+            "gpt-oss-20b": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q4_K_M.gguf",
+                        "size": 11.62
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q6_K.gguf",
+                        "size": 12.04
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q8_0.gguf",
+                        "size": 12.11
+                    }
+                },
+                "README": "readme/gpt-oss-20b.md"
+            }
+        },
+        "Qwen2.5": {
+            "Qwen2.5-0.5B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+                        "size": 0.49
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q6_k.gguf",
+                        "size": 0.65
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q8_0.gguf",
+                        "size": 0.68
+                    }
+                },
+                "README": "readme/Qwen2.5-0.5B-Instruct.md"
+            },
+            "Qwen2.5-1.5B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                        "size": 1.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q6_k.gguf",
+                        "size": 1.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q8_0.gguf",
+                        "size": 1.89
+                    }
+                },
+                "README": "readme/Qwen2.5-1.5B-Instruct.md"
+            },
+            "Qwen2.5-3B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q4_k_m.gguf",
+                        "size": 2.1
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q6_k.gguf",
+                        "size": 2.79
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q8_0.gguf",
+                        "size": 3.62
+                    }
+                },
+                "README": "readme/Qwen2.5-3B-Instruct.md"
+            },
+            "Qwen2.5-7B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q4_k_m.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q6_k.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/Qwen2.5-7B-Instruct.md"
+            },
+            "Qwen2.5-14B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q4_k_m.gguf",
+                        "size": 8.99
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q6_k.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/Qwen2.5-14B-Instruct.md"
+            },
+            "Qwen2.5-32B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q4_k_m.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q6_k.gguf",
+                        "size": 26.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen2.5-32B-Instruct.md"
+            }
+        },
+        "Qwen2.5-VL": {
+            "Qwen2.5-VL-3B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+                        "size": 1.93
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q6_K.gguf",
+                        "size": 2.54
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
+                        "size": 3.29
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-3B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.67
+                }
+            },
+            "Qwen2.5-VL-7B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q6_K.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-7B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.7
+                }
+            },
+            "Qwen2.5-VL-32B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q6_K.gguf",
+                        "size": 26.89
+                    },
+                    "Q5_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q5_K_M.gguf",
+                        "size": 23.26
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-32B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.75
+                }
+            }
+        },
+        "Qwen3": {
+            "Qwen3-0.6B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q4_K_M.gguf",
+                        "size": 0.4
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q6_K.gguf",
+                        "size": 0.5
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q8_0.gguf",
+                        "size": 0.64
+                    }
+                },
+                "README": "readme/Qwen3-0.6B.md"
+            },
+            "Qwen3-4B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q4_K_M.gguf",
+                        "size": 2.5
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q6_K.gguf",
+                        "size": 3.31
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q8_0.gguf",
+                        "size": 4.28
+                    }
+                },
+                "README": "readme/Qwen3-4B.md"
+            },
+            "Qwen3-8B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/Qwen3-8B.md"
+            },
+            "Qwen3-14B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q4_K_M.gguf",
+                        "size": 9
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q6_K.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/Qwen3-14B.md"
+            },
+            "Qwen3-32B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q4_K_M.gguf",
+                        "size": 19.76
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q6_K.gguf",
+                        "size": 26.88
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen3-32B.md"
+            }
+        },
+        "Qwen3-VL": {
+            "Qwen3-VL-2B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q4_K_M.gguf",
+                        "size": 1.11
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q6_K.gguf",
+                        "size": 1.42
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q8_0.gguf",
+                        "size": 1.83
+                    }
+                },
+                "README": "readme/Qwen3-VL-2B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.63
+                }
+            },
+            "Qwen3-VL-4B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+                        "size": 2.5
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q6_K.gguf",
+                        "size": 3.31
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q8_0.gguf",
+                        "size": 4.28
+                    }
+                },
+                "README": "readme/Qwen3-VL-4B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.66
+                }
+            },
+            "Qwen3-VL-8B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/Qwen3-VL-8B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.31
+                }
+            },
+            "Qwen3-VL-32B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q4_K_M.gguf",
+                        "size": 19.76
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q6_K.gguf",
+                        "size": 26.88
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen3-VL-32B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.38
+                }
+            }
+        },
+        "Qwen3.5": {
+            "Qwen3.5-0.8B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q4_K_M.gguf",
+                        "size": 0.53
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q6_K.gguf",
+                        "size": 0.64
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q8_0.gguf",
+                        "size": 0.81
+                    }
+                },
+                "README": "readme/Qwen3.5-0.8B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.4
+                }
+            },
+            "Qwen3.5-2B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q4_K_M.gguf",
+                        "size": 1.28
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q6_K.gguf",
+                        "size": 1.57
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q8_0.gguf",
+                        "size": 2.01
+                    }
+                },
+                "README": "readme/Qwen3.5-2B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.33
+                }
+            },
+            "Qwen3.5-4B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q4_K_M.gguf",
+                        "size": 2.74
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q6_K.gguf",
+                        "size": 3.53
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q8_0.gguf",
+                        "size": 4.48
+                    }
+                },
+                "README": "readme/Qwen3.5-4B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.33
+                }
+            },
+            "Qwen3.5-9B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q4_K_M.gguf",
+                        "size": 5.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q6_K.gguf",
+                        "size": 7.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q8_0.gguf",
+                        "size": 9.53
+                    }
+                },
+                "README": "readme/Qwen3.5-9B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.82
+                }
+            },
+            "Qwen3.5-27B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q4_K_M.gguf",
+                        "size": 16.74
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q6_K.gguf",
+                        "size": 22.45
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q8_0.gguf",
+                        "size": 28.6
+                    }
+                },
+                "README": "readme/Qwen3.5-27B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.84
+                }
+            },
+            "Qwen3.5-122B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00003-of-00003.gguf"
+                        ],
+                        "size": 75.6
+                    },
+                    "Q6_K": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00003-of-00003.gguf"
+                        ],
+                        "size": 101.6
+                    },
+                    "Q8_0": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00003-of-00003.gguf"
+                        ],
+                        "size": 129.4
+                    }
+                },
+                "README": "readme/Qwen3.5-122B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.84
+                }
+            }
+        },
+        "Deepseek-R1": {
+            "DeepSeek-R1-Distill-Qwen-1.5B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+                        "size": 1.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
+                        "size": 1.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf",
+                        "size": 1.89
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-1.5B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-7B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q6_K.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-7B.md"
+            },
+            "DeepSeek-R1-0528-Qwen3-8B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/DeepSeek-R1-0528-Qwen3-8B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-14B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+                        "size": 8.99
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-14B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-32B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q6_K.gguf",
+                        "size": 26.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-32B.md"
+            }
+        },
+        "GLM-4": {
+            "GLM-4-9B-0414": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q4_K_M.gguf",
+                        "size": 6.17
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q6_K.gguf",
+                        "size": 8.27
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q8_0.gguf",
+                        "size": 10
+                    }
+                },
+                "README": "readme/GLM-4-9B-0414.md"
+            }
+        },
+        "Gemma4": {
+            "gemma-4-E4B-it": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q4_K_M.gguf",
+                        "size": 4.64
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q6_K.gguf",
+                        "size": 6.59
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q8_0.gguf",
+                        "size": 7.63
+                    }
+                },
+                "README": "readme/gemma-4-E4B-it.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.92
+                }
+            },
+            "gemma-4-26B-A4B-it": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q4_K_M.gguf",
+                        "size": 15.64
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q6_K.gguf",
+                        "size": 20.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q8_0.gguf",
+                        "size": 27.08
+                    }
+                },
+                "README": "readme/gemma-4-26B-A4B-it.md"
+            }
+        },
+        "Qwen3.6": {
+            "Qwen3.6-35B-A3B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+                        "size": 20.61
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+                        "size": 27.06
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-Q8_0.gguf",
+                        "size": 34.37
+                    }
+                },
+                "README": "readme/Qwen3.6-35B-A3B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.84
+                }
+            }
+        }
+    },
+    "llama.cpp-linux-cuda": {
+        "gpt-oss": {
+            "gpt-oss-20b": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q4_K_M.gguf",
+                        "size": 11.62
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q6_K.gguf",
+                        "size": 12.04
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q8_0.gguf",
+                        "size": 12.11
+                    }
+                },
+                "README": "readme/gpt-oss-20b.md"
+            }
+        },
+        "Qwen2.5": {
+            "Qwen2.5-0.5B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+                        "size": 0.49
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q6_k.gguf",
+                        "size": 0.65
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q8_0.gguf",
+                        "size": 0.68
+                    }
+                },
+                "README": "readme/Qwen2.5-0.5B-Instruct.md"
+            },
+            "Qwen2.5-1.5B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                        "size": 1.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q6_k.gguf",
+                        "size": 1.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q8_0.gguf",
+                        "size": 1.89
+                    }
+                },
+                "README": "readme/Qwen2.5-1.5B-Instruct.md"
+            },
+            "Qwen2.5-3B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q4_k_m.gguf",
+                        "size": 2.1
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q6_k.gguf",
+                        "size": 2.79
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q8_0.gguf",
+                        "size": 3.62
+                    }
+                },
+                "README": "readme/Qwen2.5-3B-Instruct.md"
+            },
+            "Qwen2.5-7B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q4_k_m.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q6_k.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/Qwen2.5-7B-Instruct.md"
+            },
+            "Qwen2.5-14B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q4_k_m.gguf",
+                        "size": 8.99
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q6_k.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/Qwen2.5-14B-Instruct.md"
+            },
+            "Qwen2.5-32B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q4_k_m.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q6_k.gguf",
+                        "size": 26.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen2.5-32B-Instruct.md"
+            }
+        },
+        "Qwen2.5-VL": {
+            "Qwen2.5-VL-3B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+                        "size": 1.93
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q6_K.gguf",
+                        "size": 2.54
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
+                        "size": 3.29
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-3B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.67
+                }
+            },
+            "Qwen2.5-VL-7B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q6_K.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-7B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.7
+                }
+            },
+            "Qwen2.5-VL-32B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q6_K.gguf",
+                        "size": 26.89
+                    },
+                    "Q5_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q5_K_M.gguf",
+                        "size": 23.26
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-32B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.75
+                }
+            }
+        },
+        "Qwen3": {
+            "Qwen3-0.6B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q4_K_M.gguf",
+                        "size": 0.4
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q6_K.gguf",
+                        "size": 0.5
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q8_0.gguf",
+                        "size": 0.64
+                    }
+                },
+                "README": "readme/Qwen3-0.6B.md"
+            },
+            "Qwen3-4B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q4_K_M.gguf",
+                        "size": 2.5
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q6_K.gguf",
+                        "size": 3.31
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q8_0.gguf",
+                        "size": 4.28
+                    }
+                },
+                "README": "readme/Qwen3-4B.md"
+            },
+            "Qwen3-8B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/Qwen3-8B.md"
+            },
+            "Qwen3-14B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q4_K_M.gguf",
+                        "size": 9
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q6_K.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/Qwen3-14B.md"
+            },
+            "Qwen3-32B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q4_K_M.gguf",
+                        "size": 19.76
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q6_K.gguf",
+                        "size": 26.88
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen3-32B.md"
+            }
+        },
+        "Qwen3-VL": {
+            "Qwen3-VL-2B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q4_K_M.gguf",
+                        "size": 1.11
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q6_K.gguf",
+                        "size": 1.42
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q8_0.gguf",
+                        "size": 1.83
+                    }
+                },
+                "README": "readme/Qwen3-VL-2B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.63
+                }
+            },
+            "Qwen3-VL-4B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+                        "size": 2.5
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q6_K.gguf",
+                        "size": 3.31
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q8_0.gguf",
+                        "size": 4.28
+                    }
+                },
+                "README": "readme/Qwen3-VL-4B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.66
+                }
+            },
+            "Qwen3-VL-8B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/Qwen3-VL-8B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.31
+                }
+            },
+            "Qwen3-VL-32B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q4_K_M.gguf",
+                        "size": 19.76
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q6_K.gguf",
+                        "size": 26.88
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen3-VL-32B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.38
+                }
+            }
+        },
+        "Qwen3.5": {
+            "Qwen3.5-0.8B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q4_K_M.gguf",
+                        "size": 0.53
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q6_K.gguf",
+                        "size": 0.64
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q8_0.gguf",
+                        "size": 0.81
+                    }
+                },
+                "README": "readme/Qwen3.5-0.8B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.4
+                }
+            },
+            "Qwen3.5-2B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q4_K_M.gguf",
+                        "size": 1.28
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q6_K.gguf",
+                        "size": 1.57
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q8_0.gguf",
+                        "size": 2.01
+                    }
+                },
+                "README": "readme/Qwen3.5-2B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.33
+                }
+            },
+            "Qwen3.5-4B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q4_K_M.gguf",
+                        "size": 2.74
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q6_K.gguf",
+                        "size": 3.53
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q8_0.gguf",
+                        "size": 4.48
+                    }
+                },
+                "README": "readme/Qwen3.5-4B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.33
+                }
+            },
+            "Qwen3.5-9B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q4_K_M.gguf",
+                        "size": 5.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q6_K.gguf",
+                        "size": 7.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q8_0.gguf",
+                        "size": 9.53
+                    }
+                },
+                "README": "readme/Qwen3.5-9B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.82
+                }
+            },
+            "Qwen3.5-27B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q4_K_M.gguf",
+                        "size": 16.74
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q6_K.gguf",
+                        "size": 22.45
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q8_0.gguf",
+                        "size": 28.6
+                    }
+                },
+                "README": "readme/Qwen3.5-27B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.84
+                }
+            },
+            "Qwen3.5-122B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00003-of-00003.gguf"
+                        ],
+                        "size": 75.6
+                    },
+                    "Q6_K": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00003-of-00003.gguf"
+                        ],
+                        "size": 101.6
+                    },
+                    "Q8_0": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00003-of-00003.gguf"
+                        ],
+                        "size": 129.4
+                    }
+                },
+                "README": "readme/Qwen3.5-122B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.84
+                }
+            }
+        },
+        "Deepseek-R1": {
+            "DeepSeek-R1-Distill-Qwen-1.5B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+                        "size": 1.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
+                        "size": 1.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf",
+                        "size": 1.89
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-1.5B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-7B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q6_K.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-7B.md"
+            },
+            "DeepSeek-R1-0528-Qwen3-8B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/DeepSeek-R1-0528-Qwen3-8B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-14B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+                        "size": 8.99
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-14B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-32B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q6_K.gguf",
+                        "size": 26.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-32B.md"
+            }
+        },
+        "GLM-4": {
+            "GLM-4-9B-0414": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q4_K_M.gguf",
+                        "size": 6.17
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q6_K.gguf",
+                        "size": 8.27
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q8_0.gguf",
+                        "size": 10
+                    }
+                },
+                "README": "readme/GLM-4-9B-0414.md"
+            }
+        },
+        "Gemma4": {
+            "gemma-4-E4B-it": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q4_K_M.gguf",
+                        "size": 4.64
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q6_K.gguf",
+                        "size": 6.59
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q8_0.gguf",
+                        "size": 7.63
+                    }
+                },
+                "README": "readme/gemma-4-E4B-it.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.92
+                }
+            },
+            "gemma-4-26B-A4B-it": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q4_K_M.gguf",
+                        "size": 15.64
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q6_K.gguf",
+                        "size": 20.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q8_0.gguf",
+                        "size": 27.08
+                    }
+                },
+                "README": "readme/gemma-4-26B-A4B-it.md"
+            }
+        },
+        "Qwen3.6": {
+            "Qwen3.6-35B-A3B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+                        "size": 20.61
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+                        "size": 27.06
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-Q8_0.gguf",
+                        "size": 34.37
+                    }
+                },
+                "README": "readme/Qwen3.6-35B-A3B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.84
+                }
+            }
+        }
+    },
+    "llama.cpp-linux-vulkan": {
+        "gpt-oss": {
+            "gpt-oss-20b": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q4_K_M.gguf",
+                        "size": 11.62
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q6_K.gguf",
+                        "size": 12.04
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q8_0.gguf",
+                        "size": 12.11
+                    }
+                },
+                "README": "readme/gpt-oss-20b.md"
+            }
+        },
+        "Qwen2.5": {
+            "Qwen2.5-0.5B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+                        "size": 0.49
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q6_k.gguf",
+                        "size": 0.65
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q8_0.gguf",
+                        "size": 0.68
+                    }
+                },
+                "README": "readme/Qwen2.5-0.5B-Instruct.md"
+            },
+            "Qwen2.5-1.5B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                        "size": 1.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q6_k.gguf",
+                        "size": 1.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q8_0.gguf",
+                        "size": 1.89
+                    }
+                },
+                "README": "readme/Qwen2.5-1.5B-Instruct.md"
+            },
+            "Qwen2.5-3B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q4_k_m.gguf",
+                        "size": 2.1
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q6_k.gguf",
+                        "size": 2.79
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q8_0.gguf",
+                        "size": 3.62
+                    }
+                },
+                "README": "readme/Qwen2.5-3B-Instruct.md"
+            },
+            "Qwen2.5-7B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q4_k_m.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q6_k.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/Qwen2.5-7B-Instruct.md"
+            },
+            "Qwen2.5-14B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q4_k_m.gguf",
+                        "size": 8.99
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q6_k.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/Qwen2.5-14B-Instruct.md"
+            },
+            "Qwen2.5-32B-Instruct": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q4_k_m.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q6_k.gguf",
+                        "size": 26.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen2.5-32B-Instruct.md"
+            }
+        },
+        "Qwen2.5-VL": {
+            "Qwen2.5-VL-3B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+                        "size": 1.93
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q6_K.gguf",
+                        "size": 2.54
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
+                        "size": 3.29
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-3B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.67
+                }
+            },
+            "Qwen2.5-VL-7B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q6_K.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-7B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.7
+                }
+            },
+            "Qwen2.5-VL-32B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q6_K.gguf",
+                        "size": 26.89
+                    },
+                    "Q5_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q5_K_M.gguf",
+                        "size": 23.26
+                    }
+                },
+                "README": "readme/Qwen2.5-VL-32B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.75
+                }
+            }
+        },
+        "Qwen3": {
+            "Qwen3-0.6B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q4_K_M.gguf",
+                        "size": 0.4
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q6_K.gguf",
+                        "size": 0.5
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q8_0.gguf",
+                        "size": 0.64
+                    }
+                },
+                "README": "readme/Qwen3-0.6B.md"
+            },
+            "Qwen3-4B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q4_K_M.gguf",
+                        "size": 2.5
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q6_K.gguf",
+                        "size": 3.31
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q8_0.gguf",
+                        "size": 4.28
+                    }
+                },
+                "README": "readme/Qwen3-4B.md"
+            },
+            "Qwen3-8B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/Qwen3-8B.md"
+            },
+            "Qwen3-14B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q4_K_M.gguf",
+                        "size": 9
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q6_K.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/Qwen3-14B.md"
+            },
+            "Qwen3-32B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q4_K_M.gguf",
+                        "size": 19.76
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q6_K.gguf",
+                        "size": 26.88
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen3-32B.md"
+            }
+        },
+        "Qwen3-VL": {
+            "Qwen3-VL-2B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q4_K_M.gguf",
+                        "size": 1.11
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q6_K.gguf",
+                        "size": 1.42
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q8_0.gguf",
+                        "size": 1.83
+                    }
+                },
+                "README": "readme/Qwen3-VL-2B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.63
+                }
+            },
+            "Qwen3-VL-4B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+                        "size": 2.5
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q6_K.gguf",
+                        "size": 3.31
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q8_0.gguf",
+                        "size": 4.28
+                    }
+                },
+                "README": "readme/Qwen3-VL-4B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.66
+                }
+            },
+            "Qwen3-VL-8B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/Qwen3-VL-8B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.31
+                }
+            },
+            "Qwen3-VL-32B-Instruct": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q4_K_M.gguf",
+                        "size": 19.76
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q6_K.gguf",
+                        "size": 26.88
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/Qwen3-VL-32B-Instruct.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 2.38
+                }
+            }
+        },
+        "Qwen3.5": {
+            "Qwen3.5-0.8B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q4_K_M.gguf",
+                        "size": 0.53
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q6_K.gguf",
+                        "size": 0.64
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q8_0.gguf",
+                        "size": 0.81
+                    }
+                },
+                "README": "readme/Qwen3.5-0.8B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.4
+                }
+            },
+            "Qwen3.5-2B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q4_K_M.gguf",
+                        "size": 1.28
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q6_K.gguf",
+                        "size": 1.57
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q8_0.gguf",
+                        "size": 2.01
+                    }
+                },
+                "README": "readme/Qwen3.5-2B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.33
+                }
+            },
+            "Qwen3.5-4B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q4_K_M.gguf",
+                        "size": 2.74
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q6_K.gguf",
+                        "size": 3.53
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q8_0.gguf",
+                        "size": 4.48
+                    }
+                },
+                "README": "readme/Qwen3.5-4B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.33
+                }
+            },
+            "Qwen3.5-9B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q4_K_M.gguf",
+                        "size": 5.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q6_K.gguf",
+                        "size": 7.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q8_0.gguf",
+                        "size": 9.53
+                    }
+                },
+                "README": "readme/Qwen3.5-9B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.82
+                }
+            },
+            "Qwen3.5-27B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q4_K_M.gguf",
+                        "size": 16.74
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q6_K.gguf",
+                        "size": 22.45
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q8_0.gguf",
+                        "size": 28.6
+                    }
+                },
+                "README": "readme/Qwen3.5-27B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.84
+                }
+            },
+            "Qwen3.5-122B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q4_K_M-00003-of-00003.gguf"
+                        ],
+                        "size": 75.6
+                    },
+                    "Q6_K": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q6_K-00003-of-00003.gguf"
+                        ],
+                        "size": 101.6
+                    },
+                    "Q8_0": {
+                        "download": [
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00001-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00002-of-00003.gguf",
+                            "https://modelscope.cn/models/unsloth/Qwen3.5-122B-GGUF/resolve/master/Qwen3.5-122B-Q8_0-00003-of-00003.gguf"
+                        ],
+                        "size": 129.4
+                    }
+                },
+                "README": "readme/Qwen3.5-122B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 1.84
+                }
+            }
+        },
+        "Deepseek-R1": {
+            "DeepSeek-R1-Distill-Qwen-1.5B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+                        "size": 1.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
+                        "size": 1.46
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf",
+                        "size": 1.89
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-1.5B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-7B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+                        "size": 4.68
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q6_K.gguf",
+                        "size": 6.25
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q8_0.gguf",
+                        "size": 8.1
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-7B.md"
+            },
+            "DeepSeek-R1-0528-Qwen3-8B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf",
+                        "size": 5.03
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q6_K.gguf",
+                        "size": 6.73
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q8_0.gguf",
+                        "size": 8.71
+                    }
+                },
+                "README": "readme/DeepSeek-R1-0528-Qwen3-8B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-14B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+                        "size": 8.99
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
+                        "size": 12.12
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf",
+                        "size": 15.7
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-14B.md"
+            },
+            "DeepSeek-R1-Distill-Qwen-32B": {
+                "tag": [
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+                        "size": 19.85
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q6_K.gguf",
+                        "size": 26.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q8_0.gguf",
+                        "size": 34.82
+                    }
+                },
+                "README": "readme/DeepSeek-R1-Distill-Qwen-32B.md"
+            }
+        },
+        "GLM-4": {
+            "GLM-4-9B-0414": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q4_K_M.gguf",
+                        "size": 6.17
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q6_K.gguf",
+                        "size": 8.27
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q8_0.gguf",
+                        "size": 10
+                    }
+                },
+                "README": "readme/GLM-4-9B-0414.md"
+            }
+        },
+        "Gemma4": {
+            "gemma-4-E4B-it": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q4_K_M.gguf",
+                        "size": 4.64
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q6_K.gguf",
+                        "size": 6.59
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q8_0.gguf",
+                        "size": 7.63
+                    }
+                },
+                "README": "readme/gemma-4-E4B-it.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.92
+                }
+            },
+            "gemma-4-26B-A4B-it": {
+                "tag": [],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q4_K_M.gguf",
+                        "size": 15.64
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q6_K.gguf",
+                        "size": 20.89
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q8_0.gguf",
+                        "size": 27.08
+                    }
+                },
+                "README": "readme/gemma-4-26B-A4B-it.md"
+            }
+        },
+        "Qwen3.6": {
+            "Qwen3.6-35B-A3B": {
+                "tag": [
+                    "视觉模型",
+                    "深度思考"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+                        "size": 20.61
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+                        "size": 27.06
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/Qwen3.6-35B-A3B-Q8_0.gguf",
+                        "size": 34.37
+                    }
+                },
+                "README": "readme/Qwen3.6-35B-A3B.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.84
+                }
+            }
+        }
+    }
+}

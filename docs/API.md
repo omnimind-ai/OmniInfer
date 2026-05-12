@@ -155,11 +155,11 @@ Response fields:
 
 ### `GET /omni/supported-models?system=<windows|mac|linux>`
 
-Returns the backend-grouped supported model catalog for a target system.
+Returns the backend-grouped supported model catalog for a target system. The catalog is bundled with OmniInfer under `service_core/model_catalogs`; this endpoint does not fetch catalog JSON from a remote service at runtime.
 
 ### `GET /omni/supported-models/best?system=<windows|mac|linux>`
 
-Returns the same catalog after OmniInfer chooses the best backend for each quantization.
+Returns the same bundled catalog after OmniInfer chooses the best installed backend for each quantization.
 
 Example:
 

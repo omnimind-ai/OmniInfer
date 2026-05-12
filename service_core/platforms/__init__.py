@@ -2,7 +2,6 @@ from service_core.platforms.android import AndroidPlatform
 from service_core.platforms.base import HostPlatform
 from service_core.platforms.ios import IOSPlatform
 from service_core.platforms.common import (
-    SYSTEM_MODEL_LIST_URLS,
     current_system_name,
     discover_llama_cpp_model_artifacts,
     display_path_reference,
@@ -30,7 +29,6 @@ __all__ = [
     "IOSPlatform",
     "LinuxPlatform",
     "MacPlatform",
-    "SYSTEM_MODEL_LIST_URLS",
     "WindowsPlatform",
     "current_host_platform",
     "current_system_name",

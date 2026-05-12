@@ -30,6 +30,7 @@ $CliWorkRoot = Join-Path $BuildRoot "pyinstaller-work-cli"
 $CliSpecRoot = Join-Path $BuildRoot "pyinstaller-spec-cli"
 $CliDistRoot = Join-Path $BuildRoot "cli-dist"
 $LocalRuntimeRoot = Join-Path $RepoRoot ".local\runtime\windows"
+$ModelCatalogRoot = Join-Path $RepoRoot "service_core\model_catalogs"
 $UsageTemplate = Join-Path $RepoRoot "tmp\usage.md"
 
 function Stop-RunningPortableRelease {
@@ -310,7 +311,8 @@ $pyinstallerArgs = @(
     "--name", "omniinfer-cli",
     "--distpath", $CliDistRoot,
     "--workpath", $CliWorkRoot,
-    "--specpath", $CliSpecRoot
+    "--specpath", $CliSpecRoot,
+    "--add-data", "$ModelCatalogRoot;service_core\model_catalogs"
 )
 foreach ($exclude in $pyinstallerExcludes) {
     $pyinstallerArgs += @("--exclude-module", $exclude)

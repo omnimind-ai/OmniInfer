@@ -241,6 +241,7 @@ python3 -m PyInstaller \
   --distpath "${CLI_DIST}" \
   --workpath "${BUILD_ROOT}/pyinstaller-work-cli" \
   --specpath "${BUILD_ROOT}/pyinstaller-spec-cli" \
+  --add-data "${REPO_ROOT}/service_core/model_catalogs:service_core/model_catalogs" \
   "${CLI_ENTRY}"
 
 CLI_BIN="${CLI_DIST}/omniinfer-cli/omniinfer-cli"
