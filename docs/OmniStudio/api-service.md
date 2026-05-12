@@ -22,11 +22,18 @@ Key endpoints:
 | `/health` | GET | Health check and runtime state |
 | `/omni/state` | GET | Current backend, model, and config |
 | `/omni/backends` | GET | List backends (scope: installed/compatible/all) |
+| `/omni/backend/props` | GET | Active backend properties |
+| `/omni/supported-models` | GET | Bundled supported-model catalog |
+| `/omni/supported-models/best` | GET | Supported-model catalog with best installed backend choices |
 | `/omni/model/select` | POST | Load a model |
+| `/omni/backend/select` | POST | Select a backend |
 | `/omni/backend/stop` | POST | Stop current backend |
 | `/omni/cache/clear` | POST | Clear KV cache without reloading model |
+| `/omni/thinking` | GET | Read default thinking mode |
+| `/omni/thinking/select` | POST | Update default thinking mode |
 | `/v1/models` | GET | List currently loaded models |
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions |
+| `/v1/messages` | POST | Anthropic-compatible Messages API adapter |
 | `/omni/shutdown` | POST | Shut down the gateway |
 
 For the full API reference, see [API.md](https://github.com/omnimind-ai/OmniInfer/blob/main/docs/API.md).

@@ -1,6 +1,6 @@
-# OmniInfer API
+# OmniInfer Desktop API
 
-This document describes the public local HTTP API exposed by OmniInfer.
+This document describes the local HTTP API exposed by the desktop OmniInfer gateway.
 
 Base URL:
 
@@ -10,25 +10,57 @@ http://127.0.0.1:9000
 
 The port defaults to `9000` and can be changed via `config/omniinfer.json` or the CLI `--port` flag.
 
-All requests use JSON unless noted otherwise.
+All request and response bodies are JSON unless an endpoint explicitly uses Server-Sent Events (SSE). The gateway allows CORS for local browser clients:
 
-> **Windows note:** `omniinfer serve` auto-hides its console window by default. To run in the foreground with visible log output, use `python omniinfer.py serve --window-mode visible`.
+- `Access-Control-Allow-Origin: *`
+- `Access-Control-Allow-Methods: GET, POST, OPTIONS`
+- `Access-Control-Allow-Headers: Content-Type, Authorization`
 
-> **Multi-instance:** You can run multiple gateways on different ports, each serving a different model:
->
-> ```bash
-> # Terminal 1 – large model on default port 9000
-> omniinfer model load -m /path/to/large-model.gguf
->
-> # Terminal 2 – small model on port 9001
-> omniinfer --port 9001 model load -m /path/to/small-model.gguf
->
-> # Query each instance independently
-> curl http://127.0.0.1:9000/v1/chat/completions -d '{"messages":[...]}'
-> curl http://127.0.0.1:9001/v1/chat/completions -d '{"messages":[...]}'
-> ```
+`OPTIONS *` returns `204` for CORS preflight and also accepts `anthropic-version` and `x-api-key` in `Access-Control-Allow-Headers`.
 
-## 1. Health check
+Windows note: `omniinfer serve` hides its console window by default. To run in the foreground with visible log output, use:
+
+```powershell
+python omniinfer.py serve --window-mode visible
+```
+
+## Endpoint Summary
+
+| Method | Path | Purpose |
+|---|---|---|
+| `OPTIONS` | any path | CORS preflight |
+| `GET` | `/health` | Gateway health and basic runtime state |
+| `GET` | `/health?deep=true` | Health plus backend process health |
+| `GET` | `/omni/state` | Full OmniInfer runtime state |
+| `GET` | `/omni/backends?scope=installed\|compatible\|all` | Backend list |
+| `GET` | `/omni/thinking` | Default thinking setting |
+| `GET` | `/omni/backend/props` | Active backend `/props` payload |
+| `GET` | `/omni/models` | Deprecated, returns `410` |
+| `GET` | `/omni/supported-models?system=windows\|mac\|linux` | Bundled supported-model catalog |
+| `GET` | `/omni/supported-models/best?system=windows\|mac\|linux` | Best-backend model catalog |
+| `GET` | `/v1/models` | OpenAI-compatible loaded-model list |
+| `POST` | `/omni/backend/select` | Select a backend |
+| `POST` | `/omni/backend/stop` | Stop current backend runtime |
+| `POST` | `/omni/cache/clear` | Clear backend KV cache |
+| `POST` | `/omni/shutdown` | Stop the gateway |
+| `POST` | `/omni/thinking/select` | Update default thinking setting |
+| `POST` | `/omni/model/select` | Load a model |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions |
+| `POST` | `/v1/messages` | Anthropic-compatible Messages API adapter |
+
+Unknown paths return `404`:
+
+```json
+{
+  "error": {
+    "message": "not found: /path"
+  }
+}
+```
+
+Request bodies are limited to 100 MiB. Invalid JSON is treated as an empty object by the current gateway implementation.
+
+## Health
 
 ### `GET /health`
 
@@ -51,7 +83,10 @@ Example response:
     "mmproj": null,
     "ctx_size": null,
     "request_defaults": {},
-    "backend_ready": false
+    "backend_ready": false,
+    "runtime_mode": null,
+    "backend_port": null,
+    "launch_args": []
   },
   "thinking": {
     "default_enabled": false
@@ -59,37 +94,67 @@ Example response:
 }
 ```
 
-## 2. Runtime state
+### `GET /health?deep=true`
+
+Adds `backend_health`. For external backends, OmniInfer probes the backend process. For embedded backends, readiness is based on the loaded runtime.
+
+Possible shapes include:
+
+```json
+{
+  "status": "ok",
+  "omni": {},
+  "thinking": {
+    "default_enabled": false
+  },
+  "backend_health": {
+    "status": "no_backend"
+  }
+}
+```
+
+## Runtime State
 
 ### `GET /omni/state`
 
-Returns the current runtime state.
+Returns the current runtime state plus all platform-declared backends.
+
+Example:
+
+```bash
+curl -s http://127.0.0.1:9000/omni/state
+```
 
 Example response:
 
 ```json
 {
-  "backend": "llama.cpp-cpu",
-  "model": "models/example.gguf",
-  "mmproj": "models/mmproj-F32.gguf",
+  "backend": "llama.cpp-cuda",
+  "model": "models/Qwen3.5-2B-Q4_K_M.gguf",
+  "mmproj": null,
   "ctx_size": 4096,
   "request_defaults": {
     "temperature": 0.2,
     "max_tokens": 128,
-    "stream": true,
-    "think": false
+    "stream": true
   },
   "backend_ready": true,
+  "runtime_mode": "external_server",
+  "backend_port": 12894,
+  "launch_args": ["-ngl", "999"],
   "available_backends": [
     {
-      "id": "llama.cpp-cpu",
-      "label": "llama.cpp cpu",
+      "id": "llama.cpp-cuda",
+      "label": "llama.cpp CUDA",
       "family": "llama.cpp",
       "selected": true,
       "binary_exists": true,
-      "models_dir": "models",
-      "capabilities": ["chat", "vision", "stream", "cpu"],
-      "description": "..."
+      "models_dir": "E:\\Coding\\repository\\OmniInfer-2\\.local\\models",
+      "capabilities": ["chat", "vision", "stream", "gpu", "cuda"],
+      "description": "llama.cpp CUDA backend managed by OmniInfer",
+      "loaded_model": "models/Qwen3.5-2B-Q4_K_M.gguf",
+      "compatibility": "installed",
+      "priority": 0
     }
   ],
   "thinking": {
@@ -98,27 +163,24 @@ Example response:
 }
 ```
 
-### `GET /omni/backend/props`
+## Backends
 
-Returns the active external backend's `/props` payload when the selected backend exposes it. llama.cpp-compatible backends include context information such as `n_ctx` in this payload. If no external backend is loaded or the backend does not expose props, OmniInfer returns `{}`.
-
-## 3. List backends
-
-### `GET /omni/backends[?scope=installed|compatible|all]`
+### `GET /omni/backends?scope=installed|compatible|all`
 
 Returns backends filtered by scope.
 
-| Scope | Description |
-|-------|-------------|
-| `installed` (default) | Backends with runtime binaries present, ready to use |
-| `compatible` | Backends whose required hardware is detected on this machine |
-| `all` | All platform-declared backends |
+| Scope | Meaning |
+|---|---|
+| `installed` | Runtime binary or embedded runtime is present |
+| `compatible` | Installed or compatible with detected hardware |
+| `all` | Every backend declared for the current platform |
+
+The default scope is `installed`.
 
 Example:
 
 ```bash
-curl -s http://127.0.0.1:9000/omni/backends
-curl -s "http://127.0.0.1:9000/omni/backends?scope=all"
+curl -s "http://127.0.0.1:9000/omni/backends?scope=compatible"
 ```
 
 Example response:
@@ -133,9 +195,9 @@ Example response:
       "family": "llama.cpp",
       "selected": true,
       "binary_exists": true,
-      "models_dir": "models",
+      "models_dir": "E:\\Coding\\repository\\OmniInfer-2\\.local\\models",
       "capabilities": ["chat", "vision", "stream", "gpu", "cuda"],
-      "description": "...",
+      "description": "llama.cpp CUDA backend managed by OmniInfer",
       "loaded_model": null,
       "compatibility": "installed",
       "priority": 0
@@ -145,21 +207,109 @@ Example response:
 }
 ```
 
-Response fields:
+Invalid `scope` returns `400`.
 
-- `compatibility` — backend tier: `"installed"`, `"compatible"`, or `"unavailable"`
-- `priority` — ranking (0 = GPU/specialized best, 1 = CPU fallback)
-- `recommended` — top-level field, ID of the best installed backend (or `null` if none installed)
+### `POST /omni/backend/select`
 
-## 4. Supported models
+Selects a backend without loading a model. If another runtime is currently running, it is stopped.
 
-### `GET /omni/supported-models?system=<windows|mac|linux>`
+Request body:
 
-Returns the backend-grouped supported model catalog for a target system. The catalog is bundled with OmniInfer under `service_core/model_catalogs`; this endpoint does not fetch catalog JSON from a remote service at runtime.
+```json
+{
+  "backend": "llama.cpp-cuda"
+}
+```
 
-### `GET /omni/supported-models/best?system=<windows|mac|linux>`
+Example response:
 
-Returns the same bundled catalog after OmniInfer chooses the best installed backend for each quantization.
+```json
+{
+  "ok": true,
+  "selected_backend": "llama.cpp-cuda",
+  "binary_exists": true,
+  "models_dir": "E:\\Coding\\repository\\OmniInfer-2\\.local\\models"
+}
+```
+
+Status codes:
+
+- `200` on success
+- `400` if `backend` is missing or unsupported
+
+### `POST /omni/backend/stop`
+
+Stops the currently loaded backend runtime process. The selected backend is preserved.
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "stopped": true,
+  "selected_backend": "llama.cpp-cuda"
+}
+```
+
+### `GET /omni/backend/props`
+
+Returns the active external backend's `/props` payload when available. llama.cpp-compatible backends usually include context information such as `n_ctx`.
+
+If no external backend is loaded, or the backend does not expose `/props`, OmniInfer returns `{}`.
+
+## Model Catalog
+
+### `GET /omni/supported-models?system=windows|mac|linux`
+
+Returns the backend-grouped supported model catalog for a target system.
+
+The catalog is bundled with OmniInfer under `service_core/model_catalogs`; this endpoint does not fetch catalog JSON from a remote service at runtime.
+
+Example:
+
+```bash
+curl -s "http://127.0.0.1:9000/omni/supported-models?system=windows"
+```
+
+Response shape:
+
+```json
+{
+  "llama.cpp-cpu": {
+    "Qwen3.5": {
+      "Qwen3.5-2B": {
+        "tag": ["..."],
+        "quantization": {
+          "Q4_K_M": {
+            "download": "https://modelscope.cn/...",
+            "size": 1.28,
+            "required_memory_gib": 1.28,
+            "suitable": true
+          }
+        },
+        "README": "readme/Qwen3.5-2B.md"
+      }
+    }
+  }
+}
+```
+
+Status codes:
+
+- `200` on success
+- `400` if `system` is missing or not one of `windows`, `mac`, `linux`
+
+### `GET /omni/supported-models/best?system=windows|mac|linux`
+
+Returns a merged catalog where each quantization chooses the best installed backend for the current machine.
+
+The response is grouped by model family and model name. Each quantization includes:
+
+- `required_memory_gib`
+- `suitable`
+- `backend`
+
+If no suitable installed backend exists for a quantization, `backend` is an empty string.
 
 Example:
 
@@ -167,17 +317,11 @@ Example:
 curl -s "http://127.0.0.1:9000/omni/supported-models/best?system=windows"
 ```
 
-The response is a JSON object grouped by model family and model name. Each quantization entry includes:
-
-- `required_memory_gib`
-- `suitable`
-- `backend`
-
-## 5. Load a model
+## Model Loading
 
 ### `POST /omni/model/select`
 
-Loads a model and optionally an `mmproj` file.
+Loads a model and optionally an `mmproj` file. This is the management endpoint that starts or restarts the selected backend runtime.
 
 Request body:
 
@@ -186,56 +330,89 @@ Request body:
   "model": "<relative-or-absolute-model-path>",
   "mmproj": "<optional-relative-or-absolute-mmproj-path>",
   "backend": "<optional-backend-id>",
+  "ctx_size": 4096,
   "launch_args": ["-ngl", "999"],
   "request_defaults": {
     "temperature": 0.2,
     "max_tokens": 128,
     "stream": true
-  },
-  "ctx_size": 4096
+  }
 }
 ```
 
 Notes:
 
-- `backend` is optional.
-- `ctx_size` is optional and maps to the backend context length.
-- `launch_args` is optional and is intended for backend-native launch arguments managed by advanced CLI config files.
-- `request_defaults` is optional and stores default inference fields for later requests after the model is loaded.
-
-Example:
-
-```bash
-curl -X POST http://127.0.0.1:9000/omni/model/select \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "models/Qwen3.5-0.8B-Q4_K_M.gguf",
-    "launch_args": ["-ngl", "999"],
-    "ctx_size": 4096
-  }'
-```
+- `model` is required.
+- `backend` is optional. If omitted, OmniInfer uses the selected backend or auto-selection logic.
+- `ctx_size` is optional and may also be sent as `ctx-size`.
+- `launch_args` is optional and intended for backend-native launch arguments.
+- `request_defaults` is merged into later inference requests after this model is loaded.
+- Relative model paths resolve under the selected backend's `models_dir`.
 
 Example response:
 
 ```json
 {
   "ok": true,
-  "selected_backend": "llama.cpp-cpu",
-  "selected_model": "models/Qwen3.5-0.8B-Q4_K_M.gguf",
-  "selected_mmproj": "models/mmproj-F32.gguf",
+  "selected_backend": "llama.cpp-cuda",
+  "selected_model": "models/Qwen3.5-2B-Q4_K_M.gguf",
+  "selected_mmproj": null,
   "selected_ctx_size": 4096
 }
 ```
 
-## 6. Thinking mode
+Status codes:
+
+- `200` on success
+- `400` for invalid input or missing files
+- `409` if the backend could not be started or became unavailable
+
+### Streaming model load
+
+If `Accept` contains `text/event-stream`, `/omni/model/select` returns SSE progress events.
+
+Example:
+
+```bash
+curl -N -H "Accept: text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"models/Qwen3.5-2B-Q4_K_M.gguf"}' \
+  http://127.0.0.1:9000/omni/model/select
+```
+
+SSE events:
+
+```text
+data: {"type":"status","message":"Starting backend..."}
+data: {"type":"log","message":"..."}
+data: {"type":"done","elapsed_s":4.2,"ok":true,"selected_backend":"llama.cpp-cuda","selected_model":"models/Qwen3.5-2B-Q4_K_M.gguf","selected_mmproj":null,"selected_ctx_size":4096}
+data: [DONE]
+```
+
+Errors are sent as SSE events:
+
+```text
+data: {"type":"error","message":"backend did not become ready in time"}
+data: [DONE]
+```
+
+## Thinking
 
 ### `GET /omni/thinking`
 
 Returns the default thinking mode.
 
+Example response:
+
+```json
+{
+  "default_enabled": false
+}
+```
+
 ### `POST /omni/thinking/select`
 
-Updates the default thinking mode.
+Updates the default thinking mode. The request accepts either `enabled` or `think`.
 
 Request body:
 
@@ -254,27 +431,16 @@ Example response:
 }
 ```
 
-## 7. Stop the current backend
+Status codes:
 
-### `POST /omni/backend/stop`
+- `200` on success
+- `400` if the field is missing or cannot be parsed as a boolean
 
-Stops the currently loaded runtime process.
-
-Example response:
-
-```json
-{
-  "ok": true,
-  "stopped": true,
-  "selected_backend": "llama.cpp-cpu"
-}
-```
-
-## 8. Clear KV cache
+## Cache
 
 ### `POST /omni/cache/clear`
 
-Erases the backend's KV cache without reloading the model. Useful for freeing VRAM from accumulated conversation context or resetting the cache state.
+Erases the backend's KV cache without reloading the model. The current implementation targets llama.cpp-compatible external servers by calling slot erase on slot 0.
 
 Example:
 
@@ -291,40 +457,39 @@ Example response:
 }
 ```
 
-Returns `409` if no external backend is running.
+Status codes:
 
-## 9. List models
+- `200` on success
+- `409` if no external backend is running or the backend rejects cache clearing
+
+Multimodal llama.cpp loads may reject KV cache clearing; reload the model instead.
+
+## OpenAI-Compatible API
 
 ### `GET /v1/models`
 
-Returns the currently loaded model in OpenAI-compatible list format. If no model is loaded, the `data` array is empty.
+Returns the currently loaded model in OpenAI-compatible list format. If no model is loaded or the backend is not ready, `data` is empty.
 
-Example:
-
-```bash
-curl -s http://127.0.0.1:9000/v1/models
-```
-
-Example response (model loaded):
+Example response when a model is loaded:
 
 ```json
 {
   "object": "list",
   "data": [
     {
-      "id": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "id": "models/Qwen3.5-2B-Q4_K_M.gguf",
       "object": "model",
       "created": 0,
       "owned_by": "omniinfer",
       "permission": [],
-      "root": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "root": "models/Qwen3.5-2B-Q4_K_M.gguf",
       "parent": null
     }
   ]
 }
 ```
 
-Example response (no model loaded):
+Example response when no model is loaded:
 
 ```json
 {
@@ -333,58 +498,82 @@ Example response (no model loaded):
 }
 ```
 
-## 10. Chat completions
-
 ### `POST /v1/chat/completions`
 
-OpenAI-compatible chat endpoint.
+OpenAI-compatible chat completions endpoint.
+
+Important behavior:
+
+- This endpoint does not load a model. Load a model first with `/omni/model/select`.
+- `model`, `mmproj`, `backend`, `ctx_size`, and `launch_args` in this request are accepted for compatibility but are not used to start or switch runtimes.
+- `request_defaults` can be supplied and is merged with the loaded runtime defaults for the current request.
+- If no runtime is loaded, the endpoint returns `400` or `409`.
 
 Request body:
 
 ```json
 {
-  "model": "<optional-model-path>",
-  "mmproj": "<optional-mmproj-path>",
-  "backend": "<optional-backend-id>",
-  "launch_args": ["-ngl", "999"],
-  "request_defaults": {
-    "temperature": 0.2
-  },
-  "ctx_size": 4096,
-  "think": false,
-  "reasoning_effort": "none",
-  "reasoning": {
-    "effort": "none"
-  },
   "messages": [
     {
       "role": "user",
       "content": "Hello"
     }
   ],
+  "model": "optional-display-model",
   "temperature": 0.2,
   "max_tokens": 128,
-  "stream": false
+  "stream": false,
+  "think": false,
+  "reasoning_effort": "none",
+  "reasoning": {
+    "effort": "none"
+  },
+  "request_defaults": {
+    "top_p": 0.9
+  }
 }
 ```
 
-Notes:
+Supported OmniInfer thinking hints:
 
-- If a model is already loaded, `model` is optional.
-- `ctx_size` is optional.
-- `launch_args` and `request_defaults` are optional OmniInfer extensions for backend-specific config-driven flows.
-- `reasoning_effort` and `reasoning.effort` are accepted as thinking hints. OmniInfer maps them to the local thinking on/off switch only; it does not implement effort-specific reasoning budgets.
-- `ik_llama.cpp` thinking templates require Jinja mode, so OmniInfer's built-in ik backends start `llama-server` with `--jinja` by default. Some ik builds also support `--reasoning-format deepseek`, but OmniInfer does not pass it by default for cross-build compatibility.
-- If `stream=true`, the response uses Server-Sent Events (SSE).
+- `think: true|false`
+- `reasoning_effort`: values such as `none`, `off`, `disabled`, `false`, or `0` disable thinking
+- `reasoning.effort`: same semantics as `reasoning_effort`
 
-### Non-stream response shape
+OmniInfer maps these hints to the local thinking on/off switch. It does not implement effort-specific reasoning budgets.
+
+Multimodal content follows the OpenAI content-list shape:
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Describe this image."
+        },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,..."
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Non-stream response:
 
 ```json
 {
   "id": "chatcmpl-...",
   "object": "chat.completion",
   "created": 0,
-  "model": "Qwen3.5-0.8B-Q4_K_M.gguf",
+  "model": "models/Qwen3.5-2B-Q4_K_M.gguf",
   "choices": [
     {
       "index": 0,
@@ -404,21 +593,113 @@ Notes:
 }
 ```
 
-### Stream response shape
+Streaming response:
 
-Each SSE frame starts with `data:`.
-
-Example:
+If `stream` is `true`, the endpoint returns SSE. OmniInfer normalizes `<think>...</think>` output into `delta.reasoning_content` and keeps usage/timing payloads as a final usage event where possible.
 
 ```text
 data: {"choices":[{"delta":{"reasoning_content":"Thinking...","content":null}}]}
 data: {"choices":[{"delta":{"content":"Hel"}}]}
 data: {"choices":[{"delta":{"content":"lo"}}]}
-data: {"usage":{"prompt_tokens":13,"completion_tokens":12,"total_tokens":25}}
+data: {"choices":[],"usage":{"prompt_tokens":13,"completion_tokens":12,"total_tokens":25}}
 data: [DONE]
 ```
 
-## 11. Shutdown
+Status codes:
+
+- `200` on success
+- `400` for invalid request fields or missing model state
+- `409` if the selected backend is not ready
+- backend status codes may be passed through for proxied non-stream requests
+
+## Anthropic-Compatible API
+
+### `POST /v1/messages`
+
+Anthropic Messages API compatibility adapter. OmniInfer converts the request to the OpenAI chat-completions format internally and then converts the response back to Anthropic shape.
+
+Like `/v1/chat/completions`, this endpoint does not load a model. Load a model first with `/omni/model/select`.
+
+Request body:
+
+```json
+{
+  "model": "optional-display-model",
+  "max_tokens": 128,
+  "system": "You are concise.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello"
+    }
+  ],
+  "temperature": 0.2,
+  "stream": false
+}
+```
+
+Supported request features include:
+
+- `system` as a string or list of text blocks
+- text messages
+- image blocks with base64 or URL sources
+- `max_tokens`, `temperature`, `top_p`, `top_k`
+- `stop_sequences`
+- `stream`
+- `thinking.type = enabled|disabled`
+- tool definitions, tool use, tool results, and `tool_choice`
+
+Non-stream response shape:
+
+```json
+{
+  "id": "msg_...",
+  "type": "message",
+  "role": "assistant",
+  "model": "models/Qwen3.5-2B-Q4_K_M.gguf",
+  "content": [
+    {
+      "type": "text",
+      "text": "Hello!"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 13,
+    "output_tokens": 12
+  }
+}
+```
+
+Streaming response uses Anthropic-style SSE events converted from the backend stream.
+
+Status codes:
+
+- `200` on success
+- `400` for invalid Anthropic request shape or missing model state
+- `409` if the selected backend is not ready
+- `502` if a proxied backend returns invalid JSON
+- backend status codes may be passed through when the proxy request fails
+
+## Deprecated Endpoint
+
+### `GET /omni/models`
+
+This endpoint is deprecated and intentionally not maintained.
+
+Response:
+
+```json
+{
+  "error": {
+    "message": "GET /omni/models has been deprecated and is no longer maintained"
+  }
+}
+```
+
+Status code: `410`.
+
+## Shutdown
 
 ### `POST /omni/shutdown`
 
@@ -433,9 +714,9 @@ Example response:
 }
 ```
 
-## 12. Error format
+## Error Format
 
-Errors are returned as JSON:
+Most OmniInfer management endpoints return errors as:
 
 ```json
 {
@@ -444,3 +725,20 @@ Errors are returned as JSON:
   }
 }
 ```
+
+The Anthropic-compatible endpoint may return Anthropic-style error objects:
+
+```json
+{
+  "error": {
+    "type": "invalid_request_error",
+    "message": "..."
+  }
+}
+```
+
+## Desktop Versus Mobile
+
+This document covers the desktop gateway implemented in `service_core/service.py`.
+
+Android and iOS clients expose a smaller OpenAI-compatible subset from the mobile app process. See the OmniStudio API service documents for mobile-specific behavior.
