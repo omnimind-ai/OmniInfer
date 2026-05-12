@@ -1,6 +1,7 @@
 # OmniInfer CLI Guide
 
-This guide shows how to use the OmniInfer CLI on Linux, macOS, Windows, and Android.
+This guide shows how to use the OmniInfer desktop CLI on Linux, macOS, and Windows.
+Android and iOS use the embedded modules under `android/` and `ios/`.
 
 ## Before You Start
 
@@ -9,7 +10,6 @@ If you are running OmniInfer from a source checkout, prepare at least one local 
 - Windows: build one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip` first. See [Build Guide: Windows](build.md#windows).
 - Linux: build one of `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino` first. See [Build Guide: Linux](build.md#linux).
 - macOS: build `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
-- Android: prepare the Android runtime assets first. See [Build Guide: Android](build.md#android).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
 
@@ -41,8 +41,8 @@ On macOS source checkouts, `./omniinfer` also auto-prefers `.local/runtime/macos
 
 - Linux, macOS, Windows:
   the CLI talks to the local OmniInfer service and starts it automatically when needed.
-- Android:
-  the CLI runs in direct mode and calls the Android native backend binaries directly.
+- Android and iOS:
+  use the embedded modules under `android/` and `ios/` instead of the desktop CLI.
 
 ## Launch The CLI
 
@@ -67,12 +67,6 @@ Windows:
 
 Packaged Windows releases also keep `.\omniinfer.cmd` for `cmd.exe` compatibility. For interactive TUI use from PowerShell, prefer `.\omniinfer.ps1` or `.\omniinfer-cli.exe`; pressing `Ctrl+C` in a batch wrapper can make `cmd.exe` print `Terminate batch job (Y/N)?`.
 
-Android:
-
-```sh
-./omniinfer --help
-```
-
 ## Quick Start
 
 ### 1. Check available backends
@@ -87,12 +81,6 @@ Windows:
 
 ```powershell
 .\omniinfer.ps1 backend list
-```
-
-Android:
-
-```sh
-./omniinfer backend list
 ```
 
 The human-readable output shows the selected backend and runtime availability.
@@ -119,7 +107,6 @@ Examples:
 - Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino`
 - macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac`
 - Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`
-- Android: `llama.cpp-llama`, `llama.cpp-mtmd`, or `omniinfer-native`
 
 When you select a desktop backend, OmniInfer also creates a backend-specific JSON config template under:
 
@@ -159,23 +146,6 @@ For `llama.cpp-*`, OmniInfer accepts either a model file or a model directory. I
 
 For `mlx-mac`, OmniInfer passes the model directory directly to the embedded backend.
 
-For `omniinfer-native` on Android, OmniInfer accepts either:
-
-- a `.pte` model file
-- a model directory that contains `omniinfer-native.env`
-- or a compatibility-mode model directory that contains `hybrid_llama_qnn.pte`
-
-In package mode, `omniinfer-native.env` tells OmniInfer which ExecuTorch Qualcomm llama runner to use and which `.pte` artifacts belong to the package.
-The recommended way to generate that manifest is:
-
-```sh
-bash ./scripts/platforms/android/package-omniinfer-native.sh \
-  --artifact-dir /path/to/executorch-artifacts \
-  --decoder-model-version qwen3
-```
-
-OmniInfer also auto-discovers `tokenizer.json` beside the selected `.pte` file when available.
-
 Explicit file path:
 
 ```sh
@@ -199,14 +169,6 @@ Vision-language model:
 
 ```sh
 ./omniinfer load -m /path/to/model.gguf -mm /path/to/mmproj.gguf
-```
-
-Android OmniInfer Native QNN:
-
-```sh
-./omniinfer backend select omniinfer-native
-./omniinfer load -m /data/local/tmp/syf/executorch/static_llm
-./omniinfer chat "你好啊，你是谁？"
 ```
 
 For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or `mmproj` sidecar:
@@ -313,7 +275,7 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 - Load-time backend-native extra args are broadly passthrough for `llama.cpp-*` and `turboquant-mac`. Chat-time backend-native extra args support many common official flags plus generic long-form request overrides, but they are still interpreted through the current backend family rather than exposed as a blind global flag bag.
 - Do not combine `--auto` with backend-native extra args or load profiles, because those flows need a concrete selected backend to interpret flags correctly.
 - `status` shows the current backend, model, and thinking state.
-- `shutdown` stops the local desktop service. On Android it just confirms that direct mode has no background gateway.
+- `shutdown` stops the local desktop service.
 
 ## Platform Notes
 
@@ -329,11 +291,7 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 ./omniinfer serve
 ```
 
-### Android
+### Mobile
 
-- The repo-root [omniinfer](../omniinfer) script detects Android automatically.
-- Android direct mode uses the local launcher at `.local/runtime/android/bin/omniinfer-android`.
-- Android backend binaries live under `.local/runtime/android/lib/arm64-v8a`.
-- Android OmniInfer Native QNN runtime files can also live under `.local/runtime/android/qnn`.
-- For Android runtime build and packaging details, see [Build Guide](build.md).
-- For Android app embedding, see [Android Integration Guide](android/integration.md).
+- Android is implemented by the root `android/` Gradle module. See [Android Integration Guide](android/integration.md).
+- iOS is implemented by the root `ios/OmniInferServer` Swift Package. See [OmniStudio API Service](OmniStudio/api-service.md#ios-client).

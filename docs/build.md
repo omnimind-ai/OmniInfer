@@ -20,20 +20,9 @@ Portable releases are separate from source builds:
 - `release/portable/`
   Release output area used by platform packaging scripts.
 
-Android uses a direct-mode runtime installer, but the runtime now follows the same separation principle:
-
-- `scripts/platforms/android/build-runtime.sh`
-  Stable user-facing entrypoint for installing the local Android runtime.
-- `scripts/platforms/android/runtime/support/`
-  Shared Android CLI helpers.
-- `scripts/platforms/android/runtime/backends/<backend>/`
-  Backend-specific Android adapters.
-- `scripts/platforms/android/package-omniinfer-native.sh`
-  Stable user-facing entrypoint for packaging official ExecuTorch Qualcomm llama artifacts into an OmniInfer-native model package.
-- `.local/runtime/android/`
-  Local Android runtime output tree copied from those source scripts plus optional backend binaries.
-
-This keeps the Android entrypoint thin while still using a direct shell runtime instead of the desktop gateway model.
+Mobile builds do not use `scripts/platforms/`. Android is implemented by the
+Gradle module under `android/`, and iOS is implemented by the Swift package and
+native bridge under `ios/`.
 
 ## Common Prerequisites
 
@@ -346,63 +335,23 @@ bash ./scripts/platforms/macos/build-mlx-mac.sh
 
 ## Android
 
-### Available Scripts
+Android is built from the root `android/` module, not from `scripts/platforms`.
+Use the Android integration docs for embedding and backend setup:
 
-- `scripts/platforms/android/build-runtime.sh`
-- `scripts/platforms/android/runtime/install.sh`
-- `scripts/platforms/android/runtime/omniinfer-android`
+- [Android App Integration](android/integration.md)
+- [Android Backend Reference](android/backends.md)
+- [Android Multimodal Guide](android/multimodal.md)
 
-### What The Android Script Does
+## iOS
 
-Android does not build or launch the desktop HTTP gateway.
+iOS is built from the root `ios/` implementation:
 
-Instead, the Android script prepares a direct-mode runtime tree under:
+- `ios/OmniInferServer/`
+  Swift Package facade and in-process HTTP service.
+- `ios/native/`
+  Native bridge sources for the embedded inference backends.
 
-- `.local/runtime/android/bin/omniinfer-android`
-- `.local/runtime/android/lib/arm64-v8a/libllama-cli.so`
-- `.local/runtime/android/lib/arm64-v8a/libmtmd-cli.so`
-
-The installer always writes the launcher. It can also copy prebuilt Android binaries from an artifact directory or explicit paths.
-
-For `omniinfer-native`, the Android runtime can also host the Qualcomm ExecuTorch runners and QNN shared libraries under `.local/runtime/android/qnn/`. If your model package uses the official ExecuTorch Qualcomm llama multimodal flow, include `qnn_multimodal_runner` in that bundle as well.
-
-The recommended model-package format for official ExecuTorch Qualcomm llama artifacts is a model directory that contains:
-
-- `omniinfer-native.env`
-- `tokenizer.json` or another runtime tokenizer file referenced by the manifest
-- one or more `.pte` files such as `hybrid_llama_qnn.pte`, `vision_encoder_qnn.pte`, `tok_embedding_qnn.pte`, or `attention_sink_evictor.pte`
-
-`omniinfer-native.env` is a simple shell-style manifest consumed by the Android launcher. It lets OmniInfer map one model directory to the correct runner and artifact set without hard-coding file-name guesses in the CLI.
-
-### Prepare The Android Runtime
-
-Launcher only:
-
-```bash
-bash ./scripts/platforms/android/build-runtime.sh --launcher-only
-```
-
-Install launcher plus prebuilt Android binaries from a directory:
-
-```bash
-bash ./scripts/platforms/android/build-runtime.sh --artifact-dir /path/to/android/artifacts
-```
-
-Install with explicit binary paths:
-
-```bash
-bash ./scripts/platforms/android/build-runtime.sh \
-  --llama-cli /path/to/libllama-cli.so \
-  --mtmd-cli /path/to/libmtmd-cli.so
-```
-
-Dry run:
-
-```bash
-bash ./scripts/platforms/android/build-runtime.sh --artifact-dir /path/to/android/artifacts --dry-run
-```
-
-After the runtime is prepared, the repo-root `./omniinfer` script will detect Android automatically and forward commands into `.local/runtime/android/bin/omniinfer-android`.
+The legacy iOS script helper has been removed.
 
 ## After Building
 
@@ -415,7 +364,7 @@ List the local backends:
 Select one backend:
 
 ```bash
-./omniinfer select llama.cpp-linux-vulkan
+./omniinfer backend select llama.cpp-linux-vulkan
 ```
 
 Load a model:

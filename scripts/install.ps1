@@ -582,7 +582,7 @@ if (-not $PrebuiltInstalled) {
 Write-Host ""
 
 # Select backend via CLI
-Invoke-OmniInfer select $SelectedBackend 2>$null
+Invoke-OmniInfer backend select $SelectedBackend 2>$null
 
 # ── Step 4: Build backend ───────────────────────────────────
 

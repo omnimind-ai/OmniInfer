@@ -215,7 +215,7 @@ def benchmark_backend(args: argparse.Namespace, backend_id: str, base_url: str) 
     )
 
     def load_backend_model() -> None:
-        require_cli_success(run_cli(args.cli_command, "select", backend_id), f"select {backend_id}")
+        require_cli_success(run_cli(args.cli_command, "backend", "select", backend_id), f"select {backend_id}")
         load_args = ["model", "load", "-m", model_path]
         if mmproj_path:
             load_args.extend(["-mm", mmproj_path])

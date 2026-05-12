@@ -91,4 +91,4 @@ echo "  ${PACKAGE_ROOT}"
 echo
 echo "Use the OmniInfer launcher normally:"
 echo "  ./omniinfer backend list"
-echo "  ./omniinfer select mlx-mac"
+echo "  ./omniinfer backend select mlx-mac"
