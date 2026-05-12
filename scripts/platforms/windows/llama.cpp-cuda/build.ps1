@@ -1,6 +1,7 @@
 param(
     [string]$BuildType = "Release",
-    [string]$CudaArchitectures = ""
+    [string]$CudaArchitectures = "",
+    [switch]$BuildWebUI
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +18,20 @@ function Require-Command {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "Required command '$Name' was not found in PATH."
     }
+}
+
+function Get-CMakeCacheValue {
+    param([string]$CachePath, [string]$Name)
+    if (-not (Test-Path -LiteralPath $CachePath)) {
+        return $null
+    }
+    $pattern = "^$([regex]::Escape($Name)):[^=]*=(.*)$"
+    foreach ($line in Get-Content -LiteralPath $CachePath) {
+        if ($line -match $pattern) {
+            return $matches[1]
+        }
+    }
+    return $null
 }
 
 function Find-Msys2Ucrt64Toolchain {
@@ -49,8 +64,31 @@ function Find-Msys2Ucrt64Toolchain {
 Require-Command cmake
 Require-Command nvcc
 
+function Test-MsvcLinkEnvironment {
+    foreach ($libDir in (($env:LIB -split ';') | Where-Object { $_ })) {
+        if (Test-Path -LiteralPath (Join-Path $libDir "kernel32.lib")) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Find-NinjaExecutable {
+    $ninjaInPath = Get-Command ninja.exe -ErrorAction SilentlyContinue
+    if ($ninjaInPath) {
+        return $ninjaInPath.Source
+    }
+
+    $msys2 = Find-Msys2Ucrt64Toolchain
+    if ($msys2) {
+        return $msys2.Ninja
+    }
+
+    return $null
+}
+
 function Find-And-Load-Msvc {
-    if (Get-Command cl -ErrorAction SilentlyContinue) { return $true }
+    if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Test-MsvcLinkEnvironment)) { return $true }
 
     $vcvarsallCandidates = @()
 
@@ -98,7 +136,7 @@ function Find-And-Load-Msvc {
                 [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
             }
         }
-        if (Get-Command cl -ErrorAction SilentlyContinue) {
+        if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Test-MsvcLinkEnvironment)) {
             $clPath = (Get-Command cl).Source
             Write-Host "MSVC loaded: $clPath"
             return $true
@@ -107,8 +145,103 @@ function Find-And-Load-Msvc {
     return $false
 }
 
+function Find-MsvcRedistRoot {
+    $candidates = @()
+    if ($env:VCToolsRedistDir) {
+        $candidates += $env:VCToolsRedistDir
+    }
+
+    $vcInstallRoots = @()
+    if ($env:VCINSTALLDIR) {
+        $vcInstallRoots += $env:VCINSTALLDIR
+    }
+
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path -LiteralPath $vswhere) {
+        $installPath = & $vswhere -latest -property installationPath 2>$null
+        if ($installPath) {
+            $vcInstallRoots += Join-Path $installPath "VC"
+        }
+    }
+
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $root = $drive.Root
+        $vcInstallRoots += Join-Path $root "Coding\Tools\VS\BuildTools2022\VC"
+        foreach ($year in @("2022","2019")) {
+            $vcInstallRoots += Join-Path $root "Program Files\Microsoft Visual Studio\$year\BuildTools\VC"
+            $vcInstallRoots += Join-Path $root "Program Files\Microsoft Visual Studio\$year\Community\VC"
+            $vcInstallRoots += Join-Path $root "Program Files (x86)\Microsoft Visual Studio\$year\BuildTools\VC"
+        }
+    }
+
+    foreach ($vcRoot in ($vcInstallRoots | Where-Object { $_ } | Select-Object -Unique)) {
+        $redistRoot = Join-Path $vcRoot "Redist\MSVC"
+        if (Test-Path -LiteralPath $redistRoot) {
+            Get-ChildItem -LiteralPath $redistRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } |
+                Sort-Object Name -Descending |
+                ForEach-Object { $candidates += $_.FullName }
+        }
+    }
+
+    foreach ($candidate in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
+        $crtDir = Get-ChildItem -LiteralPath (Join-Path $candidate "x64") -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^Microsoft\.VC\d+\.CRT$' } |
+            Select-Object -First 1
+        if ($crtDir) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Copy-MsvcRuntimeDlls {
+    param([string]$Destination)
+
+    $redistRoot = Find-MsvcRedistRoot
+    if (-not $redistRoot) {
+        throw "MSVC redistributable DLLs were not found. Install Visual Studio Build Tools with the MSVC redistributable components."
+    }
+
+    $x64Root = Join-Path $redistRoot "x64"
+    $runtimeDirs = @()
+    $runtimeDirs += Get-ChildItem -LiteralPath $x64Root -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^Microsoft\.VC\d+\.CRT$' }
+    $runtimeDirs += Get-ChildItem -LiteralPath $x64Root -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^Microsoft\.VC\d+\.OpenMP$' }
+
+    if (-not $runtimeDirs) {
+        throw "MSVC x64 runtime directories were not found under $x64Root."
+    }
+
+    foreach ($runtimeDir in $runtimeDirs) {
+        Get-ChildItem -LiteralPath $runtimeDir.FullName -Filter "*.dll" -File -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Destination $_.Name) -Force
+            }
+    }
+}
+
 if (-not (Find-And-Load-Msvc)) {
     throw "CUDA builds require MSVC cl.exe. Install Visual Studio Build Tools or set vcvarsall.bat path."
+}
+
+$cachePath = Join-Path $BuildRoot "CMakeCache.txt"
+$cachedCudaCompiler = Get-CMakeCacheValue -CachePath $cachePath -Name "CMAKE_CUDA_COMPILER"
+$currentCudaCompiler = (Get-Command nvcc).Source
+if ($cachedCudaCompiler) {
+    $normalizedCachedCudaCompiler = [System.IO.Path]::GetFullPath($cachedCudaCompiler)
+    $normalizedCurrentCudaCompiler = [System.IO.Path]::GetFullPath($currentCudaCompiler)
+    if (
+        -not (Test-Path -LiteralPath $normalizedCachedCudaCompiler) -or
+        -not [string]::Equals($normalizedCachedCudaCompiler, $normalizedCurrentCudaCompiler, [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+        Write-Host "Cached CUDA compiler is stale. Resetting build directory:"
+        Write-Host "  cached:  $cachedCudaCompiler"
+        Write-Host "  current: $currentCudaCompiler"
+        Remove-Item -LiteralPath $BuildRoot -Recurse -Force
+    }
 }
 
 $configureArgs = @(
@@ -119,6 +252,7 @@ $configureArgs = @(
     "-DLLAMA_BUILD_TESTS=OFF",
     "-DLLAMA_BUILD_EXAMPLES=OFF",
     "-DLLAMA_BUILD_SERVER=ON",
+    "-DLLAMA_BUILD_WEBUI=$(if ($BuildWebUI) { 'ON' } else { 'OFF' })",
     "-DLLAMA_OPENSSL=OFF",
     "-DGGML_CUDA=ON",
     "-DGGML_NATIVE=OFF"
@@ -129,12 +263,58 @@ if ($CudaArchitectures) {
 }
 
 $buildArgs = @()
+$cachedGenerator = Get-CMakeCacheValue -CachePath $cachePath -Name "CMAKE_GENERATOR"
 
-if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -ErrorAction SilentlyContinue)) {
+if ($cachedGenerator -eq "Ninja") {
+    $ninja = Find-NinjaExecutable
+    if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Test-MsvcLinkEnvironment) -and $ninja) {
+        $configureArgs += @(
+            "-G", "Ninja",
+            "-DCMAKE_MAKE_PROGRAM=$($ninja.Replace('\','/'))",
+            "-DCMAKE_C_COMPILER=cl",
+            "-DCMAKE_CXX_COMPILER=cl"
+        )
+        $toolchainKind = "msvc-ninja"
+    }
+    else {
+        $msys2 = Find-Msys2Ucrt64Toolchain
+        if ($msys2) {
+            $env:PATH = "$($msys2.Root);$env:PATH"
+            $configureArgs += @(
+                "-G", "Ninja",
+                "-DCMAKE_MAKE_PROGRAM=$($msys2.Ninja.Replace('\','/'))"
+            )
+        }
+        else {
+            Require-Command ninja
+            $configureArgs += @("-G", "Ninja")
+        }
+        $toolchainKind = "ninja"
+    }
+}
+elseif ($cachedGenerator -eq "NMake Makefiles") {
     $configureArgs += @("-G", "NMake Makefiles")
     $buildArgs = @("--", "/NOLOGO")
     $toolchainKind = "msvc-nmake"
-} else {
+}
+elseif ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -ErrorAction SilentlyContinue)) {
+    $ninja = Find-NinjaExecutable
+    if ($ninja) {
+        $configureArgs += @(
+            "-G", "Ninja",
+            "-DCMAKE_MAKE_PROGRAM=$($ninja.Replace('\','/'))",
+            "-DCMAKE_C_COMPILER=cl",
+            "-DCMAKE_CXX_COMPILER=cl"
+        )
+        $toolchainKind = "msvc-ninja"
+    }
+    else {
+        $configureArgs += @("-G", "NMake Makefiles")
+        $buildArgs = @("--", "/NOLOGO")
+        $toolchainKind = "msvc-nmake"
+    }
+}
+else {
     $msys2 = Find-Msys2Ucrt64Toolchain
     if ($msys2) {
         $env:PATH = "$($msys2.Root);$env:PATH"
@@ -152,6 +332,10 @@ if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -Erro
 
 New-Item -ItemType Directory -Force -Path $BuildRoot, $BinRoot | Out-Null
 
+if ($toolchainKind -like "msvc-*") {
+    $configureArgs += "-DMATH_LIBRARY="
+}
+
 Write-Host "Configuring llama.cpp CUDA build..."
 cmake @configureArgs
 if ($LASTEXITCODE -ne 0) {
@@ -164,12 +348,22 @@ if ($LASTEXITCODE -ne 0) {
     throw "CMake build failed for llama.cpp CUDA build."
 }
 
+$cudaCompiler = Get-CMakeCacheValue -CachePath $cachePath -Name "CMAKE_CUDA_COMPILER"
+$cudaBin = $null
+if ($cudaCompiler) {
+    $cudaBin = Split-Path -Parent $cudaCompiler
+}
+elseif ($env:CUDA_PATH) {
+    $cudaBin = Join-Path $env:CUDA_PATH "bin"
+}
+
+Get-ChildItem -LiteralPath $BinRoot -File -ErrorAction SilentlyContinue | Remove-Item -Force
+
 Get-ChildItem (Join-Path $BuildRoot "bin") -File | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
 }
 
-if ($env:CUDA_PATH) {
-    $cudaBin = Join-Path $env:CUDA_PATH "bin"
+if ($cudaBin -and (Test-Path -LiteralPath $cudaBin)) {
     Get-ChildItem $cudaBin -Filter "cudart64*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
     }
@@ -178,6 +372,25 @@ if ($env:CUDA_PATH) {
     }
     Get-ChildItem $cudaBin -Filter "cublasLt64*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
+    }
+}
+
+if ($toolchainKind -like "msvc-*") {
+    Copy-MsvcRuntimeDlls -Destination $BinRoot
+}
+
+$requiredRuntimePatterns = @(
+    "cudart64*.dll",
+    "cublas64*.dll",
+    "cublasLt64*.dll",
+    "msvcp140.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "vcomp140.dll"
+)
+foreach ($pattern in $requiredRuntimePatterns) {
+    if (-not (Get-ChildItem -LiteralPath $BinRoot -Filter $pattern -File -ErrorAction SilentlyContinue)) {
+        throw "Self-contained CUDA package is missing $pattern in $BinRoot."
     }
 }
 

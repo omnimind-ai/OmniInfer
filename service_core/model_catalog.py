@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import copy
 import json
-import urllib.request
+from importlib import resources
 from pathlib import Path
 from typing import Any, Iterable
 
 from service_core.backends import BACKEND_PRIORITY
-from service_core.platforms import HostPlatform, SYSTEM_MODEL_LIST_URLS, parse_size_gib
+from service_core.platforms import HostPlatform, parse_size_gib
+
+
+CATALOG_SYSTEMS = frozenset({"windows", "mac", "linux"})
 
 
 class SupportedModelCatalog:
@@ -50,15 +53,17 @@ class SupportedModelCatalog:
 
     def _fetch_system_catalog(self, system_name: str) -> dict[str, Any]:
         system_key = (system_name or "").strip().lower()
-        if system_key not in SYSTEM_MODEL_LIST_URLS:
+        if system_key not in CATALOG_SYSTEMS:
             raise ValueError("field 'system' must be one of: windows, mac, linux")
-        req = urllib.request.Request(
-            SYSTEM_MODEL_LIST_URLS[system_key],
-            headers={"Accept": "application/json"},
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            payload = json.loads(resp.read().decode("utf-8-sig"))
+
+        try:
+            catalog_file = resources.files("service_core.model_catalogs").joinpath(f"{system_key}.json")
+            payload = json.loads(catalog_file.read_text(encoding="utf-8-sig"))
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"bundled model catalog is missing for system: {system_key}") from exc
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"invalid bundled model catalog for system: {system_key}") from exc
+
         if not isinstance(payload, dict):
             raise RuntimeError(f"invalid model catalog payload for system: {system_key}")
         return payload

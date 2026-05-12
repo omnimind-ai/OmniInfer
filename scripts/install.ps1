@@ -17,7 +17,6 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoSsh   = "git@github.com:omnimind-ai/OmniInfer.git"
 $RepoHttps = "https://github.com/omnimind-ai/OmniInfer.git"
-$CatalogUrl = "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/windows/model_list.json"
 
 # ── Helpers ─────────────────────────────────────────────────
 
@@ -658,9 +657,13 @@ if ($Model) {
 
     switch ($modelChoice) {
         0 {
-            Write-Info "Fetching model catalog ..."
+            Write-Info "Reading bundled model catalog ..."
             try {
-                $catalogRaw = (Invoke-WebRequest -Uri $CatalogUrl -UseBasicParsing).Content
+                $catalogPath = Join-Path $InstallDir "service_core\model_catalogs\windows.json"
+                if (-not (Test-Path -LiteralPath $catalogPath)) {
+                    throw "Bundled model catalog not found: $catalogPath"
+                }
+                $catalogRaw = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8
                 if ($catalogRaw.Length -gt 0 -and $catalogRaw[0] -eq [char]0xFEFF) {
                     $catalogRaw = $catalogRaw.Substring(1)
                 }
@@ -732,7 +735,7 @@ if ($Model) {
                     $ModelConfigured = $true
                 }
             } catch {
-                Write-Warn "Could not fetch model catalog: $_"
+                Write-Warn "Could not read bundled model catalog: $_"
                 Write-Warn "You can configure a model manually later."
             }
         }

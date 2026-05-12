@@ -34,7 +34,7 @@ from service_core.local_state import (
     save_tui_show_reasoning,
     state_file,
 )
-from service_core.runtime import RuntimeManager
+from service_core.runtime import RuntimeManager, _summarize_backend_startup_failure
 from service_core.service import load_app_config
 from service_core.tui import _consume_visible_text
 
@@ -1494,6 +1494,18 @@ class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
         )
         self.assertIn("--no-webui", launch.cmd)
         self.assertNotIn("--webui", launch.cmd)
+
+    def test_startup_failure_summary_prefers_unknown_argument(self) -> None:
+        summary = _summarize_backend_startup_failure(
+            [
+                "error: unknown argument: -mm",
+                "usage: llama-server [options]",
+                "export-lora:",
+                "  -m,    --model                  model path from which to load base model",
+            ]
+        )
+
+        self.assertEqual(summary, "error: unknown argument: -mm")
 
 
 if __name__ == "__main__":

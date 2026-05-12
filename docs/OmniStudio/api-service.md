@@ -22,11 +22,18 @@ Key endpoints:
 | `/health` | GET | Health check and runtime state |
 | `/omni/state` | GET | Current backend, model, and config |
 | `/omni/backends` | GET | List backends (scope: installed/compatible/all) |
+| `/omni/backend/props` | GET | Active backend properties |
+| `/omni/supported-models` | GET | Bundled supported-model catalog |
+| `/omni/supported-models/best` | GET | Supported-model catalog with best installed backend choices |
 | `/omni/model/select` | POST | Load a model |
+| `/omni/backend/select` | POST | Select a backend |
 | `/omni/backend/stop` | POST | Stop current backend |
 | `/omni/cache/clear` | POST | Clear KV cache without reloading model |
+| `/omni/thinking` | GET | Read default thinking mode |
+| `/omni/thinking/select` | POST | Update default thinking mode |
 | `/v1/models` | GET | List currently loaded models |
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions |
+| `/v1/messages` | POST | Anthropic-compatible Messages API adapter |
 | `/omni/shutdown` | POST | Shut down the gateway |
 
 For the full API reference, see [API.md](https://github.com/omnimind-ai/OmniInfer/blob/main/docs/API.md).
@@ -436,7 +443,7 @@ Both backends support:
 - KV cache prefix reuse (automatic, no config needed)
 - Multimodal / vision (model must include vision encoder files)
 - Thinking / reasoning mode (`chat_template_kwargs.enable_thinking`, `reasoning_effort`, or `reasoning.effort` parameter)
-- `ik_llama.cpp` thinking templates require Jinja mode for native reasoning extraction. OmniInfer's built-in ik backends start with `--jinja --reasoning-format deepseek` by default; if `launch_args` fully replaces the startup args, keep equivalent flags when `reasoning_content` is needed.
+- `ik_llama.cpp` thinking templates require Jinja mode, so OmniInfer's built-in ik backends start with `--jinja` by default. Some ik builds also support `--reasoning-format deepseek`, but OmniInfer does not pass it by default for cross-build compatibility.
 - Thinking output is normalized into `message.reasoning_content` for non-streaming responses and `delta.reasoning_content` for streaming responses, while final answer text remains in `content`.
 - Tool calling (llama.cpp: all models with tool templates; MNN: Qwen3.5, Qwen3, Hunyuan families)
 

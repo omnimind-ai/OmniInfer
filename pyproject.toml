@@ -10,3 +10,6 @@ dependencies = []  # Core runs on stdlib only
 [project.optional-dependencies]
 mlx = ["mlx", "mlx-lm"]
 dev = ["pytest>=7.0"]
+
+[tool.setuptools.package-data]
+"service_core.model_catalogs" = ["*.json"]

@@ -17,13 +17,6 @@ from typing import Any, Callable
 logger = logging.getLogger("platform")
 
 
-SYSTEM_MODEL_LIST_URLS: dict[str, str] = {
-    "windows": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/windows/model_list.json",
-    "mac": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/mac/model_list.json",
-    "linux": "https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/linux/model_list.json",
-}
-
-
 def resolve_input_path(value: str, base_dir: Path) -> str:
     path = Path(value).expanduser()
     if not path.is_absolute():

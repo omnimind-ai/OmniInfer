@@ -770,7 +770,7 @@ else
     case "${model_choice}" in
         0)
             # ── Download recommended model ──────────────────────
-            info "Fetching model catalog ..."
+            info "Reading bundled model catalog ..."
 
             if [[ "${IS_ANDROID_PLATFORM}" -eq 1 ]]; then
                 CATALOG_SYSTEM="linux"
@@ -780,13 +780,15 @@ else
                 CATALOG_SYSTEM="linux"
             fi
 
-            CATALOG_URL="https://omnimind-model.oss-cn-beijing.aliyuncs.com/backend/${CATALOG_SYSTEM}/model_list.json"
+            CATALOG_PATH="${INSTALL_DIR}/service_core/model_catalogs/${CATALOG_SYSTEM}.json"
 
             # Use embedded Python to parse catalog and present choices
-            MODEL_INFO=$(curl -sS --connect-timeout 5 --max-time 10 "${CATALOG_URL}" | python3 -c "
+            MODEL_INFO=$(
+python3 - "${CATALOG_PATH}" <<'PY' 2>/dev/null
 import json, sys
+from pathlib import Path
 
-raw = sys.stdin.buffer.read()
+raw = Path(sys.argv[1]).read_bytes()
 data = json.loads(raw.decode('utf-8-sig'))
 
 # Collect small models (< 6 GiB) across all backends
@@ -830,10 +832,11 @@ models.sort(key=lambda x: x[2])
 # Take top 6
 for i, (name, quant, size, url) in enumerate(models[:6]):
     print(f'{i+1}|{name}|{quant}|{size:.2f}|{url}')
-" 2>/dev/null) || true
+PY
+            ) || true
 
             if [[ -z "${MODEL_INFO}" ]]; then
-                warn "Could not fetch model catalog. You can configure a model manually later."
+                warn "Could not read bundled model catalog. You can configure a model manually later."
             else
                 echo ""
                 echo "  Recommended models:"

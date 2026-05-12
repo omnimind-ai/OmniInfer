@@ -129,6 +129,13 @@ class ExternalRuntimeLaunch:
     log_file_name: str
 
 
+def _summarize_backend_startup_failure(lines: list[str], *, max_lines: int = 6) -> str:
+    for line in lines:
+        if "unknown argument" in line.lower():
+            return line.strip()
+    return " | ".join(line.strip() for line in lines[-max_lines:] if line.strip())
+
+
 class RuntimeManager:
     def __init__(
         self,
@@ -534,7 +541,7 @@ class RuntimeManager:
                 except OSError:
                     lines = []
                 if lines:
-                    message += "; backend output: " + " | ".join(lines[-6:])
+                    message += "; backend output: " + _summarize_backend_startup_failure(lines)
             self.loaded_runtime = LoadedRuntime(
                 backend_id=backend.id,
                 model_path=model_path,

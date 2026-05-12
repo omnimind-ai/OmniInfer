@@ -30,6 +30,7 @@ $CliWorkRoot = Join-Path $BuildRoot "pyinstaller-work-cli"
 $CliSpecRoot = Join-Path $BuildRoot "pyinstaller-spec-cli"
 $CliDistRoot = Join-Path $BuildRoot "cli-dist"
 $LocalRuntimeRoot = Join-Path $RepoRoot ".local\runtime\windows"
+$ModelCatalogRoot = Join-Path $RepoRoot "service_core\model_catalogs"
 $UsageTemplate = Join-Path $RepoRoot "tmp\usage.md"
 
 function Stop-RunningPortableRelease {
@@ -93,6 +94,29 @@ function Get-InstalledBackends {
         }
     }
     return $items
+}
+
+function Assert-BackendRuntimeSelfContained {
+    param([string]$Backend, [string]$BinRoot)
+
+    $requiredPatterns = @("llama-server.exe")
+    if ($Backend -like "*cuda*") {
+        $requiredPatterns += @(
+            "cudart64*.dll",
+            "cublas64*.dll",
+            "cublasLt64*.dll",
+            "msvcp140.dll",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "vcomp140.dll"
+        )
+    }
+
+    foreach ($pattern in $requiredPatterns) {
+        if (-not (Get-ChildItem -LiteralPath $BinRoot -Filter $pattern -File -ErrorAction SilentlyContinue)) {
+            throw "Backend '$Backend' is not self-contained: missing $pattern in $BinRoot."
+        }
+    }
 }
 
 if ($BuildCpuBackend) {
@@ -287,7 +311,8 @@ $pyinstallerArgs = @(
     "--name", "omniinfer-cli",
     "--distpath", $CliDistRoot,
     "--workpath", $CliWorkRoot,
-    "--specpath", $CliSpecRoot
+    "--specpath", $CliSpecRoot,
+    "--add-data", "$ModelCatalogRoot;service_core\model_catalogs"
 )
 foreach ($exclude in $pyinstallerExcludes) {
     $pyinstallerArgs += @("--exclude-module", $exclude)
@@ -342,6 +367,7 @@ foreach ($backend in $backends) {
     New-Item -ItemType Directory -Force -Path $targetBin | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $targetRoot "logs") | Out-Null
     Copy-Item -Path (Join-Path $sourceBin "*") -Destination $targetBin -Recurse -Force
+    Assert-BackendRuntimeSelfContained -Backend $backend -BinRoot $targetBin
     $copiedRuntimes += $backend
 }
 
