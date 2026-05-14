@@ -34,7 +34,7 @@ from service_core.local_state import (
     save_tui_show_reasoning,
     state_file,
 )
-from service_core.runtime import RuntimeManager, _summarize_backend_startup_failure
+from service_core.runtime import LoadedRuntime, RuntimeManager, _summarize_backend_startup_failure
 from service_core.service import load_app_config
 from service_core.tui import _consume_visible_text
 
@@ -1418,6 +1418,92 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         self.assertEqual(snapshot["backend"], "mlx-mac")
         self.assertIsNone(snapshot["model"])
         self.assertFalse(snapshot["backend_ready"])
+
+
+class _AutoSelectPlatform(WindowsPlatform):
+    def __init__(self) -> None:
+        self.cuda_memory_available = False
+
+    def available_memory_gib_for_backend(self, backend_name: str) -> float:
+        if backend_name == "llama.cpp-cuda":
+            return 999.0 if self.cuda_memory_available else 0.0
+        return 999.0
+
+    def safety_margin_gib_for_backend(self, backend_name: str) -> float:
+        return 0.0
+
+
+class AutoSelectRuntimeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.model_path = self.root / "Qwen3.5-2B-Q4_K_M.gguf"
+        self.model_path.write_text("model", encoding="utf-8")
+        self.platform = _AutoSelectPlatform()
+        self._platform_patch = patch("service_core.runtime.current_host_platform", return_value=self.platform)
+        self._platform_patch.start()
+
+        self.manager = RuntimeManager(
+            repo_root=str(self.root),
+            app_root=str(self.root),
+            backend_host="127.0.0.1",
+            backend_port=0,
+            startup_timeout_s=10,
+            default_backend_id="llama.cpp-cpu",
+        )
+        for backend_id in ("llama.cpp-cpu", "llama.cpp-cuda"):
+            backend = self.manager.backends[backend_id]
+            bin_dir = Path(backend.runtime_dir) / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            launcher = bin_dir / "llama-server.exe"
+            launcher.write_text("", encoding="utf-8")
+            backend.launcher_path = str(launcher)
+        self.manager.catalog.available_backend_ids = {"llama.cpp-cpu", "llama.cpp-cuda"}
+        self.started_backends: list[str] = []
+
+    def tearDown(self) -> None:
+        self._platform_patch.stop()
+        self.temp_dir.cleanup()
+
+    def _loaded_runtime(self, backend_id: str, model_path: str) -> LoadedRuntime:
+        return LoadedRuntime(
+            backend_id=backend_id,
+            model_path=model_path,
+            model_ref=Path(model_path).name,
+            mmproj_path=None,
+            mmproj_ref=None,
+            ctx_size=None,
+            runtime_mode="external_server",
+            host="127.0.0.1",
+            port=12345,
+            process=None,
+            launch_args=list(self.manager.backends[backend_id].default_args),
+            request_defaults={},
+        )
+
+    def test_auto_select_releases_previous_runtime_before_memory_check(self) -> None:
+        old_model = self.root / "old.gguf"
+        old_model.write_text("old", encoding="utf-8")
+        self.manager.loaded_runtime = self._loaded_runtime("llama.cpp-cuda", str(old_model))
+        self.manager._is_runtime_running_locked = lambda: self.manager.loaded_runtime is not None  # type: ignore[method-assign]
+
+        def stop_runtime() -> None:
+            self.platform.cuda_memory_available = True
+            self.manager.loaded_runtime = None
+
+        def start_runtime(backend, model_path, mmproj_path, **kwargs):
+            self.started_backends.append(backend.id)
+            runtime = self._loaded_runtime(backend.id, model_path)
+            self.manager.loaded_runtime = runtime
+            return runtime
+
+        self.manager._stop_runtime_locked = stop_runtime  # type: ignore[method-assign]
+        self.manager._start_runtime_locked = start_runtime  # type: ignore[method-assign]
+
+        result = self.manager.select_model(model=str(self.model_path))
+
+        self.assertEqual(result["selected_backend"], "llama.cpp-cuda")
+        self.assertEqual(self.started_backends, ["llama.cpp-cuda"])
 
 
 class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
