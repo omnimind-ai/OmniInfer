@@ -211,6 +211,24 @@ class CliParserTests(unittest.TestCase):
         args = build_parser().parse_args(["backend", "list"])
         self.assertEqual(args.scope, "compatible")
 
+    def test_build_command_parses_in_source_checkout(self) -> None:
+        with patch("service_core.commands.is_backend_build_supported", return_value=True):
+            args = build_parser().parse_args(["build", "llama.cpp-cpu", "--build-type", "RelWithDebInfo"])
+        self.assertEqual(args.command, "build")
+        self.assertEqual(args.backend_name, "llama.cpp-cpu")
+        self.assertEqual(args.build_type, "RelWithDebInfo")
+
+    def test_build_command_is_hidden_in_packaged_release(self) -> None:
+        with patch("service_core.commands.is_backend_build_supported", return_value=False):
+            with self.assertRaises(SystemExit):
+                build_parser().parse_args(["build", "llama.cpp-cpu"])
+
+    def test_build_help_text_is_source_only(self) -> None:
+        with patch("service_core.commands.is_backend_build_supported", return_value=True):
+            self.assertIn("omniinfer build <backend>", build_parser().format_help())
+        with patch("service_core.commands.is_backend_build_supported", return_value=False):
+            self.assertNotIn("omniinfer build <backend>", build_parser().format_help())
+
     def test_top_level_load_alias_parses_like_model_load(self) -> None:
         args = build_parser().parse_args(["load", "-m", "model.gguf"])
         self.assertEqual(args.command, "load")
@@ -250,6 +268,25 @@ class CliParserTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         service_main.assert_called_once_with(["--host", "127.0.0.1", "--window-mode", "visible", "--port", "9010"])
+
+    def test_hidden_completion_includes_build_only_when_supported(self) -> None:
+        with (
+            patch.dict(os.environ, {"COMP_CWORD": "1"}, clear=False),
+            patch("service_core.commands.is_backend_build_supported", return_value=True),
+            patch("builtins.print") as print_mock,
+        ):
+            cli.handle_hidden_completion([""])
+        suggestions = print_mock.call_args.args[0]
+        self.assertIn("build", suggestions.split())
+
+        with (
+            patch.dict(os.environ, {"COMP_CWORD": "1"}, clear=False),
+            patch("service_core.commands.is_backend_build_supported", return_value=False),
+            patch("builtins.print") as print_mock,
+        ):
+            cli.handle_hidden_completion([""])
+        suggestions = print_mock.call_args.args[0]
+        self.assertNotIn("build", suggestions.split())
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +336,81 @@ class CommandHelperTests(unittest.TestCase):
 
             self.assertTrue(Path(command[0]).samefile(exe_path))
             self.assertEqual(command[1], "serve")
+
+    def test_backend_build_command_resolves_windows_script(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            script = root / "scripts" / "platforms" / "windows" / "llama.cpp-cpu" / "build.ps1"
+            script.parent.mkdir(parents=True)
+            script.write_text("", encoding="utf-8")
+            with (
+                patch("service_core.commands.REPO_ROOT", root),
+                patch("service_core.commands.sys.frozen", False, create=True),
+                patch("service_core.commands.detect_system_name", return_value="windows"),
+                patch("service_core.commands._is_windows", return_value=True),
+                patch("service_core.commands.local_backends", return_value={"llama.cpp-cpu": object()}),
+            ):
+                command, script_path = commands.backend_build_command(
+                    commands.BackendBuildOptions(backend="llama.cpp-cpu", build_type="Release")
+                )
+
+        self.assertEqual(script_path, script)
+        self.assertEqual(command[:5], ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        self.assertEqual(command[-2:], ["-BuildType", "Release"])
+
+    def test_backend_build_command_resolves_macos_script_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            script = root / "scripts" / "platforms" / "macos" / "llama.cpp-mac" / "build.sh"
+            script.parent.mkdir(parents=True)
+            script.write_text("", encoding="utf-8")
+            with (
+                patch("service_core.commands.REPO_ROOT", root),
+                patch("service_core.commands.sys.frozen", False, create=True),
+                patch("service_core.commands.detect_system_name", return_value="mac"),
+                patch("service_core.commands._is_windows", return_value=False),
+                patch("service_core.commands.local_backends", return_value={"llama.cpp-mac": object()}),
+            ):
+                command, script_path = commands.backend_build_command(
+                    commands.BackendBuildOptions(backend="llama.cpp-mac", build_type="Debug")
+                )
+
+        self.assertEqual(script_path, script)
+        self.assertEqual(command, ["bash", str(script), "--build-type", "Debug"])
+
+    def test_backend_build_rejected_when_frozen(self) -> None:
+        with patch("service_core.commands.sys.frozen", True, create=True):
+            with self.assertRaises(SystemExit):
+                commands.backend_build_command(commands.BackendBuildOptions(backend="llama.cpp-cpu"))
+
+    def test_backend_build_dry_run_does_not_start_subprocess(self) -> None:
+        fake_backend = type(
+            "FakeBackend",
+            (),
+            {
+                "launcher_path": str(Path("runtime") / "bin" / "omniinfer-backend.cmd"),
+                "binary_exists": False,
+            },
+        )()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            script = root / "scripts" / "platforms" / "linux" / "llama.cpp-linux" / "build.sh"
+            script.parent.mkdir(parents=True)
+            script.write_text("", encoding="utf-8")
+            with (
+                patch("service_core.commands.REPO_ROOT", root),
+                patch("service_core.commands.sys.frozen", False, create=True),
+                patch("service_core.commands.detect_system_name", return_value="linux"),
+                patch("service_core.commands._is_windows", return_value=False),
+                patch("service_core.commands.local_backends", return_value={"llama.cpp-linux": fake_backend}),
+                patch("service_core.commands.subprocess.run") as run_mock,
+            ):
+                result = commands.build_backend(
+                    commands.BackendBuildOptions(backend="llama.cpp-linux", dry_run=True)
+                )
+
+        self.assertTrue(result.dry_run)
+        run_mock.assert_not_called()
 
     def test_backend_models_dir_defaults_to_shared_local_models_on_all_desktop_platforms(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -879,6 +991,15 @@ class CommandHelperTests(unittest.TestCase):
         self.assertIn("no match", tui._prompt_status_text("/unknown", "backend demo"))
         self.assertEqual(tui._prompt_status_text("hello", "backend demo"), "backend demo")
 
+    def test_tui_build_command_is_source_only(self) -> None:
+        with patch("service_core.commands.is_backend_build_supported", return_value=True):
+            self.assertIn(("/build", "build a compatible backend from this source checkout"), tui._command_table())
+            self.assertIn("/build", tui._prompt_status_text("/", "backend demo"))
+
+        with patch("service_core.commands.is_backend_build_supported", return_value=False):
+            self.assertNotIn("/build", [name for name, _description in tui._command_table()])
+            self.assertNotIn("/build", tui._prompt_status_text("/", "backend demo"))
+
     def test_tui_status_line_combines_prompt_context(self) -> None:
         session = tui._ChatSessionState(
             backend="llama.cpp-linux-cuda",
@@ -1003,10 +1124,11 @@ class CommandHelperTests(unittest.TestCase):
 
     def test_tui_command_menu_sets_selected_command_notice(self) -> None:
         session = tui._ChatSessionState(backend="llama.cpp-linux-cuda")
+        model_index = [name for name, _description in tui._command_table()].index("/model")
 
         with (
             patch("service_core.tui._can_use_interactive_menu", return_value=True),
-            patch("service_core.tui._select_menu", return_value=1) as select_menu,
+            patch("service_core.tui._select_menu", return_value=model_index) as select_menu,
         ):
             tui._show_command_menu(session)
 
