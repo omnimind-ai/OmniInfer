@@ -274,6 +274,37 @@ class RuntimeManager:
             return True
         return bool(self.loaded_runtime.process and self.loaded_runtime.process.poll() is None)
 
+    def _runtime_matches_locked(
+        self,
+        runtime: LoadedRuntime,
+        *,
+        backend: BackendSpec,
+        model_path: str,
+        mmproj_path: str | None,
+        ctx_size: int | None,
+        launch_args: list[str],
+    ) -> bool:
+        current_mmproj = runtime.mmproj_path or ""
+        wanted_mmproj = mmproj_path or ""
+        compare_current_launch_args = list(runtime.launch_args)
+        compare_wanted_launch_args = list(launch_args)
+        if ctx_size is None:
+            compare_current_launch_args = self._without_server_arg(
+                compare_current_launch_args,
+                ("-c", "--ctx-size"),
+            )
+            compare_wanted_launch_args = self._without_server_arg(
+                compare_wanted_launch_args,
+                ("-c", "--ctx-size"),
+            )
+        return (
+            runtime.backend_id == backend.id
+            and Path(runtime.model_path).resolve() == Path(model_path).resolve()
+            and current_mmproj == wanted_mmproj
+            and (ctx_size is None or runtime.ctx_size == ctx_size)
+            and compare_current_launch_args == compare_wanted_launch_args
+        )
+
     def _stop_runtime_locked(self) -> None:
         runtime = self.loaded_runtime
         self.loaded_runtime = None
@@ -825,6 +856,25 @@ class RuntimeManager:
             elif preferred_backend.runtime_mode == "embedded":
                 resolved_backend_id = preferred_backend.id
             else:
+                current = self.loaded_runtime if self._is_runtime_running_locked() else None
+                if current:
+                    effective_current_args = list(current.launch_args if launch_args is None else launch_args)
+                    current_backend = self._get_backend(current.backend_id)
+                    if self._runtime_matches_locked(
+                        current,
+                        backend=current_backend,
+                        model_path=model_path,
+                        mmproj_path=mmproj_path,
+                        ctx_size=ctx_size,
+                        launch_args=effective_current_args,
+                    ):
+                        current.request_defaults = dict(request_defaults or {})
+                        if on_progress:
+                            on_progress({"type": "status", "message": "Reusing loaded backend."})
+                        return current
+                    if on_progress:
+                        on_progress({"type": "status", "message": "Stopping previous backend..."})
+                    self._stop_runtime_locked()
                 if on_progress:
                     on_progress({"type": "status", "message": "Selecting backend for this model..."})
                 try:
@@ -848,25 +898,13 @@ class RuntimeManager:
             # Check if the requested configuration matches the already-running runtime
             current = self.loaded_runtime if self._is_runtime_running_locked() else None
             if current:
-                current_mmproj = current.mmproj_path or ""
-                wanted_mmproj = mmproj_path or ""
-                compare_current_launch_args = list(current.launch_args)
-                compare_wanted_launch_args = list(effective_launch_args)
-                if ctx_size is None:
-                    compare_current_launch_args = self._without_server_arg(
-                        compare_current_launch_args,
-                        ("-c", "--ctx-size"),
-                    )
-                    compare_wanted_launch_args = self._without_server_arg(
-                        compare_wanted_launch_args,
-                        ("-c", "--ctx-size"),
-                    )
-                if (
-                    current.backend_id == backend.id
-                    and Path(current.model_path).resolve() == Path(model_path).resolve()
-                    and current_mmproj == wanted_mmproj
-                    and (ctx_size is None or current.ctx_size == ctx_size)
-                    and compare_current_launch_args == compare_wanted_launch_args
+                if self._runtime_matches_locked(
+                    current,
+                    backend=backend,
+                    model_path=model_path,
+                    mmproj_path=mmproj_path,
+                    ctx_size=ctx_size,
+                    launch_args=effective_launch_args,
                 ):
                     current.request_defaults = effective_request_defaults
                     if on_progress:
