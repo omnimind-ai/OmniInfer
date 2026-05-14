@@ -161,16 +161,22 @@ def run_tui() -> int:
 
 def _choose_backend() -> str | None:
     while True:
-        payload = commands.list_backends(scope="installed")
+        build_supported = commands.is_backend_build_supported()
+        payload = commands.list_backends(scope="compatible" if build_supported else "installed")
         rows = payload.get("data") if isinstance(payload.get("data"), list) else []
         if not rows:
+            if build_supported:
+                raise SystemExit("No compatible backends are available.")
             raise SystemExit("No installed backends are available.")
 
         items: list[_MenuItem] = []
         for item in rows:
-            installed = "installed" if item.get("binary_exists") else "not installed"
+            is_installed = bool(item.get("binary_exists"))
+            installed = "installed" if is_installed else "not installed"
             capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), list) else []
             details = [installed, *[str(value) for value in capabilities[:4]]]
+            if build_supported and not is_installed:
+                details.append("build available")
             items.append(
                 _MenuItem(
                     label=str(item.get("id") or ""),
@@ -190,12 +196,75 @@ def _choose_backend() -> str | None:
         if not backend_id:
             _print_notice("Invalid backend.", kind="warning")
             continue
+        if build_supported and not rows[index].get("binary_exists"):
+            if _build_backend_interactive(backend_id, select_after=False) is None:
+                continue
         result = commands.select_backend(backend_id)
         _print_notice(f"Selected backend: {result.backend}", kind="success")
         if result.models_dir:
             _print_kv("Models directory", result.models_dir)
         print()
         return backend_id
+
+
+def _build_backend_interactive(backend_id: str | None = None, *, select_after: bool = True) -> str | None:
+    if not commands.is_backend_build_supported():
+        _print_notice("Backend builds are only available from a source checkout.", kind="warning")
+        return None
+    if backend_id is None:
+        backend_id = _choose_backend_for_build()
+        if backend_id is None:
+            return None
+    _print_section("Build", f"Building backend: {backend_id}")
+    try:
+        options = commands.BackendBuildOptions(backend=backend_id)
+        command, _script_path = commands.backend_build_command(options)
+        _print_kv("Command", " ".join(command))
+        result = commands.build_backend(options)
+    except SystemExit as exc:
+        _print_notice(str(exc), kind="warning")
+        print()
+        return None
+    _print_notice(f"Backend build completed: {result.backend}", kind="success")
+    if result.binary_path:
+        _print_kv("Binary", str(result.binary_path))
+    if select_after:
+        selected = commands.select_backend(result.backend)
+        _print_notice(f"Selected backend: {selected.backend}", kind="success")
+        if selected.models_dir:
+            _print_kv("Models directory", selected.models_dir)
+    print()
+    return result.backend
+
+
+def _choose_backend_for_build() -> str | None:
+    payload = commands.list_backends(scope="compatible")
+    rows = payload.get("data") if isinstance(payload.get("data"), list) else []
+    if not rows:
+        _print_notice("No compatible backends are available.", kind="warning")
+        return None
+    items: list[_MenuItem] = []
+    for item in rows:
+        installed = "installed" if item.get("binary_exists") else "not installed"
+        capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), list) else []
+        details = [installed, *[str(value) for value in capabilities[:4]]]
+        items.append(
+            _MenuItem(
+                label=str(item.get("id") or ""),
+                details=details,
+                selected=bool(item.get("selected")),
+            )
+        )
+    index = _select_menu(
+        title="Build Backend",
+        subtitle="Choose a compatible runtime backend to build",
+        items=items,
+        default_index=_default_selected_index(rows),
+    )
+    if index is None:
+        return None
+    backend_id = str(rows[index].get("id", ""))
+    return backend_id or None
 
 
 def _choose_model() -> Path | None:
@@ -479,6 +548,15 @@ def _chat_loop(backend: str) -> None:
                 selected_backend = _choose_backend()
                 if selected_backend:
                     session.switch_backend(selected_backend)
+                    loaded_backend = _load_model_after_backend_switch()
+                    if loaded_backend:
+                        session.backend = loaded_backend
+            continue
+        if commands.is_backend_build_supported() and (message == "/build" or message.startswith("/build ")):
+            with session.notices.capture():
+                built_backend = _handle_build_command(message)
+                if built_backend:
+                    session.switch_backend(built_backend)
                     loaded_backend = _load_model_after_backend_switch()
                     if loaded_backend:
                         session.backend = loaded_backend
@@ -971,7 +1049,8 @@ def _print_kv(label: str, value: str) -> None:
 
 
 def _print_command_bar() -> None:
-    commands_text = " /backend  /model  /think  /reasoning  /status  /clear  /help  /exit "
+    command_names = [name for name, _description in _command_table()]
+    commands_text = " " + "  ".join(command_names) + " "
     print(_THEME.dim("Commands") + _THEME.accent(commands_text))
 
 
@@ -985,7 +1064,7 @@ def _print_chat_header(backend: str) -> None:
 
 def _print_help() -> None:
     _print_section("Help", "Conversation commands")
-    for name, description in _COMMAND_TABLE:
+    for name, description in _command_table():
         _print_kv(name, description)
 
 
@@ -994,7 +1073,8 @@ def _show_command_menu(session: _ChatSessionState) -> None:
         _print_help()
         print()
         return
-    items = [_MenuItem(label=name, details=[description]) for name, description in _COMMAND_TABLE]
+    command_table = _command_table()
+    items = [_MenuItem(label=name, details=[description]) for name, description in command_table]
     index = _select_menu(
         title="Commands",
         subtitle="Search commands; Esc returns to chat",
@@ -1003,7 +1083,7 @@ def _show_command_menu(session: _ChatSessionState) -> None:
     )
     if index is None:
         return
-    name, description = _COMMAND_TABLE[index]
+    name, description = command_table[index]
     session.notices.push(f"{name}: {description}", kind="info")
 
 
@@ -1033,6 +1113,15 @@ def _handle_reasoning_command(session: _ChatSessionState, message: str) -> None:
     _print_notice(f"Reasoning display: {'show' if session.reasoning_visible else 'hide'}", kind="success")
 
 
+def _handle_build_command(message: str) -> str | None:
+    if not commands.is_backend_build_supported():
+        _print_notice("Backend builds are only available from a source checkout.", kind="warning")
+        return None
+    parts = message.split(maxsplit=1)
+    backend_id = parts[1].strip() if len(parts) == 2 else None
+    return _build_backend_interactive(backend_id)
+
+
 def _current_thinking_label() -> str | None:
     try:
         return _format_on_off(commands.get_default_thinking())
@@ -1053,6 +1142,7 @@ class _MenuItem:
 
 _COMMAND_TABLE = [
     ("/backend", "switch the selected runtime"),
+    ("/build", "build a compatible backend from this source checkout"),
     ("/model", "load a different managed model"),
     ("/think", "toggle thinking mode; use /think on or /think off to set it"),
     ("/reasoning", "toggle visible reasoning; use /reasoning on or /reasoning off to set it"),
@@ -1061,6 +1151,12 @@ _COMMAND_TABLE = [
     ("/help", "show this command reference"),
     ("/exit", "stop the OmniInfer service and leave the TUI"),
 ]
+
+
+def _command_table() -> list[tuple[str, str]]:
+    if commands.is_backend_build_supported():
+        return list(_COMMAND_TABLE)
+    return [item for item in _COMMAND_TABLE if item[0] != "/build"]
 
 
 def _select_menu(
@@ -1845,18 +1941,19 @@ def _prompt_status_text(input_text: str, default_status: str) -> str:
 
 def _slash_command_hint(input_text: str) -> str:
     query = input_text.strip().lower()
+    command_table = _command_table()
     if query == "/":
-        names = [name for name, _description in _COMMAND_TABLE[:5]]
+        names = [name for name, _description in command_table[:5]]
         return "commands: " + "  ".join(names)
     matches = [
         (name, description)
-        for name, description in _COMMAND_TABLE
+        for name, description in command_table
         if name.startswith(query)
     ]
     if not matches:
         matches = [
             (name, description)
-            for name, description in _COMMAND_TABLE
+            for name, description in command_table
             if query.lstrip("/") in description.lower()
         ]
     if not matches:

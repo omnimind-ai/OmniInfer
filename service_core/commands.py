@@ -94,6 +94,20 @@ class ChatOptions:
 
 
 @dataclass(frozen=True)
+class BackendBuildOptions:
+    backend: str
+
+
+@dataclass(frozen=True)
+class BackendBuildResult:
+    backend: str
+    command: list[str]
+    script_path: Path
+    binary_path: Path | None
+    returncode: int
+
+
+@dataclass(frozen=True)
 class ChatStreamChunk:
     text: str = ""
     reasoning_text: str = ""
@@ -209,6 +223,96 @@ def local_backends() -> dict[str, Any]:
 
 def local_backend_ids() -> list[str]:
     return list(local_backends().keys())
+
+
+def is_backend_build_supported() -> bool:
+    """Return true when this process is running from a source checkout with build scripts."""
+    if getattr(sys, "frozen", False):
+        return False
+    scripts_root = Path(REPO_ROOT) / "scripts" / "platforms"
+    return scripts_root.is_dir()
+
+
+def backend_build_platform_dir(system_name: str | None = None) -> str:
+    system = system_name or detect_system_name()
+    if system == "mac":
+        return "macos"
+    if system in {"linux", "windows"}:
+        return system
+    raise SystemExit(f"backend builds are not supported on this platform: {system}")
+
+
+def backend_build_script_path(backend: str, *, system_name: str | None = None) -> Path:
+    platform_dir = backend_build_platform_dir(system_name)
+    extension = "ps1" if platform_dir == "windows" else "sh"
+    return Path(REPO_ROOT) / "scripts" / "platforms" / platform_dir / backend / f"build.{extension}"
+
+
+def backend_build_command(options: BackendBuildOptions) -> tuple[list[str], Path]:
+    if not is_backend_build_supported():
+        raise SystemExit("Backend builds are only available from a source checkout, not packaged releases.")
+
+    backends = local_backends()
+    available = sorted(backends)
+    if options.backend not in backends:
+        raise SystemExit(f"Unsupported backend: {options.backend}\nAvailable backends: {', '.join(available)}")
+
+    script_path = backend_build_script_path(options.backend)
+    if not script_path.is_file():
+        raise SystemExit(
+            f"No build script found for backend: {options.backend}\n"
+            f"Expected: {script_path}"
+        )
+
+    if _is_windows():
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-BuildType",
+            "Release",
+        ]
+    else:
+        command = ["bash", str(script_path), "--build-type", "Release"]
+    return command, script_path
+
+
+def build_backend(options: BackendBuildOptions) -> BackendBuildResult:
+    command, script_path = backend_build_command(options)
+    backends = local_backends()
+    backend = backends[options.backend]
+    binary_path = Path(backend.launcher_path) if backend.launcher_path else None
+
+    if is_service_running():
+        try:
+            state = current_runtime_state()
+            if state.get("backend") == options.backend and state.get("backend_ready"):
+                request_json("POST", "/omni/backend/stop", timeout=30.0)
+        except SystemExit:
+            pass
+
+    result = subprocess.run(command, cwd=str(REPO_ROOT), check=False)
+    if result.returncode != 0:
+        raise SystemExit(f"Backend build failed for {options.backend} with exit code {result.returncode}.")
+
+    refreshed = local_backends().get(options.backend)
+    if refreshed is None:
+        raise SystemExit(f"Backend disappeared after build: {options.backend}")
+    refreshed_binary = Path(refreshed.launcher_path) if refreshed.launcher_path else None
+    if not refreshed.binary_exists:
+        expected = str(refreshed_binary) if refreshed_binary else "backend launcher"
+        raise SystemExit(f"Backend build completed, but the expected binary was not found: {expected}")
+
+    return BackendBuildResult(
+        backend=options.backend,
+        command=command,
+        script_path=script_path,
+        binary_path=refreshed_binary,
+        returncode=result.returncode,
+    )
 
 
 def resolve_gateway_binary() -> Path | None:

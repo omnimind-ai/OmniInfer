@@ -12,6 +12,7 @@ If you are running OmniInfer from a source checkout, prepare at least one local 
 - macOS: build `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
+Packaged releases do not include the `omniinfer build` command; backend builds are source-checkout tooling only.
 
 ### macOS `mlx-mac` prerequisites
 
@@ -88,7 +89,25 @@ Use `./omniinfer backend list --json` when automation needs full backend metadat
 By default, `backend list` shows compatible backends only. Use `--scope installed` or `--scope all` for a narrower or broader view.
 In the table output, empty `Selected` or `Installed` cells mean the state is false.
 
-### 2. Select a backend
+### 2. Build a backend from source, optional
+
+Source checkouts on Linux, macOS, and Windows can build a compatible backend through the CLI:
+
+```sh
+./omniinfer build <backend>
+```
+
+Windows:
+
+```powershell
+.\omniinfer.ps1 build <backend>
+```
+
+The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*`, uses a `Release` build, and verifies that the backend launcher exists after the build.
+
+Packaged releases intentionally do not provide this command because they are designed to run from the included `runtime/` directory without requiring a compiler, CUDA toolkit, CMake, or other build tools.
+
+### 3. Select a backend
 
 Always pick a backend from `backend list` on your current device.
 
@@ -131,7 +150,7 @@ Example:
 }
 ```
 
-### 3. Load a model
+### 4. Load a model
 
 Default path:
 

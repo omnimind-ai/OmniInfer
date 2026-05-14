@@ -355,6 +355,14 @@ The legacy iOS script helper has been removed.
 
 ## After Building
 
+From a source checkout on Linux, macOS, or Windows, the shortest path for desktop backends is:
+
+```bash
+./omniinfer build <backend>
+```
+
+The CLI delegates to the matching script under `scripts/platforms/<platform>/<backend>/build.*`, uses a `Release` CMake build, and checks that the backend launcher was produced. This build command is intentionally omitted from packaged releases; release archives are expected to run directly from their bundled `runtime/` directory without local build tools.
+
 List the local backends:
 
 ```bash

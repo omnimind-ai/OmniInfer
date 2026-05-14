@@ -64,6 +64,20 @@ Command map:
 """
 
 
+def _help_text() -> str:
+    if not commands.is_backend_build_supported():
+        return HELP_TEXT
+    return HELP_TEXT.replace(
+        "  omniinfer backend select <backend>\n",
+        "  omniinfer backend select <backend>\n"
+        "  omniinfer build <backend>\n",
+    ).replace(
+        "  backend select <backend>  -> choose a backend\n",
+        "  backend select <backend>  -> choose a backend\n"
+        "  build <backend>           -> build a backend from a source checkout\n",
+    )
+
+
 BASH_COMPLETION_SCRIPT = r"""# bash completion for omniinfer
 _omniinfer_completion() {
     local cur prev
@@ -222,6 +236,20 @@ def select_backend(name: str) -> int:
         "Backend config: "
         f"{result.profile_path} ({'created' if result.profile_created else 'already exists'})"
     )
+    return 0
+
+
+def build_backend(name: str) -> int:
+    options = commands.BackendBuildOptions(backend=name)
+    command, _script_path = commands.backend_build_command(options)
+    print(f"Building backend: {name}")
+    print("Build type: Release")
+    print("Command: " + " ".join(command))
+
+    result = commands.build_backend(options)
+    print(f"Backend build completed: {result.backend}")
+    if result.binary_path:
+        print(f"Binary: {result.binary_path}")
     return 0
 
 
@@ -776,6 +804,8 @@ def handle_hidden_completion(argv: list[str]) -> int:
     previous = words[cword - 1] if cword - 1 >= 0 else ""
 
     top_level = ["backend", "status", "ps", "model", "load", "thinking", "chat", "shutdown", "serve", "completion"]
+    if commands.is_backend_build_supported():
+        top_level.insert(1, "build")
     backend_sub = ["list", "select", "stop"]
     model_sub = ["list", "load"]
     thinking_sub = ["show", "set"]
@@ -783,6 +813,9 @@ def handle_hidden_completion(argv: list[str]) -> int:
     suggestions: list[str] = []
     if cword <= 0:
         suggestions = top_level
+    elif words and words[0] == "build":
+        if cword == 1:
+            suggestions = complete_backend_name(current)
     elif words and words[0] == "backend":
         if cword == 1:
             suggestions = backend_sub
@@ -813,7 +846,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="omniinfer",
         description="OmniInfer local CLI",
-        epilog=HELP_TEXT,
+        epilog=_help_text(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--port", type=int, default=None, help="Gateway port (overrides config file)")
@@ -827,6 +860,10 @@ def build_parser() -> argparse.ArgumentParser:
     backend_select = backend_sub.add_parser("select", help="Select a backend")
     backend_select.add_argument("backend_name", help="Backend name")
     backend_sub.add_parser("stop", help="Stop the current backend process")
+
+    if commands.is_backend_build_supported():
+        build = sub.add_parser("build", help="Build a backend from this source checkout")
+        build.add_argument("backend_name", help="Backend name")
 
     sub.add_parser("status", help="Show current status")
 
@@ -916,6 +953,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.backend_command == "stop":
             return backend_stop()
         parser.error("backend requires a subcommand: list / select / stop")
+
+    if args.command == "build":
+        if unknown_args:
+            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+        return build_backend(args.backend_name)
 
     if args.command == "status":
         if unknown_args:
