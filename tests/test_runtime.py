@@ -213,10 +213,9 @@ class CliParserTests(unittest.TestCase):
 
     def test_build_command_parses_in_source_checkout(self) -> None:
         with patch("service_core.commands.is_backend_build_supported", return_value=True):
-            args = build_parser().parse_args(["build", "llama.cpp-cpu", "--build-type", "RelWithDebInfo"])
+            args = build_parser().parse_args(["build", "llama.cpp-cpu"])
         self.assertEqual(args.command, "build")
         self.assertEqual(args.backend_name, "llama.cpp-cpu")
-        self.assertEqual(args.build_type, "RelWithDebInfo")
 
     def test_build_command_is_hidden_in_packaged_release(self) -> None:
         with patch("service_core.commands.is_backend_build_supported", return_value=False):
@@ -351,7 +350,7 @@ class CommandHelperTests(unittest.TestCase):
                 patch("service_core.commands.local_backends", return_value={"llama.cpp-cpu": object()}),
             ):
                 command, script_path = commands.backend_build_command(
-                    commands.BackendBuildOptions(backend="llama.cpp-cpu", build_type="Release")
+                    commands.BackendBuildOptions(backend="llama.cpp-cpu")
                 )
 
         self.assertEqual(script_path, script)
@@ -372,24 +371,24 @@ class CommandHelperTests(unittest.TestCase):
                 patch("service_core.commands.local_backends", return_value={"llama.cpp-mac": object()}),
             ):
                 command, script_path = commands.backend_build_command(
-                    commands.BackendBuildOptions(backend="llama.cpp-mac", build_type="Debug")
+                    commands.BackendBuildOptions(backend="llama.cpp-mac")
                 )
 
         self.assertEqual(script_path, script)
-        self.assertEqual(command, ["bash", str(script), "--build-type", "Debug"])
+        self.assertEqual(command, ["bash", str(script), "--build-type", "Release"])
 
     def test_backend_build_rejected_when_frozen(self) -> None:
         with patch("service_core.commands.sys.frozen", True, create=True):
             with self.assertRaises(SystemExit):
                 commands.backend_build_command(commands.BackendBuildOptions(backend="llama.cpp-cpu"))
 
-    def test_backend_build_dry_run_does_not_start_subprocess(self) -> None:
+    def test_backend_build_runs_script_and_checks_output_binary(self) -> None:
         fake_backend = type(
             "FakeBackend",
             (),
             {
                 "launcher_path": str(Path("runtime") / "bin" / "omniinfer-backend.cmd"),
-                "binary_exists": False,
+                "binary_exists": True,
             },
         )()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -403,14 +402,16 @@ class CommandHelperTests(unittest.TestCase):
                 patch("service_core.commands.detect_system_name", return_value="linux"),
                 patch("service_core.commands._is_windows", return_value=False),
                 patch("service_core.commands.local_backends", return_value={"llama.cpp-linux": fake_backend}),
+                patch("service_core.commands.is_service_running", return_value=False),
                 patch("service_core.commands.subprocess.run") as run_mock,
             ):
+                run_mock.return_value.returncode = 0
                 result = commands.build_backend(
-                    commands.BackendBuildOptions(backend="llama.cpp-linux", dry_run=True)
+                    commands.BackendBuildOptions(backend="llama.cpp-linux")
                 )
 
-        self.assertTrue(result.dry_run)
-        run_mock.assert_not_called()
+        self.assertEqual(result.returncode, 0)
+        run_mock.assert_called_once_with(["bash", str(script), "--build-type", "Release"], cwd=str(root), check=False)
 
     def test_backend_models_dir_defaults_to_shared_local_models_on_all_desktop_platforms(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

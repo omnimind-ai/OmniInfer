@@ -96,8 +96,6 @@ class ChatOptions:
 @dataclass(frozen=True)
 class BackendBuildOptions:
     backend: str
-    build_type: str = "Release"
-    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -107,7 +105,6 @@ class BackendBuildResult:
     script_path: Path
     binary_path: Path | None
     returncode: int
-    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -276,10 +273,10 @@ def backend_build_command(options: BackendBuildOptions) -> tuple[list[str], Path
             "-File",
             str(script_path),
             "-BuildType",
-            options.build_type,
+            "Release",
         ]
     else:
-        command = ["bash", str(script_path), "--build-type", options.build_type]
+        command = ["bash", str(script_path), "--build-type", "Release"]
     return command, script_path
 
 
@@ -288,16 +285,6 @@ def build_backend(options: BackendBuildOptions) -> BackendBuildResult:
     backends = local_backends()
     backend = backends[options.backend]
     binary_path = Path(backend.launcher_path) if backend.launcher_path else None
-
-    if options.dry_run:
-        return BackendBuildResult(
-            backend=options.backend,
-            command=command,
-            script_path=script_path,
-            binary_path=binary_path,
-            returncode=0,
-            dry_run=True,
-        )
 
     if is_service_running():
         try:

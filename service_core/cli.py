@@ -239,15 +239,12 @@ def select_backend(name: str) -> int:
     return 0
 
 
-def build_backend(name: str, *, build_type: str, dry_run: bool) -> int:
-    options = commands.BackendBuildOptions(backend=name, build_type=build_type, dry_run=dry_run)
+def build_backend(name: str) -> int:
+    options = commands.BackendBuildOptions(backend=name)
     command, _script_path = commands.backend_build_command(options)
     print(f"Building backend: {name}")
-    print(f"Build type: {build_type}")
+    print("Build type: Release")
     print("Command: " + " ".join(command))
-    if dry_run:
-        print("Dry run only; build was not started.")
-        return 0
 
     result = commands.build_backend(options)
     print(f"Backend build completed: {result.backend}")
@@ -867,8 +864,6 @@ def build_parser() -> argparse.ArgumentParser:
     if commands.is_backend_build_supported():
         build = sub.add_parser("build", help="Build a backend from this source checkout")
         build.add_argument("backend_name", help="Backend name")
-        build.add_argument("--build-type", default="Release", help="CMake build type (default: Release)")
-        build.add_argument("--dry-run", action="store_true", help="Print the build command without running it")
 
     sub.add_parser("status", help="Show current status")
 
@@ -962,7 +957,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
-        return build_backend(args.backend_name, build_type=args.build_type, dry_run=args.dry_run)
+        return build_backend(args.backend_name)
 
     if args.command == "status":
         if unknown_args:

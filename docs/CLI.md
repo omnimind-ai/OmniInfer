@@ -103,7 +103,7 @@ Windows:
 .\omniinfer.ps1 build <backend>
 ```
 
-The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*`, defaults to a `Release` build, and verifies that the backend launcher exists after the build. Use `--build-type <type>` to choose a different CMake build type, or `--dry-run` to print the build command without running it.
+The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*`, uses a `Release` build, and verifies that the backend launcher exists after the build.
 
 Packaged releases intentionally do not provide this command because they are designed to run from the included `runtime/` directory without requiring a compiler, CUDA toolkit, CMake, or other build tools.
 
