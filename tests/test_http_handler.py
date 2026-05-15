@@ -224,6 +224,12 @@ class HttpHandlerTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertIn("required", body["error"]["message"])
 
+    def test_anthropic_messages_empty_body(self) -> None:
+        code, body = _post(self.base_url, "/v1/messages", {})
+        self.assertEqual(code, 400)
+        self.assertEqual(body["error"]["type"], "invalid_request_error")
+        self.assertIn("messages", body["error"]["message"])
+
     def test_post_not_found(self) -> None:
         code, body = _post(self.base_url, "/nonexistent", {})
         self.assertEqual(code, 404)

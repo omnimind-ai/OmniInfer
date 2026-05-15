@@ -1302,11 +1302,18 @@ class OmniHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         requested_model = str(body.get("model", "")).strip() or None
         is_stream = body.get("stream") is True
+        messages = body.get("messages")
+        if not isinstance(messages, list) or not messages:
+            self._send_json(
+                400,
+                {"error": {"type": "invalid_request_error", "message": "messages is required"}},
+            )
+            return
 
         logger.info(
             "POST /v1/messages model=%s messages=%d stream=%s",
             body.get("model", ""),
-            len(body.get("messages", [])),
+            len(messages),
             is_stream,
         )
 
