@@ -310,6 +310,27 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 ./omniinfer serve
 ```
 
+To expose only the inference API to trusted devices on the same LAN, use:
+
+```sh
+./omniinfer serve --lan
+```
+
+LAN mode binds the gateway to `0.0.0.0` and requires an API key for remote clients. If no key is supplied through `--api-key` or `OMNIINFER_API_KEY`, OmniInfer generates a session key and prints it with the LAN base URLs. Remote clients can call `/v1/chat/completions` or `/v1/messages`; `/omni/*` management endpoints stay local-only by default.
+
+On Windows, allow the port through the Private-network firewall profile when needed:
+
+```powershell
+New-NetFirewallRule `
+  -DisplayName "OmniInfer LAN 9000" `
+  -Direction Inbound `
+  -Action Allow `
+  -Protocol TCP `
+  -LocalPort 9000 `
+  -Profile Private `
+  -RemoteAddress LocalSubnet
+```
+
 ### Mobile
 
 - Android is implemented by the root `android/` Gradle module. See [Android Integration Guide](android/integration.md).

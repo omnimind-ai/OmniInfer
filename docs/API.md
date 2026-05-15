@@ -14,7 +14,7 @@ All request and response bodies are JSON unless an endpoint explicitly uses Serv
 
 - `Access-Control-Allow-Origin: *`
 - `Access-Control-Allow-Methods: GET, POST, OPTIONS`
-- `Access-Control-Allow-Headers: Content-Type, Authorization`
+- `Access-Control-Allow-Headers: Content-Type, Authorization, x-api-key`
 
 `OPTIONS *` returns `204` for CORS preflight and also accepts `anthropic-version` and `x-api-key` in `Access-Control-Allow-Headers`.
 
@@ -22,6 +22,53 @@ Windows note: `omniinfer serve` hides its console window by default. To run in t
 
 ```powershell
 python omniinfer.py serve --window-mode visible
+```
+
+## Local Network Access
+
+OmniInfer binds to `127.0.0.1` by default, so only the same machine can access the gateway. To expose the OpenAI-compatible inference API to other devices on the same trusted LAN, start the gateway in LAN mode:
+
+```sh
+./omniinfer serve --lan
+```
+
+LAN mode binds the gateway to `0.0.0.0`, generates a session API key when one is not provided, and prints the local and LAN base URLs. Remote clients must send the key with either header:
+
+```text
+Authorization: Bearer <api-key>
+x-api-key: <api-key>
+```
+
+For a stable key, pass one explicitly or set `OMNIINFER_API_KEY`:
+
+```sh
+OMNIINFER_API_KEY=oi_example ./omniinfer serve --lan
+```
+
+Only inference-facing endpoints are exposed to remote clients by default:
+
+| Method | Path |
+|---|---|
+| `GET` | `/health` |
+| `GET` | `/v1/models` |
+| `POST` | `/v1/chat/completions` |
+| `POST` | `/v1/messages` |
+
+Management endpoints under `/omni/*`, including model loading, backend switching, backend stop, and gateway shutdown, remain local-only unless the gateway is started with `--allow-remote-management` and an API key. Keep OmniStudio and other local controllers pointed at `http://127.0.0.1:<port>`.
+
+If you intentionally need an unauthenticated LAN test server, use `--allow-insecure-lan`. Do not use that mode on shared networks.
+
+On Windows, the OS firewall may still block inbound LAN traffic. Prefer a Private network profile and a LocalSubnet-only rule:
+
+```powershell
+New-NetFirewallRule `
+  -DisplayName "OmniInfer LAN 9000" `
+  -Direction Inbound `
+  -Action Allow `
+  -Protocol TCP `
+  -LocalPort 9000 `
+  -Profile Private `
+  -RemoteAddress LocalSubnet
 ```
 
 ## Endpoint Summary

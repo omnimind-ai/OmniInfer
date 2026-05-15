@@ -257,6 +257,17 @@ class CliParserTests(unittest.TestCase):
             ["--host", "0.0.0.0", "--window-mode", "visible", "--default-backend", "llama.cpp-linux"]
         )
 
+    def test_serve_lan_forwards_service_argument(self) -> None:
+        try:
+            with patch("service_core.service.main", return_value=0) as service_main:
+                result = cli.main(["serve", "--lan", "--window-mode", "visible"])
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        service_main.assert_called_once_with(["--lan", "--window-mode", "visible"])
+
     def test_global_port_override_is_forwarded_to_serve(self) -> None:
         try:
             with patch("service_core.service.main", return_value=0) as service_main:

@@ -38,6 +38,7 @@ Common commands:
   omniinfer load -m /path/to/model.gguf --config
   omniinfer chat "Introduce yourself in one sentence."
   omniinfer chat "Describe this image." --image photo.png
+  omniinfer serve --lan
   omniinfer shutdown
 
 Design notes:
@@ -59,7 +60,7 @@ Command map:
   chat                      -> run text or multimodal inference on the loaded model
   backend stop              -> stop the currently running backend process
   shutdown                  -> stop the OmniInfer service
-  serve                     -> start the service in the foreground
+  serve                     -> start the service in the foreground; use --lan to expose inference endpoints on the local network
   completion bash           -> print the bash completion script
 """
 
