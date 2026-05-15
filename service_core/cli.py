@@ -914,12 +914,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     global _cli_port_override
 
-    from service_core.logger import setup_logging
-
-    setup_logging(level="DEBUG", console=False, log_to_file=True)
-    cli_logger = logging.getLogger("cli")
-    cli_logger.debug("CLI invoked: %s", " ".join(sys.argv))
-
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "__complete":
         return handle_hidden_completion(argv[1:])
@@ -930,6 +924,12 @@ def main(argv: list[str] | None = None) -> int:
         _cli_port_override = args.port
         commands.set_port_override(args.port)
         return serve_foreground(_service_args_from_cli(args, argv[1:]))
+
+    from service_core.logger import setup_logging
+
+    setup_logging(level="DEBUG", console=False, log_to_file=True)
+    cli_logger = logging.getLogger("cli")
+    cli_logger.debug("CLI invoked: %s", " ".join(sys.argv))
 
     args, unknown_args = parser.parse_known_args(argv)
     unknown_args = [item for item in unknown_args if item != "--"]
