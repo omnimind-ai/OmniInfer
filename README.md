@@ -43,7 +43,7 @@ OmniInfer includes a terminal UI for selecting backends, loading models, and cha
 <table width="100%">
   <tr>
     <td width="100%">
-      <video src="https://github.com/user-attachments/assets/REPLACE_WITH_TUI_DEMO_ATTACHMENT" controls="controls" style="max-width: 100%;"></video>
+      <video src="https://github.com/user-attachments/assets/4ac5329e-8c54-4ea9-8a51-02306c0607e9" controls="controls" style="max-width: 100%;"></video>
     </td>
   </tr>
 </table>
