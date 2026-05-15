@@ -38,6 +38,7 @@ Common commands:
   omniinfer load -m /path/to/model.gguf --config
   omniinfer chat "Introduce yourself in one sentence."
   omniinfer chat "Describe this image." --image photo.png
+  omniinfer serve --lan
   omniinfer shutdown
 
 Design notes:
@@ -59,7 +60,7 @@ Command map:
   chat                      -> run text or multimodal inference on the loaded model
   backend stop              -> stop the currently running backend process
   shutdown                  -> stop the OmniInfer service
-  serve                     -> start the service in the foreground
+  serve                     -> start the service in the foreground; use --lan to expose inference endpoints on the local network
   completion bash           -> print the bash completion script
 """
 
@@ -120,7 +121,10 @@ def get_service_config() -> dict[str, Any]:
 
 def service_base_url() -> str:
     config = get_service_config()
-    return f"http://{config['host']}:{int(config['port'])}"
+    host = str(config["host"]).strip()
+    if host in {"0.0.0.0", "::", ""}:
+        host = "127.0.0.1"
+    return f"http://{host}:{int(config['port'])}"
 
 
 def request_json(
@@ -910,12 +914,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     global _cli_port_override
 
-    from service_core.logger import setup_logging
-
-    setup_logging(level="DEBUG", console=False, log_to_file=True)
-    cli_logger = logging.getLogger("cli")
-    cli_logger.debug("CLI invoked: %s", " ".join(sys.argv))
-
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "__complete":
         return handle_hidden_completion(argv[1:])
@@ -926,6 +924,12 @@ def main(argv: list[str] | None = None) -> int:
         _cli_port_override = args.port
         commands.set_port_override(args.port)
         return serve_foreground(_service_args_from_cli(args, argv[1:]))
+
+    from service_core.logger import setup_logging
+
+    setup_logging(level="DEBUG", console=False, log_to_file=True)
+    cli_logger = logging.getLogger("cli")
+    cli_logger.debug("CLI invoked: %s", " ".join(sys.argv))
 
     args, unknown_args = parser.parse_known_args(argv)
     unknown_args = [item for item in unknown_args if item != "--"]

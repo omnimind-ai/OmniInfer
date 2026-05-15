@@ -257,6 +257,17 @@ class CliParserTests(unittest.TestCase):
             ["--host", "0.0.0.0", "--window-mode", "visible", "--default-backend", "llama.cpp-linux"]
         )
 
+    def test_serve_lan_forwards_service_argument(self) -> None:
+        try:
+            with patch("service_core.service.main", return_value=0) as service_main:
+                result = cli.main(["serve", "--lan", "--window-mode", "visible"])
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        service_main.assert_called_once_with(["--lan", "--window-mode", "visible"])
+
     def test_global_port_override_is_forwarded_to_serve(self) -> None:
         try:
             with patch("service_core.service.main", return_value=0) as service_main:
@@ -335,6 +346,13 @@ class CommandHelperTests(unittest.TestCase):
 
             self.assertTrue(Path(command[0]).samefile(exe_path))
             self.assertEqual(command[1], "serve")
+
+    def test_command_service_base_url_uses_loopback_for_all_interfaces(self) -> None:
+        with patch(
+            "service_core.commands.load_app_config",
+            return_value={"host": "0.0.0.0", "port": 9000},
+        ):
+            self.assertEqual(commands.service_base_url(), "http://127.0.0.1:9000")
 
     def test_backend_build_command_resolves_windows_script(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

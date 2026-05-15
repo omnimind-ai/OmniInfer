@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import hmac
+import ipaddress
 import json
 import logging
 import os
+import secrets
+import socket
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,6 +37,107 @@ else:
 
 INTERNAL_BACKEND_HOST = "127.0.0.1"
 INTERNAL_BACKEND_PORT = 0
+PUBLIC_GET_ENDPOINTS = frozenset({"/health", "/v1/models"})
+PUBLIC_POST_ENDPOINTS = frozenset({"/v1/chat/completions", "/v1/messages"})
+
+
+@dataclass(frozen=True)
+class GatewayAccessPolicy:
+    api_key: str = ""
+    allow_insecure_lan: bool = False
+    allow_remote_management: bool = False
+
+
+@dataclass(frozen=True)
+class ResolvedApiKey:
+    value: str
+    generated: bool = False
+
+
+def is_loopback_address(host: str) -> bool:
+    value = host.strip().strip("[]")
+    if not value:
+        return False
+    if value.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def is_loopback_bind_host(host: str) -> bool:
+    value = host.strip().strip("[]")
+    if not value:
+        return False
+    if value.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def is_all_interfaces_host(host: str) -> bool:
+    value = host.strip().strip("[]")
+    return value in {"0.0.0.0", "::", ""}
+
+
+def should_require_remote_api_key(host: str) -> bool:
+    return not is_loopback_bind_host(host)
+
+
+def resolve_api_key(cli_value: str | None, config: dict[str, Any], *, lan_mode: bool) -> ResolvedApiKey:
+    raw = (cli_value if cli_value is not None else str(config.get("api_key", ""))).strip()
+    if not raw:
+        raw = os.environ.get("OMNIINFER_API_KEY", "").strip()
+    if raw:
+        return ResolvedApiKey(raw, generated=False)
+    if lan_mode:
+        return ResolvedApiKey("oi_" + secrets.token_urlsafe(24), generated=True)
+    return ResolvedApiKey("")
+
+
+def local_lan_ipv4_addresses() -> list[str]:
+    addresses: set[str] = set()
+
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = info[4][0]
+            if not is_loopback_address(ip) and not ip.startswith("169.254."):
+                addresses.add(ip)
+    except OSError:
+        pass
+
+    # This avoids DNS-only setups where getaddrinfo(hostname) misses the active route.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+            if not is_loopback_address(ip) and not ip.startswith("169.254."):
+                addresses.add(ip)
+    except OSError:
+        pass
+
+    return sorted(addresses)
+
+
+def log_gateway_access_urls(host: str, port: int, api_key: str, *, lan_enabled: bool) -> None:
+    logger.info("Local API: http://127.0.0.1:%d/v1", port)
+    if not lan_enabled:
+        return
+
+    addresses = local_lan_ipv4_addresses()
+    if not addresses:
+        logger.warning("LAN API enabled, but no non-loopback IPv4 address was detected")
+    else:
+        for address in addresses:
+            logger.info("LAN API: http://%s:%d/v1", address, port)
+    if api_key:
+        logger.info("LAN API key is configured")
+    else:
+        logger.warning("LAN API is running without an API key")
 
 
 def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -657,6 +763,66 @@ class OmniHandler(BaseHTTPRequestHandler):
         value = getattr(self.server, "forced_backend", "")  # type: ignore[attr-defined]
         return str(value).strip() or None
 
+    @property
+    def access_policy(self) -> GatewayAccessPolicy:
+        policy = getattr(self.server, "access_policy", None)  # type: ignore[attr-defined]
+        if isinstance(policy, GatewayAccessPolicy):
+            return policy
+        return GatewayAccessPolicy()
+
+    def _is_remote_client(self) -> bool:
+        try:
+            return not is_loopback_address(str(self.client_address[0]))
+        except (IndexError, TypeError):
+            return True
+
+    def _remote_request_authenticated(self) -> bool:
+        policy = self.access_policy
+        if not policy.api_key:
+            return bool(policy.allow_insecure_lan)
+
+        authorization = self.headers.get("Authorization", "").strip()
+        token = ""
+        if authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
+        if not token:
+            token = self.headers.get("x-api-key", "").strip()
+        return hmac.compare_digest(token, policy.api_key)
+
+    def _authorize_request(self, method: str, path: str) -> bool:
+        if not self._is_remote_client():
+            return True
+
+        policy = self.access_policy
+        if method == "GET" and path in PUBLIC_GET_ENDPOINTS:
+            public_endpoint = True
+        elif method == "POST" and path in PUBLIC_POST_ENDPOINTS:
+            public_endpoint = True
+        else:
+            public_endpoint = False
+
+        if not public_endpoint and not policy.allow_remote_management:
+            self._send_json(
+                403,
+                {
+                    "error": {
+                        "message": (
+                            "remote clients may only access inference endpoints; "
+                            "management endpoints are local-only"
+                        )
+                    }
+                },
+            )
+            return False
+
+        if not self._remote_request_authenticated():
+            status = 401 if policy.api_key else 403
+            message = "missing or invalid API key" if policy.api_key else "remote access requires an API key"
+            self._send_json(status, {"error": {"message": message}})
+            return False
+
+        return True
+
     def _send_json(self, status: int, payload: Any) -> None:
         self._debug(f"{self.command} {self.path} -> {status}")
         if status >= 400:
@@ -672,7 +838,7 @@ class OmniHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
         try:
@@ -695,7 +861,7 @@ class OmniHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
 
@@ -783,6 +949,8 @@ class OmniHandler(BaseHTTPRequestHandler):
 
     def _do_GET_impl(self) -> None:
         path, query = self._parse_request_target()
+        if not self._authorize_request("GET", path):
+            return
 
         if path == "/health":
             payload: dict[str, Any] = {
@@ -881,6 +1049,8 @@ class OmniHandler(BaseHTTPRequestHandler):
 
     def _do_POST_impl(self) -> None:
         path, _query = self._parse_request_target()
+        if not self._authorize_request("POST", path):
+            return
 
         if path == "/omni/backend/select":
             payload = self._read_json()
@@ -1132,11 +1302,18 @@ class OmniHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         requested_model = str(body.get("model", "")).strip() or None
         is_stream = body.get("stream") is True
+        messages = body.get("messages")
+        if not isinstance(messages, list) or not messages:
+            self._send_json(
+                400,
+                {"error": {"type": "invalid_request_error", "message": "messages is required"}},
+            )
+            return
 
         logger.info(
             "POST /v1/messages model=%s messages=%d stream=%s",
             body.get("model", ""),
-            len(body.get("messages", [])),
+            len(messages),
             is_stream,
         )
 
@@ -1249,9 +1426,30 @@ class OmniHandler(BaseHTTPRequestHandler):
 
 def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argparse.Namespace:
     backend_names = ", ".join(template.id for template in current_host_platform().backend_templates)
+    argv_list = list(sys.argv[1:] if argv is None else argv)
     p = argparse.ArgumentParser(description="OmniInfer unified API service")
     p.add_argument("--host", default=config["host"], help="Gateway bind host")
     p.add_argument("--port", type=int, default=int(config["port"]), help="Gateway bind port")
+    p.add_argument(
+        "--lan",
+        action="store_true",
+        help="Expose inference endpoints on the local network with API key protection",
+    )
+    p.add_argument(
+        "--api-key",
+        default=None,
+        help="API key required for remote LAN clients (or set OMNIINFER_API_KEY)",
+    )
+    p.add_argument(
+        "--allow-insecure-lan",
+        action="store_true",
+        help="Allow remote LAN inference without an API key (not recommended)",
+    )
+    p.add_argument(
+        "--allow-remote-management",
+        action="store_true",
+        help="Allow authenticated remote clients to call /omni/* management endpoints",
+    )
     p.add_argument(
         "--backend-host",
         default=str(config.get("backend_host", INTERNAL_BACKEND_HOST)),
@@ -1297,25 +1495,41 @@ def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argpars
     )
     p.add_argument("--startup-timeout", type=int, default=int(config["startup_timeout"]), help="Backend startup timeout seconds")
     p.add_argument("--log-level", default=None, choices=("DEBUG", "INFO", "WARNING", "ERROR"), help="Log level override")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    host_was_explicit = any(item == "--host" or item.startswith("--host=") for item in argv_list)
+    if args.lan and not host_was_explicit:
+        args.host = "0.0.0.0"
+    return args
 
 
 def _shutdown_existing_gateway(host: str, port: int) -> None:
     """Try to shut down an already-running gateway on the same address."""
-    url = f"http://{host}:{port}/omni/shutdown"
+    shutdown_host = "127.0.0.1" if is_all_interfaces_host(host) else host
+    url = f"http://{shutdown_host}:{port}/omni/shutdown"
     req = urllib.request.Request(url=url, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=5):
             pass
     except Exception:
         return
-    logger.info("Shut down existing gateway on %s:%d", host, port)
+    logger.info("Shut down existing gateway on %s:%d", shutdown_host, port)
     time.sleep(2)
 
 
 def main(argv: list[str] | None = None) -> int:
     config = load_app_config(APP_ROOT)
     args = parse_args(config, argv)
+    resolved_api_key = resolve_api_key(args.api_key, config, lan_mode=bool(args.lan))
+    api_key = resolved_api_key.value
+    remote_bind = should_require_remote_api_key(args.host)
+    if remote_bind and not api_key and not args.allow_insecure_lan:
+        raise SystemExit(
+            "Refusing to expose OmniInfer on a non-loopback host without an API key. "
+            "Use --lan to generate a session key, --api-key/OMNIINFER_API_KEY to set one, "
+            "or --allow-insecure-lan for trusted test networks."
+        )
+    if args.allow_remote_management and not api_key:
+        raise SystemExit("--allow-remote-management requires --api-key or OMNIINFER_API_KEY")
 
     # --- Initialize logging ---
     level = args.log_level or resolve_log_level(verbose=args.verbose, debug_body=args.debug_body)
@@ -1347,8 +1561,17 @@ def main(argv: list[str] | None = None) -> int:
     httpd.debug_http = bool(args.verbose)  # type: ignore[attr-defined]
     httpd.debug_body = bool(args.debug_body)  # type: ignore[attr-defined]
     httpd.forced_backend = args.force_backend.strip()  # type: ignore[attr-defined]
+    httpd.access_policy = GatewayAccessPolicy(  # type: ignore[attr-defined]
+        api_key=api_key,
+        allow_insecure_lan=bool(args.allow_insecure_lan),
+        allow_remote_management=bool(args.allow_remote_management),
+    )
 
     logger.info("OmniInfer listening on http://%s:%s", args.host, args.port)
+    log_gateway_access_urls(args.host, args.port, api_key, lan_enabled=remote_bind)
+    if resolved_api_key.generated:
+        print(f"LAN API key: {api_key}")
+        logger.info("Generated a session LAN API key")
     logger.info("Selected backend on startup: %s", manager.snapshot()["backend"])
     logger.info("Default thinking mode: %s", "on" if httpd.default_thinking else "off")
     if httpd.forced_backend:
