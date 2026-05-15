@@ -9,7 +9,7 @@
 
 Easy, fast, and private LLM & VLM inference for every device
 
-| [Getting Started](#getting-started) | [Documentation](#documentation) | [Architecture](#architecture) |
+| [Demo](#demo) | [Getting Started](#getting-started) | [Documentation](#documentation) | [Architecture](#architecture) |
 
 ## About
 
@@ -35,6 +35,18 @@ OmniInfer runs everywhere:
 - Linux, macOS, Windows — desktop & server
 - Android, iOS — mobile & edge devices
 - One codebase, all platforms
+
+## Demo
+
+OmniInfer includes a terminal UI for selecting backends, loading models, and chatting with local models.
+
+<table width="100%">
+  <tr>
+    <td width="100%">
+      <video src="https://github.com/user-attachments/assets/REPLACE_WITH_TUI_DEMO_ATTACHMENT" controls="controls" style="max-width: 100%;"></video>
+    </td>
+  </tr>
+</table>
 
 ## Getting Started
 
