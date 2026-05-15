@@ -336,6 +336,13 @@ class CommandHelperTests(unittest.TestCase):
             self.assertTrue(Path(command[0]).samefile(exe_path))
             self.assertEqual(command[1], "serve")
 
+    def test_command_service_base_url_uses_loopback_for_all_interfaces(self) -> None:
+        with patch(
+            "service_core.commands.load_app_config",
+            return_value={"host": "0.0.0.0", "port": 9000},
+        ):
+            self.assertEqual(commands.service_base_url(), "http://127.0.0.1:9000")
+
     def test_backend_build_command_resolves_windows_script(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

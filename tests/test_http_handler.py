@@ -16,9 +16,11 @@ from unittest.mock import MagicMock, patch
 from service_core.service import (
     ChatReasoningStreamNormalizer,
     ChatUsageStreamNormalizer,
+    GatewayAccessPolicy,
     OmniHandler,
     apply_thinking_mode,
     normalize_chat_completion_reasoning,
+    parse_args,
     split_thinking_text,
 )
 
@@ -41,6 +43,7 @@ def _create_test_server() -> tuple[ThreadingHTTPServer, str]:
     server.manager = manager
     server.default_thinking = False
     server.forced_backend = ""
+    server.access_policy = GatewayAccessPolicy()
 
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -48,9 +51,10 @@ def _create_test_server() -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://127.0.0.1:{port}"
 
 
-def _get(base_url: str, path: str) -> tuple[int, Any]:
+def _get(base_url: str, path: str, headers: dict | None = None) -> tuple[int, Any]:
+    req = urllib.request.Request(f"{base_url}{path}", method="GET", headers=headers or {})
     try:
-        with urllib.request.urlopen(f"{base_url}{path}", timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=5) as r:
             return r.getcode(), json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read())
@@ -132,6 +136,44 @@ class HttpHandlerTests(unittest.TestCase):
     def test_not_found(self) -> None:
         code, body = _get(self.base_url, "/nonexistent")
         self.assertEqual(code, 404)
+
+    def test_remote_public_endpoint_requires_api_key(self) -> None:
+        self.server.access_policy = GatewayAccessPolicy(api_key="secret")
+        try:
+            with patch("service_core.service.is_loopback_address", return_value=False):
+                code, body = _get(self.base_url, "/health")
+        finally:
+            self.server.access_policy = GatewayAccessPolicy()
+
+        self.assertEqual(code, 401)
+        self.assertIn("API key", body["error"]["message"])
+
+    def test_remote_public_endpoint_accepts_bearer_key(self) -> None:
+        self.server.access_policy = GatewayAccessPolicy(api_key="secret")
+        try:
+            with patch("service_core.service.is_loopback_address", return_value=False):
+                code, body = _get(self.base_url, "/health", {"Authorization": "Bearer secret"})
+        finally:
+            self.server.access_policy = GatewayAccessPolicy()
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "ok")
+
+    def test_remote_management_endpoint_is_local_only(self) -> None:
+        self.server.access_policy = GatewayAccessPolicy(api_key="secret")
+        try:
+            with patch("service_core.service.is_loopback_address", return_value=False):
+                code, body = _post(
+                    self.base_url,
+                    "/omni/shutdown",
+                    {},
+                    {"Authorization": "Bearer secret"},
+                )
+        finally:
+            self.server.access_policy = GatewayAccessPolicy()
+
+        self.assertEqual(code, 403)
+        self.assertIn("management endpoints are local-only", body["error"]["message"])
 
     # --- POST error cases ---
 
@@ -355,6 +397,13 @@ class ConfigValidationTests(unittest.TestCase):
     def test_host_empty_rejected(self) -> None:
         with self.assertRaises(ValueError):
             self._validate({"host": ""})
+
+    def test_lan_mode_defaults_to_all_interfaces(self) -> None:
+        args = parse_args(
+            {"host": "127.0.0.1", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
+            ["--lan"],
+        )
+        self.assertEqual(args.host, "0.0.0.0")
 
 
 if __name__ == "__main__":

@@ -120,7 +120,10 @@ def get_service_config() -> dict[str, Any]:
 
 def service_base_url() -> str:
     config = get_service_config()
-    return f"http://{config['host']}:{int(config['port'])}"
+    host = str(config["host"]).strip()
+    if host in {"0.0.0.0", "::", ""}:
+        host = "127.0.0.1"
+    return f"http://{host}:{int(config['port'])}"
 
 
 def request_json(
