@@ -49,6 +49,13 @@ class GatewayAccessPolicy:
 
 
 @dataclass(frozen=True)
+class LineStreamOptions:
+    enabled: bool = False
+    max_line_chars: int = 240
+    include_reasoning: bool = False
+
+
+@dataclass(frozen=True)
 class ResolvedApiKey:
     value: str
     generated: bool = False
@@ -565,6 +572,122 @@ def _log_completion(status: int, body: bytes | None, elapsed: float, mode: str) 
     logger.info("  ".join(parts))
 
 
+def resolve_line_stream_options(payload: dict[str, Any]) -> LineStreamOptions:
+    raw = payload.pop("omni_stream", None)
+    legacy_format = payload.pop("stream_format", None)
+    if raw is None and legacy_format is None:
+        return LineStreamOptions()
+
+    if raw is None:
+        raw = {"format": legacy_format}
+    if not isinstance(raw, dict):
+        raise ValueError("omni_stream must be an object")
+
+    raw_format = raw.get("format", legacy_format)
+    if raw_format in (None, "", "tokens", "openai"):
+        return LineStreamOptions()
+    if raw_format != "lines":
+        raise ValueError("omni_stream.format must be 'lines'")
+
+    max_line_chars = raw.get("max_line_chars", 240)
+    if not isinstance(max_line_chars, int) or isinstance(max_line_chars, bool) or max_line_chars <= 0:
+        raise ValueError("omni_stream.max_line_chars must be a positive integer")
+
+    include_reasoning = raw.get("include_reasoning", False)
+    if not isinstance(include_reasoning, bool):
+        raise ValueError("omni_stream.include_reasoning must be a boolean")
+
+    return LineStreamOptions(
+        enabled=True,
+        max_line_chars=max_line_chars,
+        include_reasoning=include_reasoning,
+    )
+
+
+class ChatLineStreamNormalizer:
+    def __init__(self, options: LineStreamOptions):
+        self.options = options
+        self._buffers: dict[str, str] = {"content": "", "reasoning": ""}
+        self._line_index = 0
+        self._finish_reason: str | None = None
+        self._usage_event: dict[str, Any] | None = None
+
+    def transform_event(self, event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        output: list[tuple[str, dict[str, Any]]] = []
+        if isinstance(event.get("usage"), dict) or isinstance(event.get("timings"), dict):
+            self._usage_event = {key: event[key] for key in ("usage", "timings") if key in event}
+
+        for choice in event.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            finish_reason = choice.get("finish_reason")
+            if finish_reason:
+                self._finish_reason = str(finish_reason)
+
+            delta = choice.get("delta") or {}
+            if not isinstance(delta, dict):
+                continue
+            content = delta.get("content")
+            if isinstance(content, str) and content:
+                output.extend(self._append_text("content", content))
+
+            reasoning = delta.get("reasoning_content")
+            if self.options.include_reasoning and isinstance(reasoning, str) and reasoning:
+                output.extend(self._append_text("reasoning", reasoning))
+
+        return output
+
+    def flush(self) -> list[tuple[str, dict[str, Any]]]:
+        output: list[tuple[str, dict[str, Any]]] = []
+        for text_type in ("reasoning", "content"):
+            output.extend(self._flush_buffer(text_type))
+
+        final: dict[str, Any] = {"finish_reason": self._finish_reason or "stop"}
+        if self._usage_event:
+            final.update(self._usage_event)
+        output.append(("done", final))
+        return output
+
+    def _append_text(self, text_type: str, text: str) -> list[tuple[str, dict[str, Any]]]:
+        self._buffers[text_type] += text
+        output: list[tuple[str, dict[str, Any]]] = []
+
+        while "\n" in self._buffers[text_type]:
+            line, rest = self._buffers[text_type].split("\n", 1)
+            output.append(self._line_event(text_type, line, newline=True))
+            self._buffers[text_type] = rest
+
+        while len(self._buffers[text_type]) >= self.options.max_line_chars:
+            chunk = self._buffers[text_type][: self.options.max_line_chars]
+            self._buffers[text_type] = self._buffers[text_type][self.options.max_line_chars :]
+            output.append(self._line_event(text_type, chunk, newline=False))
+
+        return output
+
+    def _flush_buffer(self, text_type: str) -> list[tuple[str, dict[str, Any]]]:
+        text = self._buffers[text_type]
+        self._buffers[text_type] = ""
+        if not text:
+            return []
+        return [self._line_event(text_type, text, newline=False)]
+
+    def _line_event(self, text_type: str, text: str, *, newline: bool) -> tuple[str, dict[str, Any]]:
+        event = {
+            "index": self._line_index,
+            "type": text_type,
+            "role": "assistant",
+            "text": text,
+            "newline": newline,
+        }
+        self._line_index += 1
+        return "line", event
+
+
+def _write_sse_event(handler: BaseHTTPRequestHandler, event_name: str, payload: dict[str, Any]) -> None:
+    handler.wfile.write(f"event: {event_name}\n".encode("utf-8"))
+    handler.wfile.write(b"data: " + json_dumps(payload) + b"\n\n")
+
+
 def http_json(
     method: str,
     url: str,
@@ -594,6 +717,7 @@ def stream_http_request(
     payload: dict[str, Any] | None = None,
     timeout: float = 600.0,
     normalize_reasoning: bool = False,
+    line_stream_options: LineStreamOptions | None = None,
 ) -> bytes | None:
     """Stream an HTTP request to the client, returning the last SSE data line (for usage extraction)."""
     headers = {"Accept": "text/event-stream, application/json"}
@@ -621,6 +745,11 @@ def stream_http_request(
 
             reasoning_normalizer = ChatReasoningStreamNormalizer() if normalize_reasoning else None
             usage_normalizer = ChatUsageStreamNormalizer()
+            line_normalizer = (
+                ChatLineStreamNormalizer(line_stream_options)
+                if line_stream_options is not None and line_stream_options.enabled
+                else None
+            )
             last_event: dict[str, Any] | None = None
             for chunk in resp:
                 if not chunk:
@@ -637,10 +766,22 @@ def stream_http_request(
                     if reasoning_normalizer is not None:
                         for event in reasoning_normalizer.flush(last_event):
                             for transformed in usage_normalizer.transform_event(event):
-                                handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                                if line_normalizer is None:
+                                    handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                                else:
+                                    for event_name, line_event in line_normalizer.transform_event(transformed):
+                                        _write_sse_event(handler, event_name, line_event)
                     for event in usage_normalizer.flush():
-                        handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
-                    handler.wfile.write(chunk)
+                        if line_normalizer is None:
+                            handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
+                        else:
+                            for event_name, line_event in line_normalizer.transform_event(event):
+                                _write_sse_event(handler, event_name, line_event)
+                    if line_normalizer is None:
+                        handler.wfile.write(chunk)
+                    else:
+                        for event_name, line_event in line_normalizer.flush():
+                            _write_sse_event(handler, event_name, line_event)
                     handler.wfile.flush()
                     continue
 
@@ -660,7 +801,11 @@ def stream_http_request(
                 pending = [event] if reasoning_normalizer is None else reasoning_normalizer.transform_event(event)
                 for item in pending:
                     for transformed in usage_normalizer.transform_event(item):
-                        handler.wfile.write(prefix + b": " + json_dumps(transformed) + b"\n\n")
+                        if line_normalizer is None:
+                            handler.wfile.write(prefix + b": " + json_dumps(transformed) + b"\n\n")
+                        else:
+                            for event_name, line_event in line_normalizer.transform_event(transformed):
+                                _write_sse_event(handler, event_name, line_event)
                 handler.wfile.flush()
     except urllib.error.HTTPError as e:
         body = e.read()
@@ -701,6 +846,7 @@ def stream_embedded_events(
     handler: BaseHTTPRequestHandler,
     events: list[dict[str, Any]],
     normalize_reasoning: bool = True,
+    line_stream_options: LineStreamOptions | None = None,
 ) -> None:
     handler.send_response(200)
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -714,21 +860,42 @@ def stream_embedded_events(
     try:
         reasoning_normalizer = ChatReasoningStreamNormalizer() if normalize_reasoning else None
         usage_normalizer = ChatUsageStreamNormalizer()
+        line_normalizer = (
+            ChatLineStreamNormalizer(line_stream_options)
+            if line_stream_options is not None and line_stream_options.enabled
+            else None
+        )
         last_event: dict[str, Any] | None = None
         for event in events:
             pending = [event] if reasoning_normalizer is None else reasoning_normalizer.transform_event(event)
             last_event = event
             for item in pending:
                 for transformed in usage_normalizer.transform_event(item):
-                    handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                    if line_normalizer is None:
+                        handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                    else:
+                        for event_name, line_event in line_normalizer.transform_event(transformed):
+                            _write_sse_event(handler, event_name, line_event)
             handler.wfile.flush()
         if reasoning_normalizer is not None:
             for event in reasoning_normalizer.flush(last_event):
                 for transformed in usage_normalizer.transform_event(event):
-                    handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                    if line_normalizer is None:
+                        handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                    else:
+                        for event_name, line_event in line_normalizer.transform_event(transformed):
+                            _write_sse_event(handler, event_name, line_event)
         for event in usage_normalizer.flush():
-            handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
-        handler.wfile.write(b"data: [DONE]\n\n")
+            if line_normalizer is None:
+                handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
+            else:
+                for event_name, line_event in line_normalizer.transform_event(event):
+                    _write_sse_event(handler, event_name, line_event)
+        if line_normalizer is None:
+            handler.wfile.write(b"data: [DONE]\n\n")
+        else:
+            for event_name, line_event in line_normalizer.flush():
+                _write_sse_event(handler, event_name, line_event)
         handler.wfile.flush()
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
         return
@@ -1168,6 +1335,11 @@ class OmniHandler(BaseHTTPRequestHandler):
                 payload.get("stream", False),
                 mem_str,
             )
+            try:
+                line_stream_options = resolve_line_stream_options(payload)
+            except ValueError as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
             requested_backend = self.forced_backend or (str(payload.pop("backend", "")).strip() or None)
             requested_model = str(payload.get("model", "")).strip() or None
             requested_mmproj = str(payload.pop("mmproj", "")).strip() or None
@@ -1220,7 +1392,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 try:
                     if payload.get("stream") is True:
                         events = self.manager.stream_chat_completion(payload)
-                        stream_embedded_events(self, events)
+                        stream_embedded_events(self, events, line_stream_options=line_stream_options)
                         usage_event = next((e for e in reversed(events) if "usage" in e), None)
                         _elapsed = time.perf_counter() - _req_start
                         _resp_body = json_dumps(usage_event) if usage_event else None
@@ -1256,6 +1428,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                     payload=payload,
                     timeout=3600,
                     normalize_reasoning=True,
+                    line_stream_options=line_stream_options,
                 )
                 _elapsed = time.perf_counter() - _req_start
                 _log_completion(200, last_data, _elapsed, "proxy stream")
