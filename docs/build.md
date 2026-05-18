@@ -306,6 +306,11 @@ bash ./scripts/platforms/linux/build-release.sh --build-openvino-backend --openv
 - Target: macOS Apple Silicon
 - Embedded backend
 - Requires Python packages rather than a compiled `llama-server`
+- Use Python `3.10+`
+- The Python interpreter that launches OmniInfer must be able to import `mlx`, `mlx_lm`, `mlx_vlm`, `torch`, and `torchvision`
+- Runtime dependencies are listed in [`scripts/platforms/macos/mlx-mac/requirements.txt`](../scripts/platforms/macos/mlx-mac/requirements.txt)
+- A dedicated `conda` environment such as `mlx` is recommended
+- If you use a custom interpreter, set `OMNIINFER_PYTHON` so the CLI and auto-started gateway use the same Python
 
 ### Build Commands
 
@@ -332,6 +337,15 @@ MLX:
 ```bash
 bash ./scripts/platforms/macos/build-mlx-mac.sh
 ```
+
+Example custom Python environment:
+
+```bash
+export OMNIINFER_PYTHON="$HOME/miniconda3/envs/mlx/bin/python"
+./omniinfer backend list
+```
+
+On macOS source checkouts, `./omniinfer` also auto-prefers `.local/runtime/macos/mlx-mac/venv/bin/python3` when that runtime venv exists.
 
 ## Android
 
