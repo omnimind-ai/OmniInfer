@@ -153,7 +153,7 @@
                 },
                 "README": "readme/Qwen2.5-VL-3B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.67
                 }
             },
@@ -177,7 +177,7 @@
                 },
                 "README": "readme/Qwen2.5-VL-7B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.7
                 }
             },
@@ -201,7 +201,7 @@
                 },
                 "README": "readme/Qwen2.5-VL-32B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.75
                 }
             }
@@ -329,7 +329,7 @@
                 },
                 "README": "readme/Qwen3-VL-2B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.63
                 }
             },
@@ -353,7 +353,7 @@
                 },
                 "README": "readme/Qwen3-VL-4B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.66
                 }
             },
@@ -377,7 +377,7 @@
                 },
                 "README": "readme/Qwen3-VL-8B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.31
                 }
             },
@@ -401,7 +401,7 @@
                 },
                 "README": "readme/Qwen3-VL-32B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.38
                 }
             }
@@ -428,7 +428,7 @@
                 },
                 "README": "readme/Qwen3.5-0.8B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 0.4
                 }
             },
@@ -453,7 +453,7 @@
                 },
                 "README": "readme/Qwen3.5-2B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.33
                 }
             },
@@ -478,7 +478,7 @@
                 },
                 "README": "readme/Qwen3.5-4B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.33
                 }
             },
@@ -503,7 +503,7 @@
                 },
                 "README": "readme/Qwen3.5-9B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.82
                 }
             },
@@ -528,7 +528,7 @@
                 },
                 "README": "readme/Qwen3.5-27B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.84
                 }
             }
@@ -906,7 +906,7 @@
                 },
                 "README": "readme/Qwen2.5-VL-3B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.67
                 }
             },
@@ -930,7 +930,7 @@
                 },
                 "README": "readme/Qwen2.5-VL-7B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.7
                 }
             },
@@ -954,7 +954,7 @@
                 },
                 "README": "readme/Qwen2.5-VL-32B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.75
                 }
             }
@@ -1082,7 +1082,7 @@
                 },
                 "README": "readme/Qwen3-VL-2B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.63
                 }
             },
@@ -1106,7 +1106,7 @@
                 },
                 "README": "readme/Qwen3-VL-4B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.66
                 }
             },
@@ -1130,7 +1130,7 @@
                 },
                 "README": "readme/Qwen3-VL-8B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.31
                 }
             },
@@ -1154,7 +1154,7 @@
                 },
                 "README": "readme/Qwen3-VL-32B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 2.38
                 }
             }
@@ -1181,7 +1181,7 @@
                 },
                 "README": "readme/Qwen3.5-0.8B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 0.4
                 }
             },
@@ -1206,7 +1206,7 @@
                 },
                 "README": "readme/Qwen3.5-2B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.33
                 }
             },
@@ -1231,7 +1231,7 @@
                 },
                 "README": "readme/Qwen3.5-4B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.33
                 }
             },
@@ -1256,7 +1256,7 @@
                 },
                 "README": "readme/Qwen3.5-9B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.82
                 }
             },
@@ -1281,7 +1281,7 @@
                 },
                 "README": "readme/Qwen3.5-27B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/mmproj-F32.gguf",
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 1.84
                 }
             }
