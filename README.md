@@ -118,6 +118,8 @@ Recommended docs:
 - [CLI Guide](docs/CLI.md): end-to-end CLI usage for Linux, macOS, Windows, and Android
 - [Android App Integration](docs/android/integration.md): embed OmniInfer in a third-party Android app
 - [Android Backend Reference](docs/android/backends.md): Android backend options for llama.cpp, MNN, LiteRT-LM, and ExecuTorch QNN
+- [Android Smoke Tests](docs/android/smoke-tests.md): adb/curl checks and source-build validation
+- [Android Troubleshooting](docs/android/troubleshooting.md): common build, runtime, and backend failures
 - [Build Guide](docs/build.md): build and platform packaging notes
 - [API Reference](docs/API.md): OpenAI-compatible local API usage
 

@@ -1,6 +1,6 @@
 # Android HTTP API Examples
 
-OmniInfer Android exposes the same local OpenAI-compatible HTTP API for every backend.
+OmniInfer Android exposes the same local OpenAI-compatible HTTP API for every backend. For setup, start with [integration.md](./integration.md); for adb/curl validation, see [smoke-tests.md](./smoke-tests.md).
 
 Base URL:
 
