@@ -652,6 +652,42 @@ data: {"choices":[],"usage":{"prompt_tokens":13,"completion_tokens":12,"total_to
 data: [DONE]
 ```
 
+OmniInfer line streaming:
+
+Set `stream` to `true` and add `omni_stream.format = "lines"` to receive stable line-oriented SSE events instead of OpenAI token chunks. This is useful for clients that render by line while still preserving SSE framing, usage, and finish metadata.
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a short markdown list."
+    }
+  ],
+  "stream": true,
+  "omni_stream": {
+    "format": "lines",
+    "max_line_chars": 240,
+    "include_reasoning": false
+  }
+}
+```
+
+Line stream response:
+
+```text
+event: line
+data: {"index":0,"type":"content","role":"assistant","text":"Here are three points:","newline":true}
+
+event: line
+data: {"index":1,"type":"content","role":"assistant","text":"- Fast local inference","newline":true}
+
+event: done
+data: {"finish_reason":"stop","usage":{"prompt_tokens":13,"completion_tokens":12,"total_tokens":25}}
+```
+
+`max_line_chars` defaults to `240`. If a generated paragraph exceeds that size before a newline, OmniInfer emits a partial line with `"newline": false`. Set `include_reasoning` to `true` to receive reasoning lines as `type: "reasoning"` events when the backend provides `reasoning_content`.
+
 Status codes:
 
 - `200` on success

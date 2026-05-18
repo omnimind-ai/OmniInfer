@@ -14,9 +14,11 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from service_core.service import (
+    ChatLineStreamNormalizer,
     ChatReasoningStreamNormalizer,
     ChatUsageStreamNormalizer,
     GatewayAccessPolicy,
+    LineStreamOptions,
     OmniHandler,
     apply_thinking_mode,
     normalize_chat_completion_reasoning,
@@ -71,6 +73,16 @@ def _post(base_url: str, path: str, body: dict | None = None, headers: dict | No
             return r.getcode(), json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read())
+
+
+def _post_raw(base_url: str, path: str, body: dict | None = None, headers: dict | None = None) -> tuple[int, str]:
+    data = json.dumps(body or {}).encode() if body is not None else b"{}"
+    hdrs = {"Content-Type": "application/json"}
+    if headers:
+        hdrs.update(headers)
+    req = urllib.request.Request(f"{base_url}{path}", data=data, method="POST", headers=hdrs)
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return r.getcode(), r.read().decode("utf-8")
 
 
 class HttpHandlerTests(unittest.TestCase):
@@ -230,6 +242,43 @@ class HttpHandlerTests(unittest.TestCase):
         self.assertEqual(body["error"]["type"], "invalid_request_error")
         self.assertIn("messages", body["error"]["message"])
 
+    def test_chat_line_stream_embedded(self) -> None:
+        events = [
+            {"choices": [{"index": 0, "delta": {"content": "alpha\nbe"}, "finish_reason": None}]},
+            {
+                "choices": [{"index": 0, "delta": {"content": "ta"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+            },
+        ]
+        runtime = type("Runtime", (), {"request_defaults": {}, "model_ref": "demo.gguf"})()
+        self.server.manager.ensure_model_loaded.return_value = runtime
+        self.server.manager.current_runtime_mode.return_value = "embedded"
+        self.server.manager.stream_chat_completion.return_value = events
+
+        code, body = _post_raw(
+            self.base_url,
+            "/v1/chat/completions",
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+                "omni_stream": {"format": "lines"},
+            },
+        )
+
+        self.assertEqual(code, 200)
+        self.assertIn("event: line", body)
+        self.assertIn("event: done", body)
+        self.assertNotIn("data: [DONE]", body)
+        data_events = [
+            json.loads(line[6:])
+            for line in body.splitlines()
+            if line.startswith("data: {")
+        ]
+        self.assertEqual(data_events[0]["text"], "alpha")
+        self.assertTrue(data_events[0]["newline"])
+        self.assertEqual(data_events[1]["text"], "beta")
+        self.assertEqual(data_events[-1]["usage"]["total_tokens"], 5)
+
     def test_post_not_found(self) -> None:
         code, body = _post(self.base_url, "/nonexistent", {})
         self.assertEqual(code, 404)
@@ -359,6 +408,27 @@ class ReasoningContentTests(unittest.TestCase):
         self.assertEqual(transformed[1]["choices"][0]["delta"]["content"], "b")
         self.assertEqual(transformed[2]["choices"], [])
         self.assertEqual(transformed[2]["usage"]["total_tokens"], 4)
+
+    def test_line_stream_normalizer_emits_lines_and_done(self) -> None:
+        normalizer = ChatLineStreamNormalizer(LineStreamOptions(enabled=True, max_line_chars=4))
+        events = normalizer.transform_event({
+            "choices": [{"index": 0, "delta": {"content": "ab\ncdefg"}, "finish_reason": None}],
+        })
+        events.extend(normalizer.transform_event({
+            "choices": [{"index": 0, "delta": {"content": "h"}, "finish_reason": "stop"}],
+            "usage": {"total_tokens": 8},
+        }))
+        events.extend(normalizer.flush())
+
+        self.assertEqual(events[0][0], "line")
+        self.assertEqual(events[0][1]["text"], "ab")
+        self.assertTrue(events[0][1]["newline"])
+        self.assertEqual(events[1][1]["text"], "cdef")
+        self.assertFalse(events[1][1]["newline"])
+        self.assertEqual(events[2][1]["text"], "gh")
+        self.assertFalse(events[2][1]["newline"])
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(events[-1][1]["usage"]["total_tokens"], 8)
 
 
 # ---------------------------------------------------------------------------
