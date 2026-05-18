@@ -268,6 +268,28 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(result, 0)
         service_main.assert_called_once_with(["--lan", "--window-mode", "visible"])
 
+    def test_serve_help_forwards_to_service_without_hidden_window_restart(self) -> None:
+        try:
+            with patch("service_core.service.main", return_value=0) as service_main:
+                result = cli.main(["serve", "-h"])
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        service_main.assert_called_once_with(["-h"])
+
+    def test_server_alias_forwards_to_service(self) -> None:
+        try:
+            with patch("service_core.service.main", return_value=0) as service_main:
+                result = cli.main(["server", "--lan", "--window-mode", "visible"])
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        service_main.assert_called_once_with(["--lan", "--window-mode", "visible"])
+
     def test_global_port_override_is_forwarded_to_serve(self) -> None:
         try:
             with patch("service_core.service.main", return_value=0) as service_main:

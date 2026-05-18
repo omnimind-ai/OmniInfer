@@ -1600,7 +1600,7 @@ class OmniHandler(BaseHTTPRequestHandler):
 def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argparse.Namespace:
     backend_names = ", ".join(template.id for template in current_host_platform().backend_templates)
     argv_list = list(sys.argv[1:] if argv is None else argv)
-    p = argparse.ArgumentParser(description="OmniInfer unified API service")
+    p = argparse.ArgumentParser(prog="omniinfer serve", description="OmniInfer unified API service")
     p.add_argument("--host", default=config["host"], help="Gateway bind host")
     p.add_argument("--port", type=int, default=int(config["port"]), help="Gateway bind port")
     p.add_argument(

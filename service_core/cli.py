@@ -734,6 +734,10 @@ def _requested_window_mode(argv: list[str]) -> str:
     return mode
 
 
+def _is_help_request(argv: list[str]) -> bool:
+    return any(token in {"-h", "--help"} for token in argv)
+
+
 def _has_console() -> bool:
     try:
         return bool(ctypes.windll.kernel32.GetConsoleWindow())
@@ -749,6 +753,8 @@ def _attach_console_streams() -> None:
 
 def _ensure_window_mode(argv: list[str]) -> None:
     if os.name != "nt":
+        return
+    if _is_help_request(argv):
         return
 
     mode = _requested_window_mode(argv)
@@ -903,7 +909,8 @@ def build_parser() -> argparse.ArgumentParser:
     chat_cmd.add_argument("--max-tokens", type=int, help="Maximum output tokens for this request")
 
     sub.add_parser("shutdown", help="Stop the OmniInfer service")
-    sub.add_parser("serve", help="Start the OmniInfer service in the foreground")
+    serve = sub.add_parser("serve", aliases=("server",), help="Start the OmniInfer service in the foreground")
+    serve.set_defaults(command="serve")
 
     completion = sub.add_parser("completion", help="Print shell completion")
     completion.add_argument("shell", choices=("bash",), help="Currently supported shell: bash")
@@ -919,7 +926,7 @@ def main(argv: list[str] | None = None) -> int:
         return handle_hidden_completion(argv[1:])
 
     parser = build_parser()
-    if argv and argv[0] == "serve":
+    if argv and argv[0] in {"serve", "server"}:
         args, unknown_args = parser.parse_known_args(argv[:1])
         _cli_port_override = args.port
         commands.set_port_override(args.port)
