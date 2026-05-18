@@ -1,5 +1,7 @@
 # Android Multimodal Models
 
+For the base Android setup, start with [integration.md](./integration.md). This document covers model layout and request shape for image-capable backends.
+
 This document describes how OmniInfer Android discovers vision model files. The app API is the same as text-only chat: send `/v1/chat/completions` with text and image content.
 
 ## Supported Backends
