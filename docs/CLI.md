@@ -262,6 +262,20 @@ To expose only the inference API to trusted devices on the same LAN, use:
 
 LAN mode binds the gateway to `0.0.0.0` and requires an API key for remote clients. If no key is supplied through `--api-key` or `OMNIINFER_API_KEY`, OmniInfer generates a session key and prints it with the LAN base URLs. Remote clients can call `/v1/chat/completions` or `/v1/messages`; `/omni/*` management endpoints stay local-only by default.
 
+To create a temporary public HTTPS URL without router port forwarding, use Cloudflare Quick Tunnel mode:
+
+```sh
+./omniinfer serve --cloudflare
+```
+
+Windows:
+
+```powershell
+.\omniinfer.ps1 serve --cloudflare --window-mode visible
+```
+
+Cloudflare mode keeps OmniInfer bound to `127.0.0.1`, starts `cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).
+
 On Windows, allow the port through the Private-network firewall profile when needed:
 
 ```powershell

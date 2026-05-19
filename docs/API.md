@@ -71,6 +71,18 @@ New-NetFirewallRule `
   -RemoteAddress LocalSubnet
 ```
 
+## Cloudflare Quick Tunnel
+
+For temporary remote access without router port forwarding or a public IP address, start OmniInfer with Cloudflare Quick Tunnel mode:
+
+```sh
+./omniinfer serve --cloudflare
+```
+
+This keeps the gateway bound to `127.0.0.1`, starts `cloudflared tunnel --url http://127.0.0.1:<port>`, prints a temporary `https://*.trycloudflare.com` URL, and requires an OmniInfer API key for requests arriving through Cloudflare. `/omni/*` management endpoints remain local-only.
+
+Quick Tunnel is intended for demos and short-lived testing. For best compatibility, use non-streaming requests. See [Remote Access](remote-access.md) for setup, security notes, and examples.
+
 ## Endpoint Summary
 
 | Method | Path | Purpose |
