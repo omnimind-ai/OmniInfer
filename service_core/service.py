@@ -23,6 +23,13 @@ from urllib.parse import parse_qs, urlparse
 from service_core.logger import log_session_header, resolve_log_level, setup_logging
 from service_core.local_state import load_default_thinking, save_default_thinking
 from service_core.platforms import current_host_platform, default_backend_for_current_host, parse_extra_args
+from service_core.remote_access import (
+    QuickTunnelHandle,
+    RemoteAccessError,
+    find_cloudflared,
+    quick_tunnel_config_warning,
+    start_cloudflare_quick_tunnel,
+)
 from service_core.runtime import RuntimeManager
 
 logger = logging.getLogger("gateway")
@@ -46,6 +53,7 @@ class GatewayAccessPolicy:
     api_key: str = ""
     allow_insecure_lan: bool = False
     allow_remote_management: bool = False
+    trust_proxy_headers: bool = False
 
 
 @dataclass(frozen=True)
@@ -94,13 +102,13 @@ def should_require_remote_api_key(host: str) -> bool:
     return not is_loopback_bind_host(host)
 
 
-def resolve_api_key(cli_value: str | None, config: dict[str, Any], *, lan_mode: bool) -> ResolvedApiKey:
+def resolve_api_key(cli_value: str | None, config: dict[str, Any], *, generate_session_key: bool) -> ResolvedApiKey:
     raw = (cli_value if cli_value is not None else str(config.get("api_key", ""))).strip()
     if not raw:
         raw = os.environ.get("OMNIINFER_API_KEY", "").strip()
     if raw:
         return ResolvedApiKey(raw, generated=False)
-    if lan_mode:
+    if generate_session_key:
         return ResolvedApiKey("oi_" + secrets.token_urlsafe(24), generated=True)
     return ResolvedApiKey("")
 
@@ -145,6 +153,33 @@ def log_gateway_access_urls(host: str, port: int, api_key: str, *, lan_enabled: 
         logger.info("LAN API key is configured")
     else:
         logger.warning("LAN API is running without an API key")
+
+
+def _proxy_header_remote_address(headers: Any) -> str:
+    for name in ("CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"):
+        raw = headers.get(name, "")
+        if not raw:
+            continue
+        value = str(raw).split(",", 1)[0].strip()
+        if value:
+            return value
+    return ""
+
+
+def log_cloudflare_access_urls(public_url: str, port: int, api_key: str, *, print_key: bool) -> None:
+    base = public_url.rstrip("/")
+    print(f"OmniInfer local API: http://127.0.0.1:{port}")
+    print(f"Cloudflare Quick Tunnel: {base}")
+    print(f"OpenAI Base URL: {base}/v1")
+    print(f"Health URL: {base}/health")
+    if api_key:
+        if print_key:
+            print(f"API key: {api_key}")
+        else:
+            print("API key: set, not printed")
+    print("Quick Tunnel is temporary and intended for testing. For best compatibility, use non-streaming requests.")
+    logger.info("Cloudflare Quick Tunnel URL: %s", base)
+    logger.info("Cloudflare OpenAI base URL: %s/v1", base)
 
 
 def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -938,6 +973,11 @@ class OmniHandler(BaseHTTPRequestHandler):
         return GatewayAccessPolicy()
 
     def _is_remote_client(self) -> bool:
+        policy = self.access_policy
+        if policy.trust_proxy_headers:
+            remote_address = _proxy_header_remote_address(self.headers)
+            if remote_address:
+                return True
         try:
             return not is_loopback_address(str(self.client_address[0]))
         except (IndexError, TypeError):
@@ -1609,6 +1649,21 @@ def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argpars
         help="Expose inference endpoints on the local network with API key protection",
     )
     p.add_argument(
+        "--cloudflare",
+        action="store_true",
+        help="Expose inference endpoints through a temporary Cloudflare Quick Tunnel",
+    )
+    p.add_argument(
+        "--cloudflared-path",
+        default=None,
+        help="Path to the cloudflared executable for --cloudflare",
+    )
+    p.add_argument(
+        "--cloudflare-no-print-key",
+        action="store_true",
+        help="Do not print the generated or configured API key in --cloudflare mode",
+    )
+    p.add_argument(
         "--api-key",
         default=None,
         help="API key required for remote LAN clients (or set OMNIINFER_API_KEY)",
@@ -1672,6 +1727,8 @@ def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argpars
     host_was_explicit = any(item == "--host" or item.startswith("--host=") for item in argv_list)
     if args.lan and not host_was_explicit:
         args.host = "0.0.0.0"
+    if args.cloudflare and not host_was_explicit:
+        args.host = "127.0.0.1"
     return args
 
 
@@ -1689,10 +1746,22 @@ def _shutdown_existing_gateway(host: str, port: int) -> None:
     time.sleep(2)
 
 
+def validate_remote_access_args(args: argparse.Namespace) -> None:
+    if args.cloudflare and args.lan:
+        raise SystemExit("Use either --cloudflare or --lan, not both.")
+    if args.cloudflare and not is_loopback_bind_host(args.host):
+        raise SystemExit("--cloudflare keeps OmniInfer on 127.0.0.1; do not combine it with a non-loopback --host.")
+    if args.cloudflare and args.allow_insecure_lan:
+        raise SystemExit("--cloudflare requires an API key and cannot be combined with --allow-insecure-lan.")
+    if args.cloudflare and args.allow_remote_management:
+        raise SystemExit("--cloudflare keeps /omni/* management endpoints local-only; do not use --allow-remote-management.")
+
+
 def main(argv: list[str] | None = None) -> int:
     config = load_app_config(APP_ROOT)
     args = parse_args(config, argv)
-    resolved_api_key = resolve_api_key(args.api_key, config, lan_mode=bool(args.lan))
+    validate_remote_access_args(args)
+    resolved_api_key = resolve_api_key(args.api_key, config, generate_session_key=bool(args.lan or args.cloudflare))
     api_key = resolved_api_key.value
     remote_bind = should_require_remote_api_key(args.host)
     if remote_bind and not api_key and not args.allow_insecure_lan:
@@ -1738,24 +1807,48 @@ def main(argv: list[str] | None = None) -> int:
         api_key=api_key,
         allow_insecure_lan=bool(args.allow_insecure_lan),
         allow_remote_management=bool(args.allow_remote_management),
+        trust_proxy_headers=bool(args.cloudflare),
     )
 
     logger.info("OmniInfer listening on http://%s:%s", args.host, args.port)
     log_gateway_access_urls(args.host, args.port, api_key, lan_enabled=remote_bind)
     if resolved_api_key.generated:
-        print(f"LAN API key: {api_key}")
-        logger.info("Generated a session LAN API key")
+        if args.cloudflare:
+            logger.info("Generated a session Cloudflare API key")
+        else:
+            print(f"LAN API key: {api_key}")
+            logger.info("Generated a session LAN API key")
     logger.info("Selected backend on startup: %s", manager.snapshot()["backend"])
     logger.info("Default thinking mode: %s", "on" if httpd.default_thinking else "off")
     if httpd.forced_backend:
         logger.info("Forced backend: %s", httpd.forced_backend)
     if log_file:
         logger.info("Log file: %s", log_file)
+    quick_tunnel: QuickTunnelHandle | None = None
+    if args.cloudflare:
+        warning = quick_tunnel_config_warning()
+        if warning:
+            logger.warning(warning)
+        cloudflared = find_cloudflared(args.cloudflared_path)
+        local_url = f"http://127.0.0.1:{args.port}"
+        logger.info("Starting Cloudflare Quick Tunnel to %s", local_url)
+        try:
+            quick_tunnel = start_cloudflare_quick_tunnel(cloudflared, local_url)
+        except RemoteAccessError as exc:
+            raise SystemExit(str(exc)) from exc
+        log_cloudflare_access_urls(
+            quick_tunnel.public_url,
+            args.port,
+            api_key,
+            print_key=not bool(args.cloudflare_no_print_key),
+        )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if quick_tunnel is not None:
+            quick_tunnel.stop()
         manager.stop_runtime()
         httpd.server_close()
     return 0

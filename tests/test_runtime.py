@@ -268,6 +268,27 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(result, 0)
         service_main.assert_called_once_with(["--lan", "--window-mode", "visible"])
 
+    def test_serve_cloudflare_forwards_service_arguments(self) -> None:
+        try:
+            with patch("service_core.service.main", return_value=0) as service_main:
+                result = cli.main(
+                    [
+                        "serve",
+                        "--cloudflare",
+                        "--cloudflared-path",
+                        "/opt/bin/cloudflared",
+                        "--cloudflare-no-print-key",
+                    ]
+                )
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        service_main.assert_called_once_with(
+            ["--cloudflare", "--cloudflared-path", "/opt/bin/cloudflared", "--cloudflare-no-print-key"]
+        )
+
     def test_serve_help_forwards_to_service_without_hidden_window_restart(self) -> None:
         try:
             with patch("service_core.service.main", return_value=0) as service_main:

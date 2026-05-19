@@ -24,6 +24,7 @@ from service_core.service import (
     normalize_chat_completion_reasoning,
     parse_args,
     split_thinking_text,
+    validate_remote_access_args,
 )
 
 
@@ -186,6 +187,30 @@ class HttpHandlerTests(unittest.TestCase):
 
         self.assertEqual(code, 403)
         self.assertIn("management endpoints are local-only", body["error"]["message"])
+
+    def test_cloudflare_proxy_header_requires_api_key(self) -> None:
+        self.server.access_policy = GatewayAccessPolicy(api_key="secret", trust_proxy_headers=True)
+        try:
+            code, body = _get(self.base_url, "/health", {"CF-Connecting-IP": "203.0.113.10"})
+        finally:
+            self.server.access_policy = GatewayAccessPolicy()
+
+        self.assertEqual(code, 401)
+        self.assertIn("API key", body["error"]["message"])
+
+    def test_cloudflare_proxy_header_accepts_bearer_key(self) -> None:
+        self.server.access_policy = GatewayAccessPolicy(api_key="secret", trust_proxy_headers=True)
+        try:
+            code, body = _get(
+                self.base_url,
+                "/health",
+                {"CF-Connecting-IP": "203.0.113.10", "Authorization": "Bearer secret"},
+            )
+        finally:
+            self.server.access_policy = GatewayAccessPolicy()
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "ok")
 
     # --- POST error cases ---
 
@@ -480,6 +505,37 @@ class ConfigValidationTests(unittest.TestCase):
             ["--lan"],
         )
         self.assertEqual(args.host, "0.0.0.0")
+
+    def test_cloudflare_mode_defaults_to_loopback(self) -> None:
+        args = parse_args(
+            {"host": "0.0.0.0", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
+            ["--cloudflare"],
+        )
+        self.assertEqual(args.host, "127.0.0.1")
+
+    def test_cloudflare_rejects_non_loopback_host(self) -> None:
+        args = parse_args(
+            {"host": "127.0.0.1", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
+            ["--cloudflare", "--host", "0.0.0.0"],
+        )
+        with self.assertRaises(SystemExit):
+            validate_remote_access_args(args)
+
+    def test_cloudflare_rejects_lan_mode(self) -> None:
+        args = parse_args(
+            {"host": "127.0.0.1", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
+            ["--cloudflare", "--lan"],
+        )
+        with self.assertRaises(SystemExit):
+            validate_remote_access_args(args)
+
+    def test_cloudflare_rejects_insecure_lan(self) -> None:
+        args = parse_args(
+            {"host": "127.0.0.1", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
+            ["--cloudflare", "--allow-insecure-lan"],
+        )
+        with self.assertRaises(SystemExit):
+            validate_remote_access_args(args)
 
 
 if __name__ == "__main__":
