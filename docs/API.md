@@ -53,6 +53,8 @@ Only inference-facing endpoints are exposed to remote clients by default:
 | `GET` | `/v1/models` |
 | `POST` | `/v1/chat/completions` |
 | `POST` | `/v1/messages` |
+| `POST` | `/tokenize` |
+| `POST` | `/detokenize` |
 
 Management endpoints under `/omni/*`, including model loading, backend switching, backend stop, and gateway shutdown, remain local-only unless the gateway is started with `--allow-remote-management` and an API key. Keep OmniStudio and other local controllers pointed at `http://127.0.0.1:<port>`.
 
@@ -104,6 +106,10 @@ Quick Tunnel is intended for demos and short-lived testing. For best compatibili
 | `POST` | `/omni/shutdown` | Stop the gateway |
 | `POST` | `/omni/thinking/select` | Update default thinking setting |
 | `POST` | `/omni/model/select` | Load a model |
+| `POST` | `/tokenize` | llama.cpp-compatible tokenization |
+| `POST` | `/detokenize` | llama.cpp-compatible detokenization |
+| `POST` | `/omni/tokenize` | Local-only alias for `/tokenize` |
+| `POST` | `/omni/detokenize` | Local-only alias for `/detokenize` |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions |
 | `POST` | `/v1/messages` | Anthropic-compatible Messages API adapter |
 
@@ -556,6 +562,62 @@ Example response when no model is loaded:
   "data": []
 }
 ```
+
+### `POST /tokenize`
+
+Tokenizes text with the currently loaded external llama.cpp-compatible backend. This endpoint proxies the upstream llama.cpp server API and preserves its response shape.
+
+Request body:
+
+```json
+{
+  "content": "Hello",
+  "add_special": false,
+  "parse_special": true,
+  "with_pieces": false
+}
+```
+
+Example response:
+
+```json
+{
+  "tokens": [123, 456]
+}
+```
+
+`/omni/tokenize` is a local-only alias for local controllers. Remote LAN and Cloudflare clients should use `/tokenize` with an API key.
+
+Status codes:
+
+- `200` on success
+- `409` if no external backend model is loaded
+- `501` if the current backend is embedded and does not expose a llama.cpp tokenizer API
+- backend status codes may be passed through
+
+### `POST /detokenize`
+
+Converts token IDs back to text with the currently loaded external llama.cpp-compatible backend.
+
+Request body:
+
+```json
+{
+  "tokens": [123, 456]
+}
+```
+
+Example response:
+
+```json
+{
+  "content": "Hello"
+}
+```
+
+`/omni/detokenize` is a local-only alias for local controllers. Remote LAN and Cloudflare clients should use `/detokenize` with an API key.
+
+Status codes match `/tokenize`.
 
 ### `POST /v1/chat/completions`
 
