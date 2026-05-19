@@ -21,6 +21,7 @@ Windows:
 OmniInfer will:
 
 - keep the local gateway bound to `127.0.0.1`
+- download and update a managed `cloudflared` binary under `.local/tools/cloudflared`
 - require an API key for requests arriving through Cloudflare
 - generate a session API key when `--api-key` or `OMNIINFER_API_KEY` is not set
 - keep `/omni/*` management endpoints local-only
@@ -38,14 +39,33 @@ API key: oi_example
 
 Use the OpenAI Base URL and API key in remote clients.
 
-## cloudflared Discovery
+## Managed cloudflared
 
-OmniInfer finds `cloudflared` in this order:
+OmniInfer uses its own managed `cloudflared` binary by default instead of relying on a system-wide install. This avoids old system versions and keeps Cloudflare mode self-contained.
 
-1. `--cloudflared-path <path>`
-2. `OMNIINFER_CLOUDFLARED`
-3. `PATH`
-4. common Windows install paths
+On first `--cloudflare` use, OmniInfer queries the latest Cloudflare GitHub release, selects the asset for the current operating system and CPU architecture, downloads it to:
+
+```text
+.local/tools/cloudflared/
+```
+
+The download is verified with the release asset SHA-256 digest when GitHub provides one. OmniInfer records the installed version and asset metadata in `.local/tools/cloudflared/manifest.json` and checks for newer releases on later Cloudflare starts.
+
+Supported automatic assets include:
+
+| System | Architecture | Asset |
+|---|---|---|
+| Linux | x86_64 / amd64 | `cloudflared-linux-amd64` |
+| Linux | aarch64 / arm64 | `cloudflared-linux-arm64` |
+| Linux | x86 / 386 | `cloudflared-linux-386` |
+| Linux | ARMv7 hard-float | `cloudflared-linux-armhf` |
+| Linux | other 32-bit ARM | `cloudflared-linux-arm` |
+| macOS | Apple Silicon | `cloudflared-darwin-arm64.tgz` |
+| macOS | Intel | `cloudflared-darwin-amd64.tgz` |
+| Windows | x64 / amd64 | `cloudflared-windows-amd64.exe` |
+| Windows | x86 / 386 | `cloudflared-windows-386.exe` |
+
+Advanced users can override the managed binary:
 
 Example:
 

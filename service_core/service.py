@@ -26,8 +26,8 @@ from service_core.platforms import current_host_platform, default_backend_for_cu
 from service_core.remote_access import (
     QuickTunnelHandle,
     RemoteAccessError,
-    find_cloudflared,
     quick_tunnel_config_warning,
+    resolve_cloudflared_for_quick_tunnel,
     start_cloudflare_quick_tunnel,
 )
 from service_core.runtime import RuntimeManager
@@ -1656,7 +1656,7 @@ def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argpars
     p.add_argument(
         "--cloudflared-path",
         default=None,
-        help="Path to the cloudflared executable for --cloudflare",
+        help="Override the managed .local cloudflared executable for --cloudflare",
     )
     p.add_argument(
         "--cloudflare-no-print-key",
@@ -1829,11 +1829,17 @@ def main(argv: list[str] | None = None) -> int:
         warning = quick_tunnel_config_warning()
         if warning:
             logger.warning(warning)
-        cloudflared = find_cloudflared(args.cloudflared_path)
+        cloudflared = resolve_cloudflared_for_quick_tunnel(APP_ROOT, args.cloudflared_path)
+        logger.info(
+            "Using %s cloudflared%s at %s",
+            cloudflared.source,
+            f" {cloudflared.version}" if cloudflared.version else "",
+            cloudflared.path,
+        )
         local_url = f"http://127.0.0.1:{args.port}"
         logger.info("Starting Cloudflare Quick Tunnel to %s", local_url)
         try:
-            quick_tunnel = start_cloudflare_quick_tunnel(cloudflared, local_url)
+            quick_tunnel = start_cloudflare_quick_tunnel(cloudflared.path, local_url)
         except RemoteAccessError as exc:
             raise SystemExit(str(exc)) from exc
         log_cloudflare_access_urls(
