@@ -45,7 +45,12 @@ else:
 INTERNAL_BACKEND_HOST = "127.0.0.1"
 INTERNAL_BACKEND_PORT = 0
 PUBLIC_GET_ENDPOINTS = frozenset({"/health", "/v1/models"})
-PUBLIC_POST_ENDPOINTS = frozenset({"/v1/chat/completions", "/v1/messages"})
+PUBLIC_POST_ENDPOINTS = frozenset({
+    "/v1/chat/completions",
+    "/v1/messages",
+    "/tokenize",
+    "/detokenize",
+})
 
 
 @dataclass(frozen=True)
@@ -1053,6 +1058,30 @@ class OmniHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             return
 
+    def _send_json_bytes(self, status: int, body: bytes) -> None:
+        self._debug(f"{self.command} {self.path} -> {status}")
+        if status >= 400:
+            try:
+                payload = json.loads(body.decode("utf-8-sig"))
+                message = payload.get("error", {}).get("message", "")
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                message = body[:400].decode("utf-8", errors="replace")
+            log_fn = logger.error if status >= 500 else logger.warning
+            log_fn("%s %s -> %d: %s", self.command, self.path, status, message)
+        if self._debug_body_enabled():
+            self._debug(f"response body: {body[:400]!r}")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            return
+
     def _stream_model_select_sse(
         self,
         model: str,
@@ -1349,6 +1378,14 @@ class OmniHandler(BaseHTTPRequestHandler):
             self._send_json(200, result)
             return
 
+        if path in {"/tokenize", "/omni/tokenize"}:
+            self._handle_tokenizer_request("tokenize")
+            return
+
+        if path in {"/detokenize", "/omni/detokenize"}:
+            self._handle_tokenizer_request("detokenize")
+            return
+
         if path == "/v1/chat/completions":
             _req_start = time.perf_counter()
             payload = self._read_json()
@@ -1500,6 +1537,36 @@ class OmniHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(404, {"error": {"message": f"not found: {path}"}})
+
+    def _handle_tokenizer_request(self, operation: str) -> None:
+        payload = self._read_json()
+        runtime_mode = self.manager.current_runtime_mode()
+        if runtime_mode == "embedded":
+            self._send_json(
+                501,
+                {"error": {"message": f"{operation} is not supported by the current embedded backend"}},
+            )
+            return
+        if runtime_mode != "external_server":
+            self._send_json(
+                409,
+                {"error": {"message": "no backend model loaded; call /omni/model/select first"}},
+            )
+            return
+
+        target = self.manager.current_proxy_target()
+        if not target:
+            self._send_json(409, {"error": {"message": "selected backend is not ready"}})
+            return
+        host, port = target
+        logger.info("POST /%s -> backend %s:%d", operation, host, port)
+        code, body = http_json(
+            "POST",
+            f"http://{host}:{port}/{operation}",
+            payload=payload,
+            timeout=60,
+        )
+        self._send_json_bytes(code, body)
 
     # ── Anthropic Messages API (/v1/messages) ────────────────────────────
 

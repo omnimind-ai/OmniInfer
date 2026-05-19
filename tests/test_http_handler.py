@@ -8,7 +8,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -41,6 +41,8 @@ def _create_test_server() -> tuple[ThreadingHTTPServer, str]:
     }
     manager.list_backends.return_value = ([], None)
     manager.backend_props.return_value = {}
+    manager.current_runtime_mode.return_value = None
+    manager.current_proxy_target.return_value = None
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), OmniHandler)
     server.manager = manager
@@ -86,6 +88,37 @@ def _post_raw(base_url: str, path: str, body: dict | None = None, headers: dict 
         return r.getcode(), r.read().decode("utf-8")
 
 
+def _create_tokenizer_backend() -> tuple[ThreadingHTTPServer, str]:
+    class TokenizerBackendHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args: Any) -> None:
+            return
+
+        def do_POST(self) -> None:  # noqa: N802
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            payload = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+            if self.path == "/tokenize":
+                self._send_json(200, {"tokens": [1, 2, 3], "echo": payload})
+                return
+            if self.path == "/detokenize":
+                self._send_json(200, {"content": "hello", "echo": payload})
+                return
+            self._send_json(404, {"error": {"message": f"not found: {self.path}"}})
+
+        def _send_json(self, status: int, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), TokenizerBackendHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, f"http://127.0.0.1:{port}"
+
+
 class HttpHandlerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -94,6 +127,7 @@ class HttpHandlerTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls.server.shutdown()
+        cls.server.server_close()
 
     # --- GET endpoints ---
 
@@ -266,6 +300,117 @@ class HttpHandlerTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertEqual(body["error"]["type"], "invalid_request_error")
         self.assertIn("messages", body["error"]["message"])
+
+    def test_tokenize_proxies_to_external_backend(self) -> None:
+        backend_server, backend_url = _create_tokenizer_backend()
+        _, _, port_str = backend_url.rpartition(":")
+        self.server.manager.current_runtime_mode.return_value = "external_server"
+        self.server.manager.current_proxy_target.return_value = ("127.0.0.1", int(port_str))
+        try:
+            code, body = _post(
+                self.base_url,
+                "/tokenize",
+                {"content": "hello", "add_special": True, "with_pieces": False},
+            )
+        finally:
+            backend_server.shutdown()
+            backend_server.server_close()
+            self.server.manager.current_runtime_mode.return_value = None
+            self.server.manager.current_proxy_target.return_value = None
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body["tokens"], [1, 2, 3])
+        self.assertEqual(body["echo"]["content"], "hello")
+        self.assertTrue(body["echo"]["add_special"])
+
+    def test_detokenize_proxies_to_external_backend(self) -> None:
+        backend_server, backend_url = _create_tokenizer_backend()
+        _, _, port_str = backend_url.rpartition(":")
+        self.server.manager.current_runtime_mode.return_value = "external_server"
+        self.server.manager.current_proxy_target.return_value = ("127.0.0.1", int(port_str))
+        try:
+            code, body = _post(self.base_url, "/detokenize", {"tokens": [1, 2, 3]})
+        finally:
+            backend_server.shutdown()
+            backend_server.server_close()
+            self.server.manager.current_runtime_mode.return_value = None
+            self.server.manager.current_proxy_target.return_value = None
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body["content"], "hello")
+        self.assertEqual(body["echo"]["tokens"], [1, 2, 3])
+
+    def test_tokenize_requires_loaded_backend(self) -> None:
+        self.server.manager.current_runtime_mode.return_value = None
+        self.server.manager.current_proxy_target.return_value = None
+
+        code, body = _post(self.base_url, "/tokenize", {"content": "hello"})
+
+        self.assertEqual(code, 409)
+        self.assertIn("model/select", body["error"]["message"])
+
+    def test_tokenize_reports_embedded_backend_unsupported(self) -> None:
+        self.server.manager.current_runtime_mode.return_value = "embedded"
+        try:
+            code, body = _post(self.base_url, "/tokenize", {"content": "hello"})
+        finally:
+            self.server.manager.current_runtime_mode.return_value = None
+
+        self.assertEqual(code, 501)
+        self.assertIn("not supported", body["error"]["message"])
+
+    def test_remote_tokenize_requires_api_key(self) -> None:
+        self.server.access_policy = GatewayAccessPolicy(api_key="secret", trust_proxy_headers=True)
+        try:
+            code, body = _post(
+                self.base_url,
+                "/tokenize",
+                {"content": "hello"},
+                {"CF-Connecting-IP": "203.0.113.10"},
+            )
+        finally:
+            self.server.access_policy = GatewayAccessPolicy()
+
+        self.assertEqual(code, 401)
+        self.assertIn("API key", body["error"]["message"])
+
+    def test_remote_tokenize_accepts_api_key(self) -> None:
+        backend_server, backend_url = _create_tokenizer_backend()
+        _, _, port_str = backend_url.rpartition(":")
+        self.server.manager.current_runtime_mode.return_value = "external_server"
+        self.server.manager.current_proxy_target.return_value = ("127.0.0.1", int(port_str))
+        self.server.access_policy = GatewayAccessPolicy(api_key="secret", trust_proxy_headers=True)
+        try:
+            code, body = _post(
+                self.base_url,
+                "/tokenize",
+                {"content": "hello"},
+                {"CF-Connecting-IP": "203.0.113.10", "Authorization": "Bearer secret"},
+            )
+        finally:
+            backend_server.shutdown()
+            backend_server.server_close()
+            self.server.access_policy = GatewayAccessPolicy()
+            self.server.manager.current_runtime_mode.return_value = None
+            self.server.manager.current_proxy_target.return_value = None
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body["tokens"], [1, 2, 3])
+
+    def test_remote_omni_tokenize_stays_local_only(self) -> None:
+        self.server.access_policy = GatewayAccessPolicy(api_key="secret", trust_proxy_headers=True)
+        try:
+            code, body = _post(
+                self.base_url,
+                "/omni/tokenize",
+                {"content": "hello"},
+                {"CF-Connecting-IP": "203.0.113.10", "Authorization": "Bearer secret"},
+            )
+        finally:
+            self.server.access_policy = GatewayAccessPolicy()
+
+        self.assertEqual(code, 403)
+        self.assertIn("management endpoints are local-only", body["error"]["message"])
 
     def test_chat_line_stream_embedded(self) -> None:
         events = [
