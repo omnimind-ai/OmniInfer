@@ -98,6 +98,15 @@ curl https://example.trycloudflare.com/v1/chat/completions \
   }'
 ```
 
+Tokenize or detokenize:
+
+```sh
+curl https://example.trycloudflare.com/tokenize \
+  -H "Authorization: Bearer oi_example" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Hello","with_pieces":false}'
+```
+
 You can also send the key as:
 
 ```text
