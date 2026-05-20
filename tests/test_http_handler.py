@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import json
+import io
 import threading
 import unittest
 import urllib.error
 import urllib.request
+from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,7 @@ from service_core.service import (
     LineStreamOptions,
     OmniHandler,
     apply_thinking_mode,
+    log_cloudflare_access_urls,
     normalize_chat_completion_reasoning,
     parse_args,
     split_thinking_text,
@@ -827,6 +830,109 @@ class ConfigValidationTests(unittest.TestCase):
         )
         with self.assertRaises(SystemExit):
             validate_remote_access_args(args)
+
+
+class CloudflareConsoleOutputTests(unittest.TestCase):
+    def test_cloudflare_access_urls_print_copyable_block(self) -> None:
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            log_cloudflare_access_urls(
+                "https://example.trycloudflare.com/",
+                9000,
+                "oi_test_key",
+                print_key=True,
+            )
+
+        output = stream.getvalue()
+        self.assertIn("OMNIINFER CLOUDFLARE ACCESS", output)
+        self.assertIn(">>> REMOTE BASE URL", output)
+        self.assertIn("    https://example.trycloudflare.com", output)
+        self.assertIn(">>> OPENAI BASE URL", output)
+        self.assertIn("    https://example.trycloudflare.com/v1", output)
+        self.assertIn(">>> HEALTH URL", output)
+        self.assertIn("    https://example.trycloudflare.com/health", output)
+        self.assertIn(">>> API KEY", output)
+        self.assertIn("    oi_test_key", output)
+        self.assertIn("=" * 72, output)
+
+    @patch("service_core.service.os.name", "posix")
+    def test_cloudflare_access_urls_highlight_when_stdout_is_tty(self) -> None:
+        stream = io.StringIO()
+        stream.isatty = lambda: True  # type: ignore[method-assign]
+        with redirect_stdout(stream):
+            log_cloudflare_access_urls(
+                "https://example.trycloudflare.com",
+                9000,
+                "oi_test_key",
+                print_key=True,
+            )
+
+        output = stream.getvalue()
+        self.assertIn("\033[36;1m>>> OPENAI BASE URL\033[0m", output)
+        self.assertIn("\033[36;1mhttps://example.trycloudflare.com\033[0m", output)
+        self.assertIn("\033[36;1mhttps://example.trycloudflare.com/v1\033[0m", output)
+        self.assertIn("\033[33;1m>>> API KEY\033[0m", output)
+        self.assertIn("\033[33;1moi_test_key\033[0m", output)
+
+    def test_cloudflare_access_urls_can_force_color(self) -> None:
+        stream = io.StringIO()
+        with patch.dict("os.environ", {"OMNIINFER_FORCE_COLOR": "1"}, clear=False):
+            with redirect_stdout(stream):
+                log_cloudflare_access_urls(
+                    "https://example.trycloudflare.com",
+                    9000,
+                    "oi_test_key",
+                    print_key=True,
+                )
+
+        output = stream.getvalue()
+        self.assertIn("\033[36;1m>>> OPENAI BASE URL\033[0m", output)
+        self.assertIn("\033[33;1m>>> API KEY\033[0m", output)
+
+    def test_cloudflare_access_urls_respects_no_color(self) -> None:
+        stream = io.StringIO()
+        stream.isatty = lambda: True  # type: ignore[method-assign]
+        with patch.dict("os.environ", {"NO_COLOR": "1", "OMNIINFER_FORCE_COLOR": "1"}, clear=False):
+            with redirect_stdout(stream):
+                log_cloudflare_access_urls(
+                    "https://example.trycloudflare.com",
+                    9000,
+                    "oi_test_key",
+                    print_key=True,
+                )
+
+        self.assertNotIn("\033[", stream.getvalue())
+
+    @patch("service_core.service.os.name", "nt")
+    @patch("service_core.service._enable_windows_virtual_terminal", return_value=True)
+    def test_cloudflare_access_urls_highlight_when_windows_vt_is_available(self, _enable_vt: MagicMock) -> None:
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            log_cloudflare_access_urls(
+                "https://example.trycloudflare.com",
+                9000,
+                "oi_test_key",
+                print_key=True,
+            )
+
+        output = stream.getvalue()
+        self.assertIn("\033[36;1m>>> OPENAI BASE URL\033[0m", output)
+        self.assertIn("\033[33;1m>>> API KEY\033[0m", output)
+
+    def test_cloudflare_access_urls_can_hide_key(self) -> None:
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            log_cloudflare_access_urls(
+                "https://example.trycloudflare.com",
+                9000,
+                "oi_hidden_key",
+                print_key=False,
+            )
+
+        output = stream.getvalue()
+        self.assertIn(">>> API KEY", output)
+        self.assertIn("    set, not printed", output)
+        self.assertNotIn("oi_hidden_key", output)
 
 
 if __name__ == "__main__":
