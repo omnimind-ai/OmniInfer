@@ -42,6 +42,113 @@ function Test-Command {
     }
 }
 
+function Sync-ProcessPathFromRegistry {
+    $paths = @()
+    foreach ($rawPath in @(
+        $env:PATH,
+        [System.Environment]::GetEnvironmentVariable("PATH", "User"),
+        [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
+    )) {
+        if (-not $rawPath) { continue }
+        foreach ($entry in ($rawPath -split ';')) {
+            $expanded = [System.Environment]::ExpandEnvironmentVariables($entry.Trim())
+            if ($expanded -and ($paths -notcontains $expanded)) {
+                $paths += $expanded
+            }
+        }
+    }
+    if ($paths.Count -gt 0) {
+        $env:PATH = ($paths -join ';')
+    }
+}
+
+function Add-UniqueCandidate {
+    param([System.Collections.ArrayList]$List, [string]$Path)
+    if ($Path -and ($List -notcontains $Path)) {
+        [void]$List.Add($Path)
+    }
+}
+
+function Import-VsDevEnvironment {
+    param([string]$VcVarsAll)
+    $envLines = cmd /c "`"$VcVarsAll`" x64 >nul 2>&1 && set" 2>&1
+    if ($LASTEXITCODE -ne 0) { return $false }
+    foreach ($line in $envLines) {
+        if ($line -match '^([^=]+)=(.*)$') {
+            [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+        }
+    }
+    return [bool](Get-Command cl.exe -ErrorAction SilentlyContinue)
+}
+
+function Find-And-Load-Msvc {
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) { return $true }
+
+    $candidates = [System.Collections.ArrayList]::new()
+
+    foreach ($base in @($env:VSINSTALLDIR, $env:VCINSTALLDIR)) {
+        if (-not $base) { continue }
+        $root = $base
+        if ($root -match '\\VC\\?$') { $root = Split-Path $root -Parent }
+        Add-UniqueCandidate $candidates (Join-Path $root "VC\Auxiliary\Build\vcvarsall.bat")
+    }
+
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $installPaths = @()
+        try {
+            $installPaths = & $vswhere -all -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+        } catch {}
+        if (-not $installPaths) {
+            try { $installPaths = & $vswhere -all -products * -property installationPath 2>$null } catch {}
+        }
+        foreach ($installPath in $installPaths) {
+            Add-UniqueCandidate $candidates (Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat")
+        }
+    }
+
+    foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        foreach ($year in @("18", "2022", "2019", "2017")) {
+            foreach ($edition in @("BuildTools", "Community", "Professional", "Enterprise")) {
+                Add-UniqueCandidate $candidates (Join-Path $drive.Root "Program Files\Microsoft Visual Studio\$year\$edition\VC\Auxiliary\Build\vcvarsall.bat")
+                Add-UniqueCandidate $candidates (Join-Path $drive.Root "Program Files (x86)\Microsoft Visual Studio\$year\$edition\VC\Auxiliary\Build\vcvarsall.bat")
+            }
+        }
+    }
+
+    foreach ($vcvarsall in $candidates) {
+        if (-not (Test-Path $vcvarsall)) { continue }
+        Write-Info "Found Visual Studio toolchain at $vcvarsall"
+        if (Import-VsDevEnvironment $vcvarsall) {
+            Write-Info "Loaded Visual Studio C++ environment"
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Set-GitHubSubmodulesToHttps {
+    param([string]$RepoDir)
+    $gitmodules = Join-Path $RepoDir ".gitmodules"
+    if (-not (Test-Path $gitmodules)) { return 0 }
+
+    $converted = 0
+    $moduleUrls = git -C $RepoDir config --file .gitmodules --get-regexp '^submodule\..*\.url$' 2>$null
+    foreach ($line in $moduleUrls) {
+        if ($line -notmatch '^(submodule\..+)\.url\s+(.+)$') { continue }
+        $keyPrefix = $matches[1]
+        $url = $matches[2]
+        if ($url -notmatch '^git@github\.com:(.+)$') { continue }
+
+        $httpsUrl = "https://github.com/$($matches[1])"
+        git -C $RepoDir config --local "$keyPrefix.url" $httpsUrl
+        if ($LASTEXITCODE -eq 0) { $converted++ }
+    }
+
+    return $converted
+}
+
 # Arrow-key menu selector. Returns 0-based index.
 # Falls back to numbered list when console is not interactive (e.g. irm | iex).
 function Select-Menu {
@@ -110,6 +217,7 @@ Write-Host ""
 # ── Step 1: Check prerequisites ─────────────────────────────
 
 Write-Info "Step 1/6: Checking prerequisites ..."
+Sync-ProcessPathFromRegistry
 Test-Command "git"    "Install from https://git-scm.com/"
 Test-Command "cmake"  "Install from https://cmake.org/download/"
 
@@ -135,8 +243,11 @@ if ($script:PythonCmd) {
 }
 
 # C/C++ toolchain (needed for building backends)
-# Check PATH first, then MSYS2_ROOT, then registry, then scan drives
+# Check PATH first, then installed Visual Studio, then MSYS2_ROOT, then registry, then scan drives
 $hasMsvc = [bool](Get-Command cl.exe -ErrorAction SilentlyContinue)
+if (-not $hasMsvc) {
+    $hasMsvc = Find-And-Load-Msvc
+}
 $hasMsys2Gcc = [bool](Get-Command gcc.exe -ErrorAction SilentlyContinue)
 $msys2Ucrt64Bin = $null
 if (-not $hasMsvc -and -not $hasMsys2Gcc) {
@@ -255,10 +366,6 @@ if (Test-Path "$InstallDir\.git") {
             Stop-Fatal "git clone failed via both SSH and HTTPS. Check your network connection and try again."
         }
         $clonedViaHttps = $true
-    }
-    # If cloned via HTTPS, rewrite SSH submodule URLs to HTTPS so submodule init works
-    if ($clonedViaHttps) {
-        git -C $InstallDir config --local url."https://github.com/".insteadOf "git@github.com:"
     }
 }
 if (-not (Test-Path (Join-Path $InstallDir "omniinfer.py"))) {
@@ -596,6 +703,20 @@ if ($PrebuiltInstalled) {
     if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
         Write-Info "Initializing llama.cpp submodule ..."
         git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "SSH submodule clone failed, retrying with HTTPS ..."
+            $converted = Set-GitHubSubmodulesToHttps $InstallDir
+            if ($converted -eq 0) {
+                Stop-Fatal "Failed to initialize llama.cpp submodule and no GitHub SSH submodule URLs could be converted to HTTPS."
+            }
+            git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
+            if ($LASTEXITCODE -ne 0) {
+                Stop-Fatal "Failed to initialize llama.cpp submodule via SSH and HTTPS. Check network access to GitHub and retry."
+            }
+        }
+        if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
+            Stop-Fatal "llama.cpp submodule initialized but CMakeLists.txt is missing in $llamaCppDir"
+        }
         Write-Ok "Submodule ready"
         Write-Host ""
     }

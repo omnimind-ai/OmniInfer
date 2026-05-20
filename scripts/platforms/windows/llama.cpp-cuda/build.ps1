@@ -223,6 +223,53 @@ function Copy-MsvcRuntimeDlls {
     }
 }
 
+function Add-UniqueDirectory {
+    param([System.Collections.ArrayList]$List, [string]$Path)
+    if ($Path -and (Test-Path -LiteralPath $Path) -and ($List -notcontains $Path)) {
+        [void]$List.Add($Path)
+    }
+}
+
+function Get-CudaRuntimeDirectories {
+    param([string]$CudaCompiler)
+
+    $dirs = [System.Collections.ArrayList]::new()
+
+    if ($CudaCompiler) {
+        $compilerBin = Split-Path -Parent $CudaCompiler
+        Add-UniqueDirectory $dirs $compilerBin
+        Add-UniqueDirectory $dirs (Join-Path $compilerBin "x64")
+    }
+
+    $nvcc = Get-Command nvcc.exe -ErrorAction SilentlyContinue
+    if ($nvcc) {
+        $nvccBin = Split-Path -Parent $nvcc.Source
+        Add-UniqueDirectory $dirs $nvccBin
+        Add-UniqueDirectory $dirs (Join-Path $nvccBin "x64")
+    }
+
+    if ($env:CUDA_PATH) {
+        $cudaBin = Join-Path $env:CUDA_PATH "bin"
+        Add-UniqueDirectory $dirs $cudaBin
+        Add-UniqueDirectory $dirs (Join-Path $cudaBin "x64")
+    }
+
+    return @($dirs)
+}
+
+function Copy-CudaRuntimeDlls {
+    param([string[]]$SourceDirs, [string]$Destination)
+
+    foreach ($sourceDir in $SourceDirs) {
+        foreach ($pattern in @("cudart64*.dll", "cublas64*.dll", "cublasLt64*.dll")) {
+            Get-ChildItem -LiteralPath $sourceDir -Filter $pattern -File -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Destination $_.Name) -Force
+                }
+        }
+    }
+}
+
 if (-not (Find-And-Load-Msvc)) {
     throw "CUDA builds require MSVC cl.exe. Install Visual Studio Build Tools or set vcvarsall.bat path."
 }
@@ -349,13 +396,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $cudaCompiler = Get-CMakeCacheValue -CachePath $cachePath -Name "CMAKE_CUDA_COMPILER"
-$cudaBin = $null
-if ($cudaCompiler) {
-    $cudaBin = Split-Path -Parent $cudaCompiler
-}
-elseif ($env:CUDA_PATH) {
-    $cudaBin = Join-Path $env:CUDA_PATH "bin"
-}
+$cudaRuntimeDirs = Get-CudaRuntimeDirectories -CudaCompiler $cudaCompiler
 
 Get-ChildItem -LiteralPath $BinRoot -File -ErrorAction SilentlyContinue | Remove-Item -Force
 
@@ -363,17 +404,7 @@ Get-ChildItem (Join-Path $BuildRoot "bin") -File | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
 }
 
-if ($cudaBin -and (Test-Path -LiteralPath $cudaBin)) {
-    Get-ChildItem $cudaBin -Filter "cudart64*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
-    }
-    Get-ChildItem $cudaBin -Filter "cublas64*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
-    }
-    Get-ChildItem $cudaBin -Filter "cublasLt64*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
-    }
-}
+Copy-CudaRuntimeDlls -SourceDirs $cudaRuntimeDirs -Destination $BinRoot
 
 if ($toolchainKind -like "msvc-*") {
     Copy-MsvcRuntimeDlls -Destination $BinRoot

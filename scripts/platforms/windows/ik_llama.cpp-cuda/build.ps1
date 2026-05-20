@@ -107,6 +107,45 @@ function Find-And-Load-Msvc {
     return $false
 }
 
+function Add-UniqueDirectory {
+    param([System.Collections.ArrayList]$List, [string]$Path)
+    if ($Path -and (Test-Path -LiteralPath $Path) -and ($List -notcontains $Path)) {
+        [void]$List.Add($Path)
+    }
+}
+
+function Get-CudaRuntimeDirectories {
+    $dirs = [System.Collections.ArrayList]::new()
+
+    $nvcc = Get-Command nvcc.exe -ErrorAction SilentlyContinue
+    if ($nvcc) {
+        $nvccBin = Split-Path -Parent $nvcc.Source
+        Add-UniqueDirectory $dirs $nvccBin
+        Add-UniqueDirectory $dirs (Join-Path $nvccBin "x64")
+    }
+
+    if ($env:CUDA_PATH) {
+        $cudaBin = Join-Path $env:CUDA_PATH "bin"
+        Add-UniqueDirectory $dirs $cudaBin
+        Add-UniqueDirectory $dirs (Join-Path $cudaBin "x64")
+    }
+
+    return @($dirs)
+}
+
+function Copy-CudaRuntimeDlls {
+    param([string[]]$SourceDirs, [string]$Destination)
+
+    foreach ($sourceDir in $SourceDirs) {
+        foreach ($pattern in @("cudart64*.dll", "cublas64*.dll", "cublasLt64*.dll")) {
+            Get-ChildItem -LiteralPath $sourceDir -Filter $pattern -File -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Destination $_.Name) -Force
+                }
+        }
+    }
+}
+
 if (-not (Find-And-Load-Msvc)) {
     throw "CUDA builds require MSVC cl.exe. Install Visual Studio Build Tools or set vcvarsall.bat path."
 }
@@ -169,18 +208,7 @@ Get-ChildItem (Join-Path $BuildRoot "bin") -File | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
 }
 
-if ($env:CUDA_PATH) {
-    $cudaBin = Join-Path $env:CUDA_PATH "bin"
-    Get-ChildItem $cudaBin -Filter "cudart64*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
-    }
-    Get-ChildItem $cudaBin -Filter "cublas64*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
-    }
-    Get-ChildItem $cudaBin -Filter "cublasLt64*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
-    }
-}
+Copy-CudaRuntimeDlls -SourceDirs (Get-CudaRuntimeDirectories) -Destination $BinRoot
 
 if (-not (Test-Path (Join-Path $BinRoot "llama-server.exe"))) {
     throw "Build finished but llama-server.exe was not copied into $BinRoot."
