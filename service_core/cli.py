@@ -60,7 +60,7 @@ Command map:
   chat                      -> run text or multimodal inference on the loaded model
   backend stop              -> stop the currently running backend process
   shutdown                  -> stop the OmniInfer service
-  serve                     -> start the service in the foreground; use --lan to expose inference endpoints on the local network
+  serve                     -> open the server launcher UI; use --lan to expose inference endpoints on the local network
   completion bash           -> print the bash completion script
 """
 
@@ -789,6 +789,25 @@ def serve_foreground(service_args: list[str]) -> int:
     return service_main(service_args)
 
 
+def _should_run_server_tui(service_args: list[str]) -> bool:
+    if os.environ.get("OMNIINFER_SERVE_DIRECT") == "1":
+        return False
+    if _is_help_request(service_args):
+        return False
+    return bool(
+        getattr(sys.stdin, "isatty", lambda: False)()
+        and getattr(sys.stdout, "isatty", lambda: False)()
+    )
+
+
+def serve_interactive_or_foreground(service_args: list[str]) -> int:
+    if _should_run_server_tui(service_args):
+        from service_core.tui import run_server_tui
+
+        return run_server_tui(service_args)
+    return serve_foreground(service_args)
+
+
 def _service_args_from_cli(args: argparse.Namespace, unknown_args: list[str]) -> list[str]:
     service_args = list(unknown_args)
     if args.port is not None and not any(item == "--port" or item.startswith("--port=") for item in service_args):
@@ -930,7 +949,7 @@ def main(argv: list[str] | None = None) -> int:
         args, unknown_args = parser.parse_known_args(argv[:1])
         _cli_port_override = args.port
         commands.set_port_override(args.port)
-        return serve_foreground(_service_args_from_cli(args, argv[1:]))
+        return serve_interactive_or_foreground(_service_args_from_cli(args, argv[1:]))
 
     from service_core.logger import setup_logging
 
@@ -1003,7 +1022,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
         return shutdown_service()
     if args.command == "serve":
-        return serve_foreground(_service_args_from_cli(args, unknown_args))
+        return serve_interactive_or_foreground(_service_args_from_cli(args, unknown_args))
     if args.command == "completion":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")

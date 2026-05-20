@@ -75,7 +75,7 @@ New-NetFirewallRule `
 
 ## Cloudflare Quick Tunnel
 
-For temporary remote access without router port forwarding or a public IP address, start OmniInfer with Cloudflare Quick Tunnel mode:
+For temporary remote access without router port forwarding or a public IP address, start OmniInfer with Cloudflare Quick Tunnel mode. In an interactive terminal, OmniInfer first asks you to choose a backend and model, then starts the gateway and tunnel:
 
 ```sh
 ./omniinfer serve --cloudflare

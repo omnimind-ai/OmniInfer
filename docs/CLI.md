@@ -248,11 +248,15 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 - The CLI uses the Python entrypoint in [omniinfer.py](../omniinfer.py).
 - The desktop CLI auto-starts the local OmniInfer gateway when required.
 - CUDA desktop backends default to one GPU. If `CUDA_VISIBLE_DEVICES` is unset, OmniInfer picks the visible GPU with the most free memory and lowest utilization before launching the backend. Set `CUDA_VISIBLE_DEVICES` or `OMNIINFER_CUDA_VISIBLE_DEVICES` to override this.
-- If you want to run the gateway in the foreground, use:
+- If you want to launch the gateway from an interactive terminal, use:
 
 ```sh
 ./omniinfer serve
 ```
+
+In a terminal, `serve` opens a compact server launcher. It asks you to choose a backend and then a model every time. The last selected backend and model are preselected and marked `last selected`, so pressing Enter twice reuses the previous choices. After the model is loaded, the launcher shows the gateway logs and keeps the gateway running until you press `Ctrl+C`.
+
+When `serve` is used from a non-interactive script, or when `OMNIINFER_SERVE_DIRECT=1` is set, it starts the gateway directly without the launcher.
 
 To expose only the inference API to trusted devices on the same LAN, use:
 
@@ -260,7 +264,7 @@ To expose only the inference API to trusted devices on the same LAN, use:
 ./omniinfer serve --lan
 ```
 
-LAN mode binds the gateway to `0.0.0.0` and requires an API key for remote clients. If no key is supplied through `--api-key` or `OMNIINFER_API_KEY`, OmniInfer generates a session key and prints it with the LAN base URLs. Remote clients can call `/v1/chat/completions` or `/v1/messages`; `/omni/*` management endpoints stay local-only by default.
+LAN mode uses the same launcher in an interactive terminal, then binds the gateway to `0.0.0.0` and requires an API key for remote clients. If no key is supplied through `--api-key` or `OMNIINFER_API_KEY`, OmniInfer generates a session key and prints it with the LAN base URLs. Remote clients can call `/v1/chat/completions` or `/v1/messages`; `/omni/*` management endpoints stay local-only by default.
 
 To create a temporary public HTTPS URL without router port forwarding, use Cloudflare Quick Tunnel mode:
 
@@ -274,7 +278,7 @@ Windows:
 .\omniinfer.ps1 serve --cloudflare
 ```
 
-Cloudflare mode keeps OmniInfer bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).
+Cloudflare mode uses the same launcher in an interactive terminal, keeps OmniInfer bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).
 
 On Windows, allow the port through the Private-network firewall profile when needed:
 

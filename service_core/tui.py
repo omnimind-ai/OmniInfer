@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import codecs
 import os
+import queue
 import re
 import shutil
+import subprocess
 import sys
 import threading
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +20,8 @@ except ImportError:  # pragma: no cover - platform dependent
     _readline = None  # type: ignore[assignment]
 
 from service_core import commands
+from service_core.local_state import load_selected_backend
+from service_core.service import APP_ROOT, load_app_config, parse_args as parse_service_args
 
 _LOADING_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
 _LOADING_INTERVAL = 0.08
@@ -159,6 +164,97 @@ def run_tui() -> int:
     return 130 if interrupted else 0
 
 
+def run_server_tui(service_args: list[str]) -> int:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise SystemExit("OmniInfer server UI requires an interactive terminal.")
+
+    parsed_args = parse_service_args(load_app_config(Path(APP_ROOT)), service_args)
+    commands.set_port_override(int(parsed_args.port))
+    process: subprocess.Popen[str] | None = None
+    log_queue: queue.Queue[str] | None = None
+    interrupted = False
+
+    try:
+        _clear()
+        _print_header("OmniInfer Server", "Interactive gateway launcher")
+        backend = _choose_server_backend()
+        if backend is None:
+            _print_notice("No backend selected.", kind="warning")
+            return 1
+        model = _choose_model(mark_last_selected=True)
+        if model is None:
+            _print_notice("No model selected.", kind="warning")
+            return 1
+
+        child_args = _server_child_args(service_args, backend)
+        _print_section("Gateway", "Starting OmniInfer gateway")
+        _print_kv("Backend", backend)
+        _print_kv("Model", str(model))
+        _print_kv("Logs", str(commands.CLI_LOG_FILE))
+        process, log_queue = _start_server_gateway(child_args)
+        _wait_for_server_gateway(process, log_queue, int(parsed_args.startup_timeout))
+        _drain_gateway_logs(log_queue)
+
+        selected = commands.select_backend(backend)
+        _print_notice(f"Selected backend: {selected.backend}", kind="success")
+        _load_model(commands.ModelLoadOptions(model=str(model)))
+
+        _print_server_ready(parsed_args)
+        _stream_gateway_logs_until_exit(process, log_queue)
+    except KeyboardInterrupt:
+        interrupted = True
+        print()
+    finally:
+        if process is not None:
+            _shutdown_server_gateway(process, log_queue)
+    return 130 if interrupted else 0
+
+
+def _choose_server_backend() -> str | None:
+    while True:
+        backends = commands.local_backends()
+        rows = list(backends.values())
+        if not rows:
+            raise SystemExit("No compatible backends are available.")
+
+        last_backend = load_selected_backend(Path(APP_ROOT))
+        items: list[_MenuItem] = []
+        default_index = 0
+        for index, backend in enumerate(rows):
+            details: list[str] = ["installed" if backend.binary_exists else "not installed"]
+            details.extend([str(value) for value in backend.capabilities[:4]])
+            if backend.id == last_backend:
+                details.append("last selected")
+                default_index = index
+            elif commands.is_backend_build_supported() and not backend.binary_exists:
+                details.append("build available")
+            items.append(
+                _MenuItem(
+                    label=backend.id,
+                    details=details,
+                    selected=backend.id == last_backend,
+                )
+            )
+
+        index = _select_menu(
+            title="Backends",
+            subtitle="Choose the runtime used by this gateway",
+            items=items,
+            default_index=default_index,
+        )
+        if index is None:
+            return None
+        backend = rows[index]
+        if not backend.binary_exists:
+            if commands.is_backend_build_supported():
+                if _build_backend_interactive(backend.id, select_after=False) is None:
+                    continue
+            else:
+                _print_notice(f"Backend is not installed: {backend.id}", kind="warning")
+                continue
+        return backend.id
+
+
 def _choose_backend() -> str | None:
     while True:
         build_supported = commands.is_backend_build_supported()
@@ -267,27 +363,65 @@ def _choose_backend_for_build() -> str | None:
     return backend_id or None
 
 
-def _choose_model() -> Path | None:
+def _choose_model(*, mark_last_selected: bool = False) -> Path | None:
     while True:
         models = commands.discover_local_models()
+        remembered = commands.remembered_model_load_options() if mark_last_selected else None
+        remembered_path = Path(remembered.model).expanduser() if remembered is not None else None
         items: list[_MenuItem] = []
+        model_choices: list[Path | None] = []
+        default_index = 0
         if models:
+            matched_remembered = False
             for model in models:
-                items.append(_MenuItem(label=model.label))
+                details: list[str] = []
+                if remembered_path is not None and _same_model_path(model.path, remembered_path):
+                    details.append("last selected")
+                    default_index = len(items)
+                    matched_remembered = True
+                items.append(_MenuItem(label=model.label, details=details, selected=bool(details)))
+                model_choices.append(model.path)
+            if remembered_path is not None and not matched_remembered and remembered_path.exists():
+                default_index = len(items)
+                items.append(
+                    _MenuItem(
+                        label=str(remembered_path),
+                        details=["last selected"],
+                        selected=True,
+                    )
+                )
+                model_choices.append(remembered_path)
             items.append(_MenuItem(label="Enter path manually", details=["link into .local/models"]))
+            model_choices.append(None)
             index = _select_menu(
                 title="Models",
                 subtitle="Pick a managed model or link a new local file",
                 items=items,
+                default_index=default_index,
+            )
+            if index is None:
+                return None
+            selected = model_choices[index]
+            if selected is None:
+                return _prompt_model_path()
+            return selected
+
+        _print_notice("No models found in OmniInfer .local model directories.", kind="warning")
+        if remembered_path is not None and remembered_path.exists():
+            index = _select_menu(
+                title="Models",
+                subtitle="No managed models were found",
+                items=[
+                    _MenuItem(label=str(remembered_path), details=["last selected"], selected=True),
+                    _MenuItem(label="Enter path manually", details=["link into .local/models"]),
+                ],
                 default_index=0,
             )
             if index is None:
                 return None
-            if index == len(models):
-                return _prompt_model_path()
-            return models[index].path
-
-        _print_notice("No models found in OmniInfer .local model directories.", kind="warning")
+            if index == 0:
+                return remembered_path
+            return _prompt_model_path()
         index = _select_menu(
             title="Models",
             subtitle="No managed models were found",
@@ -297,6 +431,13 @@ def _choose_model() -> Path | None:
         if index is None:
             return None
         return _prompt_model_path()
+
+
+def _same_model_path(left: Path, right: Path) -> bool:
+    try:
+        return left.expanduser().resolve() == right.expanduser().resolve()
+    except OSError:
+        return os.path.abspath(os.path.expanduser(str(left))) == os.path.abspath(os.path.expanduser(str(right)))
 
 
 def _prompt_model_path() -> Path | None:
@@ -413,6 +554,155 @@ def _load_model(options: commands.ModelLoadOptions, *, show_model: bool = True) 
     print()
     backend = response.get("selected_backend")
     return str(backend) if backend else None
+
+
+def _server_child_args(service_args: list[str], backend: str) -> list[str]:
+    child_args = _strip_service_option(service_args, "--default-backend")
+    child_args.extend(["--default-backend", backend])
+    return child_args
+
+
+def _strip_service_option(args: list[str], option: str) -> list[str]:
+    result: list[str] = []
+    skip_next = False
+    prefix = f"{option}="
+    for token in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if token == option:
+            skip_next = True
+            continue
+        if token.startswith(prefix):
+            continue
+        result.append(token)
+    return result
+
+
+def _start_server_gateway(service_args: list[str]) -> tuple[subprocess.Popen[str], queue.Queue[str]]:
+    command = _server_gateway_command(service_args)
+    env = os.environ.copy()
+    env["OMNIINFER_SERVE_DIRECT"] = "1"
+    env["OMNIINFER_WINDOW_MODE_CHILD"] = "1"
+    env["PYTHONUNBUFFERED"] = "1"
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    process = subprocess.Popen(
+        command,
+        cwd=str(commands.REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        creationflags=creationflags,
+    )
+    log_queue: queue.Queue[str] = queue.Queue()
+    thread = threading.Thread(target=_read_gateway_stdout, args=(process, log_queue), daemon=True)
+    thread.start()
+    return process, log_queue
+
+
+def _server_gateway_command(service_args: list[str]) -> list[str]:
+    if getattr(sys, "frozen", False):
+        gateway_binary = commands.resolve_gateway_binary()
+        if gateway_binary is None:
+            raise SystemExit("unable to locate the packaged OmniInfer CLI binary")
+        return [str(gateway_binary), "serve", *service_args]
+    return [sys.executable, str(Path(commands.REPO_ROOT) / "omniinfer.py"), "serve", *service_args]
+
+
+def _read_gateway_stdout(process: subprocess.Popen[str], log_queue: queue.Queue[str]) -> None:
+    if process.stdout is None:
+        return
+    for line in process.stdout:
+        log_queue.put(line)
+
+
+def _wait_for_server_gateway(
+    process: subprocess.Popen[str],
+    log_queue: queue.Queue[str],
+    startup_timeout: int,
+) -> None:
+    spinner = _LoadingSpinner("Starting gateway...")
+    spinner.start()
+    deadline = time.time() + max(startup_timeout, 10)
+    try:
+        while time.time() < deadline:
+            _drain_gateway_logs(log_queue)
+            if process.poll() is not None:
+                _drain_gateway_logs(log_queue)
+                raise SystemExit(f"OmniInfer gateway exited with code {process.returncode}.")
+            if commands.is_service_running():
+                spinner.update("Gateway ready.")
+                return
+            time.sleep(0.2)
+    finally:
+        spinner.stop()
+    _drain_gateway_logs(log_queue)
+    raise SystemExit("Timed out waiting for OmniInfer gateway to start.")
+
+
+def _stream_gateway_logs_until_exit(process: subprocess.Popen[str], log_queue: queue.Queue[str]) -> None:
+    _print_section("Gateway Logs", "Press Ctrl+C to stop the gateway")
+    while process.poll() is None:
+        _drain_gateway_logs(log_queue)
+        time.sleep(0.1)
+    _drain_gateway_logs(log_queue)
+    if process.returncode not in (0, None):
+        raise SystemExit(f"OmniInfer gateway exited with code {process.returncode}.")
+
+
+def _drain_gateway_logs(log_queue: queue.Queue[str]) -> None:
+    while True:
+        try:
+            line = log_queue.get_nowait()
+        except queue.Empty:
+            break
+        text = line.rstrip()
+        if text:
+            print(_THEME.dim(text))
+
+
+def _shutdown_server_gateway(process: subprocess.Popen[str], log_queue: queue.Queue[str] | None) -> None:
+    if process.poll() is not None:
+        if log_queue is not None:
+            _drain_gateway_logs(log_queue)
+        return
+    _print_notice("Stopping OmniInfer gateway...", kind="info")
+    try:
+        commands.shutdown_service(wait_timeout_s=10.0)
+    except SystemExit as exc:
+        _print_notice(f"Could not stop gateway through API: {exc}", kind="warning")
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if log_queue is not None:
+            _drain_gateway_logs(log_queue)
+        if process.poll() is not None:
+            return
+        time.sleep(0.2)
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+    if log_queue is not None:
+        _drain_gateway_logs(log_queue)
+
+
+def _print_server_ready(args: Any) -> None:
+    host = str(getattr(args, "host", "127.0.0.1"))
+    port = int(getattr(args, "port", 9000))
+    display_host = "127.0.0.1" if host in {"0.0.0.0", "::", ""} else host
+    _print_section("Ready", "OpenAI-compatible gateway is running")
+    _print_kv("Local Base URL", f"http://{display_host}:{port}/v1")
+    if host in {"0.0.0.0", "::"}:
+        _print_kv("LAN", "Use one of this machine's LAN IP addresses with the printed API key")
+    if bool(getattr(args, "cloudflare", False)):
+        _print_kv("Cloudflare", "See gateway logs for the temporary trycloudflare.com URL")
+    print()
 
 
 @dataclass

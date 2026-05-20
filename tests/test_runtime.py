@@ -266,6 +266,39 @@ class CliParserTests(unittest.TestCase):
             ["--host", "0.0.0.0", "--window-mode", "visible", "--default-backend", "llama.cpp-linux"]
         )
 
+    def test_interactive_serve_uses_server_tui(self) -> None:
+        try:
+            with (
+                patch("sys.stdin.isatty", return_value=True),
+                patch("sys.stdout.isatty", return_value=True),
+                patch("service_core.tui.run_server_tui", return_value=0) as run_server_tui,
+            ):
+                result = cli.main(["serve", "--lan"])
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        run_server_tui.assert_called_once_with(["--lan"])
+
+    def test_direct_serve_env_skips_server_tui(self) -> None:
+        try:
+            with (
+                patch.dict(os.environ, {"OMNIINFER_SERVE_DIRECT": "1"}),
+                patch("sys.stdin.isatty", return_value=True),
+                patch("sys.stdout.isatty", return_value=True),
+                patch("service_core.tui.run_server_tui") as run_server_tui,
+                patch("service_core.service.main", return_value=0) as service_main,
+            ):
+                result = cli.main(["serve", "--lan"])
+        finally:
+            cli._cli_port_override = None
+            commands.set_port_override(None)
+
+        self.assertEqual(result, 0)
+        run_server_tui.assert_not_called()
+        service_main.assert_called_once_with(["--lan"])
+
     def test_serve_lan_forwards_service_argument(self) -> None:
         try:
             with patch("service_core.service.main", return_value=0) as service_main:

@@ -6,7 +6,7 @@ Quick Tunnel is best for demos, testing, and short-lived personal access. Cloudf
 
 ## Cloudflare Quick Tunnel
 
-Start the gateway with Cloudflare mode:
+Start the gateway with Cloudflare mode. In an interactive terminal, OmniInfer first asks you to choose a backend and model, then starts the gateway and tunnel:
 
 ```sh
 ./omniinfer serve --cloudflare
@@ -20,6 +20,7 @@ Windows:
 
 OmniInfer will:
 
+- ask for the backend and model to load when running in an interactive terminal
 - keep the local gateway bound to `127.0.0.1`
 - download and update a managed `cloudflared` binary under `.local/tools/cloudflared`
 - require an API key for requests arriving through Cloudflare
