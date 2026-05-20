@@ -513,6 +513,148 @@ class ChatUsageStreamNormalizer:
         return usage_event
 
 
+class ChatToolCallStreamNormalizer:
+    def __init__(self) -> None:
+        self._pending_role_event: dict[str, Any] | None = None
+
+    def transform_event(self, event: dict[str, Any]) -> list[dict[str, Any]]:
+        normalized = self._normalize_event(event)
+        choices = normalized.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            return self._flush_before(normalized)
+
+        choice = choices[0]
+        delta = choice.get("delta")
+        if not isinstance(delta, dict):
+            return self._flush_before(normalized)
+
+        tool_calls = delta.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            if self._pending_role_event is not None:
+                normalized = self._merge_pending_role(normalized)
+            return [normalized]
+
+        if self._is_pending_role_delta(delta, choice):
+            if self._pending_role_event is None:
+                self._pending_role_event = normalized
+                return []
+            pending = self._pending_role_event
+            self._pending_role_event = normalized
+            return [pending]
+
+        return self._flush_before(normalized)
+
+    def flush(self) -> list[dict[str, Any]]:
+        if self._pending_role_event is None:
+            return []
+        pending = self._pending_role_event
+        self._pending_role_event = None
+        return [pending]
+
+    def _flush_before(self, event: dict[str, Any]) -> list[dict[str, Any]]:
+        flushed = self.flush()
+        flushed.append(event)
+        return flushed
+
+    def _normalize_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        choices = event.get("choices")
+        if not isinstance(choices, list):
+            return event
+
+        copied = dict(event)
+        copied_choices: list[Any] = []
+        for choice in choices:
+            if not isinstance(choice, dict):
+                copied_choices.append(choice)
+                continue
+            copied_choice = dict(choice)
+            delta = copied_choice.get("delta")
+            if isinstance(delta, dict):
+                copied_choice["delta"] = self._normalize_delta(delta)
+            copied_choices.append(copied_choice)
+        copied["choices"] = copied_choices
+        return copied
+
+    def _normalize_delta(self, delta: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(delta)
+        normalized.setdefault("reasoning_content", None)
+        if normalized.get("role") == "assistant" and "content" not in normalized:
+            normalized["content"] = None
+
+        tool_calls = normalized.get("tool_calls")
+        if isinstance(tool_calls, list):
+            normalized["tool_calls"] = [
+                self._normalize_tool_call(tool_call)
+                for tool_call in tool_calls
+            ]
+        return normalized
+
+    def _normalize_tool_call(self, tool_call: Any) -> Any:
+        if not isinstance(tool_call, dict):
+            return tool_call
+
+        normalized = dict(tool_call)
+        if "index" not in normalized:
+            normalized["index"] = 0
+        normalized.setdefault("id", "")
+        normalized.setdefault("type", "function")
+
+        function = normalized.get("function")
+        if isinstance(function, dict):
+            normalized["function"] = dict(function)
+        else:
+            normalized["function"] = {}
+        normalized["function"].setdefault("arguments", "")
+        return normalized
+
+    def _is_pending_role_delta(self, delta: dict[str, Any], choice: dict[str, Any]) -> bool:
+        if choice.get("finish_reason") is not None:
+            return False
+        if delta.get("role") != "assistant":
+            return False
+        non_empty_keys = [
+            key
+            for key, value in delta.items()
+            if key != "reasoning_content" and value not in (None, "", [], {})
+        ]
+        return non_empty_keys == ["role"]
+
+    def _merge_pending_role(self, event: dict[str, Any]) -> dict[str, Any]:
+        pending = self._pending_role_event
+        self._pending_role_event = None
+        if pending is None:
+            return event
+
+        pending_choices = pending.get("choices")
+        choices = event.get("choices")
+        if (
+            not isinstance(pending_choices, list)
+            or not pending_choices
+            or not isinstance(pending_choices[0], dict)
+            or not isinstance(choices, list)
+            or not choices
+            or not isinstance(choices[0], dict)
+        ):
+            return event
+
+        pending_delta = pending_choices[0].get("delta")
+        current_delta = choices[0].get("delta")
+        if not isinstance(pending_delta, dict) or not isinstance(current_delta, dict):
+            return event
+
+        merged = dict(event)
+        merged_choices = list(choices)
+        merged_choice = dict(choices[0])
+        merged_delta = dict(current_delta)
+        for key, value in pending_delta.items():
+            if key not in merged_delta:
+                merged_delta[key] = value
+        merged_choice["delta"] = merged_delta
+        merged_choices[0] = merged_choice
+        merged["choices"] = merged_choices
+        return merged
+
+
 _request_log_counter = 0
 _request_log_lock = threading.Lock()
 
@@ -791,6 +933,7 @@ def stream_http_request(
                 else None
             )
             last_event: dict[str, Any] | None = None
+            tool_call_normalizer = ChatToolCallStreamNormalizer()
             for chunk in resp:
                 if not chunk:
                     continue
@@ -805,12 +948,20 @@ def stream_http_request(
                 if data == b"[DONE]":
                     if reasoning_normalizer is not None:
                         for event in reasoning_normalizer.flush(last_event):
-                            for transformed in usage_normalizer.transform_event(event):
-                                if line_normalizer is None:
-                                    handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
-                                else:
-                                    for event_name, line_event in line_normalizer.transform_event(transformed):
-                                        _write_sse_event(handler, event_name, line_event)
+                            for tool_event in tool_call_normalizer.transform_event(event):
+                                for transformed in usage_normalizer.transform_event(tool_event):
+                                    if line_normalizer is None:
+                                        handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                                    else:
+                                        for event_name, line_event in line_normalizer.transform_event(transformed):
+                                            _write_sse_event(handler, event_name, line_event)
+                    for event in tool_call_normalizer.flush():
+                        for transformed in usage_normalizer.transform_event(event):
+                            if line_normalizer is None:
+                                handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                            else:
+                                for event_name, line_event in line_normalizer.transform_event(transformed):
+                                    _write_sse_event(handler, event_name, line_event)
                     for event in usage_normalizer.flush():
                         if line_normalizer is None:
                             handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")
@@ -840,12 +991,13 @@ def stream_http_request(
                 last_event = event
                 pending = [event] if reasoning_normalizer is None else reasoning_normalizer.transform_event(event)
                 for item in pending:
-                    for transformed in usage_normalizer.transform_event(item):
-                        if line_normalizer is None:
-                            handler.wfile.write(prefix + b": " + json_dumps(transformed) + b"\n\n")
-                        else:
-                            for event_name, line_event in line_normalizer.transform_event(transformed):
-                                _write_sse_event(handler, event_name, line_event)
+                    for tool_event in tool_call_normalizer.transform_event(item):
+                        for transformed in usage_normalizer.transform_event(tool_event):
+                            if line_normalizer is None:
+                                handler.wfile.write(prefix + b": " + json_dumps(transformed) + b"\n\n")
+                            else:
+                                for event_name, line_event in line_normalizer.transform_event(transformed):
+                                    _write_sse_event(handler, event_name, line_event)
                 handler.wfile.flush()
     except urllib.error.HTTPError as e:
         body = e.read()
@@ -881,7 +1033,6 @@ def stream_http_request(
             return line[6:].encode("utf-8")
     return None
 
-
 def stream_embedded_events(
     handler: BaseHTTPRequestHandler,
     events: list[dict[str, Any]],
@@ -905,26 +1056,36 @@ def stream_embedded_events(
             if line_stream_options is not None and line_stream_options.enabled
             else None
         )
+        tool_call_normalizer = ChatToolCallStreamNormalizer()
         last_event: dict[str, Any] | None = None
         for event in events:
             pending = [event] if reasoning_normalizer is None else reasoning_normalizer.transform_event(event)
             last_event = event
             for item in pending:
-                for transformed in usage_normalizer.transform_event(item):
-                    if line_normalizer is None:
-                        handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
-                    else:
-                        for event_name, line_event in line_normalizer.transform_event(transformed):
-                            _write_sse_event(handler, event_name, line_event)
+                for tool_event in tool_call_normalizer.transform_event(item):
+                    for transformed in usage_normalizer.transform_event(tool_event):
+                        if line_normalizer is None:
+                            handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                        else:
+                            for event_name, line_event in line_normalizer.transform_event(transformed):
+                                _write_sse_event(handler, event_name, line_event)
             handler.wfile.flush()
         if reasoning_normalizer is not None:
             for event in reasoning_normalizer.flush(last_event):
-                for transformed in usage_normalizer.transform_event(event):
-                    if line_normalizer is None:
-                        handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
-                    else:
-                        for event_name, line_event in line_normalizer.transform_event(transformed):
-                            _write_sse_event(handler, event_name, line_event)
+                for tool_event in tool_call_normalizer.transform_event(event):
+                    for transformed in usage_normalizer.transform_event(tool_event):
+                        if line_normalizer is None:
+                            handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                        else:
+                            for event_name, line_event in line_normalizer.transform_event(transformed):
+                                _write_sse_event(handler, event_name, line_event)
+        for event in tool_call_normalizer.flush():
+            for transformed in usage_normalizer.transform_event(event):
+                if line_normalizer is None:
+                    handler.wfile.write(b"data: " + json_dumps(transformed) + b"\n\n")
+                else:
+                    for event_name, line_event in line_normalizer.transform_event(transformed):
+                        _write_sse_event(handler, event_name, line_event)
         for event in usage_normalizer.flush():
             if line_normalizer is None:
                 handler.wfile.write(b"data: " + json_dumps(event) + b"\n\n")

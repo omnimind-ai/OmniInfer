@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 from service_core.service import (
     ChatLineStreamNormalizer,
     ChatReasoningStreamNormalizer,
+    ChatToolCallStreamNormalizer,
     ChatUsageStreamNormalizer,
     GatewayAccessPolicy,
     LineStreamOptions,
@@ -449,6 +450,82 @@ class HttpHandlerTests(unittest.TestCase):
         self.assertEqual(data_events[1]["text"], "beta")
         self.assertEqual(data_events[-1]["usage"]["total_tokens"], 5)
 
+    def test_stream_tool_calls_are_openai_compatible(self) -> None:
+        events = [
+            {"choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]},
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "get_weather", "arguments": ""},
+                                }
+                            ]
+                        },
+                        "finish_reason": None,
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"tool_calls": [{"function": {"arguments": "{\"city\":\"Hang"}}]},
+                        "finish_reason": None,
+                    }
+                ]
+            },
+            {
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+            },
+        ]
+        runtime = type("Runtime", (), {"request_defaults": {}, "model_ref": "demo.gguf"})()
+        self.server.manager.ensure_model_loaded.return_value = runtime
+        self.server.manager.current_runtime_mode.return_value = "embedded"
+        self.server.manager.stream_chat_completion.return_value = events
+
+        code, body = _post_raw(
+            self.base_url,
+            "/v1/chat/completions",
+            {
+                "messages": [{"role": "user", "content": "weather"}],
+                "stream": True,
+                "tools": [{"type": "function", "function": {"name": "get_weather"}}],
+            },
+        )
+
+        self.assertEqual(code, 200)
+        data_events = [
+            json.loads(line[6:])
+            for line in body.splitlines()
+            if line.startswith("data: {")
+        ]
+        self.assertGreaterEqual(len(data_events), 3)
+
+        first_delta = data_events[0]["choices"][0]["delta"]
+        self.assertEqual(first_delta["role"], "assistant")
+        self.assertIsNone(first_delta["content"])
+        self.assertIsNone(first_delta["reasoning_content"])
+        first_tool = first_delta["tool_calls"][0]
+        self.assertEqual(first_tool["index"], 0)
+        self.assertEqual(first_tool["id"], "call_1")
+        self.assertEqual(first_tool["type"], "function")
+        self.assertEqual(first_tool["function"]["name"], "get_weather")
+        self.assertEqual(first_tool["function"]["arguments"], "")
+
+        second_delta = data_events[1]["choices"][0]["delta"]
+        self.assertIsNone(second_delta["reasoning_content"])
+        second_tool = second_delta["tool_calls"][0]
+        self.assertEqual(second_tool["index"], 0)
+        self.assertEqual(second_tool["id"], "")
+        self.assertEqual(second_tool["type"], "function")
+        self.assertEqual(second_tool["function"], {"arguments": "{\"city\":\"Hang"})
+
     def test_post_not_found(self) -> None:
         code, body = _post(self.base_url, "/nonexistent", {})
         self.assertEqual(code, 404)
@@ -599,6 +676,75 @@ class ReasoningContentTests(unittest.TestCase):
         self.assertFalse(events[2][1]["newline"])
         self.assertEqual(events[-1][0], "done")
         self.assertEqual(events[-1][1]["usage"]["total_tokens"], 8)
+
+
+class ToolCallStreamNormalizerTests(unittest.TestCase):
+    def test_merges_initial_role_delta_into_first_tool_call_chunk(self) -> None:
+        normalizer = ChatToolCallStreamNormalizer()
+
+        first = normalizer.transform_event({
+            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+        })
+        second = normalizer.transform_event({
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "get_weather", "arguments": ""},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ]
+        })
+
+        self.assertEqual(first, [])
+        delta = second[0]["choices"][0]["delta"]
+        self.assertEqual(delta["role"], "assistant")
+        self.assertIsNone(delta["content"])
+        self.assertIsNone(delta["reasoning_content"])
+        tool_call = delta["tool_calls"][0]
+        self.assertEqual(tool_call["index"], 0)
+        self.assertEqual(tool_call["id"], "call_1")
+        self.assertEqual(tool_call["type"], "function")
+        self.assertEqual(tool_call["function"]["name"], "get_weather")
+        self.assertEqual(tool_call["function"]["arguments"], "")
+
+    def test_stabilizes_followup_tool_call_chunks(self) -> None:
+        normalizer = ChatToolCallStreamNormalizer()
+
+        events = normalizer.transform_event({
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"tool_calls": [{"function": {"arguments": "{\"city\""}}]},
+                    "finish_reason": None,
+                }
+            ]
+        })
+
+        delta = events[0]["choices"][0]["delta"]
+        self.assertIsNone(delta["reasoning_content"])
+        tool_call = delta["tool_calls"][0]
+        self.assertEqual(tool_call["index"], 0)
+        self.assertEqual(tool_call["id"], "")
+        self.assertEqual(tool_call["type"], "function")
+        self.assertEqual(tool_call["function"], {"arguments": "{\"city\""})
+
+    def test_adds_reasoning_content_null_to_regular_delta(self) -> None:
+        normalizer = ChatToolCallStreamNormalizer()
+
+        events = normalizer.transform_event({
+            "choices": [{"index": 0, "delta": {"content": "hello"}, "finish_reason": None}],
+        })
+
+        self.assertEqual(events[0]["choices"][0]["delta"]["content"], "hello")
+        self.assertIsNone(events[0]["choices"][0]["delta"]["reasoning_content"])
 
 
 # ---------------------------------------------------------------------------
