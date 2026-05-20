@@ -298,11 +298,7 @@ def find_cloudflared(explicit_path: str | None = None, *, app_root: Path | None 
 
 
 def default_cloudflared_config_path() -> Path:
-    if os.name == "nt":
-        home = Path(os.environ.get("USERPROFILE") or str(Path.home()))
-    else:
-        home = Path.home()
-    return home / ".cloudflared" / "config.yaml"
+    return Path.home() / ".cloudflared" / "config.yaml"
 
 
 def quick_tunnel_config_warning() -> str | None:
