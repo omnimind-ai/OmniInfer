@@ -216,7 +216,7 @@ def local_backends() -> dict[str, Any]:
         backend_host="127.0.0.1",
         backend_port=0,
         startup_timeout_s=int(config.get("startup_timeout", 60)),
-        backend_window_mode=str(config.get("window_mode", "hidden")),
+        backend_window_mode=str(config.get("window_mode", "visible")),
         runtime_root=str(config.get("runtime_root", "runtime")),
         backend_overrides=config.get("backends"),
         default_backend_id=str(config.get("default_backend", "")),
@@ -376,7 +376,7 @@ def start_service_background() -> None:
         host=str(config.get("host", "127.0.0.1")),
         port=int(config.get("port", 9000)),
         startup_timeout=int(config.get("startup_timeout", 60)),
-        window_mode=str(config.get("window_mode", "hidden")),
+        window_mode=str(config.get("window_mode", "visible")),
         default_thinking=str(config.get("default_thinking", "off")),
         default_backend=str(config.get("default_backend", "")),
     )

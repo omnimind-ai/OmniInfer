@@ -18,10 +18,10 @@ All request and response bodies are JSON unless an endpoint explicitly uses Serv
 
 `OPTIONS *` returns `204` for CORS preflight and also accepts `anthropic-version` and `x-api-key` in `Access-Control-Allow-Headers`.
 
-Windows note: `omniinfer serve` hides its console window by default. To run in the foreground with visible log output, use:
+Windows note: `omniinfer serve` shows its console window by default. To hide the console window, use:
 
 ```powershell
-python omniinfer.py serve --window-mode visible
+python omniinfer.py serve --window-mode hidden
 ```
 
 ## Local Network Access
