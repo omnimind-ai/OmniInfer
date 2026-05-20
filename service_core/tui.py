@@ -20,7 +20,9 @@ except ImportError:  # pragma: no cover - platform dependent
     _readline = None  # type: ignore[assignment]
 
 from service_core import commands
+from service_core.backends import BackendSpec
 from service_core.local_state import load_selected_backend
+from service_core.platforms.registry import current_host_platform
 from service_core.service import APP_ROOT, load_app_config, parse_args as parse_service_args
 
 _LOADING_FRAMES = "⠋⠙⠸⢰⣠⣄⡆⠇"
@@ -212,8 +214,7 @@ def run_server_tui(service_args: list[str]) -> int:
 
 def _choose_server_backend() -> str | None:
     while True:
-        backends = commands.local_backends()
-        rows = list(backends.values())
+        rows = _server_backend_choices()
         if not rows:
             raise SystemExit("No compatible backends are available.")
 
@@ -253,6 +254,19 @@ def _choose_server_backend() -> str | None:
                 _print_notice(f"Backend is not installed: {backend.id}", kind="warning")
                 continue
         return backend.id
+
+
+def _server_backend_choices() -> list[BackendSpec]:
+    backends = commands.local_backends()
+    platform = current_host_platform()
+    build_supported = commands.is_backend_build_supported()
+    rows: list[BackendSpec] = []
+    for backend in backends.values():
+        if backend.binary_exists:
+            rows.append(backend)
+        elif build_supported and platform.is_hardware_compatible(backend):
+            rows.append(backend)
+    return rows
 
 
 def _choose_backend() -> str | None:

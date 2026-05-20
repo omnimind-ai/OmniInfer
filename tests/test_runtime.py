@@ -395,6 +395,19 @@ class CommandHelperTests(unittest.TestCase):
         self.assertTrue(right.exists(), f"{right} should exist")
         self.assertTrue(left.samefile(right), f"{left} should reference the same file as {right}")
 
+    def backend_spec(self, backend_id: str, launcher_path: Path, capabilities: list[str] | None = None) -> BackendSpec:
+        return BackendSpec(
+            id=backend_id,
+            label=backend_id,
+            family="test",
+            runtime_dir=str(launcher_path.parent.parent),
+            launcher_path=str(launcher_path),
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=capabilities or [],
+        )
+
     def test_source_gateway_launch_uses_cli_serve_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
@@ -449,6 +462,52 @@ class CommandHelperTests(unittest.TestCase):
         command = popen.call_args.args[0]
         index = command.index("--window-mode")
         self.assertEqual(command[index + 1], "hidden")
+
+    def test_server_backend_choices_include_installed_and_compatible(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installed_launcher = root / "installed" / "bin" / "backend"
+            installed_launcher.parent.mkdir(parents=True)
+            installed_launcher.write_text("", encoding="utf-8")
+            compatible_launcher = root / "compatible" / "bin" / "backend"
+            incompatible_launcher = root / "incompatible" / "bin" / "backend"
+            backends = {
+                "installed": self.backend_spec("installed", installed_launcher, ["cpu"]),
+                "compatible": self.backend_spec("compatible", compatible_launcher, ["cuda"]),
+                "incompatible": self.backend_spec("incompatible", incompatible_launcher, ["rocm"]),
+            }
+            platform = types.SimpleNamespace(
+                is_hardware_compatible=lambda backend: backend.id == "compatible",
+            )
+            with (
+                patch("service_core.tui.commands.local_backends", return_value=backends),
+                patch("service_core.tui.commands.is_backend_build_supported", return_value=True),
+                patch("service_core.tui.current_host_platform", return_value=platform),
+            ):
+                choices = tui._server_backend_choices()
+
+        self.assertEqual([backend.id for backend in choices], ["installed", "compatible"])
+
+    def test_server_backend_choices_hide_uninstalled_without_build_support(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installed_launcher = root / "installed" / "bin" / "backend"
+            installed_launcher.parent.mkdir(parents=True)
+            installed_launcher.write_text("", encoding="utf-8")
+            compatible_launcher = root / "compatible" / "bin" / "backend"
+            backends = {
+                "installed": self.backend_spec("installed", installed_launcher, ["cpu"]),
+                "compatible": self.backend_spec("compatible", compatible_launcher, ["cuda"]),
+            }
+            platform = types.SimpleNamespace(is_hardware_compatible=lambda _backend: True)
+            with (
+                patch("service_core.tui.commands.local_backends", return_value=backends),
+                patch("service_core.tui.commands.is_backend_build_supported", return_value=False),
+                patch("service_core.tui.current_host_platform", return_value=platform),
+            ):
+                choices = tui._server_backend_choices()
+
+        self.assertEqual([backend.id for backend in choices], ["installed"])
 
     def test_command_service_base_url_uses_loopback_for_all_interfaces(self) -> None:
         with patch(
@@ -1387,6 +1446,7 @@ class CommandHelperTests(unittest.TestCase):
             patch("service_core.tui._print_chat_header"),
             patch("service_core.tui._prompt", side_effect=["hello", "/exit"]),
             patch("service_core.commands.get_tui_show_reasoning", return_value=False),
+            patch("service_core.commands.get_default_thinking", return_value=False),
             patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
             patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
             patch("sys.stdout", io.StringIO()),
@@ -1406,6 +1466,7 @@ class CommandHelperTests(unittest.TestCase):
             patch("service_core.tui._print_chat_header"),
             patch("service_core.tui._prompt", side_effect=["hello", "/exit"]),
             patch("service_core.commands.get_tui_show_reasoning", return_value=True),
+            patch("service_core.commands.get_default_thinking", return_value=False),
             patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
             patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
             patch("sys.stdout", new_callable=io.StringIO) as output,
@@ -1426,6 +1487,7 @@ class CommandHelperTests(unittest.TestCase):
             patch("service_core.tui._prompt", side_effect=["hello", "/exit"]),
             patch("service_core.tui._can_use_fixed_input_box", return_value=True),
             patch("service_core.commands.get_tui_show_reasoning", return_value=False),
+            patch("service_core.commands.get_default_thinking", return_value=False),
             patch("service_core.commands.build_chat_payload", return_value={"messages": []}),
             patch("service_core.commands.iter_chat_stream_payload", side_effect=fake_stream),
             patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24))),
