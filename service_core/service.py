@@ -33,6 +33,7 @@ from service_core.remote_access import (
 from service_core.runtime import RuntimeManager
 
 logger = logging.getLogger("gateway")
+_WINDOWS_VT_ENABLED: bool | None = None
 
 
 if getattr(sys, "frozen", False):
@@ -171,17 +172,89 @@ def _proxy_header_remote_address(headers: Any) -> str:
     return ""
 
 
+def _enable_windows_virtual_terminal() -> bool:
+    global _WINDOWS_VT_ENABLED
+    if os.name != "nt":
+        return True
+    if _WINDOWS_VT_ENABLED is not None:
+        return _WINDOWS_VT_ENABLED
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetConsoleMode.restype = wintypes.BOOL
+        kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.SetConsoleMode.restype = wintypes.BOOL
+
+        handle = kernel32.GetStdHandle(wintypes.DWORD(-11))
+        invalid_handle = ctypes.c_void_p(-1).value
+        if handle in (None, 0, invalid_handle):
+            _WINDOWS_VT_ENABLED = False
+            return False
+
+        mode = wintypes.DWORD()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            _WINDOWS_VT_ENABLED = False
+            return False
+
+        enable_virtual_terminal_processing = 0x0004
+        if not kernel32.SetConsoleMode(handle, mode.value | enable_virtual_terminal_processing):
+            _WINDOWS_VT_ENABLED = False
+            return False
+
+        _WINDOWS_VT_ENABLED = True
+        return True
+    except Exception:
+        _WINDOWS_VT_ENABLED = False
+        return False
+
+
+def _env_flag_enabled(name: str) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    return value not in {"", "0", "false", "no", "off"}
+
+
+def _stdout_supports_ansi() -> bool:
+    if _env_flag_enabled("NO_COLOR"):
+        return False
+    if _env_flag_enabled("OMNIINFER_FORCE_COLOR"):
+        return True
+    if os.name == "nt":
+        return _enable_windows_virtual_terminal()
+    return bool(getattr(sys.stdout, "isatty", lambda: False)())
+
+
+def _ansi(text: str, code: str) -> str:
+    if not _stdout_supports_ansi():
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def _print_access_field(label: str, value: str, *, color: str = "36;1") -> None:
+    print(_ansi(f">>> {label}", color))
+    print(f"    {_ansi(value, color)}")
+
+
 def log_cloudflare_access_urls(public_url: str, port: int, api_key: str, *, print_key: bool) -> None:
     base = public_url.rstrip("/")
-    print(f"OmniInfer local API: http://127.0.0.1:{port}")
-    print(f"Cloudflare Quick Tunnel: {base}")
-    print(f"OpenAI Base URL: {base}/v1")
-    print(f"Health URL: {base}/health")
+    border = _ansi("=" * 72, "36;1")
+    print(border)
+    print(_ansi("OMNIINFER CLOUDFLARE ACCESS", "36;1"))
+    print(border)
+    _print_access_field("REMOTE BASE URL", base)
+    _print_access_field("OPENAI BASE URL", f"{base}/v1")
+    _print_access_field("HEALTH URL", f"{base}/health")
+    _print_access_field("LOCAL API", f"http://127.0.0.1:{port}", color="37;1")
     if api_key:
         if print_key:
-            print(f"API key: {api_key}")
+            _print_access_field("API KEY", api_key, color="33;1")
         else:
-            print("API key: set, not printed")
+            _print_access_field("API KEY", "set, not printed", color="33;1")
+    print(border)
     print("Quick Tunnel is temporary and intended for testing. For best compatibility, use non-streaming requests.")
     logger.info("Cloudflare Quick Tunnel URL: %s", base)
     logger.info("Cloudflare OpenAI base URL: %s/v1", base)
