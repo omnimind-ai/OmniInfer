@@ -204,7 +204,7 @@ def load_app_config(app_root: Path) -> dict[str, Any]:
         "port": 9000,
         "default_backend": default_backend_for_current_host(),
         "default_thinking": "off",
-        "window_mode": "hidden",
+        "window_mode": "visible",
         "startup_timeout": 60,
         "runtime_root": "runtime",
         "backends": host_platform.default_config_backends(),
@@ -1936,7 +1936,7 @@ def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argpars
     p.add_argument(
         "--window-mode",
         choices=("visible", "hidden"),
-        default=str(config.get("window_mode", config.get("backend_window_mode", "hidden"))),
+        default=str(config.get("window_mode", config.get("backend_window_mode", "visible"))),
         help="Whether OmniInfer and managed backend console windows should be visible or hidden",
     )
     p.add_argument(

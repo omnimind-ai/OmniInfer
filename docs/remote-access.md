@@ -15,7 +15,7 @@ Start the gateway with Cloudflare mode:
 Windows:
 
 ```powershell
-.\omniinfer.ps1 serve --cloudflare --window-mode visible
+.\omniinfer.ps1 serve --cloudflare
 ```
 
 OmniInfer will:

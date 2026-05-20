@@ -271,7 +271,7 @@ To create a temporary public HTTPS URL without router port forwarding, use Cloud
 Windows:
 
 ```powershell
-.\omniinfer.ps1 serve --cloudflare --window-mode visible
+.\omniinfer.ps1 serve --cloudflare
 ```
 
 Cloudflare mode keeps OmniInfer bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).

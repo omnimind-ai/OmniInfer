@@ -159,6 +159,11 @@ class LocalStateTests(unittest.TestCase):
 
         self.assertEqual(config["default_thinking"], "on")
 
+    def test_app_config_defaults_window_mode_visible(self) -> None:
+        config = load_app_config(self.app_root)
+
+        self.assertEqual(config["window_mode"], "visible")
+
     def test_selected_model_round_trips_through_local_state(self) -> None:
         save_selected_model(
             "/models/demo.gguf",
@@ -241,6 +246,10 @@ class CliParserTests(unittest.TestCase):
     def test_top_level_select_is_not_a_command(self) -> None:
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["select", "llama.cpp-linux"])
+
+    def test_requested_window_mode_defaults_visible(self) -> None:
+        self.assertEqual(cli._requested_window_mode([]), "visible")
+        self.assertEqual(cli._requested_window_mode(["--window-mode", "hidden"]), "hidden")
 
     def test_serve_forwards_service_arguments(self) -> None:
         try:
@@ -389,6 +398,24 @@ class CommandHelperTests(unittest.TestCase):
 
             self.assertTrue(Path(command[0]).samefile(exe_path))
             self.assertEqual(command[1], "serve")
+
+    def test_start_service_background_defaults_window_mode_visible(self) -> None:
+        config = {
+            "host": "127.0.0.1",
+            "port": 9000,
+            "startup_timeout": 60,
+            "default_thinking": "off",
+            "default_backend": "",
+        }
+        with (
+            patch("service_core.commands.get_service_config", return_value=config),
+            patch("service_core.commands.subprocess.Popen") as popen,
+        ):
+            commands.start_service_background()
+
+        command = popen.call_args.args[0]
+        index = command.index("--window-mode")
+        self.assertEqual(command[index + 1], "visible")
 
     def test_command_service_base_url_uses_loopback_for_all_interfaces(self) -> None:
         with patch(
