@@ -159,10 +159,10 @@ class LocalStateTests(unittest.TestCase):
 
         self.assertEqual(config["default_thinking"], "on")
 
-    def test_app_config_defaults_window_mode_visible(self) -> None:
+    def test_app_config_defaults_window_mode_hidden(self) -> None:
         config = load_app_config(self.app_root)
 
-        self.assertEqual(config["window_mode"], "visible")
+        self.assertEqual(config["window_mode"], "hidden")
 
     def test_selected_model_round_trips_through_local_state(self) -> None:
         save_selected_model(
@@ -247,9 +247,9 @@ class CliParserTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["select", "llama.cpp-linux"])
 
-    def test_requested_window_mode_defaults_visible(self) -> None:
-        self.assertEqual(cli._requested_window_mode([]), "visible")
-        self.assertEqual(cli._requested_window_mode(["--window-mode", "hidden"]), "hidden")
+    def test_requested_window_mode_defaults_hidden(self) -> None:
+        self.assertEqual(cli._requested_window_mode([]), "hidden")
+        self.assertEqual(cli._requested_window_mode(["--window-mode", "visible"]), "visible")
 
     def test_serve_forwards_service_arguments(self) -> None:
         try:
@@ -399,7 +399,7 @@ class CommandHelperTests(unittest.TestCase):
             self.assertTrue(Path(command[0]).samefile(exe_path))
             self.assertEqual(command[1], "serve")
 
-    def test_start_service_background_defaults_window_mode_visible(self) -> None:
+    def test_start_service_background_defaults_window_mode_hidden(self) -> None:
         config = {
             "host": "127.0.0.1",
             "port": 9000,
@@ -415,7 +415,7 @@ class CommandHelperTests(unittest.TestCase):
 
         command = popen.call_args.args[0]
         index = command.index("--window-mode")
-        self.assertEqual(command[index + 1], "visible")
+        self.assertEqual(command[index + 1], "hidden")
 
     def test_command_service_base_url_uses_loopback_for_all_interfaces(self) -> None:
         with patch(

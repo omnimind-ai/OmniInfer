@@ -721,7 +721,7 @@ def shutdown_service() -> int:
 
 
 def _requested_window_mode(argv: list[str]) -> str:
-    mode = "visible"
+    mode = "hidden"
     for idx, token in enumerate(argv):
         if token == "--window-mode" and idx + 1 < len(argv):
             value = argv[idx + 1].strip().lower()
