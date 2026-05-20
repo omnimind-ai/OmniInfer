@@ -21,7 +21,19 @@ from urllib.request import Request, urlopen
 
 TRYCLOUDFLARE_URL_RE = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
 CLOUDFLARED_VERSION_RE = re.compile(r"cloudflared version ([^\s]+)")
-CLOUDFLARED_RELEASE_API_URL = "https://api.github.com/repos/cloudflare/cloudflared/releases/latest"
+CLOUDFLARED_PINNED_VERSION = "2026.5.0"
+CLOUDFLARED_RELEASE_BASE_URL = f"https://github.com/cloudflare/cloudflared/releases/download/{CLOUDFLARED_PINNED_VERSION}"
+CLOUDFLARED_PINNED_DIGESTS = {
+    "cloudflared-darwin-amd64.tgz": "sha256:7f2c4c8c86e787226804694112682aefacd4cfb98f54508f1a5a841a78bbbef9",
+    "cloudflared-darwin-arm64.tgz": "sha256:116ef11a59fc4f31e7f1bcc4378070cd7ca053fa37b4484b1432bb150b358219",
+    "cloudflared-linux-386": "sha256:af63c00d89e92538b40b1e3b8a264558f17c23d706b3b07c1c5a0f21e5f27942",
+    "cloudflared-linux-amd64": "sha256:0095e46fdc88855d801c4d304cb1f5dd4bd656116c47ab94c2ad0ae7cda1c7ec",
+    "cloudflared-linux-arm": "sha256:22394bc6d820b48a7a273f4d61a8b2f512243404b3f69388fae9632a3d253bb5",
+    "cloudflared-linux-arm64": "sha256:2dc0945345677d27de3ae390a31c3b168866b48766da5f4cfd3fc473ce572303",
+    "cloudflared-linux-armhf": "sha256:fcd05d6fef48b120c582c26625915bb9bc5713b21105a2c0c142fe72c205adee",
+    "cloudflared-windows-386.exe": "sha256:f4294840f044dcfad86d5baccb63d92d3efc3ef1528a6f4962b367477af1dc5f",
+    "cloudflared-windows-amd64.exe": "sha256:f141cded099c239171ad2cea6fb5da0fdaa2bd36104c3074d883f9546519eba7",
+}
 DEFAULT_QUICK_TUNNEL_TIMEOUT_S = 30
 DEFAULT_CLOUDFLARED_DOWNLOAD_TIMEOUT_S = 120
 
@@ -156,46 +168,17 @@ def _load_managed_cloudflared(app_root: Path) -> CloudflaredBinary | None:
     return CloudflaredBinary(path=path, source="managed", version=version, asset_name=asset_name, digest=digest)
 
 
-def _github_request(url: str, *, timeout_s: int) -> Any:
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "OmniInfer",
-        },
+def pinned_cloudflared_release() -> CloudflaredReleaseInfo:
+    asset_name = cloudflared_asset_name_for_current_platform()
+    digest = CLOUDFLARED_PINNED_DIGESTS.get(asset_name)
+    if not digest:
+        raise RemoteAccessError(f"cloudflared pinned release has no digest for asset: {asset_name}")
+    return CloudflaredReleaseInfo(
+        tag_name=CLOUDFLARED_PINNED_VERSION,
+        asset_name=asset_name,
+        download_url=f"{CLOUDFLARED_RELEASE_BASE_URL}/{asset_name}",
+        digest=digest,
     )
-    try:
-        with urlopen(request, timeout=timeout_s) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, OSError, json.JSONDecodeError) as exc:
-        raise RemoteAccessError(f"unable to query cloudflared releases: {exc}") from exc
-
-
-def fetch_latest_cloudflared_release(timeout_s: int = 30) -> CloudflaredReleaseInfo:
-    data = _github_request(CLOUDFLARED_RELEASE_API_URL, timeout_s=timeout_s)
-    if not isinstance(data, dict):
-        raise RemoteAccessError("invalid cloudflared release response")
-    tag_name = str(data.get("tag_name") or "").strip()
-    assets = data.get("assets")
-    if not tag_name or not isinstance(assets, list):
-        raise RemoteAccessError("invalid cloudflared release metadata")
-
-    expected_name = cloudflared_asset_name_for_current_platform()
-    for asset in assets:
-        if not isinstance(asset, dict) or asset.get("name") != expected_name:
-            continue
-        download_url = str(asset.get("browser_download_url") or "").strip()
-        if not download_url:
-            break
-        digest = str(asset.get("digest") or "").strip() or None
-        return CloudflaredReleaseInfo(
-            tag_name=tag_name,
-            asset_name=expected_name,
-            download_url=download_url,
-            digest=digest,
-        )
-
-    raise RemoteAccessError(f"cloudflared release {tag_name} has no asset named {expected_name}")
 
 
 def _download_bytes(url: str, timeout_s: int = DEFAULT_CLOUDFLARED_DOWNLOAD_TIMEOUT_S) -> bytes:
@@ -302,17 +285,11 @@ def resolve_cloudflared_for_quick_tunnel(app_root: Path, explicit_path: str | No
         return CloudflaredBinary(path=path, source="explicit", version=_cloudflared_version(path))
 
     current = _load_managed_cloudflared(app_root)
-    try:
-        latest = fetch_latest_cloudflared_release()
-    except RemoteAccessError:
-        if current is not None and current.path.is_file():
-            return current
-        raise
-
-    if _managed_cloudflared_matches(latest, current):
+    pinned = pinned_cloudflared_release()
+    if _managed_cloudflared_matches(pinned, current):
         return current  # type: ignore[return-value]
 
-    return install_managed_cloudflared(app_root, latest)
+    return install_managed_cloudflared(app_root, pinned)
 
 
 def find_cloudflared(explicit_path: str | None = None, *, app_root: Path | None = None) -> Path:
