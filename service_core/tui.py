@@ -189,10 +189,6 @@ def run_server_tui(service_args: list[str]) -> int:
             return 1
 
         child_args = _server_child_args(service_args, backend)
-        _print_section("Gateway", "Starting OmniInfer gateway")
-        _print_kv("Backend", backend)
-        _print_kv("Model", str(model))
-        _print_kv("Logs", str(commands.CLI_LOG_FILE))
         process, log_queue = _start_server_gateway(child_args)
         _wait_for_server_gateway(process, log_queue, int(parsed_args.startup_timeout))
         _drain_gateway_logs(log_queue)
