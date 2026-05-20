@@ -223,12 +223,9 @@ def _choose_server_backend() -> str | None:
         default_index = 0
         for index, backend in enumerate(rows):
             details: list[str] = ["installed" if backend.binary_exists else "not installed"]
-            details.extend([str(value) for value in backend.capabilities[:4]])
             if backend.id == last_backend:
                 details.append("last selected")
                 default_index = index
-            elif commands.is_backend_build_supported() and not backend.binary_exists:
-                details.append("build available")
             items.append(
                 _MenuItem(
                     label=backend.id,
@@ -283,10 +280,7 @@ def _choose_backend() -> str | None:
         for item in rows:
             is_installed = bool(item.get("binary_exists"))
             installed = "installed" if is_installed else "not installed"
-            capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), list) else []
-            details = [installed, *[str(value) for value in capabilities[:4]]]
-            if build_supported and not is_installed:
-                details.append("build available")
+            details = [installed]
             items.append(
                 _MenuItem(
                     label=str(item.get("id") or ""),
@@ -356,12 +350,10 @@ def _choose_backend_for_build() -> str | None:
     items: list[_MenuItem] = []
     for item in rows:
         installed = "installed" if item.get("binary_exists") else "not installed"
-        capabilities = item.get("capabilities") if isinstance(item.get("capabilities"), list) else []
-        details = [installed, *[str(value) for value in capabilities[:4]]]
         items.append(
             _MenuItem(
                 label=str(item.get("id") or ""),
-                details=details,
+                details=[installed],
                 selected=bool(item.get("selected")),
             )
         )
