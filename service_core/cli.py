@@ -738,6 +738,14 @@ def _is_help_request(argv: list[str]) -> bool:
     return any(token in {"-h", "--help"} for token in argv)
 
 
+def _is_cloudflare_request(argv: list[str]) -> bool:
+    return any(token == "--cloudflare" for token in argv)
+
+
+def _is_direct_serve_request() -> bool:
+    return os.environ.get("OMNIINFER_SERVE_DIRECT") == "1"
+
+
 def _has_console() -> bool:
     try:
         return bool(ctypes.windll.kernel32.GetConsoleWindow())
@@ -755,6 +763,10 @@ def _ensure_window_mode(argv: list[str]) -> None:
     if os.name != "nt":
         return
     if _is_help_request(argv):
+        return
+    if _is_direct_serve_request():
+        return
+    if _is_cloudflare_request(argv):
         return
 
     mode = _requested_window_mode(argv)
