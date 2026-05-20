@@ -44,6 +44,24 @@ class CloudflareQuickTunnelTests(unittest.TestCase):
         ):
             self.assertEqual(remote_access.cloudflared_asset_name_for_current_platform(), "cloudflared-darwin-arm64.tgz")
 
+    def test_pinned_release_uses_static_download_url_and_digest(self) -> None:
+        with (
+            patch("service_core.remote_access.platform.system", return_value="Linux"),
+            patch("service_core.remote_access.platform.machine", return_value="x86_64"),
+        ):
+            release = remote_access.pinned_cloudflared_release()
+
+        self.assertEqual(release.tag_name, "2026.5.0")
+        self.assertEqual(release.asset_name, "cloudflared-linux-amd64")
+        self.assertEqual(
+            release.download_url,
+            "https://github.com/cloudflare/cloudflared/releases/download/2026.5.0/cloudflared-linux-amd64",
+        )
+        self.assertEqual(
+            release.digest,
+            "sha256:0095e46fdc88855d801c4d304cb1f5dd4bd656116c47ab94c2ad0ae7cda1c7ec",
+        )
+
     def test_install_managed_cloudflared_writes_binary_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app_root = Path(tmp)
@@ -78,7 +96,7 @@ class CloudflareQuickTunnelTests(unittest.TestCase):
                 with self.assertRaises(remote_access.RemoteAccessError):
                     remote_access.install_managed_cloudflared(Path(tmp), release)
 
-    def test_resolve_cloudflared_reuses_managed_latest(self) -> None:
+    def test_resolve_cloudflared_reuses_matching_pinned_binary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app_root = Path(tmp)
             install_dir = app_root / ".local" / "tools" / "cloudflared"
@@ -86,32 +104,39 @@ class CloudflareQuickTunnelTests(unittest.TestCase):
             binary = install_dir / ("cloudflared.exe" if os.name == "nt" else "cloudflared")
             binary.write_bytes(b"fake")
             (install_dir / "manifest.json").write_text(
-                json.dumps({"version": "2026.5.0", "asset_name": "cloudflared-linux-amd64", "digest": "sha256:abc"}),
+                json.dumps(
+                    {
+                        "version": "2026.5.0",
+                        "asset_name": "cloudflared-linux-amd64",
+                        "digest": "sha256:0095e46fdc88855d801c4d304cb1f5dd4bd656116c47ab94c2ad0ae7cda1c7ec",
+                    }
+                ),
                 encoding="utf-8",
             )
-            release = remote_access.CloudflaredReleaseInfo(
-                tag_name="2026.5.0",
-                asset_name="cloudflared-linux-amd64",
-                download_url="https://example.invalid/cloudflared",
-                digest="sha256:abc",
-            )
-            with patch("service_core.remote_access.fetch_latest_cloudflared_release", return_value=release):
+            with (
+                patch("service_core.remote_access.platform.system", return_value="Linux"),
+                patch("service_core.remote_access.platform.machine", return_value="x86_64"),
+                patch("service_core.remote_access._download_bytes") as download,
+            ):
                 result = remote_access.resolve_cloudflared_for_quick_tunnel(app_root)
 
             self.assertEqual(result.path, binary)
             self.assertFalse(result.updated)
+            download.assert_not_called()
 
-    def test_resolve_cloudflared_installs_latest_when_missing(self) -> None:
+    def test_resolve_cloudflared_installs_pinned_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             payload = b"fake-cloudflared"
-            release = remote_access.CloudflaredReleaseInfo(
-                tag_name="2026.5.0",
-                asset_name="cloudflared-linux-amd64",
-                download_url="https://example.invalid/cloudflared",
-                digest="sha256:" + hashlib.sha256(payload).hexdigest(),
-            )
             with (
-                patch("service_core.remote_access.fetch_latest_cloudflared_release", return_value=release),
+                patch(
+                    "service_core.remote_access.pinned_cloudflared_release",
+                    return_value=remote_access.CloudflaredReleaseInfo(
+                        tag_name="2026.5.0",
+                        asset_name="cloudflared-linux-amd64",
+                        download_url="https://example.invalid/cloudflared",
+                        digest="sha256:" + hashlib.sha256(payload).hexdigest(),
+                    ),
+                ),
                 patch("service_core.remote_access._download_bytes", return_value=payload),
                 patch("service_core.remote_access._cloudflared_version", return_value="2026.5.0"),
             ):
@@ -120,21 +145,36 @@ class CloudflareQuickTunnelTests(unittest.TestCase):
             self.assertTrue(result.updated)
             self.assertTrue(result.path.is_file())
 
-    def test_resolve_cloudflared_uses_existing_when_release_query_fails(self) -> None:
+    def test_resolve_cloudflared_reinstalls_when_pinned_metadata_differs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app_root = Path(tmp)
             install_dir = app_root / ".local" / "tools" / "cloudflared"
             install_dir.mkdir(parents=True)
             binary = install_dir / ("cloudflared.exe" if os.name == "nt" else "cloudflared")
-            binary.write_bytes(b"fake")
-            (install_dir / "manifest.json").write_text(json.dumps({"version": "2026.5.0"}), encoding="utf-8")
-            with patch(
-                "service_core.remote_access.fetch_latest_cloudflared_release",
-                side_effect=remote_access.RemoteAccessError("offline"),
+            binary.write_bytes(b"old")
+            payload = b"new"
+            (install_dir / "manifest.json").write_text(
+                json.dumps({"version": "2026.5.0", "asset_name": "cloudflared-linux-386"}),
+                encoding="utf-8",
+            )
+            with (
+                patch(
+                    "service_core.remote_access.pinned_cloudflared_release",
+                    return_value=remote_access.CloudflaredReleaseInfo(
+                        tag_name="2026.5.0",
+                        asset_name="cloudflared-linux-amd64",
+                        download_url="https://example.invalid/cloudflared",
+                        digest="sha256:" + hashlib.sha256(payload).hexdigest(),
+                    ),
+                ),
+                patch("service_core.remote_access._download_bytes", return_value=payload),
+                patch("service_core.remote_access._cloudflared_version", return_value="2026.5.0"),
             ):
                 result = remote_access.resolve_cloudflared_for_quick_tunnel(app_root)
 
             self.assertEqual(result.path, binary)
+            self.assertTrue(result.updated)
+            self.assertEqual(binary.read_bytes(), payload)
 
     def test_extract_cloudflared_from_tgz(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

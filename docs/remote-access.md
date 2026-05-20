@@ -44,13 +44,13 @@ Use the OpenAI Base URL and API key in remote clients.
 
 OmniInfer uses its own managed `cloudflared` binary by default instead of relying on a system-wide install. This avoids old system versions and keeps Cloudflare mode self-contained.
 
-On first `--cloudflare` use, OmniInfer queries the latest Cloudflare GitHub release, selects the asset for the current operating system and CPU architecture, downloads it to:
+On first `--cloudflare` use, OmniInfer selects the asset for the current operating system and CPU architecture from a pinned Cloudflare release, downloads it to:
 
 ```text
 .local/tools/cloudflared/
 ```
 
-The download is verified with the release asset SHA-256 digest when GitHub provides one. OmniInfer records the installed version and asset metadata in `.local/tools/cloudflared/manifest.json` and checks for newer releases on later Cloudflare starts.
+The download uses a static GitHub release URL instead of the anonymous GitHub releases API. OmniInfer verifies the asset SHA-256 digest, records the installed version and asset metadata in `.local/tools/cloudflared/manifest.json`, and reuses the managed binary on later Cloudflare starts when it matches the pinned release.
 
 Supported automatic assets include:
 
