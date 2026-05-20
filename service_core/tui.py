@@ -193,11 +193,7 @@ def run_server_tui(service_args: list[str]) -> int:
         _wait_for_server_gateway(process, log_queue, int(parsed_args.startup_timeout))
         _drain_gateway_logs(log_queue)
 
-        selected = commands.select_backend(backend)
-        _print_notice(f"Selected backend: {selected.backend}", kind="success")
-        _load_model(commands.ModelLoadOptions(model=str(model)))
-
-        _print_server_ready(parsed_args)
+        _select_and_load_server_model(backend, model, log_queue)
         _stream_gateway_logs_until_exit(process, log_queue)
     except KeyboardInterrupt:
         interrupted = True
@@ -627,27 +623,30 @@ def _wait_for_server_gateway(
     log_queue: queue.Queue[str],
     startup_timeout: int,
 ) -> None:
-    spinner = _LoadingSpinner("Starting gateway...")
-    spinner.start()
     deadline = time.time() + max(startup_timeout, 10)
-    try:
-        while time.time() < deadline:
+    while time.time() < deadline:
+        _drain_gateway_logs(log_queue)
+        if process.poll() is not None:
             _drain_gateway_logs(log_queue)
-            if process.poll() is not None:
-                _drain_gateway_logs(log_queue)
-                raise SystemExit(f"OmniInfer gateway exited with code {process.returncode}.")
-            if commands.is_service_running():
-                spinner.update("Gateway ready.")
-                return
-            time.sleep(0.2)
-    finally:
-        spinner.stop()
+            raise SystemExit(f"OmniInfer gateway exited with code {process.returncode}.")
+        if commands.is_service_running():
+            return
+        time.sleep(0.2)
     _drain_gateway_logs(log_queue)
     raise SystemExit("Timed out waiting for OmniInfer gateway to start.")
 
 
+def _select_and_load_server_model(backend: str, model: Path, log_queue: queue.Queue[str]) -> None:
+    commands.select_backend(backend)
+    _drain_gateway_logs(log_queue)
+    commands.load_model(
+        commands.ModelLoadOptions(model=str(model)),
+        progress=lambda _event: _drain_gateway_logs(log_queue),
+    )
+    _drain_gateway_logs(log_queue)
+
+
 def _stream_gateway_logs_until_exit(process: subprocess.Popen[str], log_queue: queue.Queue[str]) -> None:
-    _print_section("Gateway Logs", "Press Ctrl+C to stop the gateway")
     while process.poll() is None:
         _drain_gateway_logs(log_queue)
         time.sleep(0.1)
@@ -692,19 +691,6 @@ def _shutdown_server_gateway(process: subprocess.Popen[str], log_queue: queue.Qu
         process.wait(timeout=5)
     if log_queue is not None:
         _drain_gateway_logs(log_queue)
-
-
-def _print_server_ready(args: Any) -> None:
-    host = str(getattr(args, "host", "127.0.0.1"))
-    port = int(getattr(args, "port", 9000))
-    display_host = "127.0.0.1" if host in {"0.0.0.0", "::", ""} else host
-    _print_section("Ready", "OpenAI-compatible gateway is running")
-    _print_kv("Local Base URL", f"http://{display_host}:{port}/v1")
-    if host in {"0.0.0.0", "::"}:
-        _print_kv("LAN", "Use one of this machine's LAN IP addresses with the printed API key")
-    if bool(getattr(args, "cloudflare", False)):
-        _print_kv("Cloudflare", "See gateway logs for the temporary trycloudflare.com URL")
-    print()
 
 
 @dataclass
