@@ -461,6 +461,29 @@ def normalize_chat_completion_body(body: bytes) -> bytes:
     return json_dumps(normalize_chat_completion_reasoning(payload))
 
 
+def normalize_legacy_function_tools(payload: dict[str, Any]) -> dict[str, Any]:
+    """Translate deprecated OpenAI functions/function_call fields to tools/tool_choice."""
+    functions = payload.pop("functions", None)
+    if isinstance(functions, list) and not payload.get("tools"):
+        tools: list[dict[str, Any]] = []
+        for function in functions:
+            if isinstance(function, dict):
+                tools.append({"type": "function", "function": dict(function)})
+        if tools:
+            payload["tools"] = tools
+
+    function_call = payload.pop("function_call", None)
+    if "tool_choice" not in payload:
+        if isinstance(function_call, str) and function_call in {"auto", "none"}:
+            payload["tool_choice"] = function_call
+        elif isinstance(function_call, dict):
+            name = str(function_call.get("name", "")).strip()
+            if name:
+                payload["tool_choice"] = {"type": "function", "function": {"name": name}}
+
+    return payload
+
+
 class ChatReasoningStreamNormalizer:
     def __init__(self) -> None:
         self._buffer = ""
@@ -1672,6 +1695,7 @@ class OmniHandler(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._send_json(400, {"error": {"message": str(e)}})
                 return
+            normalize_legacy_function_tools(payload)
 
             try:
                 # Chat completions never triggers model loading; use /omni/model/select instead.

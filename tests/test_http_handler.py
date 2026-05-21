@@ -25,6 +25,7 @@ from service_core.service import (
     OmniHandler,
     apply_thinking_mode,
     log_cloudflare_access_urls,
+    normalize_legacy_function_tools,
     normalize_chat_completion_reasoning,
     parse_args,
     split_thinking_text,
@@ -415,6 +416,79 @@ class HttpHandlerTests(unittest.TestCase):
 
         self.assertEqual(code, 403)
         self.assertIn("management endpoints are local-only", body["error"]["message"])
+
+    def test_legacy_functions_are_converted_to_tools(self) -> None:
+        payload = {
+            "messages": [{"role": "user", "content": "time"}],
+            "functions": [
+                {
+                    "name": "context_time_now",
+                    "description": "Get current time",
+                    "parameters": {"type": "object"},
+                }
+            ],
+            "function_call": {"name": "context_time_now"},
+        }
+
+        normalize_legacy_function_tools(payload)
+
+        self.assertNotIn("functions", payload)
+        self.assertNotIn("function_call", payload)
+        self.assertEqual(
+            payload["tools"],
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "context_time_now",
+                        "description": "Get current time",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        )
+        self.assertEqual(
+            payload["tool_choice"],
+            {"type": "function", "function": {"name": "context_time_now"}},
+        )
+
+    def test_chat_legacy_functions_are_converted_before_backend(self) -> None:
+        runtime = type("Runtime", (), {"request_defaults": {}, "model_ref": "demo.gguf"})()
+        self.server.manager.ensure_model_loaded.return_value = runtime
+        self.server.manager.current_runtime_mode.return_value = "embedded"
+        self.server.manager.chat_completion.reset_mock()
+        self.server.manager.chat_completion.return_value = {
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+            "object": "chat.completion",
+        }
+        try:
+            code, _body = _post(
+                self.base_url,
+                "/v1/chat/completions",
+                {
+                    "messages": [{"role": "user", "content": "time"}],
+                    "functions": [
+                        {
+                            "name": "context_time_now",
+                            "description": "Get current time",
+                            "parameters": {"type": "object"},
+                        }
+                    ],
+                    "function_call": {"name": "context_time_now"},
+                },
+            )
+        finally:
+            self.server.manager.current_runtime_mode.return_value = None
+
+        self.assertEqual(code, 200)
+        forwarded = self.server.manager.chat_completion.call_args.args[0]
+        self.assertNotIn("functions", forwarded)
+        self.assertNotIn("function_call", forwarded)
+        self.assertEqual(forwarded["tools"][0]["function"]["name"], "context_time_now")
+        self.assertEqual(
+            forwarded["tool_choice"],
+            {"type": "function", "function": {"name": "context_time_now"}},
+        )
 
     def test_chat_line_stream_embedded(self) -> None:
         events = [
