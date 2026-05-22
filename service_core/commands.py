@@ -324,6 +324,8 @@ def resolve_gateway_binary() -> Path | None:
 
     current_exe = Path(sys.executable).resolve()
     candidates = [
+        current_exe.with_name("omniinfer.exe"),
+        current_exe.with_name("omniinfer"),
         current_exe.with_name("omniinfer-cli.exe"),
         current_exe.with_name("omniinfer-cli"),
         current_exe,

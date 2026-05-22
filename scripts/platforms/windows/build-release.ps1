@@ -308,7 +308,7 @@ $pyinstallerArgs = @(
     "--clean",
     "--onedir",
     "--console",
-    "--name", "omniinfer-cli",
+    "--name", "omniinfer",
     "--distpath", $CliDistRoot,
     "--workpath", $CliWorkRoot,
     "--specpath", $CliSpecRoot,
@@ -320,16 +320,16 @@ foreach ($exclude in $pyinstallerExcludes) {
 $pyinstallerArgs += $cliEntry
 
 Write-Host ""
-Write-Host "Building omniinfer-cli.exe (CLI) with PyInstaller..."
+Write-Host "Building omniinfer.exe (CLI) with PyInstaller..."
 python -m PyInstaller @pyinstallerArgs
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller failed for CLI."
 }
 
-$cliDistDir = Join-Path $CliDistRoot "omniinfer-cli"
-$cliExe = Join-Path $cliDistDir "omniinfer-cli.exe"
+$cliDistDir = Join-Path $CliDistRoot "omniinfer"
+$cliExe = Join-Path $cliDistDir "omniinfer.exe"
 if (-not (Test-Path -LiteralPath $cliExe)) {
-    throw "CLI build succeeded but omniinfer-cli.exe not found at $cliExe"
+    throw "CLI build succeeded but omniinfer.exe not found at $cliExe"
 }
 Copy-Item -Path (Join-Path $cliDistDir "*") -Destination $PortableRoot -Recurse -Force
 

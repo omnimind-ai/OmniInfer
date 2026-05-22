@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $portablePath = Resolve-Path -LiteralPath $PortableRoot
-$cliPath = Join-Path $portablePath "omniinfer-cli.exe"
+$cliPath = Join-Path $portablePath "omniinfer.exe"
 if (-not (Test-Path -LiteralPath $cliPath)) {
     throw "Portable CLI binary not found: $cliPath"
 }
@@ -14,12 +14,12 @@ if (-not (Test-Path -LiteralPath $cliPath)) {
 Set-Content `
     -LiteralPath (Join-Path $portablePath "omniinfer.cmd") `
     -Encoding ASCII `
-    -Value "@echo off`r`n`"%~dp0omniinfer-cli.exe`" %*`r`nexit /b %ERRORLEVEL%`r`n"
+    -Value "@echo off`r`n`"%~dp0omniinfer.exe`" %*`r`nexit /b %ERRORLEVEL%`r`n"
 
 $psWrapper = @'
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$cli = Join-Path $scriptDir "omniinfer-cli.exe"
+$cli = Join-Path $scriptDir "omniinfer.exe"
 & $cli @args
 exit $LASTEXITCODE
 '@
