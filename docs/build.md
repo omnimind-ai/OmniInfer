@@ -284,6 +284,7 @@ bash ./scripts/platforms/linux/build-release.sh --build-openvino-backend --openv
 - `scripts/platforms/macos/build-llama-mac-intel.sh`
 - `scripts/platforms/macos/build-turboquant-mac.sh`
 - `scripts/platforms/macos/build-mlx-mac.sh`
+- `scripts/platforms/macos/build-release.sh`
 
 ### Backend Notes
 
@@ -348,6 +349,45 @@ export OMNIINFER_PYTHON="$HOME/miniconda3/envs/mlx/bin/python"
 ```
 
 On macOS source checkouts, `./omniinfer` also auto-prefers `.local/runtime/macos/mlx-mac/venv/bin/python3` when that runtime venv exists.
+
+### macOS Portable Packaging
+
+`scripts/platforms/macos/build-release.sh` packages a macOS portable release under:
+
+- `release/portable/macos-arm64/OmniInfer` on Apple Silicon
+- `release/portable/macos-x64/OmniInfer` on Intel
+
+By default, the script packages already-built macOS runtimes from `.local/runtime/macos`.
+If no macOS runtime exists yet, it builds the host default backend first:
+
+- Apple Silicon: `llama.cpp-mac`
+- Intel: `llama.cpp-mac-intel`
+
+You can package only selected backends. Requested backends are reused when already
+present, and missing requested backends are built through their normal backend build
+scripts before packaging:
+
+```bash
+bash ./scripts/platforms/macos/build-release.sh --backends llama.cpp-mac,mlx-mac
+bash ./scripts/platforms/macos/build-release.sh --backend llama.cpp-mac --backend turboquant-mac
+```
+
+Use strict mode when you want packaging to fail instead of building missing runtimes:
+
+```bash
+bash ./scripts/platforms/macos/build-release.sh --backends llama.cpp-mac --no-build-missing
+```
+
+To build and package every supported macOS backend:
+
+```bash
+bash ./scripts/platforms/macos/build-release.sh --all-supported
+```
+
+The release exposes `omniinfer` as a launcher and keeps the PyInstaller CLI binary
+as `omniinfer-bin`. If `mlx-mac` is packaged, the launcher uses
+`runtime/mlx-mac/venv/bin/python3` so the embedded MLX backend can import its Python
+runtime packages.
 
 ## Android
 
