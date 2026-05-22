@@ -394,8 +394,10 @@ mode depends on the selected backends:
 
 For `mlx-mac` releases, the packaging script creates a fresh venv inside the
 release package and installs `scripts/platforms/macos/mlx-mac/requirements.txt`.
-Use `--mlx-python <path>` when you need to choose a specific Python 3.10 through
-3.13 interpreter for that release venv.
+When `uv` is available, the script uses `uv venv` and `uv pip install`; otherwise
+it falls back to the standard library `venv` module and pip. Use
+`--mlx-python <path>` when you need to choose a specific Python 3.10 through 3.13
+interpreter for that release venv.
 
 ## Android
 
