@@ -405,7 +405,7 @@ if [ ! -x "$MLX_PYTHON" ]; then
 fi
 
 if [ -x "$CONDA_UNPACK" ]; then
-  "$CONDA_UNPACK" >/dev/null 2>&1 || {
+  "$MLX_PYTHON" "$CONDA_UNPACK" >/dev/null 2>&1 || {
     echo "Failed to relocate mlx-mac conda-pack runtime: $CONDA_UNPACK" >&2
     exit 1
   }
