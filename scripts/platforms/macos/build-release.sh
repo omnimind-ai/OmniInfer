@@ -17,6 +17,7 @@ SMOKE_TEST=0
 BUILD_MISSING=1
 ALL_SUPPORTED=0
 MLX_PYTHON=""
+MLX_ENV_MANAGER="auto"
 DRY_RUN=0
 REQUESTED_BACKENDS=()
 
@@ -44,6 +45,7 @@ Options:
   --no-bootstrap              Do not auto-initialize backend submodules
   --smoke-test                Run backend smoke tests after compiling missing backends
   --mlx-python <path>         Python 3.10+ interpreter used to build mlx-mac
+  --mlx-env-manager <manager> Build mlx-mac release Python env with auto, uv, venv, or conda-pack (default: auto)
   --dry-run                   Print actions without executing packaging steps
   -h, --help                  Show this help message
 
@@ -170,15 +172,82 @@ create_mlx_release_venv() {
   local python_bin="$1"
   local venv_root="$2"
 
-  if command -v uv >/dev/null 2>&1; then
-    uv venv --python "${python_bin}" "${venv_root}"
-    uv pip install --python "${venv_root}/bin/python" -r "${MLX_REQUIREMENTS_FILE}"
-    return
-  fi
+  case "${MLX_ENV_MANAGER}" in
+    auto)
+      if command -v uv >/dev/null 2>&1; then
+        create_mlx_release_uv_venv "${python_bin}" "${venv_root}"
+      else
+        create_mlx_release_stdlib_venv "${python_bin}" "${venv_root}"
+      fi
+      ;;
+    uv)
+      create_mlx_release_uv_venv "${python_bin}" "${venv_root}"
+      ;;
+    venv)
+      create_mlx_release_stdlib_venv "${python_bin}" "${venv_root}"
+      ;;
+    conda-pack)
+      create_mlx_release_conda_pack "${python_bin}" "${venv_root}"
+      ;;
+    *)
+      die "Unsupported --mlx-env-manager '${MLX_ENV_MANAGER}'. Supported: auto, uv, venv, conda-pack."
+      ;;
+  esac
+}
+
+create_mlx_release_uv_venv() {
+  local python_bin="$1"
+  local venv_root="$2"
+
+  require_command uv "Install uv or pass --mlx-env-manager venv/conda-pack."
+  uv venv --python "${python_bin}" "${venv_root}"
+  uv pip install --python "${venv_root}/bin/python" -r "${MLX_REQUIREMENTS_FILE}"
+}
+
+create_mlx_release_stdlib_venv() {
+  local python_bin="$1"
+  local venv_root="$2"
 
   "${python_bin}" -m venv --copies "${venv_root}"
   "${venv_root}/bin/python" -m pip install --upgrade pip setuptools wheel
   "${venv_root}/bin/python" -m pip install -r "${MLX_REQUIREMENTS_FILE}"
+}
+
+conda_pack_available() {
+  command -v conda-pack >/dev/null 2>&1 && return 0
+  conda run -n base python -c "import conda_pack" >/dev/null 2>&1
+}
+
+run_conda_pack() {
+  if command -v conda-pack >/dev/null 2>&1; then
+    conda-pack "$@"
+    return
+  fi
+  conda run -n base python -m conda_pack "$@"
+}
+
+create_mlx_release_conda_pack() {
+  local python_bin="$1"
+  local venv_root="$2"
+  local python_version
+  local conda_env_root="${BUILD_ROOT}/mlx-mac-conda-env"
+  local conda_archive="${BUILD_ROOT}/mlx-mac-conda-env.tar.gz"
+
+  require_command conda "Install Miniconda/Anaconda first."
+  if ! conda_pack_available; then
+    die "conda-pack is required for --mlx-env-manager conda-pack. Install it in base with: conda install -n base -c conda-forge conda-pack"
+  fi
+
+  python_version="$("${python_bin}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  rm -rf "${conda_env_root}" "${conda_archive}" "${venv_root}"
+
+  conda create -y -p "${conda_env_root}" "python=${python_version}" pip
+  conda run -p "${conda_env_root}" python -m pip install --upgrade pip setuptools wheel
+  conda run -p "${conda_env_root}" python -m pip install -r "${MLX_REQUIREMENTS_FILE}"
+
+  mkdir -p "${venv_root}"
+  run_conda_pack -p "${conda_env_root}" -o "${conda_archive}" --force
+  tar -xzf "${conda_archive}" -C "${venv_root}"
 }
 
 discover_built_backends() {
@@ -287,10 +356,18 @@ esac
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 MLX_PYTHON="$ROOT/runtime/mlx-mac/venv/bin/python3"
+CONDA_UNPACK="$ROOT/runtime/mlx-mac/venv/bin/conda-unpack"
 
 if [ ! -x "$MLX_PYTHON" ]; then
   echo "mlx-mac Python runtime was not found: $MLX_PYTHON" >&2
   exit 1
+fi
+
+if [ -x "$CONDA_UNPACK" ]; then
+  "$CONDA_UNPACK" >/dev/null 2>&1 || {
+    echo "Failed to relocate mlx-mac conda-pack runtime: $CONDA_UNPACK" >&2
+    exit 1
+  }
 fi
 
 exec "$MLX_PYTHON" "$ROOT/omniinfer.py" "$@"
@@ -403,6 +480,10 @@ while (($# > 0)); do
       MLX_PYTHON="${2:?missing value for --mlx-python}"
       shift 2
       ;;
+    --mlx-env-manager)
+      MLX_ENV_MANAGER="${2:?missing value for --mlx-env-manager}"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -465,6 +546,7 @@ echo "Default backend: ${DEFAULT_BACKEND}"
 echo "Package root: ${RELEASE_ROOT}"
 if selected_backends_include_mlx; then
   echo "CLI mode: source launcher with mlx-mac venv"
+  echo "MLX env manager: ${MLX_ENV_MANAGER}"
 else
   echo "CLI mode: PyInstaller binary"
 fi
