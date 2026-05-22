@@ -384,10 +384,13 @@ To build and package every supported macOS backend:
 bash ./scripts/platforms/macos/build-release.sh --all-supported
 ```
 
-The release exposes `omniinfer` as a launcher and keeps the PyInstaller CLI binary
-as `omniinfer-bin`. If `mlx-mac` is packaged, the launcher uses
-`runtime/mlx-mac/venv/bin/python3` so the embedded MLX backend can import its Python
-runtime packages.
+The release exposes `omniinfer` as the user-facing CLI entrypoint. The packaging
+mode depends on the selected backends:
+
+- Releases without `mlx-mac` build `omniinfer` as a PyInstaller binary.
+- Releases with `mlx-mac` skip PyInstaller and install `omniinfer` as a launcher
+  that runs `omniinfer.py` with `runtime/mlx-mac/venv/bin/python3`, so the embedded
+  MLX backend can import its Python runtime packages.
 
 ## Android
 
