@@ -392,6 +392,11 @@ mode depends on the selected backends:
   that runs `omniinfer.py` with `runtime/mlx-mac/venv/bin/python3`, so the embedded
   MLX backend can import its Python runtime packages.
 
+For `mlx-mac` releases, the packaging script creates a fresh venv inside the
+release package and installs `scripts/platforms/macos/mlx-mac/requirements.txt`.
+Use `--mlx-python <path>` when you need to choose a specific Python 3.10 through
+3.13 interpreter for that release venv.
+
 ## Android
 
 Android is built from the root `android/` module, not from `scripts/platforms`.
