@@ -405,7 +405,10 @@ into `runtime/mlx-mac/venv`; the launcher runs `conda-unpack` before starting
 OmniInfer so prefix relocation happens after extraction. Use `--mlx-python
 <path>` when you need to choose a specific Python 3.10 through 3.13 interpreter
 for the release environment version. Use `--python-index-url <url>` when a
-regional PyPI mirror is needed for MLX dependency downloads.
+regional PyPI mirror is needed for MLX dependency downloads. In `conda-pack`
+mode, use repeated `--conda-channel <channel>` arguments and
+`--conda-override-channels` when conda itself should resolve Python and base
+packages from regional Anaconda mirrors.
 
 ## Android
 

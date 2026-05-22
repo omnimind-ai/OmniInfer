@@ -19,8 +19,10 @@ ALL_SUPPORTED=0
 MLX_PYTHON=""
 MLX_ENV_MANAGER="auto"
 PYTHON_INDEX_URL="${PYTHON_INDEX_URL:-}"
+CONDA_OVERRIDE_CHANNELS=0
 DRY_RUN=0
 REQUESTED_BACKENDS=()
+CONDA_CHANNELS=()
 
 SUPPORTED_BACKENDS=(
   "llama.cpp-mac"
@@ -48,6 +50,8 @@ Options:
   --mlx-python <path>         Python 3.10+ interpreter used to build mlx-mac
   --mlx-env-manager <manager> Build mlx-mac release Python env with auto, uv, venv, or conda-pack (default: auto)
   --python-index-url <url>    Python package index URL for MLX dependency installation
+  --conda-channel <channel>   Conda channel used by conda-pack mode; can be passed multiple times
+  --conda-override-channels   Use only channels passed with --conda-channel
   --dry-run                   Print actions without executing packaging steps
   -h, --help                  Show this help message
 
@@ -237,6 +241,7 @@ create_mlx_release_conda_pack() {
   local python_bin="$1"
   local venv_root="$2"
   local pip_args=()
+  local conda_create_args=()
   local python_version
   local conda_env_root="${BUILD_ROOT}/mlx-mac-conda-env"
   local conda_archive="${BUILD_ROOT}/mlx-mac-conda-env.tar.gz"
@@ -249,7 +254,14 @@ create_mlx_release_conda_pack() {
   python_version="$("${python_bin}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
   rm -rf "${conda_env_root}" "${conda_archive}" "${venv_root}"
 
-  conda create -y -p "${conda_env_root}" "python=${python_version}" pip
+  if [[ ${CONDA_OVERRIDE_CHANNELS} -eq 1 ]]; then
+    conda_create_args+=(--override-channels)
+  fi
+  for channel in "${CONDA_CHANNELS[@]}"; do
+    conda_create_args+=(-c "${channel}")
+  done
+
+  conda create -y -p "${conda_env_root}" "${conda_create_args[@]}" "python=${python_version}" pip
   conda run -p "${conda_env_root}" python -m pip install --upgrade pip setuptools wheel
   [[ -n "${PYTHON_INDEX_URL}" ]] && pip_args+=(--index-url "${PYTHON_INDEX_URL}")
   conda run -p "${conda_env_root}" python -m pip install "${pip_args[@]}" -r "${MLX_REQUIREMENTS_FILE}"
@@ -517,6 +529,14 @@ while (($# > 0)); do
     --python-index-url)
       PYTHON_INDEX_URL="${2:?missing value for --python-index-url}"
       shift 2
+      ;;
+    --conda-channel)
+      CONDA_CHANNELS+=("${2:?missing value for --conda-channel}")
+      shift 2
+      ;;
+    --conda-override-channels)
+      CONDA_OVERRIDE_CHANNELS=1
+      shift
       ;;
     --dry-run)
       DRY_RUN=1
