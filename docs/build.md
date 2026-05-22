@@ -384,10 +384,27 @@ To build and package every supported macOS backend:
 bash ./scripts/platforms/macos/build-release.sh --all-supported
 ```
 
-The release exposes `omniinfer` as a launcher and keeps the PyInstaller CLI binary
-as `omniinfer-bin`. If `mlx-mac` is packaged, the launcher uses
-`runtime/mlx-mac/venv/bin/python3` so the embedded MLX backend can import its Python
-runtime packages.
+The release exposes `omniinfer` as the user-facing CLI entrypoint. The packaging
+mode depends on the selected backends:
+
+- Releases without `mlx-mac` build `omniinfer` as a PyInstaller binary.
+- Releases with `mlx-mac` skip PyInstaller and install `omniinfer` as a launcher
+  that runs `omniinfer.py` with `runtime/mlx-mac/venv/bin/python3`, so the embedded
+  MLX backend can import its Python runtime packages.
+
+For `mlx-mac` releases, the packaging script creates a fresh venv inside the
+release package and installs `scripts/platforms/macos/mlx-mac/requirements.txt`.
+The release venv is always created with copied Python binaries and populated
+with `uv pip install`, which is the supported packaging path for smaller and
+faster macOS portable releases. Use `--mlx-python <path>` when you need to
+choose a specific Python 3.10 through 3.13 interpreter for the release
+environment version. Use `--python-index-url <url>` when a regional PyPI mirror
+is needed for MLX dependency downloads.
+
+By default, `mlx-mac` release environments are slimmed after dependency
+installation: Python bytecode caches, test trees, pip/wheel, and build-only
+Torch headers are removed from the packaged venv. Pass `--no-slim` when you
+need an unmodified Python environment for debugging.
 
 ## Android
 

@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 LOCAL_RUNTIME_ROOT="${REPO_ROOT}/.local/runtime/macos"
+MLX_REQUIREMENTS_FILE="${SCRIPT_DIR}/mlx-mac/requirements.txt"
 
 PACKAGE_NAME="OmniInfer"
 PLATFORM_TAG=""
@@ -16,6 +17,8 @@ SMOKE_TEST=0
 BUILD_MISSING=1
 ALL_SUPPORTED=0
 MLX_PYTHON=""
+PYTHON_INDEX_URL="${PYTHON_INDEX_URL:-}"
+SLIM_RELEASE=1
 DRY_RUN=0
 REQUESTED_BACKENDS=()
 
@@ -43,6 +46,8 @@ Options:
   --no-bootstrap              Do not auto-initialize backend submodules
   --smoke-test                Run backend smoke tests after compiling missing backends
   --mlx-python <path>         Python 3.10+ interpreter used to build mlx-mac
+  --python-index-url <url>    Python package index URL for MLX dependency installation
+  --no-slim                   Keep test files, bytecode, and build-only Python assets in the release
   --dry-run                   Print actions without executing packaging steps
   -h, --help                  Show this help message
 
@@ -139,6 +144,112 @@ runtime_ready() {
   esac
 }
 
+python_supports_mlx_release() {
+  local probe
+  probe="$("$1" - <<'PY' 2>/dev/null || true
+import sys
+import venv
+if (3, 10) <= sys.version_info < (3, 14):
+    print("ok")
+PY
+)"
+  [[ "${probe}" == "ok" ]]
+}
+
+pick_mlx_release_python() {
+  local candidate
+  if [[ -n "${MLX_PYTHON}" ]]; then
+    [[ -x "${MLX_PYTHON}" ]] || die "Configured --mlx-python is not executable: ${MLX_PYTHON}"
+    python_supports_mlx_release "${MLX_PYTHON}" || die "--mlx-python must be Python 3.10, 3.11, 3.12, or 3.13."
+    echo "${MLX_PYTHON}"
+    return
+  fi
+
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "${candidate}" >/dev/null 2>&1 && python_supports_mlx_release "${candidate}"; then
+      command -v "${candidate}"
+      return
+    fi
+  done
+
+  die "mlx-mac release packaging requires Python 3.10 through 3.13. Pass --mlx-python <path> if needed."
+}
+
+create_mlx_release_venv() {
+  local python_bin="$1"
+  local venv_root="$2"
+  local uv_pip_args=()
+
+  require_command uv "Install uv first; macOS mlx-mac release packaging uses uv for portable Python environments."
+  "${python_bin}" -m venv --copies "${venv_root}"
+  uv_pip_args=(--python "${venv_root}/bin/python")
+  [[ -n "${PYTHON_INDEX_URL}" ]] && uv_pip_args+=(--default-index "${PYTHON_INDEX_URL}")
+  uv pip install "${uv_pip_args[@]}" -r "${MLX_REQUIREMENTS_FILE}"
+}
+
+validate_mlx_release_venv() {
+  local venv_root="$1"
+  local python_path="${venv_root}/bin/python3"
+  local python_real
+  local venv_real
+
+  [[ -x "${python_path}" ]] || die "mlx-mac release Python is not executable: ${python_path}"
+  python_real="$(realpath "${python_path}")"
+  venv_real="$(realpath "${venv_root}")"
+  case "${python_real}" in
+    "${venv_real}"/*) ;;
+    *) die "mlx-mac release Python resolves outside the package: ${python_real}" ;;
+  esac
+
+  "${python_path}" - <<'PY'
+import sys
+raise SystemExit(0 if (3, 10) <= sys.version_info < (3, 14) else 1)
+PY
+}
+
+remove_site_packages_globs() {
+  local site_packages="$1"
+  local pattern
+  shift
+  for pattern in "$@"; do
+    find "${site_packages}" -maxdepth 1 -name "${pattern}" -exec rm -rf {} +
+  done
+}
+
+slim_mlx_release_venv() {
+  local venv_root="$1"
+  local site_packages
+
+  [[ ${SLIM_RELEASE} -eq 1 ]] || return
+
+  echo "Slimming mlx-mac release Python environment..."
+  find "${venv_root}" -type d -name "__pycache__" -prune -exec rm -rf {} +
+  find "${venv_root}" -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete
+
+  for site_packages in "${venv_root}"/lib/python*/site-packages; do
+    [[ -d "${site_packages}" ]] || continue
+
+    find "${site_packages}" -type d \( -name tests -o -name test \) -prune -exec rm -rf {} +
+    rm -rf \
+      "${site_packages}/numpy/_core/tests" \
+      "${site_packages}/numpy/f2py/tests" \
+      "${site_packages}/numpy/lib/tests" \
+      "${site_packages}/numpy/ma/tests" \
+      "${site_packages}/numpy/random/tests" \
+      "${site_packages}/numpy/typing/tests" \
+      "${site_packages}/pandas/tests" \
+      "${site_packages}/pyarrow/tests" \
+      "${site_packages}/torch/include" \
+      "${site_packages}/torch/share/cmake"
+
+    remove_site_packages_globs "${site_packages}" \
+      "pip" \
+      "pip-*.dist-info" \
+      "wheel" \
+      "wheel-*.dist-info"
+  done
+}
+
 discover_built_backends() {
   local backend
   for backend in "${SUPPORTED_BACKENDS[@]}"; do
@@ -159,6 +270,10 @@ ensure_pyinstaller() {
     echo "PyInstaller not found. Installing..."
     python3 -m pip install pyinstaller || die "Failed to install PyInstaller."
   fi
+}
+
+selected_backends_include_mlx() {
+  contains_backend "mlx-mac" "${SELECTED_BACKENDS[@]}"
 }
 
 build_backend_if_missing() {
@@ -205,8 +320,13 @@ copy_backend_runtime() {
   mkdir -p "${target_root}/logs"
 
   if [[ "${backend}" == "mlx-mac" ]]; then
-    [[ -x "${source_root}/venv/bin/python3" ]] || die "mlx-mac venv not found: ${source_root}/venv"
-    cp -a "${source_root}/venv" "${target_root}/venv"
+    local python_bin
+    python_bin="$(pick_mlx_release_python)"
+    [[ -f "${MLX_REQUIREMENTS_FILE}" ]] || die "mlx-mac requirements file not found: ${MLX_REQUIREMENTS_FILE}"
+    echo "Creating mlx-mac release venv with ${python_bin}..."
+    create_mlx_release_venv "${python_bin}" "${target_root}/venv"
+    slim_mlx_release_venv "${target_root}/venv"
+    validate_mlx_release_venv "${target_root}/venv"
     return
   fi
 
@@ -216,7 +336,7 @@ copy_backend_runtime() {
   chmod +x "${target_root}/bin/llama-server"
 }
 
-copy_source_fallback() {
+copy_source_entrypoint() {
   cp "${REPO_ROOT}/omniinfer.py" "${RELEASE_ROOT}/omniinfer.py"
   rm -rf "${RELEASE_ROOT}/service_core"
   mkdir -p "${RELEASE_ROOT}/service_core"
@@ -239,13 +359,69 @@ esac
 ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 MLX_PYTHON="$ROOT/runtime/mlx-mac/venv/bin/python3"
 
-if [ -x "$MLX_PYTHON" ]; then
-  exec "$MLX_PYTHON" "$ROOT/omniinfer.py" "$@"
+if [ ! -x "$MLX_PYTHON" ]; then
+  echo "mlx-mac Python runtime was not found: $MLX_PYTHON" >&2
+  exit 1
 fi
 
-exec "$ROOT/omniinfer-bin" "$@"
+exec "$MLX_PYTHON" "$ROOT/omniinfer.py" "$@"
 EOF
   chmod +x "${RELEASE_ROOT}/omniinfer"
+}
+
+build_pyinstaller_cli() {
+  require_command python3 "Install Python 3.10+ first."
+  ensure_pyinstaller
+
+  local cli_entry="${REPO_ROOT}/omniinfer.py"
+  [[ -f "${cli_entry}" ]] || die "CLI entry point not found: ${cli_entry}"
+
+  local pyinstaller_excludes=(
+    "cv2"
+    "matplotlib"
+    "mkl"
+    "numpy"
+    "pandas"
+    "PIL"
+    "scipy"
+    "sklearn"
+    "sympy"
+    "torch"
+    "torchvision"
+  )
+
+  local pyinstaller_args=(
+    --noconfirm
+    --clean
+    --onedir
+    --console
+    --name "omniinfer"
+    --distpath "${CLI_DIST}"
+    --workpath "${BUILD_ROOT}/pyinstaller-work-cli"
+    --specpath "${BUILD_ROOT}/pyinstaller-spec-cli"
+    --add-data "${MODEL_CATALOG_ROOT}:service_core/model_catalogs"
+  )
+  local exclude
+  for exclude in "${pyinstaller_excludes[@]}"; do
+    pyinstaller_args+=(--exclude-module "${exclude}")
+  done
+  pyinstaller_args+=("${cli_entry}")
+
+  echo
+  echo "Building omniinfer (CLI) with PyInstaller..."
+  python3 -m PyInstaller "${pyinstaller_args[@]}"
+
+  local cli_bin="${CLI_DIST}/omniinfer/omniinfer"
+  [[ -f "${cli_bin}" ]] || die "CLI build succeeded but omniinfer not found at ${cli_bin}"
+
+  cp -a "${CLI_DIST}/omniinfer/." "${RELEASE_ROOT}/"
+}
+
+install_mlx_source_cli() {
+  echo
+  echo "Installing source CLI launcher for mlx-mac..."
+  copy_source_entrypoint
+  write_launcher
 }
 
 while (($# > 0)); do
@@ -297,6 +473,14 @@ while (($# > 0)); do
     --mlx-python)
       MLX_PYTHON="${2:?missing value for --mlx-python}"
       shift 2
+      ;;
+    --python-index-url)
+      PYTHON_INDEX_URL="${2:?missing value for --python-index-url}"
+      shift 2
+      ;;
+    --no-slim)
+      SLIM_RELEASE=0
+      shift
       ;;
     --dry-run)
       DRY_RUN=1
@@ -358,61 +542,27 @@ done
 echo "Packaged ${#SELECTED_BACKENDS[@]} backend(s): ${SELECTED_BACKENDS[*]}"
 echo "Default backend: ${DEFAULT_BACKEND}"
 echo "Package root: ${RELEASE_ROOT}"
+if selected_backends_include_mlx; then
+  echo "CLI mode: source launcher with mlx-mac venv"
+  echo "MLX env manager: uv"
+  echo "Slim release: $([[ ${SLIM_RELEASE} -eq 1 ]] && echo yes || echo no)"
+else
+  echo "CLI mode: PyInstaller binary"
+fi
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "Dry run enabled. Release packaging was not executed."
   exit 0
 fi
 
-require_command python3 "Install Python 3.10+ first."
-ensure_pyinstaller
-
 rm -rf "${RELEASE_ROOT}" "${BUILD_ROOT}"
 mkdir -p "${RELEASE_ROOT}" "${RUNTIME_ROOT}" "${CONFIG_ROOT}" "${BUILD_ROOT}"
 
-CLI_ENTRY="${REPO_ROOT}/omniinfer.py"
-[[ -f "${CLI_ENTRY}" ]] || die "CLI entry point not found: ${CLI_ENTRY}"
-
-PYINSTALLER_EXCLUDES=(
-  "cv2"
-  "matplotlib"
-  "mkl"
-  "numpy"
-  "pandas"
-  "PIL"
-  "scipy"
-  "sklearn"
-  "sympy"
-  "torch"
-  "torchvision"
-)
-
-PYINSTALLER_ARGS=(
-  --noconfirm
-  --clean
-  --onedir
-  --console
-  --name "omniinfer-bin"
-  --distpath "${CLI_DIST}"
-  --workpath "${BUILD_ROOT}/pyinstaller-work-cli"
-  --specpath "${BUILD_ROOT}/pyinstaller-spec-cli"
-  --add-data "${MODEL_CATALOG_ROOT}:service_core/model_catalogs"
-)
-for exclude in "${PYINSTALLER_EXCLUDES[@]}"; do
-  PYINSTALLER_ARGS+=(--exclude-module "${exclude}")
-done
-PYINSTALLER_ARGS+=("${CLI_ENTRY}")
-
-echo
-echo "Building omniinfer-bin (CLI) with PyInstaller..."
-python3 -m PyInstaller "${PYINSTALLER_ARGS[@]}"
-
-CLI_BIN="${CLI_DIST}/omniinfer-bin/omniinfer-bin"
-[[ -f "${CLI_BIN}" ]] || die "CLI build succeeded but omniinfer-bin not found at ${CLI_BIN}"
-
-cp -a "${CLI_DIST}/omniinfer-bin/." "${RELEASE_ROOT}/"
-copy_source_fallback
-write_launcher
+if selected_backends_include_mlx; then
+  install_mlx_source_cli
+else
+  build_pyinstaller_cli
+fi
 
 cat > "${CONFIG_ROOT}/omniinfer.json" <<EOF
 {
