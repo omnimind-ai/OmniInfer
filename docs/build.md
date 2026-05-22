@@ -410,6 +410,11 @@ mode, use repeated `--conda-channel <channel>` arguments and
 `--conda-override-channels` when conda itself should resolve Python and base
 packages from regional Anaconda mirrors.
 
+By default, `mlx-mac` release environments are slimmed after dependency
+installation: Python bytecode caches, test trees, pip/wheel, and build-only
+Torch headers are removed from the package. Pass `--no-slim` when you need an
+unmodified Python environment for debugging.
+
 ## Android
 
 Android is built from the root `android/` module, not from `scripts/platforms`.

@@ -20,6 +20,7 @@ MLX_PYTHON=""
 MLX_ENV_MANAGER="auto"
 PYTHON_INDEX_URL="${PYTHON_INDEX_URL:-}"
 CONDA_OVERRIDE_CHANNELS=0
+SLIM_RELEASE=1
 DRY_RUN=0
 REQUESTED_BACKENDS=()
 CONDA_CHANNELS=()
@@ -52,6 +53,7 @@ Options:
   --python-index-url <url>    Python package index URL for MLX dependency installation
   --conda-channel <channel>   Conda channel used by conda-pack mode; can be passed multiple times
   --conda-override-channels   Use only channels passed with --conda-channel
+  --no-slim                   Keep test files, bytecode, and build-only Python assets in the release
   --dry-run                   Print actions without executing packaging steps
   -h, --help                  Show this help message
 
@@ -290,6 +292,50 @@ raise SystemExit(0 if (3, 10) <= sys.version_info < (3, 14) else 1)
 PY
 }
 
+remove_site_packages_globs() {
+  local site_packages="$1"
+  local pattern
+  shift
+  for pattern in "$@"; do
+    find "${site_packages}" -maxdepth 1 -name "${pattern}" -exec rm -rf {} +
+  done
+}
+
+slim_mlx_release_venv() {
+  local venv_root="$1"
+  local site_packages
+
+  [[ ${SLIM_RELEASE} -eq 1 ]] || return
+
+  echo "Slimming mlx-mac release Python environment..."
+  find "${venv_root}" -type d -name "__pycache__" -prune -exec rm -rf {} +
+  find "${venv_root}" -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete
+
+  for site_packages in "${venv_root}"/lib/python*/site-packages; do
+    [[ -d "${site_packages}" ]] || continue
+
+    find "${site_packages}" -type d \( -name tests -o -name test \) -prune -exec rm -rf {} +
+    rm -rf \
+      "${site_packages}/numpy/_core/tests" \
+      "${site_packages}/numpy/f2py/tests" \
+      "${site_packages}/numpy/lib/tests" \
+      "${site_packages}/numpy/ma/tests" \
+      "${site_packages}/numpy/random/tests" \
+      "${site_packages}/numpy/typing/tests" \
+      "${site_packages}/pandas/tests" \
+      "${site_packages}/pyarrow/tests" \
+      "${site_packages}/torch/include" \
+      "${site_packages}/torch/share/cmake" \
+      "${site_packages}/torch/testing"
+
+    remove_site_packages_globs "${site_packages}" \
+      "pip" \
+      "pip-*.dist-info" \
+      "wheel" \
+      "wheel-*.dist-info"
+  done
+}
+
 discover_built_backends() {
   local backend
   for backend in "${SUPPORTED_BACKENDS[@]}"; do
@@ -365,6 +411,7 @@ copy_backend_runtime() {
     [[ -f "${MLX_REQUIREMENTS_FILE}" ]] || die "mlx-mac requirements file not found: ${MLX_REQUIREMENTS_FILE}"
     echo "Creating mlx-mac release venv with ${python_bin}..."
     create_mlx_release_venv "${python_bin}" "${target_root}/venv"
+    slim_mlx_release_venv "${target_root}/venv"
     validate_mlx_release_venv "${target_root}/venv"
     return
   fi
@@ -537,6 +584,10 @@ while (($# > 0)); do
       CONDA_OVERRIDE_CHANNELS=1
       shift
       ;;
+    --no-slim)
+      SLIM_RELEASE=0
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -600,6 +651,7 @@ echo "Package root: ${RELEASE_ROOT}"
 if selected_backends_include_mlx; then
   echo "CLI mode: source launcher with mlx-mac venv"
   echo "MLX env manager: ${MLX_ENV_MANAGER}"
+  echo "Slim release: $([[ ${SLIM_RELEASE} -eq 1 ]] && echo yes || echo no)"
 else
   echo "CLI mode: PyInstaller binary"
 fi
