@@ -234,7 +234,7 @@ run_conda_pack() {
     conda-pack "$@"
     return
   fi
-  conda run -n base python -m conda_pack "$@"
+  conda run -n base python -m conda_pack.cli "$@"
 }
 
 create_mlx_release_conda_pack() {
