@@ -244,6 +244,7 @@ create_mlx_release_conda_pack() {
   local venv_root="$2"
   local pip_args=()
   local conda_create_args=()
+  local conda_pack_args=()
   local python_version
   local conda_env_root="${BUILD_ROOT}/mlx-mac-conda-env"
   local conda_archive="${BUILD_ROOT}/mlx-mac-conda-env.tar.gz"
@@ -268,7 +269,19 @@ create_mlx_release_conda_pack() {
   conda run -p "${conda_env_root}" python -m pip install "${pip_args[@]}" -r "${MLX_REQUIREMENTS_FILE}"
 
   mkdir -p "${venv_root}"
-  run_conda_pack -p "${conda_env_root}" -o "${conda_archive}" --force
+  conda_pack_args=(-p "${conda_env_root}" -o "${conda_archive}" --force)
+  if [[ ${SLIM_RELEASE} -eq 1 ]]; then
+    conda_pack_args+=(
+      --exclude "*.pyc"
+      --exclude "*.pyo"
+      --exclude "*/__pycache__/*"
+      --exclude "lib/python*/site-packages/*/tests/*"
+      --exclude "lib/python*/site-packages/*/test/*"
+      --exclude "lib/python*/site-packages/torch/include/*"
+      --exclude "lib/python*/site-packages/torch/share/cmake/*"
+    )
+  fi
+  run_conda_pack "${conda_pack_args[@]}"
   tar -xzf "${conda_archive}" -C "${venv_root}"
 }
 
@@ -325,8 +338,7 @@ slim_mlx_release_venv() {
       "${site_packages}/pandas/tests" \
       "${site_packages}/pyarrow/tests" \
       "${site_packages}/torch/include" \
-      "${site_packages}/torch/share/cmake" \
-      "${site_packages}/torch/testing"
+      "${site_packages}/torch/share/cmake"
 
     remove_site_packages_globs "${site_packages}" \
       "pip" \
@@ -411,7 +423,9 @@ copy_backend_runtime() {
     [[ -f "${MLX_REQUIREMENTS_FILE}" ]] || die "mlx-mac requirements file not found: ${MLX_REQUIREMENTS_FILE}"
     echo "Creating mlx-mac release venv with ${python_bin}..."
     create_mlx_release_venv "${python_bin}" "${target_root}/venv"
-    slim_mlx_release_venv "${target_root}/venv"
+    if [[ "${MLX_ENV_MANAGER}" != "conda-pack" ]]; then
+      slim_mlx_release_venv "${target_root}/venv"
+    fi
     validate_mlx_release_venv "${target_root}/venv"
     return
   fi

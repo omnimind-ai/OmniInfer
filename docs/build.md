@@ -412,8 +412,10 @@ packages from regional Anaconda mirrors.
 
 By default, `mlx-mac` release environments are slimmed after dependency
 installation: Python bytecode caches, test trees, pip/wheel, and build-only
-Torch headers are removed from the package. Pass `--no-slim` when you need an
-unmodified Python environment for debugging.
+Torch headers are removed from venv-based packages. In `conda-pack` mode the
+same kind of slimming is applied through `conda-pack --exclude` patterns so the
+generated relocation script stays consistent with the archive. Pass `--no-slim`
+when you need an unmodified Python environment for debugging.
 
 ## Android
 
