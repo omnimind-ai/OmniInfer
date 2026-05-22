@@ -42,7 +42,7 @@ Windows:
 .\omniinfer.ps1 --help
 ```
 
-Packaged Windows releases also keep `.\omniinfer.cmd` for `cmd.exe` compatibility. For interactive TUI use from PowerShell, prefer `.\omniinfer.ps1` or `.\omniinfer-cli.exe`; pressing `Ctrl+C` in a batch wrapper can make `cmd.exe` print `Terminate batch job (Y/N)?`.
+Packaged Windows releases also keep `.\omniinfer.exe` as the real CLI binary and `.\omniinfer.cmd` for `cmd.exe` compatibility. For interactive TUI use from PowerShell, prefer `.\omniinfer.ps1` or `.\omniinfer.exe`; pressing `Ctrl+C` in a batch wrapper can make `cmd.exe` print `Terminate batch job (Y/N)?`.
 
 ## Quick Start
 

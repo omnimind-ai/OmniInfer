@@ -183,7 +183,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 
 - It can prebuild any of the Windows runtimes above before packaging
 - It packages only the requested backends when `-Backends` is provided; otherwise it packages every built backend under `.local/runtime/windows`
-- It builds `omniinfer-cli.exe` with PyInstaller `--onedir` and excludes optional heavyweight scientific/image stacks such as MKL, NumPy, SciPy, PIL, Torch, pandas, and OpenCV from the CLI bundle
+- It builds `omniinfer.exe` with PyInstaller `--onedir` and excludes optional heavyweight scientific/image stacks such as MKL, NumPy, SciPy, PIL, Torch, pandas, and OpenCV from the CLI bundle
 - It writes PowerShell and cmd.exe launchers; use `omniinfer.ps1` from PowerShell and keep `omniinfer.cmd` for cmd.exe compatibility
 
 ## Linux
@@ -266,6 +266,8 @@ bash ./scripts/platforms/linux/build-llama-openvino.sh --openvino-root /opt/inte
 - `llama.cpp-linux-vulkan`
 - `llama.cpp-linux-s390x`
 - `llama.cpp-linux-openvino`
+
+The portable package exposes `omniinfer` as the real CLI binary.
 
 Optional prebuild examples:
 

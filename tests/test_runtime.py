@@ -427,7 +427,7 @@ class CommandHelperTests(unittest.TestCase):
 
     def test_packaged_gateway_launch_uses_cli_binary_serve(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            exe_path = Path(temp_dir) / "omniinfer-cli"
+            exe_path = Path(temp_dir) / "omniinfer"
             exe_path.write_text("", encoding="utf-8")
             with (
                 patch("service_core.commands.sys.executable", str(exe_path)),
@@ -443,6 +443,30 @@ class CommandHelperTests(unittest.TestCase):
                 )
 
             self.assertTrue(Path(command[0]).samefile(exe_path))
+            self.assertEqual(command[1], "serve")
+
+    def test_packaged_gateway_launch_prefers_omniinfer_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            new_exe = Path(temp_dir) / "omniinfer"
+            old_exe = Path(temp_dir) / "omniinfer-cli"
+            current_exe = Path(temp_dir) / "python"
+            new_exe.write_text("", encoding="utf-8")
+            old_exe.write_text("", encoding="utf-8")
+            current_exe.write_text("", encoding="utf-8")
+            with (
+                patch("service_core.commands.sys.executable", str(current_exe)),
+                patch("service_core.commands.sys.frozen", True, create=True),
+            ):
+                command = commands.gateway_launch_command(
+                    host="127.0.0.1",
+                    port=9000,
+                    startup_timeout=60,
+                    window_mode="hidden",
+                    default_thinking="off",
+                    default_backend="",
+                )
+
+            self.assertTrue(Path(command[0]).samefile(new_exe))
             self.assertEqual(command[1], "serve")
 
     def test_start_service_background_defaults_window_mode_hidden(self) -> None:

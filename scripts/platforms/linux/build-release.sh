@@ -231,36 +231,26 @@ CLI_ENTRY="${REPO_ROOT}/omniinfer.py"
 
 CLI_DIST="${BUILD_ROOT}/cli-dist"
 echo ""
-echo "Building omniinfer-cli (CLI) with PyInstaller..."
+echo "Building omniinfer (CLI) with PyInstaller..."
 python3 -m PyInstaller \
   --noconfirm \
   --clean \
   --onedir \
   --console \
-  --name "omniinfer-cli" \
+  --name "omniinfer" \
   --distpath "${CLI_DIST}" \
   --workpath "${BUILD_ROOT}/pyinstaller-work-cli" \
   --specpath "${BUILD_ROOT}/pyinstaller-spec-cli" \
   --add-data "${REPO_ROOT}/service_core/model_catalogs:service_core/model_catalogs" \
   "${CLI_ENTRY}"
 
-CLI_BIN="${CLI_DIST}/omniinfer-cli/omniinfer-cli"
+CLI_BIN="${CLI_DIST}/omniinfer/omniinfer"
 if [[ ! -f "${CLI_BIN}" ]]; then
-  echo "ERROR: CLI build succeeded but omniinfer-cli not found at ${CLI_BIN}" >&2
+  echo "ERROR: CLI build succeeded but omniinfer not found at ${CLI_BIN}" >&2
   exit 1
 fi
 
-cp -a "${CLI_DIST}/omniinfer-cli/." "${RELEASE_ROOT}/"
-chmod +x "${RELEASE_ROOT}/omniinfer-cli"
-
-# --- launcher wrapper ---
-
-cat > "${RELEASE_ROOT}/omniinfer" <<'LAUNCHER_EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "${SCRIPT_DIR}/omniinfer-cli" "$@"
-LAUNCHER_EOF
+cp -a "${CLI_DIST}/omniinfer/." "${RELEASE_ROOT}/"
 chmod +x "${RELEASE_ROOT}/omniinfer"
 
 # --- config ---
