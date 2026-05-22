@@ -12,7 +12,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from service_core import cli, commands, tui
 from service_core.platforms.linux import LinuxPlatform
@@ -250,6 +250,87 @@ class CliParserTests(unittest.TestCase):
     def test_requested_window_mode_defaults_hidden(self) -> None:
         self.assertEqual(cli._requested_window_mode([]), "hidden")
         self.assertEqual(cli._requested_window_mode(["--window-mode", "visible"]), "visible")
+
+    def test_detached_health_target_uses_cli_bind_over_config(self) -> None:
+        config = {"host": "127.0.0.1", "port": 9000, "startup_timeout": 60}
+        with patch("service_core.cli.load_app_config", return_value=config):
+            target = cli._detached_health_target(
+                ["--port", "9157", "--host", "127.0.0.1", "--startup-timeout", "20"]
+            )
+
+        self.assertEqual(target, ("127.0.0.1", 9157, 20))
+
+    def test_detached_health_target_checks_loopback_for_lan_bind(self) -> None:
+        config = {"host": "127.0.0.1", "port": 9000, "startup_timeout": 60}
+        with patch("service_core.cli.load_app_config", return_value=config):
+            target = cli._detached_health_target(["--lan", "--port", "9158"])
+
+        self.assertEqual(target, ("127.0.0.1", 9158, 60))
+
+    def test_hidden_window_relaunch_redirects_child_output_and_waits_for_health(self) -> None:
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app_root = Path(temp_dir)
+            log_path = app_root / ".local" / "logs" / "serve-child.log"
+            fake_process = Mock()
+            fake_process.poll.return_value = None
+            popen = Mock(return_value=fake_process)
+            with (
+                patch("service_core.cli.os.name", "nt"),
+                patch("service_core.cli.APP_ROOT", app_root),
+                patch("service_core.cli.REPO_ROOT", app_root),
+                patch(
+                    "service_core.cli.load_app_config",
+                    return_value={"host": "127.0.0.1", "port": 9000, "startup_timeout": 60},
+                ),
+                patch("service_core.cli._has_console", return_value=True),
+                patch("service_core.cli._detached_child_log_path", return_value=log_path),
+                patch("service_core.cli.sys.frozen", True, create=True),
+                patch("service_core.cli.sys.executable", "omniinfer.exe"),
+                patch("service_core.cli.sys.argv", ["omniinfer.exe", "serve", "--port", "9157", "--host", "127.0.0.1"]),
+                patch("service_core.cli.subprocess.Popen", popen),
+                patch("service_core.cli.urllib.request.urlopen", return_value=Response()) as urlopen,
+                patch.dict(os.environ, {}, clear=True),
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    cli._ensure_window_mode(["--port", "9157", "--host", "127.0.0.1"])
+
+            self.assertEqual(raised.exception.code, 0)
+            kwargs = popen.call_args.kwargs
+            self.assertEqual(kwargs["cwd"], str(app_root))
+            self.assertIsNotNone(kwargs["stdout"])
+            self.assertEqual(kwargs["stderr"], cli.subprocess.STDOUT)
+            urlopen.assert_called_with("http://127.0.0.1:9157/health", timeout=1)
+            self.assertIn("launching detached OmniInfer", log_path.read_text(encoding="utf-8"))
+
+    def test_wait_for_detached_health_reports_early_child_exit_with_log_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "serve-child.log"
+            log_path.write_text("bind failed on requested port", encoding="utf-8")
+            fake_process = Mock()
+            fake_process.poll.return_value = 1
+
+            with self.assertRaises(SystemExit) as raised:
+                cli._wait_for_detached_health(
+                    fake_process,
+                    host="127.0.0.1",
+                    port=9157,
+                    timeout_s=20,
+                    log_path=log_path,
+                )
+
+        message = str(raised.exception)
+        self.assertIn("exited early", message)
+        self.assertIn("127.0.0.1:9157", message)
+        self.assertIn("bind failed on requested port", message)
 
     def test_serve_forwards_service_arguments(self) -> None:
         try:
