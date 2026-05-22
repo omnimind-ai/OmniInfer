@@ -161,6 +161,10 @@ ensure_pyinstaller() {
   fi
 }
 
+selected_backends_include_mlx() {
+  contains_backend "mlx-mac" "${SELECTED_BACKENDS[@]}"
+}
+
 build_backend_if_missing() {
   local backend="$1"
   local script_path
@@ -216,7 +220,7 @@ copy_backend_runtime() {
   chmod +x "${target_root}/bin/llama-server"
 }
 
-copy_source_fallback() {
+copy_source_entrypoint() {
   cp "${REPO_ROOT}/omniinfer.py" "${RELEASE_ROOT}/omniinfer.py"
   rm -rf "${RELEASE_ROOT}/service_core"
   mkdir -p "${RELEASE_ROOT}/service_core"
@@ -239,13 +243,69 @@ esac
 ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 MLX_PYTHON="$ROOT/runtime/mlx-mac/venv/bin/python3"
 
-if [ -x "$MLX_PYTHON" ]; then
-  exec "$MLX_PYTHON" "$ROOT/omniinfer.py" "$@"
+if [ ! -x "$MLX_PYTHON" ]; then
+  echo "mlx-mac Python runtime was not found: $MLX_PYTHON" >&2
+  exit 1
 fi
 
-exec "$ROOT/omniinfer-bin" "$@"
+exec "$MLX_PYTHON" "$ROOT/omniinfer.py" "$@"
 EOF
   chmod +x "${RELEASE_ROOT}/omniinfer"
+}
+
+build_pyinstaller_cli() {
+  require_command python3 "Install Python 3.10+ first."
+  ensure_pyinstaller
+
+  local cli_entry="${REPO_ROOT}/omniinfer.py"
+  [[ -f "${cli_entry}" ]] || die "CLI entry point not found: ${cli_entry}"
+
+  local pyinstaller_excludes=(
+    "cv2"
+    "matplotlib"
+    "mkl"
+    "numpy"
+    "pandas"
+    "PIL"
+    "scipy"
+    "sklearn"
+    "sympy"
+    "torch"
+    "torchvision"
+  )
+
+  local pyinstaller_args=(
+    --noconfirm
+    --clean
+    --onedir
+    --console
+    --name "omniinfer"
+    --distpath "${CLI_DIST}"
+    --workpath "${BUILD_ROOT}/pyinstaller-work-cli"
+    --specpath "${BUILD_ROOT}/pyinstaller-spec-cli"
+    --add-data "${MODEL_CATALOG_ROOT}:service_core/model_catalogs"
+  )
+  local exclude
+  for exclude in "${pyinstaller_excludes[@]}"; do
+    pyinstaller_args+=(--exclude-module "${exclude}")
+  done
+  pyinstaller_args+=("${cli_entry}")
+
+  echo
+  echo "Building omniinfer (CLI) with PyInstaller..."
+  python3 -m PyInstaller "${pyinstaller_args[@]}"
+
+  local cli_bin="${CLI_DIST}/omniinfer/omniinfer"
+  [[ -f "${cli_bin}" ]] || die "CLI build succeeded but omniinfer not found at ${cli_bin}"
+
+  cp -a "${CLI_DIST}/omniinfer/." "${RELEASE_ROOT}/"
+}
+
+install_mlx_source_cli() {
+  echo
+  echo "Installing source CLI launcher for mlx-mac..."
+  copy_source_entrypoint
+  write_launcher
 }
 
 while (($# > 0)); do
@@ -358,61 +418,25 @@ done
 echo "Packaged ${#SELECTED_BACKENDS[@]} backend(s): ${SELECTED_BACKENDS[*]}"
 echo "Default backend: ${DEFAULT_BACKEND}"
 echo "Package root: ${RELEASE_ROOT}"
+if selected_backends_include_mlx; then
+  echo "CLI mode: source launcher with mlx-mac venv"
+else
+  echo "CLI mode: PyInstaller binary"
+fi
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "Dry run enabled. Release packaging was not executed."
   exit 0
 fi
 
-require_command python3 "Install Python 3.10+ first."
-ensure_pyinstaller
-
 rm -rf "${RELEASE_ROOT}" "${BUILD_ROOT}"
 mkdir -p "${RELEASE_ROOT}" "${RUNTIME_ROOT}" "${CONFIG_ROOT}" "${BUILD_ROOT}"
 
-CLI_ENTRY="${REPO_ROOT}/omniinfer.py"
-[[ -f "${CLI_ENTRY}" ]] || die "CLI entry point not found: ${CLI_ENTRY}"
-
-PYINSTALLER_EXCLUDES=(
-  "cv2"
-  "matplotlib"
-  "mkl"
-  "numpy"
-  "pandas"
-  "PIL"
-  "scipy"
-  "sklearn"
-  "sympy"
-  "torch"
-  "torchvision"
-)
-
-PYINSTALLER_ARGS=(
-  --noconfirm
-  --clean
-  --onedir
-  --console
-  --name "omniinfer-bin"
-  --distpath "${CLI_DIST}"
-  --workpath "${BUILD_ROOT}/pyinstaller-work-cli"
-  --specpath "${BUILD_ROOT}/pyinstaller-spec-cli"
-  --add-data "${MODEL_CATALOG_ROOT}:service_core/model_catalogs"
-)
-for exclude in "${PYINSTALLER_EXCLUDES[@]}"; do
-  PYINSTALLER_ARGS+=(--exclude-module "${exclude}")
-done
-PYINSTALLER_ARGS+=("${CLI_ENTRY}")
-
-echo
-echo "Building omniinfer-bin (CLI) with PyInstaller..."
-python3 -m PyInstaller "${PYINSTALLER_ARGS[@]}"
-
-CLI_BIN="${CLI_DIST}/omniinfer-bin/omniinfer-bin"
-[[ -f "${CLI_BIN}" ]] || die "CLI build succeeded but omniinfer-bin not found at ${CLI_BIN}"
-
-cp -a "${CLI_DIST}/omniinfer-bin/." "${RELEASE_ROOT}/"
-copy_source_fallback
-write_launcher
+if selected_backends_include_mlx; then
+  install_mlx_source_cli
+else
+  build_pyinstaller_cli
+fi
 
 cat > "${CONFIG_ROOT}/omniinfer.json" <<EOF
 {
