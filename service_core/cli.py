@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -734,6 +735,90 @@ def _requested_window_mode(argv: list[str]) -> str:
     return mode
 
 
+def _value_from_argv(argv: list[str], name: str) -> str | None:
+    prefix = f"{name}="
+    for idx, token in enumerate(argv):
+        if token == name and idx + 1 < len(argv):
+            return argv[idx + 1]
+        if token.startswith(prefix):
+            return token.split("=", 1)[1]
+    return None
+
+
+def _flag_in_argv(argv: list[str], name: str) -> bool:
+    return any(token == name for token in argv)
+
+
+def _detached_health_target(argv: list[str]) -> tuple[str, int, int]:
+    config = load_app_config(APP_ROOT)
+    host = _value_from_argv(argv, "--host") or str(config.get("host", "127.0.0.1"))
+    if _flag_in_argv(argv, "--lan") and _value_from_argv(argv, "--host") is None:
+        host = "0.0.0.0"
+
+    port_text = _value_from_argv(argv, "--port") or str(config.get("port", "9000"))
+    timeout_text = _value_from_argv(argv, "--startup-timeout") or str(config.get("startup_timeout", "60"))
+    try:
+        port = int(port_text)
+    except ValueError:
+        port = 9000
+    try:
+        timeout = max(1, int(timeout_text))
+    except ValueError:
+        timeout = 60
+
+    health_host = "127.0.0.1" if host in {"", "0.0.0.0", "::"} else host
+    return health_host, port, timeout
+
+
+def _detached_child_log_path() -> Path:
+    return Path(APP_ROOT) / ".local" / "logs" / "serve-child.log"
+
+
+def _tail_file(path: Path, max_chars: int = 4000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-max_chars:].strip()
+
+
+def _wait_for_detached_health(
+    process: subprocess.Popen[Any],
+    *,
+    host: str,
+    port: int,
+    timeout_s: int,
+    log_path: Path,
+) -> None:
+    url = f"http://{host}:{port}/health"
+    deadline = time.monotonic() + timeout_s
+    last_error = ""
+    while time.monotonic() < deadline:
+        returncode = process.poll()
+        if returncode is not None:
+            message = f"OmniInfer detached server exited early with code {returncode}; expected health at {url}."
+            tail = _tail_file(log_path)
+            if tail:
+                message += f"\nChild log tail ({log_path}):\n{tail}"
+            raise SystemExit(message)
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                if response.status == 200:
+                    return
+                last_error = f"HTTP {response.status}"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(0.25)
+
+    message = f"OmniInfer detached server did not become healthy at {url} within {timeout_s}s."
+    if last_error:
+        message += f" Last error: {last_error}."
+    tail = _tail_file(log_path)
+    if tail:
+        message += f"\nChild log tail ({log_path}):\n{tail}"
+    raise SystemExit(message)
+
+
 def _is_help_request(argv: list[str]) -> bool:
     return any(token in {"-h", "--help"} for token in argv)
 
@@ -774,19 +859,37 @@ def _ensure_window_mode(argv: list[str]) -> None:
     if mode == "hidden" and os.environ.get(child_flag) != "1" and _has_console():
         env = os.environ.copy()
         env[child_flag] = "1"
-        import subprocess
 
         if getattr(sys, "frozen", False):
             command = [sys.executable, *sys.argv[1:]]
         else:
             command = [sys.executable, str(Path(REPO_ROOT) / "omniinfer.py"), *sys.argv[1:]]
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.Popen(
-            command,
-            env=env,
-            creationflags=creationflags,
-            cwd=str(APP_ROOT),
+        health_host, health_port, startup_timeout = _detached_health_target(argv)
+        log_path = _detached_child_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as log_handle:
+            log_handle.write(
+                f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] launching detached OmniInfer: {' '.join(command)}\n"
+            )
+            log_handle.flush()
+            process = subprocess.Popen(
+                command,
+                env=env,
+                creationflags=creationflags,
+                cwd=str(APP_ROOT),
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+            )
+        _wait_for_detached_health(
+            process,
+            host=health_host,
+            port=health_port,
+            timeout_s=startup_timeout,
+            log_path=log_path,
         )
+        print(f"OmniInfer detached server is healthy at http://{health_host}:{health_port}/health")
+        print(f"Detached server log: {log_path}")
         raise SystemExit(0)
 
     if mode == "visible" and not _has_console():

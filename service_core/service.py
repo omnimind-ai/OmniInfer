@@ -2122,7 +2122,12 @@ def main(argv: list[str] | None = None) -> int:
         backends=[b["id"] for b in manager.list_backends(scope="installed")[0]],
     )
 
-    httpd = ThreadingHTTPServer((args.host, args.port), OmniHandler)
+    logger.info("Effective bind: host=%s port=%s", args.host, args.port)
+    try:
+        httpd = ThreadingHTTPServer((args.host, args.port), OmniHandler)
+    except OSError:
+        logger.exception("Failed to bind OmniInfer gateway on %s:%s", args.host, args.port)
+        raise
     httpd.manager = manager  # type: ignore[attr-defined]
     httpd.default_thinking = args.default_thinking == "on"  # type: ignore[attr-defined]
     httpd.debug_http = bool(args.verbose)  # type: ignore[attr-defined]
