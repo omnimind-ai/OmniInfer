@@ -166,6 +166,21 @@ pick_mlx_release_python() {
   die "mlx-mac release packaging requires Python 3.10 through 3.13. Pass --mlx-python <path> if needed."
 }
 
+create_mlx_release_venv() {
+  local python_bin="$1"
+  local venv_root="$2"
+
+  if command -v uv >/dev/null 2>&1; then
+    uv venv --python "${python_bin}" "${venv_root}"
+    uv pip install --python "${venv_root}/bin/python" -r "${MLX_REQUIREMENTS_FILE}"
+    return
+  fi
+
+  "${python_bin}" -m venv --copies "${venv_root}"
+  "${venv_root}/bin/python" -m pip install --upgrade pip setuptools wheel
+  "${venv_root}/bin/python" -m pip install -r "${MLX_REQUIREMENTS_FILE}"
+}
+
 discover_built_backends() {
   local backend
   for backend in "${SUPPORTED_BACKENDS[@]}"; do
@@ -240,9 +255,7 @@ copy_backend_runtime() {
     python_bin="$(pick_mlx_release_python)"
     [[ -f "${MLX_REQUIREMENTS_FILE}" ]] || die "mlx-mac requirements file not found: ${MLX_REQUIREMENTS_FILE}"
     echo "Creating mlx-mac release venv with ${python_bin}..."
-    "${python_bin}" -m venv --copies "${target_root}/venv"
-    "${target_root}/venv/bin/python" -m pip install --upgrade pip setuptools wheel
-    "${target_root}/venv/bin/python" -m pip install -r "${MLX_REQUIREMENTS_FILE}"
+    create_mlx_release_venv "${python_bin}" "${target_root}/venv"
     return
   fi
 
