@@ -262,7 +262,6 @@ create_mlx_release_conda_pack() {
   done
 
   conda create -y -p "${conda_env_root}" "${conda_create_args[@]}" "python=${python_version}" pip
-  conda run -p "${conda_env_root}" python -m pip install --upgrade pip setuptools wheel
   [[ -n "${PYTHON_INDEX_URL}" ]] && pip_args+=(--index-url "${PYTHON_INDEX_URL}")
   conda run -p "${conda_env_root}" python -m pip install "${pip_args[@]}" -r "${MLX_REQUIREMENTS_FILE}"
 
