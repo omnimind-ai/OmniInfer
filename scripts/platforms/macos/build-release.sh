@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 LOCAL_RUNTIME_ROOT="${REPO_ROOT}/.local/runtime/macos"
+MLX_REQUIREMENTS_FILE="${SCRIPT_DIR}/mlx-mac/requirements.txt"
 
 PACKAGE_NAME="OmniInfer"
 PLATFORM_TAG=""
@@ -139,6 +140,32 @@ runtime_ready() {
   esac
 }
 
+python_supports_mlx_release() {
+  "$1" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if (3, 10) <= sys.version_info < (3, 14) else 1)
+PY
+}
+
+pick_mlx_release_python() {
+  local candidate
+  if [[ -n "${MLX_PYTHON}" ]]; then
+    [[ -x "${MLX_PYTHON}" ]] || die "Configured --mlx-python is not executable: ${MLX_PYTHON}"
+    python_supports_mlx_release "${MLX_PYTHON}" || die "--mlx-python must be Python 3.10, 3.11, 3.12, or 3.13."
+    echo "${MLX_PYTHON}"
+    return
+  fi
+
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "${candidate}" >/dev/null 2>&1 && python_supports_mlx_release "${candidate}"; then
+      command -v "${candidate}"
+      return
+    fi
+  done
+
+  die "mlx-mac release packaging requires Python 3.10 through 3.13. Pass --mlx-python <path> if needed."
+}
+
 discover_built_backends() {
   local backend
   for backend in "${SUPPORTED_BACKENDS[@]}"; do
@@ -209,8 +236,13 @@ copy_backend_runtime() {
   mkdir -p "${target_root}/logs"
 
   if [[ "${backend}" == "mlx-mac" ]]; then
-    [[ -x "${source_root}/venv/bin/python3" ]] || die "mlx-mac venv not found: ${source_root}/venv"
-    cp -a "${source_root}/venv" "${target_root}/venv"
+    local python_bin
+    python_bin="$(pick_mlx_release_python)"
+    [[ -f "${MLX_REQUIREMENTS_FILE}" ]] || die "mlx-mac requirements file not found: ${MLX_REQUIREMENTS_FILE}"
+    echo "Creating mlx-mac release venv with ${python_bin}..."
+    "${python_bin}" -m venv --copies "${target_root}/venv"
+    "${target_root}/venv/bin/python" -m pip install --upgrade pip setuptools wheel
+    "${target_root}/venv/bin/python" -m pip install -r "${MLX_REQUIREMENTS_FILE}"
     return
   fi
 
