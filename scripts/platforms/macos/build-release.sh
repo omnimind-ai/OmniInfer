@@ -1,0 +1,451 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+LOCAL_RUNTIME_ROOT="${REPO_ROOT}/.local/runtime/macos"
+
+PACKAGE_NAME="OmniInfer"
+PLATFORM_TAG=""
+BUILD_TYPE="Release"
+JOBS=""
+CLEAN_BUILD=0
+BOOTSTRAP_SUBMODULE=1
+SMOKE_TEST=0
+BUILD_MISSING=1
+ALL_SUPPORTED=0
+MLX_PYTHON=""
+DRY_RUN=0
+REQUESTED_BACKENDS=()
+
+SUPPORTED_BACKENDS=(
+  "llama.cpp-mac"
+  "llama.cpp-mac-intel"
+  "turboquant-mac"
+  "mlx-mac"
+)
+
+usage() {
+  cat <<'EOF'
+Usage: build-release.sh [options]
+
+Options:
+  --package-name <name>       Release directory name (default: OmniInfer)
+  --platform-tag <tag>        Output platform tag (default: macos-arm64 or macos-x64)
+  --backends <ids>            Comma-separated backend ids to package
+  --backend <id>              Backend id to package; can be passed multiple times
+  --all-supported             Package all supported macOS backends, building missing ones
+  --no-build-missing          Fail if a requested backend is not already built
+  --build-type <type>         CMake build type, default: Release
+  --jobs <n>                  Parallel build jobs passed to compiled backend scripts
+  --clean                     Remove previous backend build dirs before compiling
+  --no-bootstrap              Do not auto-initialize backend submodules
+  --smoke-test                Run backend smoke tests after compiling missing backends
+  --mlx-python <path>         Python 3.10+ interpreter used to build mlx-mac
+  --dry-run                   Print actions without executing packaging steps
+  -h, --help                  Show this help message
+
+Supported backends:
+  llama.cpp-mac, llama.cpp-mac-intel, turboquant-mac, mlx-mac
+EOF
+}
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+run_cmd() {
+  echo "+ $*"
+  if [[ ${DRY_RUN} -eq 0 ]]; then
+    "$@"
+  fi
+}
+
+contains_backend() {
+  local needle="$1"
+  local item
+  shift
+  for item in "$@"; do
+    [[ "${item}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
+append_backend() {
+  local backend="$1"
+  [[ -z "${backend}" ]] && return
+  if [[ ${#REQUESTED_BACKENDS[@]} -gt 0 ]]; then
+    if contains_backend "${backend}" "${REQUESTED_BACKENDS[@]}"; then
+      return
+    fi
+  fi
+  REQUESTED_BACKENDS+=("${backend}")
+}
+
+append_backend_list() {
+  local raw="$1"
+  local item
+  local old_ifs="${IFS}"
+  IFS=","
+  for item in ${raw}; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    append_backend "${item}"
+  done
+  IFS="${old_ifs}"
+}
+
+detect_platform_tag() {
+  local machine
+  machine="$(uname -m 2>/dev/null || echo unknown)"
+  case "${machine}" in
+    arm64|aarch64) echo "macos-arm64" ;;
+    x86_64|amd64) echo "macos-x64" ;;
+    *) echo "macos-${machine}" ;;
+  esac
+}
+
+host_default_backend() {
+  local machine
+  machine="$(uname -m 2>/dev/null || echo unknown)"
+  case "${machine}" in
+    x86_64|amd64) echo "llama.cpp-mac-intel" ;;
+    *) echo "llama.cpp-mac" ;;
+  esac
+}
+
+build_script_for_backend() {
+  case "$1" in
+    llama.cpp-mac) echo "${SCRIPT_DIR}/build-llama-mac.sh" ;;
+    llama.cpp-mac-intel) echo "${SCRIPT_DIR}/build-llama-mac-intel.sh" ;;
+    turboquant-mac) echo "${SCRIPT_DIR}/build-turboquant-mac.sh" ;;
+    mlx-mac) echo "${SCRIPT_DIR}/build-mlx-mac.sh" ;;
+    *) return 1 ;;
+  esac
+}
+
+runtime_ready() {
+  local backend="$1"
+  local root="${LOCAL_RUNTIME_ROOT}/${backend}"
+  case "${backend}" in
+    mlx-mac)
+      [[ -x "${root}/venv/bin/python3" ]]
+      ;;
+    *)
+      [[ -x "${root}/bin/llama-server" ]]
+      ;;
+  esac
+}
+
+discover_built_backends() {
+  local backend
+  for backend in "${SUPPORTED_BACKENDS[@]}"; do
+    if runtime_ready "${backend}"; then
+      echo "${backend}"
+    fi
+  done
+}
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    die "Required command '$1' was not found.${2:+ $2}"
+  fi
+}
+
+ensure_pyinstaller() {
+  if ! python3 -c "import PyInstaller" >/dev/null 2>&1; then
+    echo "PyInstaller not found. Installing..."
+    python3 -m pip install pyinstaller || die "Failed to install PyInstaller."
+  fi
+}
+
+build_backend_if_missing() {
+  local backend="$1"
+  local script_path
+  local args=()
+
+  if runtime_ready "${backend}"; then
+    echo "Using existing backend runtime: ${backend}"
+    return
+  fi
+
+  if [[ ${BUILD_MISSING} -eq 0 ]]; then
+    die "Requested backend '${backend}' is not built under ${LOCAL_RUNTIME_ROOT}."
+  fi
+
+  script_path="$(build_script_for_backend "${backend}")" || die "Unsupported backend: ${backend}"
+  [[ -f "${script_path}" ]] || die "Build script not found for ${backend}: ${script_path}"
+
+  echo "Backend '${backend}' is missing. Building it before packaging..."
+  if [[ "${backend}" == "mlx-mac" ]]; then
+    [[ -n "${MLX_PYTHON}" ]] && args+=(--python "${MLX_PYTHON}")
+  else
+    args+=(--build-type "${BUILD_TYPE}")
+    [[ -n "${JOBS}" ]] && args+=(--jobs "${JOBS}")
+    [[ ${CLEAN_BUILD} -eq 1 ]] && args+=(--clean)
+    [[ ${BOOTSTRAP_SUBMODULE} -eq 0 ]] && args+=(--no-bootstrap)
+    [[ ${SMOKE_TEST} -eq 1 ]] && args+=(--smoke-test)
+  fi
+  [[ ${DRY_RUN} -eq 1 ]] && args+=(--dry-run)
+  run_cmd bash "${script_path}" "${args[@]}"
+
+  if [[ ${DRY_RUN} -eq 0 ]] && ! runtime_ready "${backend}"; then
+    die "Build finished but runtime is still incomplete for ${backend}."
+  fi
+}
+
+copy_backend_runtime() {
+  local backend="$1"
+  local source_root="${LOCAL_RUNTIME_ROOT}/${backend}"
+  local target_root="${RUNTIME_ROOT}/${backend}"
+
+  rm -rf "${target_root}"
+  mkdir -p "${target_root}/logs"
+
+  if [[ "${backend}" == "mlx-mac" ]]; then
+    [[ -x "${source_root}/venv/bin/python3" ]] || die "mlx-mac venv not found: ${source_root}/venv"
+    cp -a "${source_root}/venv" "${target_root}/venv"
+    return
+  fi
+
+  [[ -x "${source_root}/bin/llama-server" ]] || die "llama-server not found for ${backend}: ${source_root}/bin"
+  mkdir -p "${target_root}/bin"
+  cp -a "${source_root}/bin/." "${target_root}/bin/"
+  chmod +x "${target_root}/bin/llama-server"
+}
+
+copy_source_fallback() {
+  cp "${REPO_ROOT}/omniinfer.py" "${RELEASE_ROOT}/omniinfer.py"
+  rm -rf "${RELEASE_ROOT}/service_core"
+  mkdir -p "${RELEASE_ROOT}/service_core"
+  cp -a "${REPO_ROOT}/service_core/." "${RELEASE_ROOT}/service_core/"
+  find "${RELEASE_ROOT}/service_core" -type d -name "__pycache__" -prune -exec rm -rf {} +
+  find "${RELEASE_ROOT}/service_core" -type f -name "*.pyc" -delete
+}
+
+write_launcher() {
+  cat > "${RELEASE_ROOT}/omniinfer" <<'EOF'
+#!/bin/sh
+set -eu
+
+SCRIPT_PATH="$0"
+case "$SCRIPT_PATH" in
+  /*) ;;
+  *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
+esac
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+MLX_PYTHON="$ROOT/runtime/mlx-mac/venv/bin/python3"
+
+if [ -x "$MLX_PYTHON" ]; then
+  exec "$MLX_PYTHON" "$ROOT/omniinfer.py" "$@"
+fi
+
+exec "$ROOT/omniinfer-bin" "$@"
+EOF
+  chmod +x "${RELEASE_ROOT}/omniinfer"
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --package-name)
+      PACKAGE_NAME="${2:?missing value for --package-name}"
+      shift 2
+      ;;
+    --platform-tag)
+      PLATFORM_TAG="${2:?missing value for --platform-tag}"
+      shift 2
+      ;;
+    --backends)
+      append_backend_list "${2:?missing value for --backends}"
+      shift 2
+      ;;
+    --backend)
+      append_backend "${2:?missing value for --backend}"
+      shift 2
+      ;;
+    --all-supported)
+      ALL_SUPPORTED=1
+      shift
+      ;;
+    --no-build-missing)
+      BUILD_MISSING=0
+      shift
+      ;;
+    --build-type)
+      BUILD_TYPE="${2:?missing value for --build-type}"
+      shift 2
+      ;;
+    --jobs)
+      JOBS="${2:?missing value for --jobs}"
+      shift 2
+      ;;
+    --clean)
+      CLEAN_BUILD=1
+      shift
+      ;;
+    --no-bootstrap)
+      BOOTSTRAP_SUBMODULE=0
+      shift
+      ;;
+    --smoke-test)
+      SMOKE_TEST=1
+      shift
+      ;;
+    --mlx-python)
+      MLX_PYTHON="${2:?missing value for --mlx-python}"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+[[ -z "${PLATFORM_TAG}" ]] && PLATFORM_TAG="$(detect_platform_tag)"
+
+RELEASE_ROOT="${REPO_ROOT}/release/portable/${PLATFORM_TAG}/${PACKAGE_NAME}"
+BUILD_ROOT="${REPO_ROOT}/release/build"
+CLI_DIST="${BUILD_ROOT}/macos-cli-dist"
+RUNTIME_ROOT="${RELEASE_ROOT}/runtime"
+CONFIG_ROOT="${RELEASE_ROOT}/config"
+MODEL_CATALOG_ROOT="${REPO_ROOT}/service_core/model_catalogs"
+
+if [[ ${ALL_SUPPORTED} -eq 1 ]]; then
+  SELECTED_BACKENDS=("${SUPPORTED_BACKENDS[@]}")
+elif [[ ${#REQUESTED_BACKENDS[@]} -gt 0 ]]; then
+  SELECTED_BACKENDS=("${REQUESTED_BACKENDS[@]}")
+else
+  SELECTED_BACKENDS=()
+  while IFS= read -r backend; do
+    SELECTED_BACKENDS+=("${backend}")
+  done < <(discover_built_backends)
+  if [[ ${#SELECTED_BACKENDS[@]} -eq 0 ]]; then
+    SELECTED_BACKENDS=("$(host_default_backend)")
+  fi
+fi
+
+for backend in "${SELECTED_BACKENDS[@]}"; do
+  if ! contains_backend "${backend}" "${SUPPORTED_BACKENDS[@]}"; then
+    die "Unsupported macOS backend '${backend}'. Supported: ${SUPPORTED_BACKENDS[*]}"
+  fi
+done
+
+for backend in "${SELECTED_BACKENDS[@]}"; do
+  build_backend_if_missing "${backend}"
+done
+
+DEFAULT_BACKEND="${SELECTED_BACKENDS[0]}"
+for candidate in "$(host_default_backend)" "turboquant-mac" "mlx-mac" "llama.cpp-mac" "llama.cpp-mac-intel"; do
+  if contains_backend "${candidate}" "${SELECTED_BACKENDS[@]}"; then
+    DEFAULT_BACKEND="${candidate}"
+    break
+  fi
+done
+
+echo "Packaged ${#SELECTED_BACKENDS[@]} backend(s): ${SELECTED_BACKENDS[*]}"
+echo "Default backend: ${DEFAULT_BACKEND}"
+echo "Package root: ${RELEASE_ROOT}"
+
+if [[ ${DRY_RUN} -eq 1 ]]; then
+  echo "Dry run enabled. Release packaging was not executed."
+  exit 0
+fi
+
+require_command python3 "Install Python 3.10+ first."
+ensure_pyinstaller
+
+rm -rf "${RELEASE_ROOT}" "${BUILD_ROOT}"
+mkdir -p "${RELEASE_ROOT}" "${RUNTIME_ROOT}" "${CONFIG_ROOT}" "${BUILD_ROOT}"
+
+CLI_ENTRY="${REPO_ROOT}/omniinfer.py"
+[[ -f "${CLI_ENTRY}" ]] || die "CLI entry point not found: ${CLI_ENTRY}"
+
+PYINSTALLER_EXCLUDES=(
+  "cv2"
+  "matplotlib"
+  "mkl"
+  "numpy"
+  "pandas"
+  "PIL"
+  "scipy"
+  "sklearn"
+  "sympy"
+  "torch"
+  "torchvision"
+)
+
+PYINSTALLER_ARGS=(
+  --noconfirm
+  --clean
+  --onedir
+  --console
+  --name "omniinfer-bin"
+  --distpath "${CLI_DIST}"
+  --workpath "${BUILD_ROOT}/pyinstaller-work-cli"
+  --specpath "${BUILD_ROOT}/pyinstaller-spec-cli"
+  --add-data "${MODEL_CATALOG_ROOT}:service_core/model_catalogs"
+)
+for exclude in "${PYINSTALLER_EXCLUDES[@]}"; do
+  PYINSTALLER_ARGS+=(--exclude-module "${exclude}")
+done
+PYINSTALLER_ARGS+=("${CLI_ENTRY}")
+
+echo
+echo "Building omniinfer-bin (CLI) with PyInstaller..."
+python3 -m PyInstaller "${PYINSTALLER_ARGS[@]}"
+
+CLI_BIN="${CLI_DIST}/omniinfer-bin/omniinfer-bin"
+[[ -f "${CLI_BIN}" ]] || die "CLI build succeeded but omniinfer-bin not found at ${CLI_BIN}"
+
+cp -a "${CLI_DIST}/omniinfer-bin/." "${RELEASE_ROOT}/"
+copy_source_fallback
+write_launcher
+
+cat > "${CONFIG_ROOT}/omniinfer.json" <<EOF
+{
+  "host": "127.0.0.1",
+  "port": 9000,
+  "default_backend": "${DEFAULT_BACKEND}",
+  "default_thinking": "off",
+  "window_mode": "hidden",
+  "startup_timeout": 60,
+  "runtime_root": "runtime"
+}
+EOF
+
+COPIED_BACKENDS=()
+for backend in "${SELECTED_BACKENDS[@]}"; do
+  copy_backend_runtime "${backend}"
+  COPIED_BACKENDS+=("${backend}")
+done
+
+USAGE_TEMPLATE="${REPO_ROOT}/tmp/usage.md"
+if [[ -f "${USAGE_TEMPLATE}" ]]; then
+  cp "${USAGE_TEMPLATE}" "${RELEASE_ROOT}/README.md"
+fi
+
+echo
+echo "============================================"
+echo "Portable release ready."
+echo "  Location:  ${RELEASE_ROOT}"
+echo "  Platform:  ${PLATFORM_TAG}"
+echo "  Backends:  ${COPIED_BACKENDS[*]}"
+echo "  Default:   ${DEFAULT_BACKEND}"
+echo "============================================"
+echo
+echo "Run with:"
+echo "  ${RELEASE_ROOT}/omniinfer backend list"
+echo "  ${RELEASE_ROOT}/omniinfer chat \"Hello\""
