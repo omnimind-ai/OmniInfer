@@ -18,6 +18,7 @@ BUILD_MISSING=1
 ALL_SUPPORTED=0
 MLX_PYTHON=""
 MLX_ENV_MANAGER="auto"
+PYTHON_INDEX_URL="${PYTHON_INDEX_URL:-}"
 DRY_RUN=0
 REQUESTED_BACKENDS=()
 
@@ -46,6 +47,7 @@ Options:
   --smoke-test                Run backend smoke tests after compiling missing backends
   --mlx-python <path>         Python 3.10+ interpreter used to build mlx-mac
   --mlx-env-manager <manager> Build mlx-mac release Python env with auto, uv, venv, or conda-pack (default: auto)
+  --python-index-url <url>    Python package index URL for MLX dependency installation
   --dry-run                   Print actions without executing packaging steps
   -h, --help                  Show this help message
 
@@ -198,19 +200,24 @@ create_mlx_release_venv() {
 create_mlx_release_uv_venv() {
   local python_bin="$1"
   local venv_root="$2"
+  local uv_pip_args=()
 
   require_command uv "Install uv or pass --mlx-env-manager venv/conda-pack."
-  uv venv --python "${python_bin}" "${venv_root}"
-  uv pip install --python "${venv_root}/bin/python" -r "${MLX_REQUIREMENTS_FILE}"
+  "${python_bin}" -m venv --copies "${venv_root}"
+  uv_pip_args=(--python "${venv_root}/bin/python")
+  [[ -n "${PYTHON_INDEX_URL}" ]] && uv_pip_args+=(--default-index "${PYTHON_INDEX_URL}")
+  uv pip install "${uv_pip_args[@]}" -r "${MLX_REQUIREMENTS_FILE}"
 }
 
 create_mlx_release_stdlib_venv() {
   local python_bin="$1"
   local venv_root="$2"
+  local pip_args=()
 
   "${python_bin}" -m venv --copies "${venv_root}"
   "${venv_root}/bin/python" -m pip install --upgrade pip setuptools wheel
-  "${venv_root}/bin/python" -m pip install -r "${MLX_REQUIREMENTS_FILE}"
+  [[ -n "${PYTHON_INDEX_URL}" ]] && pip_args+=(--index-url "${PYTHON_INDEX_URL}")
+  "${venv_root}/bin/python" -m pip install "${pip_args[@]}" -r "${MLX_REQUIREMENTS_FILE}"
 }
 
 conda_pack_available() {
@@ -229,6 +236,7 @@ run_conda_pack() {
 create_mlx_release_conda_pack() {
   local python_bin="$1"
   local venv_root="$2"
+  local pip_args=()
   local python_version
   local conda_env_root="${BUILD_ROOT}/mlx-mac-conda-env"
   local conda_archive="${BUILD_ROOT}/mlx-mac-conda-env.tar.gz"
@@ -243,11 +251,32 @@ create_mlx_release_conda_pack() {
 
   conda create -y -p "${conda_env_root}" "python=${python_version}" pip
   conda run -p "${conda_env_root}" python -m pip install --upgrade pip setuptools wheel
-  conda run -p "${conda_env_root}" python -m pip install -r "${MLX_REQUIREMENTS_FILE}"
+  [[ -n "${PYTHON_INDEX_URL}" ]] && pip_args+=(--index-url "${PYTHON_INDEX_URL}")
+  conda run -p "${conda_env_root}" python -m pip install "${pip_args[@]}" -r "${MLX_REQUIREMENTS_FILE}"
 
   mkdir -p "${venv_root}"
   run_conda_pack -p "${conda_env_root}" -o "${conda_archive}" --force
   tar -xzf "${conda_archive}" -C "${venv_root}"
+}
+
+validate_mlx_release_venv() {
+  local venv_root="$1"
+  local python_path="${venv_root}/bin/python3"
+  local python_real
+  local venv_real
+
+  [[ -x "${python_path}" ]] || die "mlx-mac release Python is not executable: ${python_path}"
+  python_real="$(realpath "${python_path}")"
+  venv_real="$(realpath "${venv_root}")"
+  case "${python_real}" in
+    "${venv_real}"/*) ;;
+    *) die "mlx-mac release Python resolves outside the package: ${python_real}" ;;
+  esac
+
+  "${python_path}" - <<'PY'
+import sys
+raise SystemExit(0 if (3, 10) <= sys.version_info < (3, 14) else 1)
+PY
 }
 
 discover_built_backends() {
@@ -325,6 +354,7 @@ copy_backend_runtime() {
     [[ -f "${MLX_REQUIREMENTS_FILE}" ]] || die "mlx-mac requirements file not found: ${MLX_REQUIREMENTS_FILE}"
     echo "Creating mlx-mac release venv with ${python_bin}..."
     create_mlx_release_venv "${python_bin}" "${target_root}/venv"
+    validate_mlx_release_venv "${target_root}/venv"
     return
   fi
 
@@ -482,6 +512,10 @@ while (($# > 0)); do
       ;;
     --mlx-env-manager)
       MLX_ENV_MANAGER="${2:?missing value for --mlx-env-manager}"
+      shift 2
+      ;;
+    --python-index-url)
+      PYTHON_INDEX_URL="${2:?missing value for --python-index-url}"
       shift 2
       ;;
     --dry-run)

@@ -394,16 +394,18 @@ mode depends on the selected backends:
 
 For `mlx-mac` releases, the packaging script creates a fresh venv inside the
 release package and installs `scripts/platforms/macos/mlx-mac/requirements.txt`.
-The default `--mlx-env-manager auto` mode uses `uv venv` and `uv pip install`
-when `uv` is available, otherwise it falls back to the standard library `venv`
-module and pip. Use `--mlx-env-manager uv`, `--mlx-env-manager venv`, or
+The default `--mlx-env-manager auto` mode creates a copied standard-library venv
+and uses `uv pip install` when `uv` is available, otherwise it falls back to the
+standard library `venv` module and pip. Use `--mlx-env-manager uv`,
+`--mlx-env-manager venv`, or
 `--mlx-env-manager conda-pack` when you need to compare or pin the packaging
 strategy. The `conda-pack` strategy creates a temporary conda environment,
 installs the same MLX requirements, packs it with `conda-pack`, and unpacks it
 into `runtime/mlx-mac/venv`; the launcher runs `conda-unpack` before starting
 OmniInfer so prefix relocation happens after extraction. Use `--mlx-python
 <path>` when you need to choose a specific Python 3.10 through 3.13 interpreter
-for the release environment version.
+for the release environment version. Use `--python-index-url <url>` when a
+regional PyPI mirror is needed for MLX dependency downloads.
 
 ## Android
 
