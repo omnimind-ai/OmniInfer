@@ -10,7 +10,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Any, Callable
@@ -119,6 +119,7 @@ class LoadedRuntime:
     log_handle: TextIOWrapper | None = None
     embedded_driver: EmbeddedBackendDriver | None = None
     embedded_state: Any = None
+    load_warnings: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -260,6 +261,67 @@ class RuntimeManager:
                     f"launch arg {flag_name!r} is managed by OmniInfer and must not be set in backend config"
                 )
             i += 1
+
+    def _load_option_warning(self, field: str, message: str) -> dict[str, str]:
+        return {
+            "field": field,
+            "reason": "unsupported_by_backend",
+            "message": message,
+        }
+
+    def _append_load_option_warning(
+        self,
+        warnings: list[dict[str, str]],
+        *,
+        field: str,
+        backend: BackendSpec,
+        message: str,
+        strict_capabilities: bool,
+    ) -> None:
+        if strict_capabilities:
+            raise ValueError(message)
+        warning = self._load_option_warning(field, message)
+        warnings.append(warning)
+        logger.warning("%s", message)
+
+    def _normalize_load_options_for_backend(
+        self,
+        backend: BackendSpec,
+        *,
+        mmproj: str | None,
+        ctx_size: int | None,
+        launch_args: list[str] | None,
+        warnings: list[dict[str, str]],
+        strict_capabilities: bool,
+    ) -> tuple[str | None, int | None, list[str] | None]:
+        if mmproj and not backend.supports_mmproj:
+            self._append_load_option_warning(
+                warnings,
+                field="mmproj",
+                backend=backend,
+                message=f"mmproj is not supported by {backend.id} and was ignored",
+                strict_capabilities=strict_capabilities,
+            )
+            mmproj = None
+        if ctx_size is not None and not backend.supports_ctx_size:
+            self._append_load_option_warning(
+                warnings,
+                field="ctx_size",
+                backend=backend,
+                message=f"ctx_size is not supported by {backend.id} and was ignored",
+                strict_capabilities=strict_capabilities,
+            )
+            ctx_size = None
+        if launch_args and backend.runtime_mode == "embedded":
+            self._append_load_option_warning(
+                warnings,
+                field="launch_args",
+                backend=backend,
+                message=f"launch_args are not supported by embedded backend {backend.id} and were ignored",
+                strict_capabilities=strict_capabilities,
+            )
+            launch_args = None
+        return mmproj, ctx_size, launch_args
 
     def _get_backend(self, backend_id: str | None = None) -> BackendSpec:
         target = self._normalize_backend_id(backend_id) or self.selected_backend_id
@@ -789,14 +851,25 @@ class RuntimeManager:
         ctx_size: int | None = None,
         launch_args: list[str] | None = None,
         request_defaults: dict[str, Any] | None = None,
+        strict_capabilities: bool = False,
         on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> LoadedRuntime:
         with self.lock:
+            load_warnings: list[dict[str, str]] = []
             requested_backend_id = self._normalize_backend_id(backend_id)
             if not model:
                 if self._is_runtime_running_locked() and self.loaded_runtime:
                     if requested_backend_id and self.loaded_runtime.backend_id != requested_backend_id:
                         raise RuntimeError("a different backend is currently loaded; reload the model to switch")
+                    current_backend = self._get_backend(self.loaded_runtime.backend_id)
+                    _mmproj, ctx_size, launch_args = self._normalize_load_options_for_backend(
+                        current_backend,
+                        mmproj=mmproj,
+                        ctx_size=ctx_size,
+                        launch_args=launch_args,
+                        warnings=load_warnings,
+                        strict_capabilities=strict_capabilities,
+                    )
                     desired_launch_args = list(self.loaded_runtime.launch_args if launch_args is None else launch_args)
                     desired_request_defaults = dict(
                         self.loaded_runtime.request_defaults if request_defaults is None else request_defaults
@@ -817,14 +890,13 @@ class RuntimeManager:
                         and compare_desired_launch_args == compare_current_launch_args
                     ):
                         self.loaded_runtime.request_defaults = desired_request_defaults
+                        self.loaded_runtime.load_warnings = list(load_warnings)
                         return self.loaded_runtime
                     current_runtime = self.loaded_runtime
                     backend = self._get_backend(current_runtime.backend_id)
-                    if not backend.supports_ctx_size:
-                        raise ValueError(f"{backend.id} does not support ctx_size overrides")
                     self._set_selected_backend_locked(backend.id)
                     self._stop_runtime_locked()
-                    return self._start_runtime_locked(
+                    runtime = self._start_runtime_locked(
                         backend,
                         current_runtime.model_path,
                         current_runtime.mmproj_path,
@@ -833,12 +905,20 @@ class RuntimeManager:
                         request_defaults=desired_request_defaults,
                         on_progress=on_progress,
                     )
+                    runtime.load_warnings = list(load_warnings)
+                    return runtime
                 logger.warning("No model loaded and no model specified in request")
                 raise RuntimeError("no backend model loaded; call /omni/model/select first or provide 'model'")
 
             preferred_backend = self._get_backend(requested_backend_id) if requested_backend_id else self._get_backend()
-            if ctx_size is not None and not preferred_backend.supports_ctx_size:
-                raise ValueError(f"{preferred_backend.id} does not support ctx_size overrides")
+            mmproj, ctx_size, launch_args = self._normalize_load_options_for_backend(
+                preferred_backend,
+                mmproj=mmproj,
+                ctx_size=ctx_size,
+                launch_args=launch_args,
+                warnings=load_warnings,
+                strict_capabilities=strict_capabilities,
+            )
             if on_progress:
                 on_progress({"type": "status", "message": "Resolving model files..."})
             model_path, auto_mmproj_path = self._resolve_model_path(preferred_backend, model)
@@ -889,8 +969,17 @@ class RuntimeManager:
                     )
                     resolved_backend_id = fallback
             backend = self._get_backend(resolved_backend_id)
-            if ctx_size is not None and not backend.supports_ctx_size:
-                raise ValueError(f"{backend.id} does not support ctx_size overrides")
+            if backend.id != preferred_backend.id:
+                _raw_mmproj, ctx_size, launch_args = self._normalize_load_options_for_backend(
+                    backend,
+                    mmproj=mmproj_path,
+                    ctx_size=ctx_size,
+                    launch_args=launch_args,
+                    warnings=load_warnings,
+                    strict_capabilities=strict_capabilities,
+                )
+                if not backend.supports_mmproj and mmproj_path:
+                    mmproj_path = None
             self._set_selected_backend_locked(backend.id)
             effective_launch_args = list(backend.default_args if launch_args is None else launch_args)
             effective_request_defaults = dict(request_defaults or {})
@@ -907,6 +996,7 @@ class RuntimeManager:
                     launch_args=effective_launch_args,
                 ):
                     current.request_defaults = effective_request_defaults
+                    current.load_warnings = list(load_warnings)
                     if on_progress:
                         on_progress({"type": "status", "message": "Reusing loaded backend."})
                     return current
@@ -929,7 +1019,7 @@ class RuntimeManager:
             self._stop_runtime_locked()
             if on_progress:
                 on_progress({"type": "status", "message": f"Loading model with {backend.id}..."})
-            return self._start_runtime_locked(
+            runtime = self._start_runtime_locked(
                 backend,
                 model_path,
                 mmproj_path,
@@ -938,6 +1028,8 @@ class RuntimeManager:
                 request_defaults=effective_request_defaults,
                 on_progress=on_progress,
             )
+            runtime.load_warnings = list(load_warnings)
+            return runtime
 
     def select_model(
         self,
@@ -947,6 +1039,7 @@ class RuntimeManager:
         ctx_size: int | None = None,
         launch_args: list[str] | None = None,
         request_defaults: dict[str, Any] | None = None,
+        strict_capabilities: bool = False,
         on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         runtime = self.ensure_model_loaded(
@@ -956,6 +1049,7 @@ class RuntimeManager:
             ctx_size=ctx_size,
             launch_args=launch_args,
             request_defaults=request_defaults,
+            strict_capabilities=strict_capabilities,
             on_progress=on_progress,
         )
         return {
@@ -964,6 +1058,7 @@ class RuntimeManager:
             "selected_model": runtime.model_ref,
             "selected_mmproj": runtime.mmproj_ref,
             "selected_ctx_size": runtime.ctx_size,
+            "warnings": list(runtime.load_warnings),
         }
 
     def current_proxy_target(self) -> tuple[str, int] | None:
