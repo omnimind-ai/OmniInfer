@@ -20,6 +20,7 @@ MLX_PYTHON=""
 PYTHON_INDEX_URL="${PYTHON_INDEX_URL:-}"
 SLIM_RELEASE=1
 DRY_RUN=0
+CREATE_ARCHIVE=0
 REQUESTED_BACKENDS=()
 
 SUPPORTED_BACKENDS=(
@@ -48,6 +49,7 @@ Options:
   --mlx-python <path>         Python 3.10+ interpreter used to build mlx-mac
   --python-index-url <url>    Python package index URL for MLX dependency installation
   --no-slim                   Keep test files, bytecode, and build-only Python assets in the release
+  --archive                   Create a zip archive next to the release directory
   --dry-run                   Print actions without executing packaging steps
   -h, --help                  Show this help message
 
@@ -119,6 +121,33 @@ host_default_backend() {
     x86_64|amd64) echo "llama.cpp-mac-intel" ;;
     *) echo "llama.cpp-mac" ;;
   esac
+}
+
+archive_label_for_backend() {
+  case "$1" in
+    llama.cpp-mac) echo "llama" ;;
+    llama.cpp-mac-intel) echo "llama-intel" ;;
+    turboquant-mac) echo "turboquant" ;;
+    mlx-mac) echo "mlx" ;;
+    *)
+      echo "$1" | tr '.[:upper:]' '-[:lower:]'
+      ;;
+  esac
+}
+
+archive_backend_suffix() {
+  local labels=()
+  local backend
+  local old_ifs
+
+  for backend in "${SELECTED_BACKENDS[@]}"; do
+    labels+=("$(archive_label_for_backend "${backend}")")
+  done
+
+  old_ifs="${IFS}"
+  IFS="-"
+  echo "${labels[*]}"
+  IFS="${old_ifs}"
 }
 
 build_script_for_backend() {
@@ -482,6 +511,10 @@ while (($# > 0)); do
       SLIM_RELEASE=0
       shift
       ;;
+    --archive)
+      CREATE_ARCHIVE=1
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -539,9 +572,16 @@ for candidate in "$(host_default_backend)" "turboquant-mac" "mlx-mac" "llama.cpp
   fi
 done
 
+ARCHIVE_PATH="${REPO_ROOT}/release/portable/${PLATFORM_TAG}/${PACKAGE_NAME}-${PLATFORM_TAG}-$(archive_backend_suffix).zip"
+
 echo "Packaged ${#SELECTED_BACKENDS[@]} backend(s): ${SELECTED_BACKENDS[*]}"
 echo "Default backend: ${DEFAULT_BACKEND}"
 echo "Package root: ${RELEASE_ROOT}"
+if [[ ${CREATE_ARCHIVE} -eq 1 ]]; then
+  echo "Archive: ${ARCHIVE_PATH}"
+else
+  echo "Archive: disabled"
+fi
 if selected_backends_include_mlx; then
   echo "CLI mode: source launcher with mlx-mac venv"
   echo "MLX env manager: uv"
@@ -587,10 +627,22 @@ if [[ -f "${USAGE_TEMPLATE}" ]]; then
   cp "${USAGE_TEMPLATE}" "${RELEASE_ROOT}/README.md"
 fi
 
+if [[ ${CREATE_ARCHIVE} -eq 1 ]]; then
+  require_command ditto "macOS release archives require ditto."
+  rm -f "${ARCHIVE_PATH}"
+  (
+    cd "$(dirname "${RELEASE_ROOT}")"
+    ditto -c -k --sequesterRsrc --keepParent "$(basename "${RELEASE_ROOT}")" "$(basename "${ARCHIVE_PATH}")"
+  )
+fi
+
 echo
 echo "============================================"
 echo "Portable release ready."
 echo "  Location:  ${RELEASE_ROOT}"
+if [[ ${CREATE_ARCHIVE} -eq 1 ]]; then
+  echo "  Archive:   ${ARCHIVE_PATH}"
+fi
 echo "  Platform:  ${PLATFORM_TAG}"
 echo "  Backends:  ${COPIED_BACKENDS[*]}"
 echo "  Default:   ${DEFAULT_BACKEND}"

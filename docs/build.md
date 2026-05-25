@@ -372,6 +372,16 @@ bash ./scripts/platforms/macos/build-release.sh --backends llama.cpp-mac,mlx-mac
 bash ./scripts/platforms/macos/build-release.sh --backend llama.cpp-mac --backend turboquant-mac
 ```
 
+The default output directory is the stable package root:
+
+- `release/portable/macos-arm64/OmniInfer`
+- `release/portable/macos-x64/OmniInfer`
+
+The script does not create a zip archive by default. Pass `--archive` when you
+need a distributable zip; the archive name is generated from the package,
+platform, and selected backend set, for example
+`OmniInfer-macos-arm64-llama-mlx.zip`.
+
 Use strict mode when you want packaging to fail instead of building missing runtimes:
 
 ```bash
