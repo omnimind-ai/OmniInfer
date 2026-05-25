@@ -213,6 +213,9 @@ Backends vary by platform. OmniStudio automatically selects the best available b
 
 ### Advanced: Switch Backend via API
 
+Model load parameters are documented in the main OmniInfer API contract:
+[`docs/model-load.md`](../model-load.md).
+
 ```bash
 curl -X POST http://127.0.0.1:9000/omni/model/select \
   -H "Content-Type: application/json" \

@@ -1791,6 +1791,36 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         result = self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")
         self.assertEqual(result["selected_backend"], "mlx-mac")
         self.assertEqual(self.manager.current_runtime_mode(), "embedded")
+        self.assertEqual(result["warnings"], [])
+
+    def test_unsupported_load_options_are_ignored_with_warnings(self) -> None:
+        result = self.manager.select_model(
+            model=str(self.model_dir),
+            backend_id="mlx-mac",
+            mmproj="/tmp/ignored-mmproj.gguf",
+            ctx_size=4096,
+            launch_args=["-t", "8"],
+        )
+
+        self.assertIsNone(result["selected_mmproj"])
+        self.assertIsNone(result["selected_ctx_size"])
+        self.assertEqual([warning["field"] for warning in result["warnings"]], ["mmproj", "ctx_size", "launch_args"])
+        self.assertIsNotNone(self.manager.loaded_runtime)
+        state = self.manager.loaded_runtime.embedded_state
+        self.assertIsNone(state["mmproj_path"])
+        self.assertIsNone(state["ctx_size"])
+        self.assertEqual(self.manager.loaded_runtime.launch_args, [])
+
+    def test_strict_capabilities_rejects_unsupported_load_options(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ctx_size is not supported"):
+            self.manager.select_model(
+                model=str(self.model_dir),
+                backend_id="mlx-mac",
+                ctx_size=4096,
+                strict_capabilities=True,
+            )
+
+        self.assertIsNone(self.manager.loaded_runtime)
 
     def test_chat_completion(self) -> None:
         self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")
@@ -1915,6 +1945,41 @@ class AutoSelectRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result["selected_backend"], "llama.cpp-cuda")
         self.assertEqual(self.started_backends, ["llama.cpp-cuda"])
+
+    def test_external_backend_keeps_supported_load_options(self) -> None:
+        mmproj = self.root / "mmproj.gguf"
+        mmproj.write_text("mmproj", encoding="utf-8")
+        captured: dict[str, object] = {}
+
+        def start_runtime(backend, model_path, mmproj_path, **kwargs):
+            captured["backend"] = backend.id
+            captured["model_path"] = model_path
+            captured["mmproj_path"] = mmproj_path
+            captured.update(kwargs)
+            runtime = self._loaded_runtime(backend.id, model_path)
+            runtime.mmproj_path = mmproj_path
+            runtime.mmproj_ref = display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None
+            runtime.ctx_size = kwargs["ctx_size"]
+            runtime.launch_args = list(kwargs["launch_args"])
+            self.manager.loaded_runtime = runtime
+            return runtime
+
+        self.manager._start_runtime_locked = start_runtime  # type: ignore[method-assign]
+
+        result = self.manager.select_model(
+            model=str(self.model_path),
+            backend_id="llama.cpp-cpu",
+            mmproj=str(mmproj),
+            ctx_size=4096,
+            launch_args=["-t", "8"],
+        )
+
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(captured["backend"], result["selected_backend"])
+        self.assertEqual(captured["mmproj_path"], str(mmproj))
+        self.assertEqual(captured["ctx_size"], 4096)
+        self.assertEqual(captured["launch_args"], ["-t", "8"])
+        self.assertEqual(result["selected_ctx_size"], 4096)
 
 
 class ExternalRuntimeLaunchArgsTests(unittest.TestCase):

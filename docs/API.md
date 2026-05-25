@@ -387,6 +387,7 @@ curl -s "http://127.0.0.1:9000/omni/supported-models/best?system=windows"
 ### `POST /omni/model/select`
 
 Loads a model and optionally an `mmproj` file. This is the management endpoint that starts or restarts the selected backend runtime.
+For the stable gateway contract, see [Model Load Parameters](model-load.md).
 
 Request body:
 
@@ -397,6 +398,7 @@ Request body:
   "backend": "<optional-backend-id>",
   "ctx_size": 4096,
   "launch_args": ["-ngl", "999"],
+  "strict_capabilities": false,
   "request_defaults": {
     "temperature": 0.2,
     "max_tokens": 128,
@@ -412,6 +414,7 @@ Notes:
 - `ctx_size` is optional and may also be sent as `ctx-size`.
 - `launch_args` is optional and intended for backend-native launch arguments.
 - `request_defaults` is merged into later inference requests after this model is loaded.
+- `strict_capabilities` is optional. When true, unsupported load options fail instead of being ignored with warnings.
 - Relative model paths resolve under the selected backend's `models_dir`.
 
 Example response:
@@ -422,7 +425,8 @@ Example response:
   "selected_backend": "llama.cpp-cuda",
   "selected_model": "models/Qwen3.5-2B-Q4_K_M.gguf",
   "selected_mmproj": null,
-  "selected_ctx_size": 4096
+  "selected_ctx_size": 4096,
+  "warnings": []
 }
 ```
 

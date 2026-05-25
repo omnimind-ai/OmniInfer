@@ -1347,6 +1347,7 @@ class OmniHandler(BaseHTTPRequestHandler):
         ctx_size: int | None,
         launch_args: list[str] | None,
         request_defaults: dict[str, Any] | None,
+        strict_capabilities: bool = False,
     ) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -1380,6 +1381,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                 ctx_size=ctx_size,
                 launch_args=launch_args,
                 request_defaults=request_defaults,
+                strict_capabilities=strict_capabilities,
                 on_progress=emit,
             )
             _elapsed = round(time.perf_counter() - _load_start, 1)
@@ -1601,6 +1603,11 @@ class OmniHandler(BaseHTTPRequestHandler):
             raw_request_defaults = payload.get("request_defaults")
             request_defaults = dict(raw_request_defaults) if isinstance(raw_request_defaults, dict) else None
             try:
+                strict_capabilities = parse_boolish(payload.get("strict_capabilities", False))
+            except ValueError as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
+            try:
                 ctx_size = parse_optional_positive_int_field(payload, "ctx_size", "ctx-size")
             except ValueError as e:
                 self._send_json(400, {"error": {"message": str(e)}})
@@ -1617,6 +1624,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                     ctx_size=ctx_size,
                     launch_args=launch_args,
                     request_defaults=request_defaults,
+                    strict_capabilities=strict_capabilities,
                 )
                 return
             try:
@@ -1627,6 +1635,7 @@ class OmniHandler(BaseHTTPRequestHandler):
                     ctx_size=ctx_size,
                     launch_args=launch_args,
                     request_defaults=request_defaults,
+                    strict_capabilities=strict_capabilities,
                 )
             except (ValueError, FileNotFoundError, RuntimeError) as e:
                 status = 400 if isinstance(e, (ValueError, FileNotFoundError)) else 409
