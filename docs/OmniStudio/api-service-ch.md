@@ -213,6 +213,9 @@ console.log(data.choices[0].message.content);
 
 ### 进阶：通过 API 切换后端
 
+模型加载参数以 OmniInfer 主 API 契约为准：
+[`docs/model-load.md`](../model-load.md)。
+
 ```bash
 curl -X POST http://127.0.0.1:9000/omni/model/select \
   -H "Content-Type: application/json" \
