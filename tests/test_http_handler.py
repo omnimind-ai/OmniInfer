@@ -956,13 +956,14 @@ class CloudflareConsoleOutputTests(unittest.TestCase):
     def test_cloudflare_access_urls_highlight_when_stdout_is_tty(self) -> None:
         stream = io.StringIO()
         stream.isatty = lambda: True  # type: ignore[method-assign]
-        with redirect_stdout(stream):
-            log_cloudflare_access_urls(
-                "https://example.trycloudflare.com",
-                9000,
-                "oi_test_key",
-                print_key=True,
-            )
+        with patch.dict("os.environ", {}, clear=True):
+            with redirect_stdout(stream):
+                log_cloudflare_access_urls(
+                    "https://example.trycloudflare.com",
+                    9000,
+                    "oi_test_key",
+                    print_key=True,
+                )
 
         output = stream.getvalue()
         self.assertIn("\033[36;1m>>> OPENAI BASE URL\033[0m", output)
@@ -973,7 +974,7 @@ class CloudflareConsoleOutputTests(unittest.TestCase):
 
     def test_cloudflare_access_urls_can_force_color(self) -> None:
         stream = io.StringIO()
-        with patch.dict("os.environ", {"OMNIINFER_FORCE_COLOR": "1"}, clear=False):
+        with patch.dict("os.environ", {"OMNIINFER_FORCE_COLOR": "1"}, clear=True):
             with redirect_stdout(stream):
                 log_cloudflare_access_urls(
                     "https://example.trycloudflare.com",
@@ -1004,13 +1005,14 @@ class CloudflareConsoleOutputTests(unittest.TestCase):
     @patch("service_core.service._enable_windows_virtual_terminal", return_value=True)
     def test_cloudflare_access_urls_highlight_when_windows_vt_is_available(self, _enable_vt: MagicMock) -> None:
         stream = io.StringIO()
-        with redirect_stdout(stream):
-            log_cloudflare_access_urls(
-                "https://example.trycloudflare.com",
-                9000,
-                "oi_test_key",
-                print_key=True,
-            )
+        with patch.dict("os.environ", {}, clear=True):
+            with redirect_stdout(stream):
+                log_cloudflare_access_urls(
+                    "https://example.trycloudflare.com",
+                    9000,
+                    "oi_test_key",
+                    print_key=True,
+                )
 
         output = stream.getvalue()
         self.assertIn("\033[36;1m>>> OPENAI BASE URL\033[0m", output)
