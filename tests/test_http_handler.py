@@ -300,6 +300,29 @@ class HttpHandlerTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertIn("required", body["error"]["message"])
 
+    def test_model_select_passes_strict_capabilities(self) -> None:
+        self.server.manager.select_model.return_value = {
+            "ok": True,
+            "selected_backend": "mlx-mac",
+            "selected_model": "demo",
+            "selected_mmproj": None,
+            "selected_ctx_size": None,
+            "warnings": [],
+        }
+
+        code, _body = _post(
+            self.base_url,
+            "/omni/model/select",
+            {
+                "model": "demo",
+                "backend": "mlx-mac",
+                "strict_capabilities": True,
+            },
+        )
+
+        self.assertEqual(code, 200)
+        self.assertTrue(self.server.manager.select_model.call_args.kwargs["strict_capabilities"])
+
     def test_anthropic_messages_empty_body(self) -> None:
         code, body = _post(self.base_url, "/v1/messages", {})
         self.assertEqual(code, 400)
