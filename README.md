@@ -65,6 +65,8 @@ irm "https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/instal
 ```
 
 The installer detects your platform and hardware, recommends a backend, and walks you through model setup interactively.
+Use `--model /path/to/model.gguf` for explicit model setup or `--no-model` / `-NoModel` to skip model setup without prompting.
+Install summaries are written to `.local/install-summary.json`; source builds also save logs under `tmp/test_results/install/`.
 
 ### Source Checkout
 

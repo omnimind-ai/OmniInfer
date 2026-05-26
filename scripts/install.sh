@@ -13,6 +13,7 @@ set -euo pipefail
 
 INSTALL_DIR="$(pwd)/OmniInfer"
 MODEL_PATH=""
+NO_MODEL=0
 SKIP_BUILD=0
 BACKEND_OVERRIDE=""
 NON_INTERACTIVE=0
@@ -26,6 +27,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --install-dir)    INSTALL_DIR="$2";       shift 2 ;;
         --model|-m)       MODEL_PATH="$2";        shift 2 ;;
+        --no-model)       NO_MODEL=1;             shift   ;;
         --skip-build)     SKIP_BUILD=1;           shift   ;;
         --backend)        BACKEND_OVERRIDE="$2";  shift 2 ;;
         --non-interactive) NON_INTERACTIVE=1;      shift   ;;
@@ -42,6 +44,7 @@ Usage:
 Options:
   --install-dir DIR     Installation directory (default: ~/OmniInfer)
   --model, -m PATH      Path to a local GGUF model file or directory
+  --no-model            Skip model setup without prompting
   --skip-build          Skip the backend build step
   --backend ID          Force a specific backend (e.g. llama.cpp-linux-vulkan)
   --non-interactive     Do not prompt; fail with instructions if dependencies are missing
@@ -62,6 +65,16 @@ HELP
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+
+if [[ "${NO_MODEL}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
+    echo "Cannot use --model and --no-model together" >&2
+    exit 1
+fi
+
+BUILD_LOG_PATH=""
+BUILD_STATUS="not-run"
+SUMMARY_PATH=""
+CUDA_EFFECTIVE_ARCH=""
 
 # ── Helpers ─────────────────────────────────────────────────
 
@@ -184,6 +197,65 @@ prompt_input() {
     printf '%s' "${prompt_text}" >&2
     IFS= read -r result < "${INPUT_TTY}" || result=""
     echo "${result:-${default}}"
+}
+
+run_python() {
+    if [[ "${PYTHON_CMD:-}" == "uv run python3" ]]; then
+        uv run python3 "$@"
+    else
+        "${PYTHON_CMD:-python3}" "$@"
+    fi
+}
+
+detect_cuda_effective_arch() {
+    if [[ -n "${CMAKE_CUDA_ARCHITECTURES:-}" ]]; then
+        echo "${CMAKE_CUDA_ARCHITECTURES}"
+        return
+    fi
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        local compute_cap
+        compute_cap="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '[:space:].')" || compute_cap=""
+        if [[ -n "${compute_cap}" ]]; then
+            echo "${compute_cap}"
+            return
+        fi
+    fi
+    echo ""
+}
+
+write_install_summary() {
+    SUMMARY_PATH="${INSTALL_DIR}/.local/install-summary.json"
+    mkdir -p "$(dirname "${SUMMARY_PATH}")"
+    export INSTALL_DIR
+    export SELECTED_BACKEND="${SELECTED_BACKEND:-}"
+    export MODEL_PATH="${MODEL_PATH:-}"
+    export MODEL_CONFIGURED="${MODEL_CONFIGURED:-0}"
+    export OMNI_PORT="${OMNI_PORT:-}"
+    export SKIP_BUILD
+    export BUILD_STATUS
+    export BUILD_LOG_PATH
+    export CUDA_EFFECTIVE_ARCH
+    export SUMMARY_PATH
+    run_python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+summary = {
+    "install_dir": os.environ.get("INSTALL_DIR", ""),
+    "backend": os.environ.get("SELECTED_BACKEND", ""),
+    "model_configured": os.environ.get("MODEL_CONFIGURED") == "1",
+    "model_path": os.environ.get("MODEL_PATH") or None,
+    "port": int(os.environ["OMNI_PORT"]) if os.environ.get("OMNI_PORT", "").isdigit() else None,
+    "skip_build": os.environ.get("SKIP_BUILD") == "1",
+    "build_status": os.environ.get("BUILD_STATUS", "not-run"),
+    "build_log": os.environ.get("BUILD_LOG_PATH") or None,
+    "cuda_effective_arch": os.environ.get("CUDA_EFFECTIVE_ARCH") or None,
+}
+path = Path(os.environ["SUMMARY_PATH"])
+path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+PY
+    ok "Install summary written: ${SUMMARY_PATH}"
 }
 
 # ── Banner ──────────────────────────────────────────────────
@@ -369,8 +441,12 @@ info "Step 3/6: Detecting platform and hardware ..."
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
+CUDA_EFFECTIVE_ARCH="$(detect_cuda_effective_arch)"
 
 info "Platform: ${OS} (${ARCH})"
+if [[ -n "${CUDA_EFFECTIVE_ARCH}" ]]; then
+    info "CUDA effective architecture: ${CUDA_EFFECTIVE_ARCH}"
+fi
 echo ""
 
 # Get available backends
@@ -662,17 +738,30 @@ fi
 
 if [[ "${SKIP_BUILD}" -eq 1 ]]; then
     info "Skipping build (--skip-build)"
+    BUILD_STATUS="skipped"
 else
     # Check if runtime is already available via CLI
     RUNTIME_AVAILABLE=$(omniinfer_cmd backend list 2>/dev/null | grep -A3 "[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
     if [[ "${RUNTIME_AVAILABLE}" -gt 0 ]]; then
         ok "Backend ${SELECTED_BACKEND} already built, skipping"
+        BUILD_STATUS="already-built"
     else
         info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
-        if ! bash "${FULL_BUILD_SCRIPT}"; then
+        BUILD_LOG_DIR="${INSTALL_DIR}/tmp/test_results/install"
+        mkdir -p "${BUILD_LOG_DIR}"
+        BUILD_LOG_PATH="${BUILD_LOG_DIR}/${SELECTED_BACKEND}-build-$(date +%Y%m%d-%H%M%S).log"
+        info "Build log: ${BUILD_LOG_PATH}"
+        set +e
+        bash "${FULL_BUILD_SCRIPT}" 2>&1 | tee "${BUILD_LOG_PATH}"
+        _build_rc=${PIPESTATUS[0]}
+        set -e
+        if [[ "${_build_rc}" -ne 0 ]]; then
             echo ""
-            fatal "Build failed (exit code $?). See the messages above for details."
+            BUILD_STATUS="failed"
+            write_install_summary
+            fatal "Build failed (exit code ${_build_rc}). See ${BUILD_LOG_PATH} for details."
         fi
+        BUILD_STATUS="built"
         ok "Build complete"
     fi
 fi
@@ -691,6 +780,8 @@ if [[ -n "${MODEL_PATH}" ]]; then
     # Model provided via --model flag
     info "Using provided model: ${MODEL_PATH}"
     MODEL_CONFIGURED=1
+elif [[ "${NO_MODEL}" -eq 1 ]]; then
+    info "Skipping model configuration (--no-model)"
 else
     model_choice=$(select_menu 0 \
         "Download a recommended model" \
@@ -835,6 +926,7 @@ if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     info "Loading model ..."
     if ! omniinfer_cmd model load -m "${MODEL_PATH}"; then
         err "Failed to load model. Make sure the backend is built and the model path is correct."
+        write_install_summary
         echo ""
         echo "  Try building the backend first, then re-run:"
         echo "    cd ${INSTALL_DIR}"
@@ -849,6 +941,7 @@ if [[ "${MODEL_CONFIGURED}" -eq 1 ]] && [[ -n "${MODEL_PATH}" ]]; then
     print_finish() {
         echo ""
         omniinfer_cmd shutdown 2>/dev/null || true
+        write_install_summary
 
         cat <<FINISH
 
@@ -907,6 +1000,7 @@ FINISH
 
 else
     # ── No model configured — print next steps ──────────
+    write_install_summary
     cat <<EOF
 
 ╔══════════════════════════════════════════════════════════╗
