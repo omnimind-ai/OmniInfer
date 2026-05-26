@@ -2064,7 +2064,7 @@ def parse_args(config: dict[str, Any], argv: list[str] | None = None) -> argpars
     host_was_explicit = any(item == "--host" or item.startswith("--host=") for item in argv_list)
     if args.lan and not host_was_explicit:
         args.host = "0.0.0.0"
-    if args.cloudflare and not host_was_explicit:
+    elif args.cloudflare and not host_was_explicit:
         args.host = "127.0.0.1"
     return args
 
@@ -2084,9 +2084,7 @@ def _shutdown_existing_gateway(host: str, port: int) -> None:
 
 
 def validate_remote_access_args(args: argparse.Namespace) -> None:
-    if args.cloudflare and args.lan:
-        raise SystemExit("Use either --cloudflare or --lan, not both.")
-    if args.cloudflare and not is_loopback_bind_host(args.host):
+    if args.cloudflare and not args.lan and not is_loopback_bind_host(args.host):
         raise SystemExit("--cloudflare keeps OmniInfer on 127.0.0.1; do not combine it with a non-loopback --host.")
     if args.cloudflare and args.allow_insecure_lan:
         raise SystemExit("--cloudflare requires an API key and cannot be combined with --allow-insecure-lan.")
