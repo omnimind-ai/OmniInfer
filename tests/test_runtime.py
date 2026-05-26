@@ -1839,7 +1839,10 @@ class EmbeddedRuntimeTests(unittest.TestCase):
         self.assertEqual(snapshot["backend"], "mlx-mac")
         self.assertTrue(snapshot["backend_ready"])
         self.assertEqual(snapshot["runtime_mode"], "embedded")
+        self.assertIsNone(snapshot["backend_pid"])
+        self.assertEqual(snapshot["launch_command"], [])
         self.assertEqual(snapshot["launch_args"], [])
+        self.assertEqual(snapshot["effective_parameters"]["ctx_size"], None)
 
     def test_stop_runtime(self) -> None:
         self.manager.select_model(model=str(self.model_dir), backend_id="mlx-mac")
@@ -1921,6 +1924,32 @@ class AutoSelectRuntimeTests(unittest.TestCase):
             launch_args=list(self.manager.backends[backend_id].default_args),
             request_defaults={},
         )
+
+    def test_snapshot_includes_runtime_observability_fields(self) -> None:
+        model = self.root / "demo.gguf"
+        model.write_text("demo", encoding="utf-8")
+        runtime = self._loaded_runtime("llama.cpp-cuda", str(model))
+        runtime.ctx_size = 4096
+        runtime.launch_args = ["-ngl", "999", "--threads=16", "--threads-batch", "8", "-b", "2048", "-ub", "512"]
+        runtime.launch_command = ["llama-server", "-m", str(model), "--port", "12345"]
+        runtime.log_path = str(self.root / "runtime.log")
+        runtime.process = type("FakeProcess", (), {"pid": 4321})()
+        self.manager.loaded_runtime = runtime
+        self.manager._is_runtime_running_locked = lambda: True  # type: ignore[method-assign]
+
+        snapshot = self.manager.snapshot()
+
+        self.assertEqual(snapshot["backend_pid"], 4321)
+        self.assertEqual(snapshot["launch_command"], ["llama-server", "-m", str(model), "--port", "12345"])
+        self.assertEqual(snapshot["backend_log"], str(self.root / "runtime.log"))
+        self.assertEqual(snapshot["effective_parameters"], {
+            "ctx_size": 4096,
+            "ngl": 999,
+            "threads": 16,
+            "threads_batch": 8,
+            "batch_size": 2048,
+            "ubatch_size": 512,
+        })
 
     def test_auto_select_releases_previous_runtime_before_memory_check(self) -> None:
         old_model = self.root / "old.gguf"

@@ -152,7 +152,18 @@ Example response:
     "backend_ready": false,
     "runtime_mode": null,
     "backend_port": null,
-    "launch_args": []
+    "backend_pid": null,
+    "launch_args": [],
+    "launch_command": [],
+    "backend_log": null,
+    "effective_parameters": {
+      "ctx_size": null,
+      "ngl": null,
+      "threads": null,
+      "threads_batch": null,
+      "batch_size": null,
+      "ubatch_size": null
+    }
   },
   "thinking": {
     "default_enabled": false
@@ -208,7 +219,18 @@ Example response:
   "backend_ready": true,
   "runtime_mode": "external_server",
   "backend_port": 12894,
+  "backend_pid": 45210,
   "launch_args": ["-ngl", "999"],
+  "launch_command": ["llama-server", "-m", "models/Qwen3.5-2B-Q4_K_M.gguf", "--port", "12894"],
+  "backend_log": ".local/runtime/linux/llama.cpp-linux-cuda/logs/runtime.log",
+  "effective_parameters": {
+    "ctx_size": 4096,
+    "ngl": 999,
+    "threads": null,
+    "threads_batch": null,
+    "batch_size": null,
+    "ubatch_size": null
+  },
   "available_backends": [
     {
       "id": "llama.cpp-cuda",
