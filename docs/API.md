@@ -45,6 +45,14 @@ For a stable key, pass one explicitly or set `OMNIINFER_API_KEY`:
 OMNIINFER_API_KEY=oi_example ./omniinfer serve --lan
 ```
 
+LAN access can be combined with Cloudflare Quick Tunnel when you need both same-network and temporary public HTTPS access from the same gateway:
+
+```sh
+./omniinfer serve --lan --cloudflare
+```
+
+In combined mode, OmniInfer binds the gateway to `0.0.0.0` for LAN clients while `cloudflared` still connects to `http://127.0.0.1:<port>` on the same machine. Both LAN and Cloudflare clients must send the API key.
+
 Only inference-facing endpoints are exposed to remote clients by default:
 
 | Method | Path |
@@ -81,7 +89,7 @@ For temporary remote access without router port forwarding or a public IP addres
 ./omniinfer serve --cloudflare
 ```
 
-This keeps the gateway bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, starts `cloudflared tunnel --url http://127.0.0.1:<port>`, prints a temporary `https://*.trycloudflare.com` URL, and requires an OmniInfer API key for requests arriving through Cloudflare. `/omni/*` management endpoints remain local-only.
+This keeps the gateway bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, starts `cloudflared tunnel --url http://127.0.0.1:<port>`, prints a temporary `https://*.trycloudflare.com` URL, and requires an OmniInfer API key for requests arriving through Cloudflare. When combined with `--lan`, the gateway binds to `0.0.0.0` for LAN clients and the tunnel still targets `127.0.0.1`. `/omni/*` management endpoints remain local-only.
 
 Quick Tunnel is intended for demos and short-lived testing. For best compatibility, use non-streaming requests. See [Remote Access](remote-access.md) for setup, security notes, and examples.
 

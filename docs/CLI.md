@@ -280,6 +280,14 @@ Windows:
 
 Cloudflare mode uses the same launcher in an interactive terminal, keeps OmniInfer bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).
 
+LAN and Cloudflare access can run at the same time:
+
+```sh
+./omniinfer serve --lan --cloudflare
+```
+
+In this mode, OmniInfer binds to `0.0.0.0` for LAN clients and starts Cloudflare Quick Tunnel against `http://127.0.0.1:<port>`. Both remote entry points require the same API key, and `/omni/*` management endpoints remain local-only.
+
 On Windows, allow the port through the Private-network firewall profile when needed:
 
 ```powershell

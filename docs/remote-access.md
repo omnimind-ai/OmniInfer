@@ -1,6 +1,6 @@
 # Remote Access
 
-OmniInfer can expose the desktop inference API through Cloudflare Quick Tunnel for temporary remote access without router port forwarding, a public IP address, or a Cloudflare account.
+OmniInfer can expose the desktop inference API through Cloudflare Quick Tunnel for temporary remote access without router port forwarding, a public IP address, or a Cloudflare account. Cloudflare access can also run alongside LAN access from the same gateway process.
 
 Quick Tunnel is best for demos, testing, and short-lived personal access. Cloudflare assigns a random `trycloudflare.com` URL and does not guarantee uptime for this mode. For best compatibility, use non-streaming requests; streaming over Quick Tunnel is best-effort only.
 
@@ -21,7 +21,7 @@ Windows:
 OmniInfer will:
 
 - ask for the backend and model to load when running in an interactive terminal
-- keep the local gateway bound to `127.0.0.1`
+- keep the local gateway bound to `127.0.0.1`, unless `--lan` is also used
 - download and update a managed `cloudflared` binary under `.local/tools/cloudflared`
 - require an API key for requests arriving through Cloudflare
 - generate a session API key when `--api-key` or `OMNIINFER_API_KEY` is not set
@@ -39,6 +39,24 @@ API key: oi_example
 ```
 
 Use the OpenAI Base URL and API key in remote clients.
+
+## LAN and Cloudflare Together
+
+Use both flags when you want trusted devices on the same LAN and temporary public HTTPS clients to share the same gateway, model, and backend:
+
+```sh
+./omniinfer serve --lan --cloudflare
+```
+
+In combined mode, OmniInfer:
+
+- binds the gateway to `0.0.0.0` for LAN clients
+- starts `cloudflared tunnel --url http://127.0.0.1:<port>` for Cloudflare clients
+- uses one API key for both remote entry points
+- treats Cloudflare proxy-header requests as remote clients even though `cloudflared` connects over loopback
+- keeps `/omni/*` management endpoints local-only by default
+
+This means LAN clients use `http://<lan-ip>:<port>/v1`, while Cloudflare clients use the printed `https://*.trycloudflare.com/v1` URL.
 
 ## Managed cloudflared
 
@@ -122,8 +140,7 @@ Cloudflare terminates HTTPS for the public URL and forwards traffic to the local
 
 The following combinations are intentionally rejected:
 
-- `--cloudflare --lan`
-- `--cloudflare --host 0.0.0.0`
+- `--cloudflare --host 0.0.0.0` without `--lan`
 - `--cloudflare --allow-insecure-lan`
 - `--cloudflare --allow-remote-management`
 
