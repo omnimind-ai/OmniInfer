@@ -135,7 +135,28 @@ def _summarize_backend_startup_failure(lines: list[str], *, max_lines: int = 6) 
     for line in lines:
         if "unknown argument" in line.lower():
             return line.strip()
+    diagnostic_terms = (
+        "error:",
+        "failed",
+        "fatal",
+        "exception",
+        "traceback",
+        "cannot",
+        "out of memory",
+        "no such file",
+    )
+    diagnostics = [line.strip() for line in lines if any(term in line.lower() for term in diagnostic_terms)]
+    if diagnostics:
+        return " | ".join(diagnostics[-max_lines:])
     return " | ".join(line.strip() for line in lines[-max_lines:] if line.strip())
+
+
+def _read_runtime_log_summary(log_path: Path) -> str:
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return _summarize_backend_startup_failure(lines) if lines else ""
 
 
 def _launch_arg_value(args: list[str], flags: tuple[str, ...]) -> str | None:
@@ -671,13 +692,9 @@ class RuntimeManager:
             ready = wait_http_ready(self.backend_host, launch.port, self.startup_timeout_s)
         if not ready:
             message = "backend did not become ready in time"
-            if proc.poll() is not None:
-                try:
-                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                except OSError:
-                    lines = []
-                if lines:
-                    message += "; backend output: " + _summarize_backend_startup_failure(lines)
+            output_summary = _read_runtime_log_summary(log_path)
+            if output_summary:
+                message += "; backend output: " + output_summary
             self.loaded_runtime = LoadedRuntime(
                 backend_id=backend.id,
                 model_path=model_path,
