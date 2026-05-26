@@ -31,6 +31,7 @@ from service_core.remote_access import (
     start_cloudflare_quick_tunnel,
 )
 from service_core.runtime import RuntimeManager
+from service_core.version import get_omniinfer_version
 
 logger = logging.getLogger("gateway")
 _WINDOWS_VT_ENABLED: bool | None = None
@@ -1450,6 +1451,7 @@ class OmniHandler(BaseHTTPRequestHandler):
         if path == "/health":
             payload: dict[str, Any] = {
                 "status": "ok",
+                "version": get_omniinfer_version(),
                 "omni": self.manager.snapshot(),
                 "thinking": {"default_enabled": self.default_thinking},
             }
@@ -1460,6 +1462,7 @@ class OmniHandler(BaseHTTPRequestHandler):
 
         if path == "/omni/state":
             payload = self.manager.snapshot()
+            payload["version"] = get_omniinfer_version()
             payload["available_backends"] = self.manager.list_backends(scope="all")[0]
             payload["thinking"] = {"default_enabled": self.default_thinking}
             self._send_json(200, payload)

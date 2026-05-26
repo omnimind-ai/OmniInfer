@@ -142,6 +142,7 @@ Example response:
 ```json
 {
   "status": "ok",
+  "version": "0.2.1",
   "omni": {
     "backend": "llama.cpp-cpu",
     "model": null,
@@ -194,6 +195,7 @@ Example response:
 
 ```json
 {
+  "version": "0.2.1",
   "backend": "llama.cpp-cuda",
   "model": "models/Qwen3.5-2B-Q4_K_M.gguf",
   "mmproj": null,
