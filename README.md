@@ -9,32 +9,7 @@
 
 Easy, fast, and private LLM & VLM inference for every device
 
-| [Demo](#demo) | [Getting Started](#getting-started) | [Documentation](#documentation) | [Architecture](#architecture) |
-
-## About
-
-OmniInfer is a high-performance, cross-platform inference engine for running Large Language Models (LLM) and Vision-Language Models (VLM) locally. It abstracts away model compilation, hardware adaptation, and deployment complexity, enabling efficient local inference with minimal configuration.
-
-> OmniInfer powers the inference layer of [Omni Studio](https://omnimind.com.cn/omnistudio), a unified model orchestration platform.
-
-OmniInfer is fast with:
-
-- Optimized token generation speed and minimal memory footprint
-- Multiple backend engines (llama.cpp, mnn, et, mlx, OmniInfer Native) for best-fit performance
-- Hardware-aware adaptation and optimization
-
-OmniInfer is flexible and easy to use with:
-
-- Seamless multi-backend switching — choose the best engine for your workload
-- OpenAI-compatible API server for drop-in integration
-- Support for LLM, VLM, and World Models
-- Fine-grained parameter control (context length, GPU offloading, KV cache, etc.)
-
-OmniInfer runs everywhere:
-
-- Linux, macOS, Windows — desktop & server
-- Android, iOS — mobile & edge devices
-- One codebase, all platforms
+| [Demo](#demo) | [Getting Started](#getting-started) | [About](#about) | [Documentation](#documentation) | [Architecture](#architecture) |
 
 ## Demo
 
@@ -65,6 +40,8 @@ irm "https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/instal
 ```
 
 The installer detects your platform and hardware, recommends a backend, and walks you through model setup interactively.
+Use `--model /path/to/model.gguf` for explicit model setup or `--no-model` / `-NoModel` to skip model setup without prompting.
+Install summaries are written to `.local/install-summary.json`; source builds also save logs under `tmp/test_results/install/`.
 
 ### Source Checkout
 
@@ -95,21 +72,30 @@ Android:
 ./omniinfer --help
 ```
 
-### Packaged Release
+## About
 
-If you are using a packaged release that already includes `runtime/`, you can run the CLI immediately from the release directory:
+OmniInfer is a high-performance, cross-platform inference engine for running Large Language Models (LLM) and Vision-Language Models (VLM) locally. It abstracts away model compilation, hardware adaptation, and deployment complexity, enabling efficient local inference with minimal configuration.
 
-Windows:
+> OmniInfer powers the inference layer of [Omni Studio](https://omnimind.com.cn/omnistudio), a unified model orchestration platform.
 
-```powershell
-.\omniinfer.ps1 --help
-```
+OmniInfer is fast with:
 
-Linux and macOS:
+- Optimized token generation speed and minimal memory footprint
+- Multiple backend engines, including llama.cpp, ik_llama.cpp, MNN, MLX, TurboQuant, LiteRT-LM, ExecuTorch QNN, and OmniInfer Native where supported
+- Hardware-aware adaptation and optimization
 
-```sh
-./omniinfer --help
-```
+OmniInfer is flexible and easy to use with:
+
+- Seamless multi-backend switching for the best available engine on each device
+- OpenAI-compatible and Anthropic-compatible local API endpoints
+- Support for text and vision-language workloads
+- Fine-grained parameter control for context length, GPU offloading, KV cache, and backend-native launch options
+
+OmniInfer runs everywhere:
+
+- Linux, macOS, Windows — desktop and server
+- Android and iOS — mobile and edge devices
+- One codebase across CLI, HTTP gateway, and mobile modules
 
 ## Documentation
 
@@ -140,12 +126,9 @@ GitHub can automatically generate citation formats from [CITATION.cff](CITATION.
 }
 ```
 
-
 ## Contributing
 
 We welcome and value any contributions and collaborations. Please check out [Contributing to OmniInfer](CONTRIBUTING.md) for how to get involved.
-
-
 
 ## License
 

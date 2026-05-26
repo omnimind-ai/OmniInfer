@@ -9,6 +9,7 @@ param(
     [string]$InstallDir = "$(Get-Location)\OmniInfer",
     [Alias("m")]
     [string]$Model = "",
+    [switch]$NoModel,
     [switch]$SkipBuild,
     [string]$Backend = "",
     [switch]$NonInteractive
@@ -17,6 +18,14 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoSsh   = "git@github.com:omnimind-ai/OmniInfer.git"
 $RepoHttps = "https://github.com/omnimind-ai/OmniInfer.git"
+$script:BuildLogPath = ""
+$script:BuildStatus = "not-run"
+$script:SummaryPath = ""
+$script:CudaEffectiveArch = ""
+
+if ($NoModel -and $Model) {
+    throw "Cannot use -Model and -NoModel together."
+}
 
 # ── Helpers ─────────────────────────────────────────────────
 
@@ -40,6 +49,36 @@ function Test-Command {
     } else {
         Stop-Fatal "'$Name' is required but not found. $Hint"
     }
+}
+
+function Get-CudaEffectiveArch {
+    if ($env:CMAKE_CUDA_ARCHITECTURES) { return $env:CMAKE_CUDA_ARCHITECTURES }
+    $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if (-not $nvidiaSmi) { return "" }
+    try {
+        $cap = (& $nvidiaSmi.Source --query-gpu=compute_cap --format=csv,noheader 2>$null | Select-Object -First 1)
+        if ($cap) { return (($cap.ToString()).Trim() -replace '\.', '') }
+    } catch {}
+    return ""
+}
+
+function Write-InstallSummary {
+    $script:SummaryPath = Join-Path $InstallDir ".local\install-summary.json"
+    $summaryDir = Split-Path -Parent $script:SummaryPath
+    if (-not (Test-Path $summaryDir)) { New-Item -ItemType Directory -Force -Path $summaryDir | Out-Null }
+    $summary = [ordered]@{
+        install_dir = $InstallDir
+        backend = $SelectedBackend
+        model_configured = [bool]$ModelConfigured
+        model_path = if ($ModelPath) { $ModelPath } else { $null }
+        port = $OmniPort
+        skip_build = [bool]$SkipBuild
+        build_status = $script:BuildStatus
+        build_log = if ($script:BuildLogPath) { $script:BuildLogPath } else { $null }
+        cuda_effective_arch = if ($script:CudaEffectiveArch) { $script:CudaEffectiveArch } else { $null }
+    }
+    $summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $script:SummaryPath -Encoding UTF8
+    Write-Ok "Install summary written: $script:SummaryPath"
 }
 
 function Sync-ProcessPathFromRegistry {
@@ -380,6 +419,7 @@ if (-not $env:OMNIINFER_INSTALL_HANDOFF -and (Test-Path $repoScript)) {
     $env:OMNIINFER_INSTALL_HANDOFF = "1"
     $handoffArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $repoScript, "-InstallDir", $InstallDir)
     if ($Model)   { $handoffArgs += @("-m", $Model) }
+    if ($NoModel) { $handoffArgs += "-NoModel" }
     if ($Backend) { $handoffArgs += @("-Backend", $Backend) }
     if ($SkipBuild)      { $handoffArgs += "-SkipBuild" }
     if ($NonInteractive) { $handoffArgs += "-NonInteractive" }
@@ -514,6 +554,10 @@ if ($BackendIds.Count -eq 0) {
 }
 
 Write-Info "Platform: Windows"
+$script:CudaEffectiveArch = Get-CudaEffectiveArch
+if ($script:CudaEffectiveArch) {
+    Write-Info "CUDA effective architecture: $script:CudaEffectiveArch"
+}
 Write-Host ""
 
 $PrebuiltInstalled = $false
@@ -695,6 +739,7 @@ Invoke-OmniInfer backend select $SelectedBackend 2>$null
 
 if ($PrebuiltInstalled) {
     Write-Info "Step 4/6: Backend already installed (prebuilt), skipping build"
+    $script:BuildStatus = "prebuilt"
 } else {
     Write-Info "Step 4/6: Building backend ..."
 
@@ -729,25 +774,37 @@ if ($PrebuiltInstalled) {
 
     if ($SkipBuild) {
         Write-Info "Skipping build (-SkipBuild)"
+        $script:BuildStatus = "skipped"
     } else {
         $runtimeCheck = Invoke-OmniInfer backend list 2>$null
         $isBuilt = ($runtimeCheck -join "`n") -match "$([regex]::Escape($SelectedBackend))[\s\S]*?Runtime available: yes"
         if ($isBuilt) {
             Write-Ok "Backend $SelectedBackend already built, skipping"
+            $script:BuildStatus = "already-built"
         } else {
             Write-Info "Building $SelectedBackend (this may take a few minutes) ..."
-            powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript
-            if ($LASTEXITCODE -ne 0) {
+            $buildLogDir = Join-Path $InstallDir "tmp\test_results\install"
+            if (-not (Test-Path $buildLogDir)) { New-Item -ItemType Directory -Force -Path $buildLogDir | Out-Null }
+            $script:BuildLogPath = Join-Path $buildLogDir ("{0}-build-{1}.log" -f $SelectedBackend, (Get-Date -Format "yyyyMMdd-HHmmss"))
+            Write-Info "Build log: $script:BuildLogPath"
+            powershell -NoProfile -ExecutionPolicy Bypass -File $fullScript 2>&1 | Tee-Object -FilePath $script:BuildLogPath
+            $buildExitCode = $LASTEXITCODE
+            if ($buildExitCode -ne 0) {
+                $script:BuildStatus = "failed"
                 Write-Host ""
-                Write-Err "Build failed (exit code $LASTEXITCODE). See the messages above for details."
+                Write-InstallSummary
+                Write-Err "Build failed (exit code $buildExitCode). See $script:BuildLogPath for details."
                 exit 1
             }
             # Verify build produced the expected binary
             $binDir = Join-Path $InstallDir ".local\runtime\windows\$SelectedBackend\bin"
             if (-not (Test-Path $binDir) -or (Get-ChildItem $binDir -File -ErrorAction SilentlyContinue).Count -eq 0) {
+                $script:BuildStatus = "failed"
+                Write-InstallSummary
                 Write-Err "Build completed but no binaries found in $binDir"
                 exit 1
             }
+            $script:BuildStatus = "built"
             Write-Ok "Build complete"
         }
     }
@@ -769,6 +826,8 @@ if ($Model) {
     Write-Info "Using provided model: $Model"
     $ModelPath = $Model
     $ModelConfigured = $true
+} elseif ($NoModel) {
+    Write-Info "Skipping model configuration (-NoModel)"
 } else {
     $modelChoice = Select-Menu -Default 0 -Options @(
         "Download a recommended model",
@@ -889,6 +948,7 @@ Write-Host ""
 function Print-Finish {
     Write-Host ""
     Invoke-OmniInfer shutdown 2>$null
+    Write-InstallSummary
 
     Write-Host ""
     Write-Host "============================================================"
@@ -941,6 +1001,7 @@ if ($ModelConfigured -and $ModelPath) {
     Invoke-OmniInfer model load -m $ModelPath
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Failed to load model. Make sure the backend is built and the model path is correct."
+        Write-InstallSummary
         Write-Host ""
         Write-Host "  Try building the backend first, then re-run:"
         Write-Host "    cd $InstallDir"

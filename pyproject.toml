@@ -1,6 +1,6 @@
 [project]
 name = "omniinfer"
-version = "0.1.11"
+version = "0.2.1"
 description = "Cross-platform local inference engine for LLM and VLM models"
 requires-python = ">=3.10"
 license = "Apache-2.0"

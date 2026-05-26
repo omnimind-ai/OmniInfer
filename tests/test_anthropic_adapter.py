@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import unittest
+import json
+from io import BytesIO
 
 from service_core.anthropic_adapter import (
+    _OAIToAnthropicStreamConverter,
     anthropic_request_to_openai,
     openai_response_to_anthropic,
 )
@@ -246,6 +249,108 @@ class OpenaiResponseToAnthropicTests(unittest.TestCase):
         result = openai_response_to_anthropic(oai, model="test")
         tool_block = result["content"][0]
         self.assertEqual(tool_block["input"], {})
+
+
+class OpenaiStreamToAnthropicTests(unittest.TestCase):
+    def _events_for(self, chunks: list[dict]) -> list[tuple[str, dict]]:
+        output = BytesIO()
+        converter = _OAIToAnthropicStreamConverter(output, model="test-model", msg_id="msg_123")
+        converter.send_preamble()
+        for chunk in chunks:
+            converter.process_chunk(chunk)
+        converter.send_epilogue()
+        return self._parse_sse(output.getvalue())
+
+    def _parse_sse(self, raw: bytes) -> list[tuple[str, dict]]:
+        events: list[tuple[str, dict]] = []
+        for frame in raw.decode("utf-8").strip().split("\n\n"):
+            event_type = ""
+            payload = None
+            for line in frame.splitlines():
+                if line.startswith("event: "):
+                    event_type = line.removeprefix("event: ")
+                elif line.startswith("data: "):
+                    payload = json.loads(line.removeprefix("data: "))
+            if event_type and payload is not None:
+                events.append((event_type, payload))
+        return events
+
+    def test_text_stream_events(self) -> None:
+        events = self._events_for([
+            {"choices": [{"delta": {"content": "Hel"}}]},
+            {"choices": [{"delta": {"content": "lo"}, "finish_reason": "stop"}], "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 2,
+            }},
+        ])
+
+        self.assertEqual([event for event, _ in events], [
+            "message_start",
+            "ping",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop",
+        ])
+        self.assertEqual(events[2][1]["content_block"], {"type": "text", "text": ""})
+        self.assertEqual(events[3][1]["delta"], {"type": "text_delta", "text": "Hel"})
+        self.assertEqual(events[4][1]["delta"], {"type": "text_delta", "text": "lo"})
+        self.assertEqual(events[-2][1]["delta"]["stop_reason"], "end_turn")
+        self.assertEqual(events[-2][1]["usage"], {"output_tokens": 2})
+
+    def test_tool_stream_events(self) -> None:
+        events = self._events_for([
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_1",
+                "function": {"name": "get_weather", "arguments": "{\"city\""},
+            }]}}]},
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0,
+                "function": {"arguments": ":\"Tokyo\"}"},
+            }]}, "finish_reason": "tool_calls"}]},
+        ])
+
+        block_start = next(payload for event, payload in events if event == "content_block_start")
+        deltas = [payload for event, payload in events if event == "content_block_delta"]
+        self.assertEqual(block_start["index"], 0)
+        self.assertEqual(block_start["content_block"]["type"], "tool_use")
+        self.assertEqual(block_start["content_block"]["id"], "call_1")
+        self.assertEqual(block_start["content_block"]["name"], "get_weather")
+        self.assertEqual([delta["delta"]["partial_json"] for delta in deltas], ["{\"city\"", ":\"Tokyo\"}"])
+        self.assertEqual(events[-2][1]["delta"]["stop_reason"], "tool_use")
+
+    def test_tool_before_text_uses_distinct_block_indexes(self) -> None:
+        events = self._events_for([
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_1",
+                "function": {"name": "lookup", "arguments": "{}"},
+            }]}}]},
+            {"choices": [{"delta": {"content": "done"}, "finish_reason": "stop"}]},
+        ])
+
+        starts = [payload for event, payload in events if event == "content_block_start"]
+        stops = [payload for event, payload in events if event == "content_block_stop"]
+        self.assertEqual([start["index"] for start in starts], [0, 1])
+        self.assertEqual(starts[0]["content_block"]["type"], "tool_use")
+        self.assertEqual(starts[1]["content_block"]["type"], "text")
+        self.assertEqual([stop["index"] for stop in stops], [1, 0])
+
+    def test_empty_stream_emits_empty_text_block(self) -> None:
+        events = self._events_for([
+            {"choices": [{"delta": {}, "finish_reason": "length"}], "timings": {
+                "prompt_n": 3,
+                "predicted_n": 4,
+            }},
+        ])
+
+        starts = [payload for event, payload in events if event == "content_block_start"]
+        self.assertEqual(starts[0]["content_block"], {"type": "text", "text": ""})
+        self.assertEqual(events[-2][1]["delta"]["stop_reason"], "max_tokens")
+        self.assertEqual(events[-2][1]["usage"], {"output_tokens": 4})
 
 
 if __name__ == "__main__":

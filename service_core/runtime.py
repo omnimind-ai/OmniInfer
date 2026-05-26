@@ -115,6 +115,7 @@ class LoadedRuntime:
     process: subprocess.Popen[Any] | None
     launch_args: list[str]
     request_defaults: dict[str, Any]
+    launch_command: list[str] = field(default_factory=list)
     log_path: str | None = None
     log_handle: TextIOWrapper | None = None
     embedded_driver: EmbeddedBackendDriver | None = None
@@ -134,7 +135,70 @@ def _summarize_backend_startup_failure(lines: list[str], *, max_lines: int = 6) 
     for line in lines:
         if "unknown argument" in line.lower():
             return line.strip()
+    diagnostic_terms = (
+        "error:",
+        "failed",
+        "fatal",
+        "exception",
+        "traceback",
+        "cannot",
+        "out of memory",
+        "no such file",
+    )
+    diagnostics = [line.strip() for line in lines if any(term in line.lower() for term in diagnostic_terms)]
+    if diagnostics:
+        return " | ".join(diagnostics[-max_lines:])
     return " | ".join(line.strip() for line in lines[-max_lines:] if line.strip())
+
+
+def _read_runtime_log_summary(log_path: Path) -> str:
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return _summarize_backend_startup_failure(lines) if lines else ""
+
+
+def _launch_arg_value(args: list[str], flags: tuple[str, ...]) -> str | None:
+    for index, arg in enumerate(args):
+        for flag in flags:
+            if arg == flag and index + 1 < len(args):
+                return args[index + 1]
+            prefix = f"{flag}="
+            if arg.startswith(prefix):
+                return arg[len(prefix):]
+    return None
+
+
+def _launch_arg_int(args: list[str], flags: tuple[str, ...]) -> int | None:
+    value = _launch_arg_value(args, flags)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _effective_runtime_parameters(runtime: LoadedRuntime | None) -> dict[str, int | None]:
+    if runtime is None:
+        return {
+            "ctx_size": None,
+            "ngl": None,
+            "threads": None,
+            "threads_batch": None,
+            "batch_size": None,
+            "ubatch_size": None,
+        }
+    return {
+        "ctx_size": runtime.ctx_size,
+        "ngl": _launch_arg_int(runtime.launch_args, ("-ngl", "--n-gpu-layers")),
+        "threads": _launch_arg_int(runtime.launch_args, ("-t", "--threads")),
+        "threads_batch": _launch_arg_int(runtime.launch_args, ("-tb", "--threads-batch")),
+        "batch_size": _launch_arg_int(runtime.launch_args, ("-b", "--batch-size")),
+        "ubatch_size": _launch_arg_int(runtime.launch_args, ("-ub", "--ubatch-size")),
+    }
 
 
 class RuntimeManager:
@@ -628,13 +692,9 @@ class RuntimeManager:
             ready = wait_http_ready(self.backend_host, launch.port, self.startup_timeout_s)
         if not ready:
             message = "backend did not become ready in time"
-            if proc.poll() is not None:
-                try:
-                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                except OSError:
-                    lines = []
-                if lines:
-                    message += "; backend output: " + _summarize_backend_startup_failure(lines)
+            output_summary = _read_runtime_log_summary(log_path)
+            if output_summary:
+                message += "; backend output: " + output_summary
             self.loaded_runtime = LoadedRuntime(
                 backend_id=backend.id,
                 model_path=model_path,
@@ -648,6 +708,7 @@ class RuntimeManager:
                 process=proc,
                 launch_args=list(effective_launch_args),
                 request_defaults=dict(request_defaults or {}),
+                launch_command=list(launch.cmd),
                 log_path=str(log_path),
                 log_handle=log_handle,
             )
@@ -673,6 +734,7 @@ class RuntimeManager:
             process=proc,
             launch_args=list(effective_launch_args),
             request_defaults=dict(request_defaults or {}),
+            launch_command=list(launch.cmd),
             log_path=str(log_path),
             log_handle=log_handle,
         )
@@ -1093,6 +1155,7 @@ class RuntimeManager:
 
     def snapshot(self) -> dict[str, Any]:
         runtime = self.loaded_runtime if self._is_runtime_running_locked() else None
+        backend_pid = runtime.process.pid if runtime and runtime.process is not None else None
         return {
             "backend": self.selected_backend_id,
             "model": runtime.model_ref if runtime else None,
@@ -1101,8 +1164,12 @@ class RuntimeManager:
             "request_defaults": dict(runtime.request_defaults) if runtime else {},
             "backend_ready": bool(runtime),
             "runtime_mode": runtime.runtime_mode if runtime else None,
+            "backend_pid": backend_pid,
             "backend_port": runtime.port if runtime else None,
             "launch_args": list(runtime.launch_args) if runtime else [],
+            "launch_command": list(runtime.launch_command) if runtime else [],
+            "backend_log": runtime.log_path if runtime else None,
+            "effective_parameters": _effective_runtime_parameters(runtime),
         }
 
     def backend_health(self) -> dict[str, Any]:

@@ -262,8 +262,9 @@ class _OAIToAnthropicStreamConverter:
         self._model = model
         self._msg_id = msg_id
         # index → {"id": str, "name": str} for started tool_use blocks
-        self._tool_blocks: dict[int, dict[str, str]] = {}
-        self._text_started = False
+        self._tool_blocks: dict[int, dict[str, Any]] = {}
+        self._text_block_index: int | None = None
+        self._next_block_index = 0
         self._finish_reason = "end_turn"
         self._prompt_tokens = 0
         self._completion_tokens = 0
@@ -296,30 +297,31 @@ class _OAIToAnthropicStreamConverter:
             # Text delta
             text = delta.get("content")
             if text:
-                if not self._text_started:
+                if self._text_block_index is None:
+                    self._text_block_index = self._next_block_index
+                    self._next_block_index += 1
                     self._write("content_block_start", {
                         "type": "content_block_start",
-                        "index": 0,
+                        "index": self._text_block_index,
                         "content_block": {"type": "text", "text": ""},
                     })
-                    self._text_started = True
                 self._write("content_block_delta", {
                     "type": "content_block_delta",
-                    "index": 0,
+                    "index": self._text_block_index,
                     "delta": {"type": "text_delta", "text": text},
                 })
 
             # Tool call deltas
             for tc_delta in delta.get("tool_calls") or []:
                 tc_idx = tc_delta.get("index", 0)
-                # Offset by 1 if a text block occupies index 0
-                block_idx = tc_idx + (1 if self._text_started else 0)
 
-                if block_idx not in self._tool_blocks:
+                if tc_idx not in self._tool_blocks:
                     func = tc_delta.get("function") or {}
                     block_id = tc_delta.get("id") or ("toolu_" + uuid.uuid4().hex[:24])
                     block_name = func.get("name", "")
-                    self._tool_blocks[block_idx] = {"id": block_id, "name": block_name}
+                    block_idx = self._next_block_index
+                    self._next_block_index += 1
+                    self._tool_blocks[tc_idx] = {"index": block_idx, "id": block_id, "name": block_name}
                     self._write("content_block_start", {
                         "type": "content_block_start",
                         "index": block_idx,
@@ -340,6 +342,7 @@ class _OAIToAnthropicStreamConverter:
                             "delta": {"type": "input_json_delta", "partial_json": args_frag},
                         })
                 else:
+                    block_idx = self._tool_blocks[tc_idx]["index"]
                     func = tc_delta.get("function") or {}
                     args_frag = func.get("arguments") or ""
                     if args_frag:
@@ -365,7 +368,7 @@ class _OAIToAnthropicStreamConverter:
 
     def send_epilogue(self) -> None:
         # Ensure at least one content block was opened
-        if not self._text_started and not self._tool_blocks:
+        if self._text_block_index is None and not self._tool_blocks:
             self._write("content_block_start", {
                 "type": "content_block_start",
                 "index": 0,
@@ -373,9 +376,9 @@ class _OAIToAnthropicStreamConverter:
             })
             self._write("content_block_stop", {"type": "content_block_stop", "index": 0})
         else:
-            if self._text_started:
-                self._write("content_block_stop", {"type": "content_block_stop", "index": 0})
-            for block_idx in sorted(self._tool_blocks):
+            if self._text_block_index is not None:
+                self._write("content_block_stop", {"type": "content_block_stop", "index": self._text_block_index})
+            for block_idx in sorted(block["index"] for block in self._tool_blocks.values()):
                 self._write("content_block_stop", {"type": "content_block_stop", "index": block_idx})
 
         self._write("message_delta", {

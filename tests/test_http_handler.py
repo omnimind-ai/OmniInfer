@@ -31,6 +31,7 @@ from service_core.service import (
     split_thinking_text,
     validate_remote_access_args,
 )
+from service_core.version import get_omniinfer_version
 
 
 def _create_test_server() -> tuple[ThreadingHTTPServer, str]:
@@ -140,12 +141,14 @@ class HttpHandlerTests(unittest.TestCase):
         code, body = _get(self.base_url, "/health")
         self.assertEqual(code, 200)
         self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["version"], get_omniinfer_version())
         self.assertIn("omni", body)
 
     def test_state(self) -> None:
         code, body = _get(self.base_url, "/omni/state")
         self.assertEqual(code, 200)
         self.assertIn("backend", body)
+        self.assertEqual(body["version"], get_omniinfer_version())
 
     def test_backends(self) -> None:
         code, body = _get(self.base_url, "/omni/backends")
