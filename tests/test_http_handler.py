@@ -25,6 +25,7 @@ from service_core.service import (
     OmniHandler,
     apply_thinking_mode,
     log_cloudflare_access_urls,
+    main as service_main,
     normalize_legacy_function_tools,
     normalize_chat_completion_reasoning,
     parse_args,
@@ -907,6 +908,13 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(args.host, "127.0.0.1")
 
+    def test_lan_cloudflare_mode_defaults_to_all_interfaces(self) -> None:
+        args = parse_args(
+            {"host": "127.0.0.1", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
+            ["--lan", "--cloudflare"],
+        )
+        self.assertEqual(args.host, "0.0.0.0")
+
     def test_cloudflare_rejects_non_loopback_host(self) -> None:
         args = parse_args(
             {"host": "127.0.0.1", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
@@ -915,13 +923,12 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             validate_remote_access_args(args)
 
-    def test_cloudflare_rejects_lan_mode(self) -> None:
+    def test_cloudflare_allows_lan_mode(self) -> None:
         args = parse_args(
             {"host": "127.0.0.1", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
             ["--cloudflare", "--lan"],
         )
-        with self.assertRaises(SystemExit):
-            validate_remote_access_args(args)
+        validate_remote_access_args(args)
 
     def test_cloudflare_rejects_insecure_lan(self) -> None:
         args = parse_args(
@@ -930,6 +937,58 @@ class ConfigValidationTests(unittest.TestCase):
         )
         with self.assertRaises(SystemExit):
             validate_remote_access_args(args)
+
+    def test_lan_cloudflare_starts_lan_bind_with_loopback_tunnel_target(self) -> None:
+        class FakeServer:
+            instance: "FakeServer | None" = None
+
+            def __init__(self, address: tuple[str, int], _handler: Any) -> None:
+                self.address = address
+                self.manager = None
+                self.default_thinking = False
+                self.debug_http = False
+                self.debug_body = False
+                self.forced_backend = ""
+                self.access_policy = None
+                FakeServer.instance = self
+
+            def serve_forever(self) -> None:
+                return
+
+            def server_close(self) -> None:
+                return
+
+        manager = MagicMock()
+        manager.list_backends.return_value = ([], None)
+        manager.snapshot.return_value = {"backend": "llama.cpp-cpu"}
+        cloudflared = MagicMock(path=Path("/opt/bin/cloudflared"), source="explicit", version="test")
+        tunnel = MagicMock(public_url="https://example.trycloudflare.com")
+
+        with patch("service_core.service.ThreadingHTTPServer", FakeServer):
+            with patch("service_core.service.RuntimeManager", return_value=manager):
+                with patch("service_core.service.resolve_cloudflared_for_quick_tunnel", return_value=cloudflared):
+                    with patch("service_core.service.start_cloudflare_quick_tunnel", return_value=tunnel) as start_tunnel:
+                        result = service_main(
+                            [
+                                "--lan",
+                                "--cloudflare",
+                                "--port",
+                                "19177",
+                                "--api-key",
+                                "secret",
+                                "--cloudflared-path",
+                                "/opt/bin/cloudflared",
+                            ]
+                        )
+
+        self.assertEqual(result, 0)
+        self.assertIsNotNone(FakeServer.instance)
+        self.assertEqual(FakeServer.instance.address, ("0.0.0.0", 19177))  # type: ignore[union-attr]
+        self.assertTrue(FakeServer.instance.access_policy.trust_proxy_headers)  # type: ignore[union-attr]
+        self.assertEqual(FakeServer.instance.access_policy.api_key, "secret")  # type: ignore[union-attr]
+        start_tunnel.assert_called_once_with(Path("/opt/bin/cloudflared"), "http://127.0.0.1:19177")
+        tunnel.stop.assert_called_once()
+        manager.stop_runtime.assert_called_once()
 
 
 class CloudflareConsoleOutputTests(unittest.TestCase):
