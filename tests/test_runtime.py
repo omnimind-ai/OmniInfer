@@ -2129,7 +2129,12 @@ class ExternalRuntimeLaunchArgsTests(unittest.TestCase):
                     mmproj_path=None,
                 )
 
-        proc.send_signal.assert_called_once()
+        if os.name == "nt":
+            proc.terminate.assert_called_once()
+            proc.send_signal.assert_not_called()
+        else:
+            proc.send_signal.assert_called_once()
+            proc.terminate.assert_not_called()
         proc.wait.assert_called_once()
 
 
