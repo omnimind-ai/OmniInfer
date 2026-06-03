@@ -6,6 +6,7 @@ BUILD_TYPE="Release"
 DRY_RUN=0
 BOOTSTRAP_SUBMODULE=1
 WITH_OPENCL=0
+WITH_CUDA=0
 JOBS=""
 PYTHON_BIN="${OMNIINFER_MNN_PYTHON:-python3}"
 CLEAN_BUILD=0
@@ -35,6 +36,7 @@ Options:
   --python <path>       Python interpreter used to create the local venv
   --jobs <n>            Parallel build jobs, default: nproc
   --opencl              Build MNN with OpenCL enabled
+  --cuda                Build MNN with CUDA enabled
   --clean               Remove previous MNN build products and recreate the venv
   --no-bootstrap        Do not auto-initialize the MNN git submodule
   --smoke-test          Verify the installed Python package imports `MNN.llm`
@@ -59,6 +61,10 @@ while (($# > 0)); do
       ;;
     --opencl)
       WITH_OPENCL=1
+      shift
+      ;;
+    --cuda)
+      WITH_CUDA=1
       shift
       ;;
     --clean)
@@ -160,6 +166,130 @@ run_cmd() {
   fi
 }
 
+configure_cuda_env() {
+  if [[ ${WITH_CUDA} -eq 0 ]]; then
+    return
+  fi
+
+  local cuda_root="${CUDAToolkit_ROOT:-${CUDA_HOME:-${CUDA_PATH:-}}}"
+  if [[ -z "${cuda_root}" ]]; then
+    for candidate in "${HOME}/.local/cuda-12.5" /usr/local/cuda /usr/local/cuda-12.5; do
+      if [[ -f "${candidate}/include/cuda_runtime.h" && -d "${candidate}/lib64" ]]; then
+        cuda_root="${candidate}"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "${cuda_root}" || ! -f "${cuda_root}/include/cuda_runtime.h" ]]; then
+    echo "CUDA headers were not found. Set CUDAToolkit_ROOT or CUDA_HOME before --cuda." >&2
+    exit 1
+  fi
+  if [[ ! -d "${cuda_root}/lib64" ]]; then
+    echo "CUDA library directory was not found: ${cuda_root}/lib64" >&2
+    exit 1
+  fi
+
+  export CUDAToolkit_ROOT="${cuda_root}"
+  export CUDA_HOME="${cuda_root}"
+  export CUDA_PATH="${cuda_root}"
+  export PATH="${cuda_root}/bin:${PATH}"
+  export CPATH="${cuda_root}/include${CPATH:+:${CPATH}}"
+  export LIBRARY_PATH="${cuda_root}/lib64${LIBRARY_PATH:+:${LIBRARY_PATH}}"
+  export LD_LIBRARY_PATH="${cuda_root}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+}
+
+append_path_list() {
+  local var_name="$1"
+  local new_value="$2"
+  local old_value="${!var_name:-}"
+  if [[ -z "${new_value}" ]]; then
+    return
+  fi
+  if [[ -n "${old_value}" ]]; then
+    printf -v "${var_name}" '%s:%s' "${old_value}" "${new_value}"
+  else
+    printf -v "${var_name}" '%s' "${new_value}"
+  fi
+  export "${var_name}"
+}
+
+append_cuda_component_env() {
+  if [[ ${WITH_CUDA} -eq 0 ]]; then
+    return
+  fi
+
+  local extra_roots="${OMNIINFER_MNN_CUDA_EXTRA_ROOTS:-}"
+  if [[ -x "${VENV_ROOT}/bin/python3" ]]; then
+    local venv_roots=""
+    venv_roots="$("${VENV_ROOT}/bin/python3" - <<'PY'
+import site
+from pathlib import Path
+
+roots = []
+for base in site.getsitepackages():
+    nvidia_root = Path(base) / "nvidia"
+    if not nvidia_root.is_dir():
+        continue
+    for child in nvidia_root.iterdir():
+        if child.is_dir() and ((child / "include").is_dir() or (child / "lib").is_dir()):
+            roots.append(str(child))
+print(":".join(roots))
+PY
+)"
+    if [[ -n "${venv_roots}" ]]; then
+      extra_roots="${extra_roots:+${extra_roots}:}${venv_roots}"
+    fi
+  fi
+
+  if [[ -z "${extra_roots}" ]]; then
+    return
+  fi
+
+  local include_dirs="" lib_dirs="" root=""
+  local old_ifs="${IFS}"
+  IFS=':'
+  for root in ${extra_roots}; do
+    if [[ -d "${root}/include" ]]; then
+      include_dirs="${include_dirs:+${include_dirs}:}${root}/include"
+    fi
+    if [[ -d "${root}/lib" ]]; then
+      lib_dirs="${lib_dirs:+${lib_dirs}:}${root}/lib"
+    fi
+    if [[ -d "${root}/lib64" ]]; then
+      lib_dirs="${lib_dirs:+${lib_dirs}:}${root}/lib64"
+    fi
+  done
+  IFS="${old_ifs}"
+
+  append_path_list CPATH "${include_dirs}"
+  append_path_list CMAKE_INCLUDE_PATH "${include_dirs}"
+  append_path_list LIBRARY_PATH "${lib_dirs}"
+  append_path_list LD_LIBRARY_PATH "${lib_dirs}"
+  append_path_list CMAKE_LIBRARY_PATH "${lib_dirs}"
+}
+
+cuda_component_lib_dirs() {
+  if [[ ! -x "${VENV_ROOT}/bin/python3" ]]; then
+    return
+  fi
+  "${VENV_ROOT}/bin/python3" - <<'PY'
+import site
+from pathlib import Path
+
+dirs = []
+for base in site.getsitepackages():
+    nvidia_root = Path(base) / "nvidia"
+    if not nvidia_root.is_dir():
+        continue
+    for child in nvidia_root.iterdir():
+        for lib_dir in (child / "lib", child / "lib64"):
+            if lib_dir.is_dir():
+                dirs.append(str(lib_dir))
+print(":".join(dirs))
+PY
+}
+
 create_venv() {
   if "${PYTHON_BIN}" -m venv "${VENV_ROOT}"; then
     return
@@ -225,6 +355,7 @@ fi
 ensure_mnn_root
 require_command "${PYTHON_BIN}"
 select_python_with_headers
+configure_cuda_env
 prepare_runtime_dirs
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
@@ -238,23 +369,40 @@ if [[ ! -x "${VENV_ROOT}/bin/python3" ]]; then
 fi
 
 install_python_deps
+append_cuda_component_env
 
 pushd "${PIP_PACKAGE_ROOT}" >/dev/null
 DEPS_ARGS=(llm)
 if [[ ${WITH_OPENCL} -eq 1 ]]; then
   DEPS_ARGS+=(opencl)
 fi
+if [[ ${WITH_CUDA} -eq 1 ]]; then
+  DEPS_ARGS+=(cuda)
+fi
+DEPS_SPEC="$(IFS=,; echo "${DEPS_ARGS[*]}")"
 PROJECT_ROOT="${MNN_ROOT}" \
-  "${VENV_ROOT}/bin/python3" build_deps.py "${DEPS_ARGS[@]}"
+  "${VENV_ROOT}/bin/python3" build_deps.py "${DEPS_SPEC}"
 
 PROJECT_ROOT="${MNN_ROOT}" \
   MNN_BUILD_DIR="${BUILD_ROOT}" \
   MAX_JOBS="${JOBS}" \
-  "${VENV_ROOT}/bin/python3" setup.py install --deps "$(IFS=,; echo "${DEPS_ARGS[*]}")"
+  "${VENV_ROOT}/bin/python3" setup.py install --deps "${DEPS_SPEC}"
 popd >/dev/null
+
+WRAPPER_LIBRARY_PATH="${VENV_ROOT}/lib"
+if [[ ${WITH_CUDA} -eq 1 ]]; then
+  if [[ -n "${CUDA_HOME:-}" && -d "${CUDA_HOME}/lib64" ]]; then
+    WRAPPER_LIBRARY_PATH="${WRAPPER_LIBRARY_PATH}:${CUDA_HOME}/lib64"
+  fi
+  CUDA_COMPONENT_LIB_DIRS="$(cuda_component_lib_dirs)"
+  if [[ -n "${CUDA_COMPONENT_LIB_DIRS}" ]]; then
+    WRAPPER_LIBRARY_PATH="${WRAPPER_LIBRARY_PATH}:${CUDA_COMPONENT_LIB_DIRS}"
+  fi
+fi
 
 cat > "${BIN_ROOT}/python3" <<EOF
 #!/usr/bin/env bash
+export LD_LIBRARY_PATH="${WRAPPER_LIBRARY_PATH}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
 exec "${VENV_ROOT}/bin/python3" "\$@"
 EOF
 chmod +x "${BIN_ROOT}/python3"
