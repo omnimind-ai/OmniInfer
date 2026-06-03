@@ -81,6 +81,23 @@ class CliArgParserTests(unittest.TestCase):
         self.assertIsNone(parsed.ctx_size)
         self.assertEqual(parsed.launch_args, [])
 
+    def test_ik_load_args_map_no_cache_prompt(self) -> None:
+        backend = make_backend("ik_llama.cpp-linux-cuda", "llama.cpp")
+
+        parsed = parse_backend_load_extra_args(
+            backend,
+            ["-ngl", "999", "--no-cache-prompt", "--ignore-eos"],
+        )
+
+        self.assertEqual(parsed.launch_args, ["-ngl", "999", "-cram", "0", "--ignore-eos"])
+
+    def test_official_llama_load_args_keep_no_cache_prompt(self) -> None:
+        backend = make_backend("llama.cpp-linux-cuda", "llama.cpp")
+
+        parsed = parse_backend_load_extra_args(backend, ["--no-cache-prompt"])
+
+        self.assertEqual(parsed.launch_args, ["--no-cache-prompt"])
+
     def test_reserved_flags_rejected_in_load_args(self) -> None:
         backend = make_backend("llama.cpp-cpu", "llama.cpp")
         for flag in ["-m", "--model", "-mm", "--mmproj"]:

@@ -19,7 +19,7 @@ def parse_backend_load_extra_args(backend: BackendSpec, tokens: list[str]) -> Pa
     if not tokens:
         return ParsedBackendExtraArgs()
     if backend.family in {"llama.cpp", "turboquant"}:
-        return _parse_llama_cpp_load_args(tokens)
+        return _parse_llama_cpp_load_args(backend, tokens)
     if backend.family == "mlx-lm":
         return _parse_mlx_load_args(tokens)
     return _parse_generic_load_args(tokens)
@@ -35,7 +35,7 @@ def parse_backend_chat_extra_args(backend: BackendSpec, tokens: list[str]) -> Pa
     return _parse_generic_chat_args(tokens)
 
 
-def _parse_llama_cpp_load_args(tokens: list[str]) -> ParsedBackendExtraArgs:
+def _parse_llama_cpp_load_args(backend: BackendSpec, tokens: list[str]) -> ParsedBackendExtraArgs:
     parsed = ParsedBackendExtraArgs()
     reserved = {"-m", "--model", "-mm", "--mmproj", "--message", "-p", "--prompt", "--image"}
     i = 0
@@ -47,6 +47,10 @@ def _parse_llama_cpp_load_args(tokens: list[str]) -> ParsedBackendExtraArgs:
         if flag in {"-c", "--ctx-size"}:
             parsed.ctx_size = _parse_int(_take_option_value(tokens, i, inline_value, flag))
             i += 1 if inline_value is not None else 2
+            continue
+        if backend.id.startswith("ik_llama.cpp") and flag == "--no-cache-prompt":
+            parsed.launch_args.extend(["-cram", "0"])
+            i += 1
             continue
         parsed.launch_args.append(token)
         i += 1
