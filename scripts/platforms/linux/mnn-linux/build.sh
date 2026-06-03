@@ -111,6 +111,36 @@ require_command() {
   fi
 }
 
+python_has_headers() {
+  "$1" - <<'PY' >/dev/null 2>&1
+import sysconfig
+from pathlib import Path
+
+include_dir = sysconfig.get_paths().get("include")
+raise SystemExit(0 if include_dir and (Path(include_dir) / "Python.h").is_file() else 1)
+PY
+}
+
+select_python_with_headers() {
+  if python_has_headers "${PYTHON_BIN}"; then
+    return
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    local candidate=""
+    candidate="$(uv python find --managed-python --no-python-downloads 3.13 2>/dev/null || true)"
+    if [[ -n "${candidate}" ]] && python_has_headers "${candidate}"; then
+      echo "${PYTHON_BIN} does not provide Python.h; using uv-managed Python: ${candidate}"
+      PYTHON_BIN="${candidate}"
+      return
+    fi
+  fi
+
+  echo "${PYTHON_BIN} does not provide Python.h, which is required to build PyMNN." >&2
+  echo "Install python3-dev/python3-venv, pass --python to a Python with headers, or install a uv-managed Python." >&2
+  exit 1
+}
+
 detect_jobs() {
   if command -v nproc >/dev/null 2>&1; then
     nproc
@@ -128,6 +158,40 @@ run_cmd() {
   if [[ ${DRY_RUN} -eq 0 ]]; then
     "$@"
   fi
+}
+
+create_venv() {
+  if "${PYTHON_BIN}" -m venv "${VENV_ROOT}"; then
+    return
+  fi
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "Failed to create venv with ${PYTHON_BIN}, and uv was not found for fallback." >&2
+    echo "Install python3-venv or provide a Python with ensurepip via --python." >&2
+    exit 1
+  fi
+
+  echo "Falling back to uv venv because ${PYTHON_BIN} could not create a venv."
+  rm -rf "${VENV_ROOT}"
+  local resolved_python="${PYTHON_BIN}"
+  if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    resolved_python="$(command -v "${PYTHON_BIN}")"
+  fi
+  uv venv --python "${resolved_python}" "${VENV_ROOT}"
+}
+
+install_python_deps() {
+  if "${VENV_ROOT}/bin/python3" -m pip --version >/dev/null 2>&1; then
+    "${VENV_ROOT}/bin/python3" -m pip install --upgrade pip setuptools wheel numpy
+    return
+  fi
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "The MNN venv does not have pip, and uv was not found for dependency install." >&2
+    exit 1
+  fi
+
+  uv pip install --python "${VENV_ROOT}/bin/python3" --upgrade pip setuptools wheel numpy
 }
 
 ensure_mnn_root() {
@@ -160,6 +224,7 @@ fi
 
 ensure_mnn_root
 require_command "${PYTHON_BIN}"
+select_python_with_headers
 prepare_runtime_dirs
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
@@ -169,10 +234,10 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
 fi
 
 if [[ ! -x "${VENV_ROOT}/bin/python3" ]]; then
-  "${PYTHON_BIN}" -m venv "${VENV_ROOT}"
+  create_venv
 fi
 
-"${VENV_ROOT}/bin/python3" -m pip install --upgrade pip setuptools wheel numpy
+install_python_deps
 
 pushd "${PIP_PACKAGE_ROOT}" >/dev/null
 DEPS_ARGS=(llm)
