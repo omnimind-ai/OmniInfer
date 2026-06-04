@@ -7,9 +7,11 @@ DRY_RUN=0
 CLEAN_BUILD=0
 SMOKE_TEST=0
 PYTHON_BIN="${OMNIINFER_VLLM_PYTHON:-python3}"
-PIP_PACKAGE="${OMNIINFER_VLLM_PIP_PACKAGE:-vllm}"
+PIP_PACKAGE="${OMNIINFER_VLLM_PIP_PACKAGE:-}"
 INDEX_URL="${OMNIINFER_VLLM_INDEX_URL:-}"
 EXTRA_INDEX_URL="${OMNIINFER_VLLM_EXTRA_INDEX_URL:-}"
+PYTORCH_INDEX_URL="${OMNIINFER_VLLM_PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
+UV_INDEX_STRATEGY="${OMNIINFER_VLLM_UV_INDEX_STRATEGY:-unsafe-best-match}"
 PIP_EXTRA_ARGS=()
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +28,7 @@ Usage: build.sh [options]
 Options:
   --build-type <type>        Accepted for CLI consistency; vLLM is installed from Python wheels
   --python <path>            Python interpreter used to create the local venv
-  --package <spec>           pip package spec, default: vllm
+  --package <spec>           Override the default pip package set
                              Example: 'vllm==0.9.2'
   --index-url <url>          pip index URL
   --extra-index-url <url>    extra pip index URL
@@ -41,6 +43,8 @@ Environment:
   OMNIINFER_VLLM_PIP_PACKAGE     Default pip package spec
   OMNIINFER_VLLM_INDEX_URL       Default pip index URL
   OMNIINFER_VLLM_EXTRA_INDEX_URL Default extra pip index URL
+  OMNIINFER_VLLM_PYTORCH_INDEX_URL Default PyTorch CUDA wheel index for the pinned install
+  OMNIINFER_VLLM_UV_INDEX_STRATEGY uv index strategy for the pinned install
 EOF
 }
 
@@ -127,7 +131,43 @@ run_cmd() {
   fi
 }
 
+create_venv() {
+  if "${PYTHON_BIN}" -m venv "${PACKAGE_ROOT}"; then
+    return
+  fi
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "Failed to create venv with ${PYTHON_BIN}, and uv was not found for fallback." >&2
+    echo "Install python3-venv or pass --python to an interpreter with venv support." >&2
+    exit 1
+  fi
+
+  echo "Falling back to uv venv because ${PYTHON_BIN} could not create a venv."
+  rm -rf "${PACKAGE_ROOT}"
+  local resolved_python="${PYTHON_BIN}"
+  if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    resolved_python="$(command -v "${PYTHON_BIN}")"
+  fi
+  run_cmd uv venv --python "${resolved_python}" "${PACKAGE_ROOT}"
+}
+
 require_command "${PYTHON_BIN}"
+
+PIP_PACKAGES=()
+if [[ -n "${PIP_PACKAGE}" ]]; then
+  PIP_PACKAGES+=("${PIP_PACKAGE}")
+else
+  PIP_PACKAGES+=(
+    "torch==2.5.1+cu121"
+    "torchvision==0.20.1+cu121"
+    "transformers==4.46.3"
+    "setuptools"
+    "vllm==0.6.6"
+  )
+  if [[ -z "${EXTRA_INDEX_URL}" ]]; then
+    EXTRA_INDEX_URL="${PYTORCH_INDEX_URL}"
+  fi
+fi
 
 PIP_ARGS=()
 if [[ -n "${INDEX_URL}" ]]; then
@@ -137,12 +177,18 @@ if [[ -n "${EXTRA_INDEX_URL}" ]]; then
   PIP_ARGS+=(--extra-index-url "${EXTRA_INDEX_URL}")
 fi
 PIP_ARGS+=("${PIP_EXTRA_ARGS[@]}")
-PIP_ARGS+=("${PIP_PACKAGE}")
+PIP_ARGS+=("${PIP_PACKAGES[@]}")
+
+UV_PIP_ARGS=()
+if [[ -z "${PIP_PACKAGE}" && -n "${UV_INDEX_STRATEGY}" ]]; then
+  UV_PIP_ARGS+=(--index-strategy "${UV_INDEX_STRATEGY}")
+fi
+UV_PIP_ARGS+=("${PIP_ARGS[@]}")
 
 echo "Preparing vLLM Linux CUDA runtime..."
 echo "  runtime: ${PACKAGE_ROOT}"
 echo "  python: ${PYTHON_BIN}"
-echo "  package: ${PIP_PACKAGE}"
+echo "  packages: ${PIP_PACKAGES[*]}"
 echo "  build type: ${BUILD_TYPE} (accepted for CLI consistency)"
 
 if [[ ${CLEAN_BUILD} -eq 1 ]]; then
@@ -154,7 +200,7 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
   [[ ${CLEAN_BUILD} -eq 1 ]] && echo "+ rm -rf ${PACKAGE_ROOT}"
   echo "+ ${PYTHON_BIN} -m venv ${PACKAGE_ROOT}"
   if command -v uv >/dev/null 2>&1; then
-    echo "+ uv pip install --python ${BIN_ROOT}/python ${PIP_ARGS[*]}"
+    echo "+ uv pip install --python ${BIN_ROOT}/python ${UV_PIP_ARGS[*]}"
   else
     echo "+ ${BIN_ROOT}/python -m pip install --upgrade pip"
     echo "+ ${BIN_ROOT}/python -m pip install ${PIP_ARGS[*]}"
@@ -170,7 +216,7 @@ fi
 mkdir -p "${LOG_ROOT}" "${MODELS_ROOT}"
 
 if [[ ! -x "${BIN_ROOT}/python" ]]; then
-  run_cmd "${PYTHON_BIN}" -m venv "${PACKAGE_ROOT}"
+  create_venv
 fi
 
 if [[ ! -x "${BIN_ROOT}/python" ]]; then
@@ -180,7 +226,7 @@ if [[ ! -x "${BIN_ROOT}/python" ]]; then
 fi
 
 if command -v uv >/dev/null 2>&1; then
-  run_cmd uv pip install --python "${BIN_ROOT}/python" "${PIP_ARGS[@]}"
+  run_cmd uv pip install --python "${BIN_ROOT}/python" "${UV_PIP_ARGS[@]}"
 else
   run_cmd "${BIN_ROOT}/python" -m ensurepip --upgrade
   run_cmd "${BIN_ROOT}/python" -m pip install --upgrade pip
