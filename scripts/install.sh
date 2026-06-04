@@ -15,7 +15,7 @@ INSTALL_DIR="$(pwd)/OmniInfer"
 MODEL_PATH=""
 NO_MODEL=0
 SKIP_BUILD=0
-PREBUILT_MODE=0
+PREBUILT_MODE=1
 BACKEND_OVERRIDE=""
 NON_INTERACTIVE=0
 INSTALL_SYSTEM_DEPS="ask"
@@ -31,6 +31,7 @@ while [[ $# -gt 0 ]]; do
         --no-model)       NO_MODEL=1;             shift   ;;
         --skip-build)     SKIP_BUILD=1;           shift   ;;
         --prebuilt)       PREBUILT_MODE=1;         shift   ;;
+        --from-source)    PREBUILT_MODE=0;         shift   ;;
         --backend)        BACKEND_OVERRIDE="$2";  shift 2 ;;
         --non-interactive) NON_INTERACTIVE=1;      shift   ;;
         --install-system-deps) INSTALL_SYSTEM_DEPS="yes"; shift ;;
@@ -49,6 +50,7 @@ Options:
   --no-model            Skip model setup without prompting
   --skip-build          Skip the backend build step
   --prebuilt            Install the selected backend from a configured prebuilt archive
+  --from-source         Build the selected backend from source instead of using prebuilt install
   --backend ID          Force a specific backend (e.g. llama.cpp-linux-vulkan)
   --non-interactive     Do not prompt; fail with instructions if dependencies are missing
   --install-system-deps Automatically install missing system packages with sudo
@@ -563,10 +565,15 @@ while true; do
             fi
         done
 
-        _menu_descs=("${BACKEND_DESCS[@]}")
+        _menu_descs=()
         if [[ ${#_prebuilt_ids[@]} -gt 0 ]]; then
             _menu_descs+=("${_prebuilt_descs[@]}")
         fi
+        _source_descs=()
+        for _backend_idx in "${!BACKEND_IDS[@]}"; do
+            _source_descs+=("${BACKEND_DESCS[$_backend_idx]}  (build from source)")
+        done
+        _menu_descs+=("${_source_descs[@]}")
         _menu_descs+=("Skip for now  —  install backend manually later")
 
         echo "  Available backends (arrow keys to move, Enter to select):"
@@ -584,11 +591,11 @@ while true; do
             break
         fi
 
-        if [[ "${idx}" -lt "${#BACKEND_IDS[@]}" ]]; then
-            SELECTED_BACKEND="${BACKEND_IDS[$idx]}"
-        else
+        if [[ "${idx}" -lt "${#_prebuilt_ids[@]}" ]]; then
             PREBUILT_MODE=1
-            SELECTED_BACKEND="${_prebuilt_ids[$(( idx - ${#BACKEND_IDS[@]} ))]}"
+            SELECTED_BACKEND="${_prebuilt_ids[$idx]}"
+        else
+            SELECTED_BACKEND="${BACKEND_IDS[$(( idx - ${#_prebuilt_ids[@]} ))]}"
         fi
     fi
 
@@ -804,6 +811,7 @@ else
         info "Build log: ${BUILD_LOG_PATH}"
         _build_args=()
         [[ "${PREBUILT_MODE}" -eq 1 ]] && _build_args+=(--prebuilt)
+        [[ "${PREBUILT_MODE}" -eq 0 ]] && _build_args+=(--from-source)
         set +e
         bash "${FULL_BUILD_SCRIPT}" "${_build_args[@]}" 2>&1 | tee "${BUILD_LOG_PATH}"
         _build_rc=${PIPESTATUS[0]}

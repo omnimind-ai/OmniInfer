@@ -244,16 +244,22 @@ def select_backend(name: str) -> int:
     return 0
 
 
-def build_backend(name: str, *, prebuilt: bool = False) -> int:
-    options = commands.BackendBuildOptions(backend=name, prebuilt=prebuilt)
+def build_backend(name: str, *, prebuilt: bool = False, from_source: bool = False) -> int:
+    options = commands.BackendBuildOptions(backend=name, prebuilt=prebuilt, from_source=from_source)
     command, _script_path = commands.backend_build_command(options)
-    action = "Installing prebuilt backend" if prebuilt else "Building backend"
+    action = "Building backend" if from_source else "Installing backend"
     print(f"{action}: {name}")
-    print(f"Install mode: {'prebuilt' if prebuilt else 'source'}")
+    if from_source:
+        install_mode = "source"
+    elif prebuilt:
+        install_mode = "prebuilt"
+    else:
+        install_mode = "default"
+    print(f"Install mode: {install_mode}")
     print("Command: " + " ".join(command))
 
     result = commands.build_backend(options)
-    print(f"Backend {'install' if prebuilt else 'build'} completed: {result.backend}")
+    print(f"Backend {'build' if from_source else 'install'} completed: {result.backend}")
     if result.binary_path:
         print(f"Binary: {result.binary_path}")
     return 0
@@ -1009,7 +1015,9 @@ def build_parser() -> argparse.ArgumentParser:
     if commands.is_backend_build_supported():
         build = sub.add_parser("build", help="Build a backend from this source checkout")
         build.add_argument("backend_name", help="Backend name")
-        build.add_argument("--prebuilt", action="store_true", help="Install the backend from a configured prebuilt archive")
+        build_mode = build.add_mutually_exclusive_group()
+        build_mode.add_argument("--prebuilt", action="store_true", help="Install the backend from a configured prebuilt archive")
+        build_mode.add_argument("--from-source", action="store_true", help="Build the backend from the checked-out source submodule")
 
     sub.add_parser("status", help="Show current status")
 
@@ -1104,7 +1112,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
-        return build_backend(args.backend_name, prebuilt=getattr(args, "prebuilt", False))
+        return build_backend(
+            args.backend_name,
+            prebuilt=getattr(args, "prebuilt", False),
+            from_source=getattr(args, "from_source", False),
+        )
 
     if args.command == "status":
         if unknown_args:

@@ -67,16 +67,16 @@ In the table output, empty `Selected` or `Installed` cells mean the state is fal
 
 ### 2. Build a backend from source, optional
 
-Source checkouts on Linux, macOS, and Windows can build a compatible backend through the CLI:
+Source checkouts on Linux, macOS, and Windows can install a compatible backend through the CLI:
 
 ```sh
 ./omniinfer build <backend>
 ```
 
-If the backend has a configured upstream prebuilt archive, install that runtime instead of compiling locally:
+Linux backend scripts default to non-build installation. Use `--from-source` when you explicitly want to compile from the checked-out source submodule:
 
 ```sh
-./omniinfer build <backend> --prebuilt
+./omniinfer build <backend> --from-source
 ```
 
 Windows:
@@ -86,7 +86,7 @@ Windows:
 .\omniinfer.ps1 build <backend> --prebuilt
 ```
 
-The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*`, uses a `Release` source build unless `--prebuilt` is set, and verifies that the backend launcher exists after the install.
+The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*` and verifies that the backend launcher exists after the install. `--prebuilt` is still accepted for explicit prebuilt installs where supported.
 
 Packaged releases intentionally do not provide this command because they are designed to run from the included `runtime/` directory without requiring a compiler, CUDA toolkit, CMake, or other build tools.
 

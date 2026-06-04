@@ -8,6 +8,7 @@ JOBS=""
 CLEAN_BUILD=0
 BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
+BUILD_FROM_SOURCE=0
 USE_NATIVE=0
 ENABLE_LTO=0
 
@@ -38,6 +39,7 @@ Options:
   --lto                Enable link-time optimization
   --clean              Remove the previous build directory before configuring
   --no-bootstrap       Do not auto-initialize the omniinfer-native git submodule
+  --from-source        Build from the checked-out source submodule
   --smoke-test         Run `llama-server --version` after the build completes
   --dry-run            Print actions without executing them
   -h, --help           Show this help message
@@ -74,6 +76,10 @@ while (($# > 0)); do
       BOOTSTRAP_SUBMODULE=0
       shift
       ;;
+    --from-source)
+      BUILD_FROM_SOURCE=1
+      shift
+      ;;
     --smoke-test)
       SMOKE_TEST=1
       shift
@@ -106,6 +112,12 @@ BUILD_ROOT="${PACKAGE_ROOT}/build/omniinfer-native-linux"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
 MODELS_ROOT="${REPO_ROOT}/.local/models"
+
+if [[ ${BUILD_FROM_SOURCE} -eq 0 ]]; then
+  echo "No prebuilt install path is configured for omniinfer-native-linux." >&2
+  echo "Re-run with --from-source to build from framework/omniinfer-native." >&2
+  exit 1
+fi
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then

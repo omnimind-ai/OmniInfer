@@ -8,7 +8,7 @@ JOBS=""
 CLEAN_BUILD=0
 BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
-INSTALL_PREBUILT=0
+INSTALL_PREBUILT=1
 
 check_deps() {
   local rc=0
@@ -35,6 +35,7 @@ Options:
   --clean              Remove the previous build directory before configuring
   --no-bootstrap       Do not auto-initialize the llama.cpp git submodule
   --prebuilt           Download and install the configured upstream prebuilt archive
+  --from-source        Build from the checked-out source submodule instead of installing a prebuilt archive
   --smoke-test         Run `llama-server --version` after the build completes
   --dry-run            Print actions without executing them
   -h, --help           Show this help message
@@ -61,6 +62,10 @@ while (($# > 0)); do
       ;;
     --prebuilt)
       INSTALL_PREBUILT=1
+      shift
+      ;;
+    --from-source)
+      INSTALL_PREBUILT=0
       shift
       ;;
     --smoke-test)
@@ -105,7 +110,15 @@ if [[ ${INSTALL_PREBUILT} -eq 1 ]]; then
     --models-dir "${MODELS_ROOT}"
   )
   [[ ${DRY_RUN} -eq 1 ]] && PREBUILT_ARGS+=(--dry-run)
-  exec python3 "${REPO_ROOT}/scripts/platforms/common/install-prebuilt.py" "${PREBUILT_ARGS[@]}"
+  set +e
+  python3 "${REPO_ROOT}/scripts/platforms/common/install-prebuilt.py" "${PREBUILT_ARGS[@]}"
+  rc=$?
+  set -e
+  if [[ ${rc} -ne 0 ]]; then
+    echo "Re-run with --from-source to build from framework/llama.cpp." >&2
+    exit ${rc}
+  fi
+  exit 0
 fi
 
 require_command() {

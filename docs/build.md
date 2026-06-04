@@ -56,16 +56,18 @@ git submodule update --init --recursive framework/llama.cpp
 
 ## Prebuilt Runtime Installs
 
-Backend scripts may support a prebuilt install mode:
+Backend scripts may support a prebuilt install mode. On Linux, backend scripts default to non-build installation; pass `--from-source` when you explicitly want a local source build.
 
 ```bash
-./omniinfer build <backend> --prebuilt
+./omniinfer build <backend>
+./omniinfer build <backend> --from-source
 ```
 
 or directly:
 
 ```bash
 bash scripts/platforms/linux/llama.cpp-linux/build.sh --prebuilt
+bash scripts/platforms/linux/llama.cpp-linux/build.sh --from-source
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/platforms/windows/llama.cpp-cpu/build.ps1 -Prebuilt
 ```
 
@@ -74,8 +76,8 @@ The per-runtime script owns the install behavior. The interactive installers and
 Prebuilt versioning is explicit:
 
 - `scripts/prebuilt_backends.json` records the upstream source, release tag, archive URL, archive type, and launcher name.
-- A prebuilt llama.cpp runtime is an upstream release artifact. It is not automatically the same commit as `framework/llama.cpp`.
-- To make a prebuilt llama.cpp runtime source-aligned, pin both the catalog tag and `framework/llama.cpp` submodule to the same upstream release tag or commit.
+- A prebuilt llama.cpp runtime is an upstream release artifact. It is only source-aligned when the catalog tag and `framework/llama.cpp` submodule are pinned to the same upstream release tag or commit.
+- The current llama.cpp catalog and `framework/llama.cpp` submodule are both pinned to upstream release `b9500`.
 - If no official asset exists, leave the catalog entry absent. For example, llama.cpp `b9500` publishes Linux CPU, ROCm, Vulkan, OpenVINO, macOS, and Windows CUDA assets, but not a Linux CUDA archive.
 - Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and download URL used.
 
@@ -228,6 +230,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 - `scripts/platforms/linux/build-release.sh`
 
 ### Backend Notes
+
+Linux backend script behavior:
+
+| Backend | Default action | Source build action |
+|---|---|---|
+| `llama.cpp-linux` | Downloads official `b9500` Linux CPU archive | `--from-source` builds `framework/llama.cpp` with CPU settings |
+| `llama.cpp-linux-rocm` | Downloads official `b9500` ROCm archive | `--from-source` builds `framework/llama.cpp` with ROCm settings |
+| `llama.cpp-linux-vulkan` | Downloads official `b9500` Vulkan archive | `--from-source` builds `framework/llama.cpp` with Vulkan settings |
+| `llama.cpp-linux-s390x` | Downloads official `b9500` s390x archive | `--from-source` builds `framework/llama.cpp` for s390x |
+| `llama.cpp-linux-openvino` | Downloads official `b9500` OpenVINO archive | `--from-source` builds `framework/llama.cpp` with OpenVINO settings |
+| `llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message because upstream `b9500` has no Linux CUDA archive | `--from-source` builds `framework/llama.cpp` with CUDA settings |
+| `vllm-linux-cuda` | Creates an OmniInfer-managed venv and installs vLLM wheels | Not a C++ source build path |
+| `mnn-linux` | Fails with a clear "no prebuilt configured" message | `--from-source` builds PyMNN from `framework/mnn` |
+| `ik_llama.cpp-linux` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/ik_llama.cpp` CPU |
+| `ik_llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/ik_llama.cpp` CUDA |
+| `omniinfer-native-linux` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/omniinfer-native` |
 
 `llama.cpp-linux`:
 

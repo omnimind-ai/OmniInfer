@@ -222,12 +222,21 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(args.command, "build")
         self.assertEqual(args.backend_name, "llama.cpp-cpu")
         self.assertFalse(args.prebuilt)
+        self.assertFalse(args.from_source)
 
     def test_build_command_parses_prebuilt_mode(self) -> None:
         with patch("service_core.commands.is_backend_build_supported", return_value=True):
             args = build_parser().parse_args(["build", "llama.cpp-cpu", "--prebuilt"])
         self.assertEqual(args.backend_name, "llama.cpp-cpu")
         self.assertTrue(args.prebuilt)
+        self.assertFalse(args.from_source)
+
+    def test_build_command_parses_from_source_mode(self) -> None:
+        with patch("service_core.commands.is_backend_build_supported", return_value=True):
+            args = build_parser().parse_args(["build", "llama.cpp-cpu", "--from-source"])
+        self.assertEqual(args.backend_name, "llama.cpp-cpu")
+        self.assertFalse(args.prebuilt)
+        self.assertTrue(args.from_source)
 
     def test_build_command_is_hidden_in_packaged_release(self) -> None:
         with patch("service_core.commands.is_backend_build_supported", return_value=False):
@@ -663,11 +672,11 @@ class CommandHelperTests(unittest.TestCase):
                 patch("service_core.commands.local_backends", return_value={"llama.cpp-mac": object()}),
             ):
                 command, script_path = commands.backend_build_command(
-                    commands.BackendBuildOptions(backend="llama.cpp-mac", prebuilt=True)
+                    commands.BackendBuildOptions(backend="llama.cpp-mac", from_source=True)
                 )
 
         self.assertEqual(script_path, script)
-        self.assertEqual(command, ["bash", str(script), "--build-type", "Release", "--prebuilt"])
+        self.assertEqual(command, ["bash", str(script), "--build-type", "Release", "--from-source"])
 
     def test_backend_build_rejected_when_frozen(self) -> None:
         with patch("service_core.commands.sys.frozen", True, create=True):

@@ -11,6 +11,7 @@ JOBS=""
 PYTHON_BIN="${OMNIINFER_MNN_PYTHON:-python3}"
 CLEAN_BUILD=0
 SMOKE_TEST=0
+BUILD_FROM_SOURCE=0
 
 check_deps() {
   local rc=0
@@ -39,6 +40,7 @@ Options:
   --cuda                Build MNN with CUDA enabled
   --clean               Remove previous MNN build products and recreate the venv
   --no-bootstrap        Do not auto-initialize the MNN git submodule
+  --from-source         Build from the checked-out MNN source submodule
   --smoke-test          Verify the installed Python package imports `MNN.llm`
   --dry-run             Print actions without executing them
   -h, --help            Show this help text
@@ -75,6 +77,10 @@ while (($# > 0)); do
       BOOTSTRAP_SUBMODULE=0
       shift
       ;;
+    --from-source)
+      BUILD_FROM_SOURCE=1
+      shift
+      ;;
     --smoke-test)
       SMOKE_TEST=1
       shift
@@ -109,6 +115,12 @@ MODELS_ROOT="${REPO_ROOT}/.local/models"
 MNN_ROOT="${REPO_ROOT}/framework/mnn"
 PIP_PACKAGE_ROOT="${MNN_ROOT}/pymnn/pip_package"
 BUILD_ROOT="${MNN_ROOT}/pymnn_build"
+
+if [[ ${BUILD_FROM_SOURCE} -eq 0 ]]; then
+  echo "No prebuilt install path is configured for mnn-linux." >&2
+  echo "Re-run with --from-source to build from framework/mnn." >&2
+  exit 1
+fi
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
