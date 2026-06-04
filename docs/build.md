@@ -37,7 +37,8 @@ Additional framework notes:
 
 - `framework/llama-cpp-turboquant` is required for `turboquant-mac`
 - `mlx-mac` is embedded and uses Python packages instead of building `framework/mlx`
-- `vllm-linux-cuda` installs vLLM Python wheels into an OmniInfer-managed local venv
+- `framework/vllm` pins the upstream vLLM source release used for provenance and future source-build work
+- `vllm-linux-cuda` installs vLLM Python wheels into an OmniInfer-managed local venv by default, which matches vLLM's normal binary distribution path
 
 Submodule behavior:
 
@@ -45,6 +46,7 @@ Submodule behavior:
 - macOS `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`
 - macOS `turboquant-mac` can bootstrap `framework/llama-cpp-turboquant` automatically unless you pass `--no-bootstrap`
 - Windows `llama.cpp-*` scripts do not bootstrap submodules automatically; initialize `framework/llama.cpp` first if it is missing
+- `vllm-linux-cuda` does not bootstrap `framework/vllm` during normal wheel installation
 
 Example:
 

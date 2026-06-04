@@ -31,3 +31,6 @@
 [submodule "framework/ik_llama.cpp"]
 	path = framework/ik_llama.cpp
 	url = git@github.com:ikawrakow/ik_llama.cpp.git
+[submodule "framework/vllm"]
+	path = framework/vllm
+	url = https://github.com/vllm-project/vllm.git
