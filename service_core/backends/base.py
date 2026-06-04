@@ -22,6 +22,7 @@ BACKEND_PRIORITY: dict[str, int] = {
     "llama.cpp-linux-openvino": 0,
     "llama.cpp-linux": 1,
     "llama.cpp-linux-s390x": 1,
+    "vllm-linux-cuda": 2,
     "llama.cpp-cpu": 1,
     "llama.cpp-windows-arm64": 1,
     "llama.cpp-ios": 0,
