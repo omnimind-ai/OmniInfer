@@ -37,6 +37,7 @@ Additional framework notes:
 
 - `framework/llama-cpp-turboquant` is required for `turboquant-mac`
 - `mlx-mac` is embedded and uses Python packages instead of building `framework/mlx`
+- `vllm-linux-cuda` installs vLLM Python wheels into an OmniInfer-managed local venv instead of compiling a C++ submodule
 
 Submodule behavior:
 
@@ -66,6 +67,7 @@ Current desktop runtime directories:
 - Linux x64 Vulkan: `.local/runtime/linux/llama.cpp-linux-vulkan`
 - Linux s390x CPU: `.local/runtime/linux/llama.cpp-linux-s390x`
 - Linux x64 OpenVINO: `.local/runtime/linux/llama.cpp-linux-openvino`
+- Linux x64 vLLM CUDA: `.local/runtime/linux/vllm-linux-cuda`
 - macOS Apple Silicon Metal: `.local/runtime/macos/llama.cpp-mac`
 - macOS Intel x64 CPU: `.local/runtime/macos/llama.cpp-mac-intel`
 - macOS TurboQuant: `.local/runtime/macos/turboquant-mac`
@@ -195,6 +197,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 - `scripts/platforms/linux/build-llama-vulkan.sh`
 - `scripts/platforms/linux/build-llama-s390x.sh`
 - `scripts/platforms/linux/build-llama-openvino.sh`
+- `scripts/platforms/linux/vllm-linux-cuda/build.sh`
 - `scripts/platforms/linux/build-release.sh`
 
 ### Backend Notes
@@ -224,6 +227,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 - Requires: OpenVINO runtime and build environment
 - The script accepts `--openvino-root` and also honors `OPENVINO_ROOT`
 - Runtime selection remains controlled at inference time with environment variables such as `GGML_OPENVINO_DEVICE=CPU` or `GGML_OPENVINO_DEVICE=GPU`
+
+`vllm-linux-cuda`:
+
+- Target: Linux x64 CUDA
+- Uses the official vLLM OpenAI-compatible server through `vllm serve`
+- Installs into `.local/runtime/linux/vllm-linux-cuda` without `sudo`
+- Requires a CUDA-capable NVIDIA GPU and a vLLM-compatible Python/PyTorch wheel stack
+- Accepts HuggingFace model IDs, local snapshot directories, or other model references that vLLM can load
 
 ### Build Commands
 
@@ -257,6 +268,18 @@ Linux x64 OpenVINO:
 bash ./scripts/platforms/linux/build-llama-openvino.sh --openvino-root /opt/intel/openvino
 ```
 
+Linux x64 vLLM CUDA:
+
+```bash
+bash ./scripts/platforms/linux/vllm-linux-cuda/build.sh --smoke-test
+```
+
+Pin a specific vLLM wheel when reproducibility matters:
+
+```bash
+bash ./scripts/platforms/linux/vllm-linux-cuda/build.sh --package 'vllm==0.9.2'
+```
+
 ### Linux Portable Packaging
 
 `scripts/platforms/linux/build-release.sh` can now package any Linux runtime directories that already exist locally, including:
@@ -266,6 +289,7 @@ bash ./scripts/platforms/linux/build-llama-openvino.sh --openvino-root /opt/inte
 - `llama.cpp-linux-vulkan`
 - `llama.cpp-linux-s390x`
 - `llama.cpp-linux-openvino`
+- `vllm-linux-cuda`
 
 The portable package exposes `omniinfer` as the real CLI binary.
 

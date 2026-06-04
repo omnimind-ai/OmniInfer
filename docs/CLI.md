@@ -8,7 +8,7 @@ Android and iOS use the embedded modules under `android/` and `ios/`.
 If you are running OmniInfer from a source checkout, prepare at least one local runtime backend before using the CLI.
 
 - Windows: build one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip` first. See [Build Guide: Windows](build.md#windows).
-- Linux: build one of `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino` first. See [Build Guide: Linux](build.md#linux).
+- Linux: build one of `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, `llama.cpp-linux-openvino`, or `vllm-linux-cuda` first. See [Build Guide: Linux](build.md#linux).
 - macOS: build `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
@@ -99,7 +99,7 @@ Windows:
 
 Examples:
 
-- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino`
+- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, `llama.cpp-linux-openvino`, or `vllm-linux-cuda`
 - macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac`
 - Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`
 
@@ -140,6 +140,7 @@ For `llama.cpp-*`, OmniInfer accepts either a model file or a model directory. I
 - the optional `mmproj` GGUF
 
 For `mlx-mac`, OmniInfer passes the model directory directly to the embedded backend.
+For `vllm-linux-cuda`, OmniInfer passes the model string directly to `vllm serve`, so it can be a HuggingFace model ID, a local snapshot directory, or another reference accepted by vLLM.
 
 Explicit file path:
 
@@ -177,6 +178,7 @@ For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or
 ```
 
 The backend config JSON is where advanced users should put backend-native launch parameters such as `-ngl`, `--threads`, and other backend-specific options.
+For `vllm-linux-cuda`, use `--max-model-len` or the stable OmniInfer `ctx_size` option for context length; OmniInfer maps it to vLLM's `--max-model-len`.
 
 You can also skip `--config` entirely and pass backend-native extra args directly after the stable OmniInfer args. OmniInfer parses those extra args according to the currently selected backend.
 
@@ -185,6 +187,13 @@ Example:
 ```powershell
 .\omniinfer.ps1 backend select llama.cpp-vulkan
 .\omniinfer.ps1 load -m C:\models\Qwen3 -ngl 99 -t 8
+```
+
+vLLM example:
+
+```sh
+./omniinfer backend select vllm-linux-cuda
+./omniinfer load -m Qwen/Qwen3.5-4B-Instruct -- --max-model-len 8192 --gpu-memory-utilization 0.85
 ```
 
 ### 4. Chat
