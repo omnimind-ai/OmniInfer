@@ -1765,6 +1765,10 @@ class OmniHandler(BaseHTTPRequestHandler):
                 self._send_json(409, {"error": {"message": "selected backend is not ready"}})
                 return
             host, port = target
+            current_proxy_model_ref = getattr(self.manager, "current_proxy_model_ref", None)
+            proxy_model_ref = current_proxy_model_ref() if callable(current_proxy_model_ref) else None
+            if isinstance(proxy_model_ref, str) and proxy_model_ref.strip():
+                payload["model"] = proxy_model_ref
 
             if payload.get("stream") is True:
                 self._debug(f"proxy stream -> http://{host}:{port}/v1/chat/completions")

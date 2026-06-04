@@ -564,7 +564,16 @@ def require_selected_backend() -> AutoSelectResult:
     return AutoSelectResult(backend=backend_id, auto_selected=True)
 
 
-def resolve_model_reference(path_text: str) -> Path:
+def resolve_model_reference(path_text: str, *, backend: Any | None = None) -> Path | str:
+    if backend is not None and getattr(backend, "family", None) == "vllm":
+        text = normalize_path_text(path_text)
+        if not text:
+            raise SystemExit("Model reference must not be empty.")
+        path = absolute_path_from_text(text)
+        if path.exists():
+            return path
+        return text
+
     path = _absolute_existing_path(path_text)
     if not path.exists():
         raise SystemExit(f"Model path does not exist: {path}")
@@ -654,7 +663,7 @@ def build_model_load_payload(options: ModelLoadOptions) -> tuple[dict[str, Any],
         cli_tokens=list(options.backend_extra_args or []),
     )
 
-    model_ref = resolve_model_reference(options.model)
+    model_ref = resolve_model_reference(options.model, backend=backend)
     mmproj_file = resolve_existing_path(options.mmproj, "mmproj file") if options.mmproj else None
     effective_ctx_size = options.ctx_size if options.ctx_size is not None else backend_extras.ctx_size
     if effective_ctx_size is not None and effective_ctx_size <= 0:

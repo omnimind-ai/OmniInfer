@@ -891,6 +891,47 @@ class CommandHelperTests(unittest.TestCase):
 
             self.assertEqual(resolved.resolve(), model.resolve())
 
+    def test_vllm_model_reference_accepts_hf_id(self) -> None:
+        backend = BackendSpec(
+            id="vllm-linux-cuda",
+            label="vLLM Linux CUDA",
+            family="vllm",
+            runtime_dir=".",
+            launcher_path=None,
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=[],
+        )
+
+        resolved = commands.resolve_model_reference(
+            "hf-internal-testing/tiny-random-LlamaForCausalLM",
+            backend=backend,
+        )
+
+        self.assertEqual(resolved, "hf-internal-testing/tiny-random-LlamaForCausalLM")
+
+    def test_vllm_model_reference_keeps_existing_local_path(self) -> None:
+        backend = BackendSpec(
+            id="vllm-linux-cuda",
+            label="vLLM Linux CUDA",
+            family="vllm",
+            runtime_dir=".",
+            launcher_path=None,
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=[],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model_dir = root / "local-transformers-model"
+            model_dir.mkdir()
+
+            resolved = commands.resolve_model_reference(str(model_dir), backend=backend)
+
+            self.assertEqual(resolved.resolve(), model_dir.resolve())
+
     def test_tui_manual_model_directory_accepts_quoted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

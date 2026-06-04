@@ -118,6 +118,7 @@ class LoadedRuntime:
     launch_command: list[str] = field(default_factory=list)
     log_path: str | None = None
     log_handle: TextIOWrapper | None = None
+    proxy_model_ref: str | None = None
     embedded_driver: EmbeddedBackendDriver | None = None
     embedded_state: Any = None
     load_warnings: list[dict[str, str]] = field(default_factory=list)
@@ -129,6 +130,7 @@ class ExternalRuntimeLaunch:
     port: int
     ctx_size: int | None
     log_file_name: str
+    proxy_model_ref: str | None = None
 
 
 def _summarize_backend_startup_failure(lines: list[str], *, max_lines: int = 6) -> str:
@@ -733,6 +735,7 @@ class RuntimeManager:
                 launch_command=list(launch.cmd),
                 log_path=str(log_path),
                 log_handle=log_handle,
+                proxy_model_ref=launch.proxy_model_ref,
             )
             logger.error("Backend %s did not become ready within %ds", backend.id, self.startup_timeout_s)
             if on_progress:
@@ -759,6 +762,7 @@ class RuntimeManager:
             launch_command=list(launch.cmd),
             log_path=str(log_path),
             log_handle=log_handle,
+            proxy_model_ref=launch.proxy_model_ref,
         )
         self.loaded_runtime = runtime
         return runtime
@@ -838,6 +842,7 @@ class RuntimeManager:
     ) -> ExternalRuntimeLaunch:
         if not self._extract_server_arg_value(server_args, ("--served-model-name",)):
             server_args = ["--served-model-name", "local", *server_args]
+        served_model_name = self._extract_server_arg_value(server_args, ("--served-model-name",))
 
         cmd = [
             backend.launcher_path,
@@ -854,6 +859,7 @@ class RuntimeManager:
             port=target_port,
             ctx_size=effective_ctx_size,
             log_file_name=backend.log_file_name or "runtime.log",
+            proxy_model_ref=served_model_name,
         )
 
     def _best_installed_backend_id(self) -> str | None:
@@ -1200,6 +1206,16 @@ class RuntimeManager:
             return runtime.host, runtime.port
         return None
 
+    def current_proxy_model_ref(self) -> str | None:
+        runtime = self.loaded_runtime
+        if (
+            runtime
+            and self._is_runtime_running_locked()
+            and runtime.runtime_mode == "external_server"
+        ):
+            return runtime.proxy_model_ref
+        return None
+
     def current_runtime_mode(self) -> str | None:
         runtime = self.loaded_runtime
         if runtime and self._is_runtime_running_locked():
@@ -1233,6 +1249,7 @@ class RuntimeManager:
             "backend_port": runtime.port if runtime else None,
             "launch_args": list(runtime.launch_args) if runtime else [],
             "launch_command": list(runtime.launch_command) if runtime else [],
+            "proxy_model": runtime.proxy_model_ref if runtime else None,
             "backend_log": runtime.log_path if runtime else None,
             "effective_parameters": _effective_runtime_parameters(runtime),
         }

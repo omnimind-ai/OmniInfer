@@ -126,6 +126,52 @@ def _create_tokenizer_backend() -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://127.0.0.1:{port}"
 
 
+def _create_chat_backend() -> tuple[ThreadingHTTPServer, str]:
+    class ChatBackendHandler(BaseHTTPRequestHandler):
+        last_payload: dict[str, Any] | None = None
+
+        def log_message(self, fmt: str, *args: Any) -> None:
+            return
+
+        def do_POST(self) -> None:  # noqa: N802
+            n = int(self.headers.get("Content-Length", "0") or "0")
+            payload = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+            type(self).last_payload = payload
+            if self.path == "/v1/chat/completions":
+                self._send_json(
+                    200,
+                    {
+                        "id": "chatcmpl-test",
+                        "object": "chat.completion",
+                        "model": payload.get("model"),
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": "ok"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    },
+                )
+                return
+            self._send_json(404, {"error": {"message": f"not found: {self.path}"}})
+
+        def _send_json(self, status: int, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ChatBackendHandler)
+    server.last_payload_holder = ChatBackendHandler  # type: ignore[attr-defined]
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, f"http://127.0.0.1:{port}"
+
+
 class HttpHandlerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -629,6 +675,40 @@ class HttpHandlerTests(unittest.TestCase):
         self.assertEqual(second_tool["id"], "")
         self.assertEqual(second_tool["type"], "function")
         self.assertEqual(second_tool["function"], {"arguments": "{\"city\":\"Hang"})
+
+    def test_chat_proxy_uses_runtime_proxy_model_ref(self) -> None:
+        backend_server, backend_url = _create_chat_backend()
+        _, _, port_str = backend_url.rpartition(":")
+        runtime = type(
+            "Runtime",
+            (),
+            {"request_defaults": {}, "model_ref": "/models/facebook-opt-125m"},
+        )()
+        self.server.manager.ensure_model_loaded.return_value = runtime
+        self.server.manager.current_runtime_mode.return_value = "external_server"
+        self.server.manager.current_proxy_target.return_value = ("127.0.0.1", int(port_str))
+        self.server.manager.current_proxy_model_ref.return_value = "local"
+        try:
+            code, body = _post(
+                self.base_url,
+                "/v1/chat/completions",
+                {
+                    "model": "/models/facebook-opt-125m",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+            holder = backend_server.last_payload_holder  # type: ignore[attr-defined]
+            forwarded = holder.last_payload
+        finally:
+            backend_server.shutdown()
+            backend_server.server_close()
+            self.server.manager.current_runtime_mode.return_value = None
+            self.server.manager.current_proxy_target.return_value = None
+            self.server.manager.current_proxy_model_ref.return_value = None
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body["model"], "local")
+        self.assertEqual(forwarded["model"], "local")
 
     def test_post_not_found(self) -> None:
         code, body = _post(self.base_url, "/nonexistent", {})

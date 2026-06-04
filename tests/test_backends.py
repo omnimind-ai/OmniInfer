@@ -358,6 +358,7 @@ class VllmLaunchCommandTests(unittest.TestCase):
         self.assertEqual(self.launch.port, 9101)
         self.assertEqual(self.launch.ctx_size, 8192)
         self.assertEqual(self.launch.log_file_name, "vllm-server.log")
+        self.assertEqual(self.launch.proxy_model_ref, "local")
 
 
 if __name__ == "__main__":
