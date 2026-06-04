@@ -15,6 +15,7 @@ INSTALL_DIR="$(pwd)/OmniInfer"
 MODEL_PATH=""
 NO_MODEL=0
 SKIP_BUILD=0
+PREBUILT_MODE=0
 BACKEND_OVERRIDE=""
 NON_INTERACTIVE=0
 INSTALL_SYSTEM_DEPS="ask"
@@ -29,6 +30,7 @@ while [[ $# -gt 0 ]]; do
         --model|-m)       MODEL_PATH="$2";        shift 2 ;;
         --no-model)       NO_MODEL=1;             shift   ;;
         --skip-build)     SKIP_BUILD=1;           shift   ;;
+        --prebuilt)       PREBUILT_MODE=1;         shift   ;;
         --backend)        BACKEND_OVERRIDE="$2";  shift 2 ;;
         --non-interactive) NON_INTERACTIVE=1;      shift   ;;
         --install-system-deps) INSTALL_SYSTEM_DEPS="yes"; shift ;;
@@ -46,6 +48,7 @@ Options:
   --model, -m PATH      Path to a local GGUF model file or directory
   --no-model            Skip model setup without prompting
   --skip-build          Skip the backend build step
+  --prebuilt            Install the selected backend from a configured prebuilt archive
   --backend ID          Force a specific backend (e.g. llama.cpp-linux-vulkan)
   --non-interactive     Do not prompt; fail with instructions if dependencies are missing
   --install-system-deps Automatically install missing system packages with sudo
@@ -205,6 +208,23 @@ run_python() {
     else
         "${PYTHON_CMD:-python3}" "$@"
     fi
+}
+
+backend_has_prebuilt() {
+    local backend_id="$1"
+    local catalog_path="${INSTALL_DIR}/scripts/prebuilt_backends.json"
+    [[ -f "${catalog_path}" ]] || return 1
+    run_python - "${catalog_path}" "${PLATFORM_DIR}" "${backend_id}" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from pathlib import Path
+
+catalog = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+platform = sys.argv[2]
+backend = sys.argv[3]
+entry = catalog.get("platforms", {}).get(platform, {}).get(backend)
+raise SystemExit(0 if isinstance(entry, dict) and entry.get("url") else 1)
+PY
 }
 
 detect_cuda_effective_arch() {
@@ -533,8 +553,21 @@ while true; do
     if [[ -n "${BACKEND_OVERRIDE}" ]]; then
         SELECTED_BACKEND="${BACKEND_OVERRIDE}"
     else
-        # Append a "skip" option to the menu
-        _menu_descs=("${BACKEND_DESCS[@]}" "Skip for now  —  install backend manually later")
+        PREBUILT_MODE=0
+        _prebuilt_ids=()
+        _prebuilt_descs=()
+        for _backend_idx in "${!BACKEND_IDS[@]}"; do
+            if backend_has_prebuilt "${BACKEND_IDS[$_backend_idx]}"; then
+                _prebuilt_ids+=("${BACKEND_IDS[$_backend_idx]}")
+                _prebuilt_descs+=("${BACKEND_DESCS[$_backend_idx]}  (prebuilt)")
+            fi
+        done
+
+        _menu_descs=("${BACKEND_DESCS[@]}")
+        if [[ ${#_prebuilt_ids[@]} -gt 0 ]]; then
+            _menu_descs+=("${_prebuilt_descs[@]}")
+        fi
+        _menu_descs+=("Skip for now  —  install backend manually later")
 
         echo "  Available backends (arrow keys to move, Enter to select):"
         echo ""
@@ -551,10 +584,18 @@ while true; do
             break
         fi
 
-        SELECTED_BACKEND="${BACKEND_IDS[$idx]}"
+        if [[ "${idx}" -lt "${#BACKEND_IDS[@]}" ]]; then
+            SELECTED_BACKEND="${BACKEND_IDS[$idx]}"
+        else
+            PREBUILT_MODE=1
+            SELECTED_BACKEND="${_prebuilt_ids[$(( idx - ${#BACKEND_IDS[@]} ))]}"
+        fi
     fi
 
     ok "Selected: ${SELECTED_BACKEND}"
+    if [[ "${PREBUILT_MODE}" -eq 1 ]]; then
+        info "Install mode: prebuilt"
+    fi
     echo ""
 
     # Select backend via CLI.
@@ -563,7 +604,7 @@ while true; do
     # ── Pre-build dependency check ──────────────────────────────
     # Verify required build tools BEFORE starting the build.
     # Skip dependency probing when the build step is disabled.
-    if [[ "${SKIP_BUILD}" -eq 1 ]]; then
+    if [[ "${SKIP_BUILD}" -eq 1 || "${PREBUILT_MODE}" -eq 1 ]]; then
         break
     fi
 
@@ -728,7 +769,11 @@ done
 # Build scripts auto-bootstrap their required submodules.
 # Build script is discovered by convention: scripts/platforms/<platform_dir>/<backend_id>/build.sh
 
-info "Step 4/6: Building backend ..."
+if [[ "${PREBUILT_MODE}" -eq 1 ]]; then
+    info "Step 4/6: Installing prebuilt backend ..."
+else
+    info "Step 4/6: Building backend ..."
+fi
 
 # ── Desktop: discover and run build script by convention ──
 FULL_BUILD_SCRIPT="${INSTALL_DIR}/scripts/platforms/${PLATFORM_DIR}/${SELECTED_BACKEND}/build.sh"
@@ -746,23 +791,32 @@ else
         ok "Backend ${SELECTED_BACKEND} already built, skipping"
         BUILD_STATUS="already-built"
     else
-        info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
+        if [[ "${PREBUILT_MODE}" -eq 1 ]]; then
+            info "Installing prebuilt ${SELECTED_BACKEND} ..."
+        else
+            info "Building ${SELECTED_BACKEND} (this may take a few minutes) ..."
+        fi
         BUILD_LOG_DIR="${INSTALL_DIR}/tmp/test_results/install"
         mkdir -p "${BUILD_LOG_DIR}"
-        BUILD_LOG_PATH="${BUILD_LOG_DIR}/${SELECTED_BACKEND}-build-$(date +%Y%m%d-%H%M%S).log"
+        _build_log_kind="build"
+        [[ "${PREBUILT_MODE}" -eq 1 ]] && _build_log_kind="prebuilt"
+        BUILD_LOG_PATH="${BUILD_LOG_DIR}/${SELECTED_BACKEND}-${_build_log_kind}-$(date +%Y%m%d-%H%M%S).log"
         info "Build log: ${BUILD_LOG_PATH}"
+        _build_args=()
+        [[ "${PREBUILT_MODE}" -eq 1 ]] && _build_args+=(--prebuilt)
         set +e
-        bash "${FULL_BUILD_SCRIPT}" 2>&1 | tee "${BUILD_LOG_PATH}"
+        bash "${FULL_BUILD_SCRIPT}" "${_build_args[@]}" 2>&1 | tee "${BUILD_LOG_PATH}"
         _build_rc=${PIPESTATUS[0]}
         set -e
         if [[ "${_build_rc}" -ne 0 ]]; then
             echo ""
             BUILD_STATUS="failed"
             write_install_summary
-            fatal "Build failed (exit code ${_build_rc}). See ${BUILD_LOG_PATH} for details."
+            fatal "Backend install failed (exit code ${_build_rc}). See ${BUILD_LOG_PATH} for details."
         fi
         BUILD_STATUS="built"
-        ok "Build complete"
+        [[ "${PREBUILT_MODE}" -eq 1 ]] && BUILD_STATUS="prebuilt"
+        ok "Backend install complete"
     fi
 fi
 echo ""

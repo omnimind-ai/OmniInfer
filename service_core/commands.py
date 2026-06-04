@@ -96,6 +96,7 @@ class ChatOptions:
 @dataclass(frozen=True)
 class BackendBuildOptions:
     backend: str
+    prebuilt: bool = False
 
 
 @dataclass(frozen=True)
@@ -278,8 +279,12 @@ def backend_build_command(options: BackendBuildOptions) -> tuple[list[str], Path
             "-BuildType",
             "Release",
         ]
+        if options.prebuilt:
+            command.append("-Prebuilt")
     else:
         command = ["bash", str(script_path), "--build-type", "Release"]
+        if options.prebuilt:
+            command.append("--prebuilt")
     return command, script_path
 
 

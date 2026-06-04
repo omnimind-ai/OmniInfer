@@ -10,6 +10,7 @@ ROCM_PATH_OVERRIDE="${ROCM_PATH:-}"
 CLEAN_BUILD=1
 BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
+INSTALL_PREBUILT=0
 
 check_deps() {
   local rc=0
@@ -39,6 +40,7 @@ Options:
   --rocm-path <path>   Override ROCm installation root
   --no-clean           Reuse the previous build directory instead of reconfiguring from scratch
   --no-bootstrap       Do not auto-initialize the llama.cpp git submodule
+  --prebuilt           Download and install the configured upstream prebuilt archive
   --smoke-test         Run `llama-server --list-devices` after the build completes
   --dry-run            Print actions without executing them
   -h, --help           Show this help message
@@ -69,6 +71,10 @@ while (($# > 0)); do
       ;;
     --no-bootstrap)
       BOOTSTRAP_SUBMODULE=0
+      shift
+      ;;
+    --prebuilt)
+      INSTALL_PREBUILT=1
       shift
       ;;
     --smoke-test)
@@ -103,6 +109,18 @@ BUILD_ROOT="${PACKAGE_ROOT}/build/llama.cpp-linux-rocm"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
 MODELS_ROOT="${REPO_ROOT}/.local/models"
+
+if [[ ${INSTALL_PREBUILT} -eq 1 ]]; then
+  PREBUILT_ARGS=(
+    --catalog "${REPO_ROOT}/scripts/prebuilt_backends.json"
+    --platform linux
+    --backend llama.cpp-linux-rocm
+    --runtime-dir "${PACKAGE_ROOT}"
+    --models-dir "${MODELS_ROOT}"
+  )
+  [[ ${DRY_RUN} -eq 1 ]] && PREBUILT_ARGS+=(--dry-run)
+  exec python3 "${REPO_ROOT}/scripts/platforms/common/install-prebuilt.py" "${PREBUILT_ARGS[@]}"
+fi
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then

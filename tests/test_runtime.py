@@ -221,6 +221,13 @@ class CliParserTests(unittest.TestCase):
             args = build_parser().parse_args(["build", "llama.cpp-cpu"])
         self.assertEqual(args.command, "build")
         self.assertEqual(args.backend_name, "llama.cpp-cpu")
+        self.assertFalse(args.prebuilt)
+
+    def test_build_command_parses_prebuilt_mode(self) -> None:
+        with patch("service_core.commands.is_backend_build_supported", return_value=True):
+            args = build_parser().parse_args(["build", "llama.cpp-cpu", "--prebuilt"])
+        self.assertEqual(args.backend_name, "llama.cpp-cpu")
+        self.assertTrue(args.prebuilt)
 
     def test_build_command_is_hidden_in_packaged_release(self) -> None:
         with patch("service_core.commands.is_backend_build_supported", return_value=False):
@@ -635,12 +642,12 @@ class CommandHelperTests(unittest.TestCase):
                 patch("service_core.commands.local_backends", return_value={"llama.cpp-cpu": object()}),
             ):
                 command, script_path = commands.backend_build_command(
-                    commands.BackendBuildOptions(backend="llama.cpp-cpu")
+                    commands.BackendBuildOptions(backend="llama.cpp-cpu", prebuilt=True)
                 )
 
         self.assertEqual(script_path, script)
         self.assertEqual(command[:5], ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        self.assertEqual(command[-2:], ["-BuildType", "Release"])
+        self.assertEqual(command[-3:], ["-BuildType", "Release", "-Prebuilt"])
 
     def test_backend_build_command_resolves_macos_script_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -656,11 +663,11 @@ class CommandHelperTests(unittest.TestCase):
                 patch("service_core.commands.local_backends", return_value={"llama.cpp-mac": object()}),
             ):
                 command, script_path = commands.backend_build_command(
-                    commands.BackendBuildOptions(backend="llama.cpp-mac")
+                    commands.BackendBuildOptions(backend="llama.cpp-mac", prebuilt=True)
                 )
 
         self.assertEqual(script_path, script)
-        self.assertEqual(command, ["bash", str(script), "--build-type", "Release"])
+        self.assertEqual(command, ["bash", str(script), "--build-type", "Release", "--prebuilt"])
 
     def test_backend_build_rejected_when_frozen(self) -> None:
         with patch("service_core.commands.sys.frozen", True, create=True):

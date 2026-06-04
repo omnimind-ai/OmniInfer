@@ -73,13 +73,20 @@ Source checkouts on Linux, macOS, and Windows can build a compatible backend thr
 ./omniinfer build <backend>
 ```
 
+If the backend has a configured upstream prebuilt archive, install that runtime instead of compiling locally:
+
+```sh
+./omniinfer build <backend> --prebuilt
+```
+
 Windows:
 
 ```powershell
 .\omniinfer.ps1 build <backend>
+.\omniinfer.ps1 build <backend> --prebuilt
 ```
 
-The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*`, uses a `Release` build, and verifies that the backend launcher exists after the build.
+The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*`, uses a `Release` source build unless `--prebuilt` is set, and verifies that the backend launcher exists after the install.
 
 Packaged releases intentionally do not provide this command because they are designed to run from the included `runtime/` directory without requiring a compiler, CUDA toolkit, CMake, or other build tools.
 

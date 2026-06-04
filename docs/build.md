@@ -1,6 +1,6 @@
 # Building OmniInfer
 
-This guide explains how OmniInfer builds local runtime backends from a source checkout.
+This guide explains how OmniInfer builds or installs local runtime backends from a source checkout.
 
 ## Build Model
 
@@ -37,7 +37,7 @@ Additional framework notes:
 
 - `framework/llama-cpp-turboquant` is required for `turboquant-mac`
 - `mlx-mac` is embedded and uses Python packages instead of building `framework/mlx`
-- `vllm-linux-cuda` installs vLLM Python wheels into an OmniInfer-managed local venv instead of compiling a C++ submodule
+- `vllm-linux-cuda` installs vLLM Python wheels into an OmniInfer-managed local venv
 
 Submodule behavior:
 
@@ -51,6 +51,31 @@ Example:
 ```bash
 git submodule update --init --recursive framework/llama.cpp
 ```
+
+## Prebuilt Runtime Installs
+
+Backend scripts may support a prebuilt install mode:
+
+```bash
+./omniinfer build <backend> --prebuilt
+```
+
+or directly:
+
+```bash
+bash scripts/platforms/linux/llama.cpp-linux/build.sh --prebuilt
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/platforms/windows/llama.cpp-cpu/build.ps1 -Prebuilt
+```
+
+The per-runtime script owns the install behavior. The interactive installers and CLI only route to that script. Shared llama.cpp release URLs live in `scripts/prebuilt_backends.json`, but a backend is only offered as prebuilt when that catalog contains a matching entry for the current platform.
+
+Prebuilt versioning is explicit:
+
+- `scripts/prebuilt_backends.json` records the upstream source, release tag, archive URL, archive type, and launcher name.
+- A prebuilt llama.cpp runtime is an upstream release artifact. It is not automatically the same commit as `framework/llama.cpp`.
+- To make a prebuilt llama.cpp runtime source-aligned, pin both the catalog tag and `framework/llama.cpp` submodule to the same upstream release tag or commit.
+- If no official asset exists, leave the catalog entry absent. For example, llama.cpp `b9500` publishes Linux CPU, ROCm, Vulkan, OpenVINO, macOS, and Windows CUDA assets, but not a Linux CUDA archive.
+- Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and download URL used.
 
 ## Runtime Output Layout
 

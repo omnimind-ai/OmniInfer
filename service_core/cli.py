@@ -244,15 +244,16 @@ def select_backend(name: str) -> int:
     return 0
 
 
-def build_backend(name: str) -> int:
-    options = commands.BackendBuildOptions(backend=name)
+def build_backend(name: str, *, prebuilt: bool = False) -> int:
+    options = commands.BackendBuildOptions(backend=name, prebuilt=prebuilt)
     command, _script_path = commands.backend_build_command(options)
-    print(f"Building backend: {name}")
-    print("Build type: Release")
+    action = "Installing prebuilt backend" if prebuilt else "Building backend"
+    print(f"{action}: {name}")
+    print(f"Install mode: {'prebuilt' if prebuilt else 'source'}")
     print("Command: " + " ".join(command))
 
     result = commands.build_backend(options)
-    print(f"Backend build completed: {result.backend}")
+    print(f"Backend {'install' if prebuilt else 'build'} completed: {result.backend}")
     if result.binary_path:
         print(f"Binary: {result.binary_path}")
     return 0
@@ -1008,6 +1009,7 @@ def build_parser() -> argparse.ArgumentParser:
     if commands.is_backend_build_supported():
         build = sub.add_parser("build", help="Build a backend from this source checkout")
         build.add_argument("backend_name", help="Backend name")
+        build.add_argument("--prebuilt", action="store_true", help="Install the backend from a configured prebuilt archive")
 
     sub.add_parser("status", help="Show current status")
 
@@ -1102,7 +1104,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
-        return build_backend(args.backend_name)
+        return build_backend(args.backend_name, prebuilt=getattr(args, "prebuilt", False))
 
     if args.command == "status":
         if unknown_args:
