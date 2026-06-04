@@ -242,7 +242,7 @@ Linux backend script behavior:
 | `llama.cpp-linux-openvino` | Downloads official `b9500` OpenVINO archive | `--from-source` builds `framework/llama.cpp` with OpenVINO settings |
 | `llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message because upstream `b9500` has no Linux CUDA archive | `--from-source` builds `framework/llama.cpp` with CUDA settings |
 | `vllm-linux-cuda` | Creates an OmniInfer-managed venv and installs vLLM wheels | Not a C++ source build path |
-| `mnn-linux` | Fails with a clear "no prebuilt configured" message | `--from-source` builds PyMNN from `framework/mnn` |
+| `mnn-linux` | Creates an OmniInfer-managed venv and installs the official `MNN==3.5.0` wheel | `--from-source` builds PyMNN from `framework/mnn` |
 | `ik_llama.cpp-linux` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/ik_llama.cpp` CPU |
 | `ik_llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/ik_llama.cpp` CUDA |
 | `omniinfer-native-linux` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/omniinfer-native` |
@@ -280,6 +280,13 @@ Linux backend script behavior:
 - Installs into `.local/runtime/linux/vllm-linux-cuda` without `sudo`
 - Requires a CUDA-capable NVIDIA GPU and a vLLM-compatible Python/PyTorch wheel stack
 - Accepts HuggingFace model IDs, local snapshot directories, or other model references that vLLM can load
+
+`mnn-linux`:
+
+- Target: Linux embedded PyMNN runtime
+- Default path installs the official `MNN==3.5.0` Python wheel into `.local/runtime/linux/mnn-linux/venv`
+- The MNN GitHub release also publishes a Linux x64 CPU/OpenCL zip, but OmniInfer's embedded driver needs the Python modules `MNN`, `MNN.cv`, and `MNN.llm`, so the wheel is the default prebuilt path
+- `--from-source` keeps the previous PyMNN source-build path and is required for `--opencl` / `--cuda`
 
 ### Build Commands
 

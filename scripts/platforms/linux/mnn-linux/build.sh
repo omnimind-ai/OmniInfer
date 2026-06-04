@@ -9,6 +9,7 @@ WITH_OPENCL=0
 WITH_CUDA=0
 JOBS=""
 PYTHON_BIN="${OMNIINFER_MNN_PYTHON:-python3}"
+MNN_PACKAGE="${OMNIINFER_MNN_PIP_PACKAGE:-MNN==3.5.0}"
 CLEAN_BUILD=0
 SMOKE_TEST=0
 BUILD_FROM_SOURCE=0
@@ -35,9 +36,10 @@ Usage: build-mnn-linux.sh [options]
 Options:
   --build-type <type>   Build type for MNN core, default: Release
   --python <path>       Python interpreter used to create the local venv
+  --package <spec>      pip package spec for default wheel install, default: MNN==3.5.0
   --jobs <n>            Parallel build jobs, default: nproc
-  --opencl              Build MNN with OpenCL enabled
-  --cuda                Build MNN with CUDA enabled
+  --opencl              Build MNN with OpenCL enabled; requires --from-source
+  --cuda                Build MNN with CUDA enabled; requires --from-source
   --clean               Remove previous MNN build products and recreate the venv
   --no-bootstrap        Do not auto-initialize the MNN git submodule
   --from-source         Build from the checked-out MNN source submodule
@@ -55,6 +57,10 @@ while (($# > 0)); do
       ;;
     --python)
       PYTHON_BIN="${2:?missing value for --python}"
+      shift 2
+      ;;
+    --package)
+      MNN_PACKAGE="${2:?missing value for --package}"
       shift 2
       ;;
     --jobs)
@@ -116,9 +122,9 @@ MNN_ROOT="${REPO_ROOT}/framework/mnn"
 PIP_PACKAGE_ROOT="${MNN_ROOT}/pymnn/pip_package"
 BUILD_ROOT="${MNN_ROOT}/pymnn_build"
 
-if [[ ${BUILD_FROM_SOURCE} -eq 0 ]]; then
-  echo "No prebuilt install path is configured for mnn-linux." >&2
-  echo "Re-run with --from-source to build from framework/mnn." >&2
+if [[ ${BUILD_FROM_SOURCE} -eq 0 && (${WITH_OPENCL} -eq 1 || ${WITH_CUDA} -eq 1) ]]; then
+  echo "--opencl and --cuda are source-build options for mnn-linux." >&2
+  echo "Re-run with --from-source, or omit them to install the MNN wheel." >&2
   exit 1
 fi
 
@@ -336,6 +342,21 @@ install_python_deps() {
   uv pip install --python "${VENV_ROOT}/bin/python3" --upgrade pip setuptools wheel numpy
 }
 
+install_mnn_wheel() {
+  if command -v uv >/dev/null 2>&1; then
+    run_cmd uv pip install --python "${VENV_ROOT}/bin/python3" "${MNN_PACKAGE}"
+    return
+  fi
+
+  if "${VENV_ROOT}/bin/python3" -m pip --version >/dev/null 2>&1; then
+    run_cmd "${VENV_ROOT}/bin/python3" -m pip install "${MNN_PACKAGE}"
+    return
+  fi
+
+  echo "The MNN venv does not have pip, and uv was not found for wheel install." >&2
+  exit 1
+}
+
 ensure_mnn_root() {
   if [[ -f "${MNN_ROOT}/CMakeLists.txt" ]]; then
     return
@@ -364,15 +385,21 @@ if [[ -z "${JOBS}" ]]; then
   JOBS="$(detect_jobs)"
 fi
 
-ensure_mnn_root
 require_command "${PYTHON_BIN}"
-select_python_with_headers
-configure_cuda_env
+if [[ ${BUILD_FROM_SOURCE} -eq 1 ]]; then
+  ensure_mnn_root
+  select_python_with_headers
+  configure_cuda_env
+fi
 prepare_runtime_dirs
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "Will create/update venv under ${VENV_ROOT}"
-  echo "Will build PyMNN with LLM support from ${PIP_PACKAGE_ROOT}"
+  if [[ ${BUILD_FROM_SOURCE} -eq 1 ]]; then
+    echo "Will build PyMNN with LLM support from ${PIP_PACKAGE_ROOT}"
+  else
+    echo "Will install MNN wheel package: ${MNN_PACKAGE}"
+  fi
   exit 0
 fi
 
@@ -381,6 +408,26 @@ if [[ ! -x "${VENV_ROOT}/bin/python3" ]]; then
 fi
 
 install_python_deps
+if [[ ${BUILD_FROM_SOURCE} -eq 0 ]]; then
+  install_mnn_wheel
+  if [[ ${SMOKE_TEST} -eq 1 ]]; then
+    "${VENV_ROOT}/bin/python3" - <<'PY'
+import MNN
+import MNN.cv
+import MNN.llm
+print("MNN Python runtime is available")
+PY
+  fi
+  echo
+  echo "Linux MNN wheel runtime is ready."
+  echo "Python runtime: ${VENV_ROOT}/bin/python3"
+  echo "Models directory: ${MODELS_ROOT}"
+  echo "Next step:"
+  echo "  ./omniinfer backend select mnn-linux"
+  echo "  ./omniinfer model load -m /absolute/path/to/mnn-model-dir-or-config.json"
+  exit 0
+fi
+
 append_cuda_component_env
 
 pushd "${PIP_PACKAGE_ROOT}" >/dev/null
