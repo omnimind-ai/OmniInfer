@@ -364,6 +364,7 @@ def _choose_backend_for_build() -> str | None:
 def _choose_model(*, mark_last_selected: bool = False) -> Path | None:
     while True:
         models = commands.discover_local_models()
+        advisor_recommendations = _advisor_recommendation_map(models)
         remembered = commands.remembered_model_load_options() if mark_last_selected else None
         remembered_path = Path(remembered.model).expanduser() if remembered is not None else None
         items: list[_MenuItem] = []
@@ -373,11 +374,14 @@ def _choose_model(*, mark_last_selected: bool = False) -> Path | None:
             matched_remembered = False
             for model in models:
                 details: list[str] = []
+                is_last_selected = False
                 if remembered_path is not None and _same_model_path(model.path, remembered_path):
                     details.append("last selected")
                     default_index = len(items)
                     matched_remembered = True
-                items.append(_MenuItem(label=model.label, details=details, selected=bool(details)))
+                    is_last_selected = True
+                details.extend(_advisor_model_details(model.path, advisor_recommendations))
+                items.append(_MenuItem(label=model.label, details=details, selected=is_last_selected))
                 model_choices.append(model.path)
             if remembered_path is not None and not matched_remembered and remembered_path.exists():
                 default_index = len(items)
@@ -485,6 +489,51 @@ def _select_model_from_directory(directory: Path) -> Path | None:
     if index is None:
         return None
     return candidates[index].path
+
+
+def _advisor_recommendation_map(models: list[commands.LocalModel]) -> dict[str, dict[str, Any]]:
+    if not models:
+        return {}
+    try:
+        payload = commands.advisor_recommend(limit=max(len(models), 20))
+    except (SystemExit, OSError, ValueError):
+        return {}
+    rows = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        model_info = row.get("model") if isinstance(row.get("model"), dict) else {}
+        for key in ("input", "model", "model_path"):
+            value = model_info.get(key)
+            if isinstance(value, str) and value.strip():
+                result[_advisor_path_key(value)] = row
+    return result
+
+
+def _advisor_path_key(value: str | Path) -> str:
+    try:
+        return str(Path(value).expanduser().resolve())
+    except OSError:
+        return os.path.abspath(os.path.expanduser(str(value)))
+
+
+def _advisor_model_details(model_path: Path, recommendations: dict[str, dict[str, Any]]) -> list[str]:
+    row = recommendations.get(_advisor_path_key(model_path))
+    if not row:
+        return []
+    recommended = row.get("recommended") if isinstance(row.get("recommended"), dict) else {}
+    details: list[str] = []
+    fit = str(recommended.get("fit") or "").strip()
+    if fit:
+        details.append(f"advisor {fit}")
+    backend = str(recommended.get("backend") or "").strip()
+    if backend:
+        details.append(backend)
+    warnings = row.get("warnings") if isinstance(row.get("warnings"), list) else []
+    if warnings:
+        details.append("warning")
+    return details
 
 
 def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None:
