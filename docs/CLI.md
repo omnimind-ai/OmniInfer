@@ -36,6 +36,8 @@ Linux and macOS:
 
 Run `./omniinfer` without arguments in an interactive terminal to open the basic TUI. On first use, the TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop. When a manual directory is scanned, the selected model is linked into `.local/models/<detected-model-dir>/<model-file>` instead of preserving unrelated parent folders. Later TUI launches automatically reload the last selected backend and model when the model path still exists.
 
+The TUI also surfaces the advisor without adding a setup step. Managed model rows show small advisor fit/backend badges when local recommendations are available. Before a newly selected model is loaded, the TUI shows a short advisor preflight with the recommended backend, fit, and memory estimate. Press Enter to apply the recommendation and continue, `A` for details, `B` to choose another backend, `S` to keep the current backend, or `Q` to cancel. Automatic reload of the last model skips this preflight so repeat launches stay fast.
+
 Windows:
 
 ```powershell
