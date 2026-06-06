@@ -20,6 +20,12 @@ from service_core.backend_cli_args import (
     parse_backend_chat_extra_args,
     parse_backend_load_extra_args,
 )
+from service_core.advisor import (
+    fit_model as advisor_fit_model,
+    inspect_model as advisor_inspect_model,
+    recommend_models as advisor_recommend_models,
+    system_snapshot as advisor_system_snapshot,
+)
 from service_core.backend_configs import (
     BackendProfile,
     ensure_backend_profile_template,
@@ -210,9 +216,9 @@ def is_service_running() -> bool:
     return status == 200 and isinstance(payload, dict) and payload.get("status") == "ok"
 
 
-def local_backends() -> dict[str, Any]:
+def _local_runtime_manager() -> RuntimeManager:
     config = get_service_config()
-    manager = RuntimeManager(
+    return RuntimeManager(
         repo_root=str(REPO_ROOT),
         app_root=str(APP_ROOT),
         backend_host="127.0.0.1",
@@ -223,11 +229,61 @@ def local_backends() -> dict[str, Any]:
         backend_overrides=config.get("backends"),
         default_backend_id=str(config.get("default_backend", "")),
     )
+
+
+def local_backends() -> dict[str, Any]:
+    manager = _local_runtime_manager()
     return manager.backends
 
 
 def local_backend_ids() -> list[str]:
     return list(local_backends().keys())
+
+
+def advisor_system() -> dict[str, Any]:
+    manager = _local_runtime_manager()
+    return advisor_system_snapshot(manager.platform, manager.backends)
+
+
+def advisor_inspect(model: str, *, mmproj: str | None = None) -> dict[str, Any]:
+    return advisor_inspect_model(model, mmproj=mmproj)
+
+
+def advisor_fit(
+    model: str,
+    *,
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+    backend: str | None = None,
+) -> dict[str, Any]:
+    manager = _local_runtime_manager()
+    if backend is not None and backend not in manager.backends:
+        available = ", ".join(sorted(manager.backends))
+        raise SystemExit(f"Unsupported backend: {backend}\nAvailable backends: {available}")
+    return advisor_fit_model(
+        model,
+        platform_obj=manager.platform,
+        backends=manager.backends,
+        mmproj=mmproj,
+        ctx_size=ctx_size,
+        backend_filter=backend,
+    )
+
+
+def advisor_recommend(
+    *,
+    task: str | None = None,
+    limit: int = 5,
+    ctx_size: int | None = None,
+) -> dict[str, Any]:
+    manager = _local_runtime_manager()
+    return advisor_recommend_models(
+        platform_obj=manager.platform,
+        backends=manager.backends,
+        task=task,
+        limit=limit,
+        ctx_size=ctx_size,
+    )
 
 
 def is_backend_build_supported() -> bool:

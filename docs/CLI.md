@@ -133,6 +133,39 @@ Example:
 }
 ```
 
+### 3.5. Ask the advisor before loading, optional
+
+The advisor is a local preflight layer. It does not start the gateway or load a model. Use it to inspect current hardware, installed runtimes, model format, approximate memory fit, and a suggested load command.
+
+Inspect hardware and runtime availability:
+
+```sh
+./omniinfer advisor system
+./omniinfer advisor system --json
+```
+
+Inspect a model artifact:
+
+```sh
+./omniinfer advisor inspect /path/to/model.gguf
+./omniinfer advisor inspect /path/to/model-directory --json
+```
+
+Estimate fit and get a recommended backend:
+
+```sh
+./omniinfer advisor fit /path/to/model.gguf --ctx-size 8192
+./omniinfer advisor fit Qwen/Qwen2.5-7B-Instruct --backend vllm-linux-cuda --json
+```
+
+Recommend from OmniInfer-managed local model directories:
+
+```sh
+./omniinfer advisor recommend --task coding -n 5
+```
+
+Advisor memory numbers are estimates based on local file size, context length, and conservative overhead. Backend startup logs and real benchmark results remain authoritative.
+
 ### 4. Load a model
 
 Default path:
