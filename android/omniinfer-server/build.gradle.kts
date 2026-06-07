@@ -14,6 +14,7 @@ val enableLlamaCpp: Boolean = boolProperty("omniinfer.backend.llama_cpp")
 val enableMnn: Boolean = boolProperty("omniinfer.backend.mnn")
 val enableExecutorchQnn: Boolean = boolProperty("omniinfer.backend.executorch_qnn")
 val enableLiteRtLm: Boolean = boolProperty("omniinfer.backend.litert_lm")
+val enableMnnThreadPool: Boolean = boolProperty("omniinfer.mnn.thread_pool")
 
 // --- ExecuTorch QNN: auto-download pre-built binaries ---
 if (enableExecutorchQnn) {
@@ -92,6 +93,9 @@ android {
                 arguments += "-DOMNIINFER_BACKEND_LLAMA_CPP=${if (enableLlamaCpp) "ON" else "OFF"}"
                 arguments += "-DOMNIINFER_BACKEND_MNN=${if (enableMnn) "ON" else "OFF"}"
                 arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=${if (enableExecutorchQnn) "ON" else "OFF"}"
+                if (enableMnn) {
+                    arguments += "-DMNN_USE_THREAD_POOL=${if (enableMnnThreadPool) "ON" else "OFF"}"
+                }
             }
         }
     }
@@ -101,6 +105,11 @@ android {
             if (enableLiteRtLm) {
                 java.srcDir("src/litertLm/java")
             }
+            val jniLibDirs = mutableListOf<File>()
+            if (enableExecutorchQnn) {
+                jniLibDirs += file("src/main/jniLibs")
+            }
+            jniLibs.setSrcDirs(jniLibDirs)
         }
     }
 
