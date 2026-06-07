@@ -93,9 +93,14 @@ object OmniInferBridge {
         temperature: Float? = null,
         topP: Float? = null,
         topK: Int? = null,
+        seed: Int? = null,
         repetitionPenalty: Float? = null,
+        repeatPenalty: Float? = null,
         frequencyPenalty: Float? = null,
         presencePenalty: Float? = null,
+        minP: Float? = null,
+        typicalP: Float? = null,
+        repeatLastN: Int? = null,
         callback: OmniInferStreamCallback? = null
     ): String {
         liteRtHandles[handle]?.let { liteRt ->
@@ -110,9 +115,14 @@ object OmniInferBridge {
             if (temperature != null) sb.append(",\"temperature\":").append(temperature)
             if (topP != null) sb.append(",\"top_p\":").append(topP)
             if (topK != null) sb.append(",\"top_k\":").append(topK)
+            if (seed != null) sb.append(",\"seed\":").append(seed)
             if (repetitionPenalty != null) sb.append(",\"repetition_penalty\":").append(repetitionPenalty)
+            if (repeatPenalty != null) sb.append(",\"repeat_penalty\":").append(repeatPenalty)
             if (frequencyPenalty != null) sb.append(",\"frequency_penalty\":").append(frequencyPenalty)
             if (presencePenalty != null) sb.append(",\"presence_penalty\":").append(presencePenalty)
+            if (minP != null) sb.append(",\"min_p\":").append(minP)
+            if (typicalP != null) sb.append(",\"typical_p\":").append(typicalP)
+            if (repeatLastN != null) sb.append(",\"repeat_last_n\":").append(repeatLastN)
             sb.append("}")
             return liteRt.generate(messagesJson, imageDataArray, sb.toString(), callback)
         }
@@ -131,9 +141,14 @@ object OmniInferBridge {
         if (temperature != null) sb.append(",\"temperature\":").append(temperature)
         if (topP != null) sb.append(",\"top_p\":").append(topP)
         if (topK != null) sb.append(",\"top_k\":").append(topK)
+        if (seed != null) sb.append(",\"seed\":").append(seed)
         if (repetitionPenalty != null) sb.append(",\"repetition_penalty\":").append(repetitionPenalty)
+        if (repeatPenalty != null) sb.append(",\"repeat_penalty\":").append(repeatPenalty)
         if (frequencyPenalty != null) sb.append(",\"frequency_penalty\":").append(frequencyPenalty)
         if (presencePenalty != null) sb.append(",\"presence_penalty\":").append(presencePenalty)
+        if (minP != null) sb.append(",\"min_p\":").append(minP)
+        if (typicalP != null) sb.append(",\"typical_p\":").append(typicalP)
+        if (repeatLastN != null) sb.append(",\"repeat_last_n\":").append(repeatLastN)
         sb.append("}")
         return nativeGenerate(handle, "", "", sb.toString(), imageDataArray, callback)
     }

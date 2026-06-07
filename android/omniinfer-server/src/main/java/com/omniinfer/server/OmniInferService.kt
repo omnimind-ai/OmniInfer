@@ -173,9 +173,14 @@ class OmniInferService : Service() {
         val temperature = req["temperature"]?.jsonPrimitive?.floatOrNull
         val topP = req["top_p"]?.jsonPrimitive?.floatOrNull
         val topK = req["top_k"]?.jsonPrimitive?.intOrNull
+        val seed = req["seed"]?.jsonPrimitive?.intOrNull
         val repetitionPenalty = req["repetition_penalty"]?.jsonPrimitive?.floatOrNull
+        val repeatPenalty = req["repeat_penalty"]?.jsonPrimitive?.floatOrNull
         val frequencyPenalty = req["frequency_penalty"]?.jsonPrimitive?.floatOrNull
         val presencePenalty = req["presence_penalty"]?.jsonPrimitive?.floatOrNull
+        val minP = req["min_p"]?.jsonPrimitive?.floatOrNull
+        val typicalP = req["typical_p"]?.jsonPrimitive?.floatOrNull
+        val repeatLastN = req["repeat_last_n"]?.jsonPrimitive?.intOrNull
 
         // Tools support.
         val toolsJson = req["tools"]?.jsonArray?.toString()
@@ -267,9 +272,14 @@ class OmniInferService : Service() {
                     temperature = temperature,
                     topP = topP,
                     topK = topK,
+                    seed = seed,
                     repetitionPenalty = repetitionPenalty,
+                    repeatPenalty = repeatPenalty,
                     frequencyPenalty = frequencyPenalty,
                     presencePenalty = presencePenalty,
+                    minP = minP,
+                    typicalP = typicalP,
+                    repeatLastN = repeatLastN,
                     callback = OmniInferStreamCallback(
                         onTokenHandler = { token ->
                             if (connectionAlive) {
@@ -486,9 +496,14 @@ class OmniInferService : Service() {
                 temperature = temperature,
                 topP = topP,
                 topK = topK,
+                seed = seed,
                 repetitionPenalty = repetitionPenalty,
+                repeatPenalty = repeatPenalty,
                 frequencyPenalty = frequencyPenalty,
                 presencePenalty = presencePenalty,
+                minP = minP,
+                typicalP = typicalP,
+                repeatLastN = repeatLastN,
                 callback = OmniInferStreamCallback(
                     onMetricsHandler = { metrics ->
                         metricsStr = metrics
