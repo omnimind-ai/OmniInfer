@@ -323,13 +323,33 @@ To create a temporary public HTTPS URL without router port forwarding, use Cloud
 ./omniinfer serve --cloudflare
 ```
 
+If you already know the model to serve, the same command can start the gateway, open the tunnel, select a backend, load the model, and run a short validation request:
+
+```sh
+./omniinfer serve \
+  --cloudflare \
+  --backend llama.cpp-linux-cuda \
+  --model /path/to/model.gguf \
+  --ctx-size 8192 \
+  --api-key auto \
+  --detach \
+  --smoke-test
+```
+
 Windows:
 
 ```powershell
 .\omniinfer.ps1 serve --cloudflare
 ```
 
-Cloudflare mode uses the same launcher in an interactive terminal, keeps OmniInfer bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).
+Cloudflare mode uses the same launcher in an interactive terminal when no `--model` is supplied, keeps OmniInfer bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).
+
+Detached services can be checked or stopped without remembering process IDs:
+
+```sh
+./omniinfer serve status --port 9000
+./omniinfer serve stop --port 9000
+```
 
 LAN and Cloudflare access can run at the same time:
 

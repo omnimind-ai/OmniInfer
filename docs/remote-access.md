@@ -6,7 +6,22 @@ Quick Tunnel is best for demos, testing, and short-lived personal access. Cloudf
 
 ## Cloudflare Quick Tunnel
 
-Start the gateway with Cloudflare mode. In an interactive terminal, OmniInfer first asks you to choose a backend and model, then starts the gateway and tunnel:
+Start the gateway with Cloudflare mode. If you already know the model path, use one command to start the gateway, open the tunnel, load the model, and run a short smoke test:
+
+```sh
+./omniinfer serve \
+  --cloudflare \
+  --backend llama.cpp-linux-cuda \
+  --model /path/to/model.gguf \
+  --ctx-size 8192 \
+  --api-key auto \
+  --detach \
+  --smoke-test
+```
+
+For foreground debugging, omit `--detach`. When `--api-key auto` is used, OmniInfer generates a session key and prints it in the startup summary.
+
+When no model is supplied and the command runs in an interactive terminal, OmniInfer first asks you to choose a backend and model, then starts the gateway and tunnel:
 
 ```sh
 ./omniinfer serve --cloudflare
@@ -20,7 +35,7 @@ Windows:
 
 OmniInfer will:
 
-- ask for the backend and model to load when running in an interactive terminal
+- load the supplied `--model`, or ask for the backend and model when running interactively without `--model`
 - keep the local gateway bound to `127.0.0.1`, unless `--lan` is also used
 - download and update a managed `cloudflared` binary under `.local/tools/cloudflared`
 - require an API key for requests arriving through Cloudflare
@@ -39,6 +54,13 @@ API key: oi_example
 ```
 
 Use the OpenAI Base URL and API key in remote clients.
+
+Manage a detached gateway with:
+
+```sh
+./omniinfer serve status --port 9000
+./omniinfer serve stop --port 9000
+```
 
 ## LAN and Cloudflare Together
 
