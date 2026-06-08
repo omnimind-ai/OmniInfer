@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -428,16 +429,21 @@ class CliParserTests(unittest.TestCase):
             ["--cloudflare", "--cloudflared-path", "/opt/bin/cloudflared", "--cloudflare-no-print-key"]
         )
 
-    def test_serve_help_forwards_to_service_without_hidden_window_restart(self) -> None:
+    def test_serve_help_prints_cli_orchestration_help_without_starting_service(self) -> None:
+        output = io.StringIO()
         try:
             with patch("service_core.service.main", return_value=0) as service_main:
-                result = cli.main(["serve", "-h"])
+                with redirect_stdout(output):
+                    result = cli.main(["serve", "-h"])
         finally:
             cli._cli_port_override = None
             commands.set_port_override(None)
 
         self.assertEqual(result, 0)
-        service_main.assert_called_once_with(["-h"])
+        service_main.assert_not_called()
+        self.assertIn("--model", output.getvalue())
+        self.assertIn("--detach", output.getvalue())
+        self.assertIn("serve stop", output.getvalue())
 
     def test_server_alias_forwards_to_service(self) -> None:
         try:
