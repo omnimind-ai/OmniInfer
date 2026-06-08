@@ -166,12 +166,33 @@ OmniInferServer.init(applicationContext)
 val models = OmniInferServer.listCatalogModels()
 val selected = models.first { it.id == "qwen35-2b-q4-0-gguf-llamacpp-htp" }
 val source = selected.sources.first()
-val target = File(modelDir, source.fileName)
+val targetDir = File(modelDir, selected.id)
+val target = File(targetDir, source.fileName)
 ```
 
+Each catalog model includes:
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable model id for UI state and local folder naming |
+| `displayName` | Human-readable model name |
+| `backend` / `accelerator` | Recommended runtime family and accelerator |
+| `format` / `quantization` | Model file format and quantization |
+| `sources` | Download candidates with `provider`, `url`, `fileName`, `sha256`, and `sizeBytes` |
+| `loadConfig` | Backend/thread/context/options recommended by OmniInfer |
+
 Download `source.url` into `target`, verify `source.sha256`, then call
-`loadModel()`. This AAR package contains llama.cpp CPU, llama.cpp HTP, and
-LiteRT-LM GPU. `modelPath` is the absolute path to the model entry file:
+`loadModel()`. A practical local layout is:
+
+```text
+context.filesDir/models/<model-id>/<source.fileName>
+```
+
+For lower-level integrations that want to render or cache the raw catalog JSON,
+use `OmniInferServer.getModelCatalogJson()`.
+
+This AAR package contains llama.cpp CPU, llama.cpp HTP, and LiteRT-LM GPU.
+`modelPath` is the absolute path to the model entry file:
 
 | Format | `modelPath` value |
 |---|---|
