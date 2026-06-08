@@ -36,8 +36,12 @@ public:
             const std::string& native_lib_dir, int n_threads, int n_ctx) override {
     std::string llama_device = extract_string(config_json, "llama_device");
     if (llama_device.empty()) llama_device = extract_string(config_json, "device");
+    std::string accelerator = extract_string(config_json, "accelerator");
+    if (accelerator.empty()) accelerator = extract_string(config_json, "compute_unit");
     std::string backend_type = extract_string(config_json, "backend_type");
-    if (llama_device.empty() && backend_type == "npu") llama_device = "HTP0";
+    const bool wants_htp = accelerator == "htp" || accelerator == "npu" ||
+                           backend_type == "npu";
+    if (llama_device.empty() && wants_htp) llama_device = "HTP0";
     const bool wants_accelerator =
         !llama_device.empty() && llama_device != "cpu" && llama_device != "none";
 
@@ -94,7 +98,7 @@ public:
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = n_ctx;
-    const int default_batch = backend_type == "npu" ? 1024 : 512;
+    const int default_batch = wants_htp ? 1024 : 512;
     int n_batch = extract_int_any(config_json, default_batch, "n_batch", "batch_size");
     int n_ubatch = extract_int_any(config_json, n_batch, "n_ubatch", "ubatch_size");
     n_batch = n_batch > 0 ? n_batch : default_batch;
@@ -111,7 +115,7 @@ public:
     ctx_ = llama_init_from_model(model_, cp);
     if (!ctx_) { llama_model_free(model_); model_ = nullptr; return false; }
 
-    attach_threadpool(config_json, backend_type, eff_threads);
+    attach_threadpool(config_json, wants_htp, eff_threads);
 
     sampler_ = common_sampler_init(model_, default_sampling_);
 
@@ -121,8 +125,9 @@ public:
     n_batch_ = n_batch;
     n_threads_ = eff_threads;
     __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-        "llama.cpp context configured: ctx=%d batch=%d ubatch=%d threads=%d backend_type=%s device=%s",
-        n_ctx, n_batch, n_ubatch, eff_threads, backend_type.c_str(), llama_device.c_str());
+        "llama.cpp context configured: ctx=%d batch=%d ubatch=%d threads=%d backend_type=%s accelerator=%s device=%s",
+        n_ctx, n_batch, n_ubatch, eff_threads, backend_type.c_str(),
+        accelerator.c_str(), llama_device.c_str());
 
     // Auto-discover mmproj in same directory for multimodal models.
     std::string mmproj_path = find_mmproj(model_path);
@@ -852,9 +857,8 @@ private:
   }
 
   void attach_threadpool(const std::string& config_json,
-                         const std::string& backend_type,
+                         bool is_npu,
                          int eff_threads) {
-    const bool is_npu = backend_type == "npu";
     const bool wants_threadpool =
         is_npu ||
         config_json.find("\"poll\"") != std::string::npos ||

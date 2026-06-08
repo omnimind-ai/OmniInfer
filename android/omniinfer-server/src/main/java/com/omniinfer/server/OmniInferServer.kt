@@ -56,6 +56,33 @@ object OmniInferServer {
 
     fun isReady(): Boolean = currentHandle != 0L && serverRunning
 
+    fun listModelCatalogs(): List<String> {
+        val ctx = appContext ?: return emptyList()
+        return OmniInferModelCatalog.listCatalogs(ctx)
+    }
+
+    fun getModelCatalogJson(
+        catalogId: String = OmniInferModelCatalog.ANDROID_LLAMA_CPP_HTP
+    ): String {
+        val ctx = appContext ?: return "{}"
+        return OmniInferModelCatalog.readCatalogJson(ctx, catalogId)
+    }
+
+    fun listCatalogModels(
+        catalogId: String = OmniInferModelCatalog.ANDROID_LLAMA_CPP_HTP
+    ): List<OmniInferCatalogModel> {
+        val ctx = appContext ?: return emptyList()
+        return OmniInferModelCatalog.listModels(ctx, catalogId)
+    }
+
+    fun getRecommendedLoadConfig(
+        modelId: String,
+        catalogId: String = OmniInferModelCatalog.ANDROID_LLAMA_CPP_HTP
+    ): OmniInferModelLoadConfig? {
+        val ctx = appContext ?: return null
+        return OmniInferModelCatalog.recommendedLoadConfig(ctx, modelId, catalogId)
+    }
+
     /**
      * Load a model and start the server.
      * @param modelPath absolute path to model file (GGUF, config.json, or .pte)

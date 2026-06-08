@@ -3,9 +3,19 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    id("maven-publish")
 }
 
 val ktorVersion: String = findProperty("omniinfer.ktor.version")?.toString() ?: "3.1.3"
+val omniInferMavenGroup: String =
+    findProperty("omniinfer.maven.group")?.toString() ?: "ai.omnimind"
+val omniInferMavenVersion: String =
+    findProperty("omniinfer.maven.version")?.toString() ?: "0.1.0-SNAPSHOT"
+val omniInferMavenRepo: String =
+    findProperty("omniinfer.maven.repo")?.toString() ?: layout.buildDirectory.dir("repo").get().asFile.absolutePath
+
+group = omniInferMavenGroup
+version = omniInferMavenVersion
 
 fun boolProperty(name: String, default: Boolean = true): Boolean =
     findProperty(name)?.toString()?.toBooleanStrictOrNull() ?: default
@@ -113,6 +123,12 @@ android {
         }
     }
 
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
+
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/omniinfer-jni/CMakeLists.txt")
@@ -140,14 +156,44 @@ kotlin {
 }
 
 dependencies {
-    compileOnly("io.ktor:ktor-server-core:$ktorVersion")
-    compileOnly("io.ktor:ktor-server-cio:$ktorVersion")
-    compileOnly("io.ktor:ktor-server-content-negotiation:$ktorVersion")
-    compileOnly("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("io.ktor:ktor-server-core:$ktorVersion")
+    implementation("io.ktor:ktor-server-cio:$ktorVersion")
+    implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
     if (enableLiteRtLm) {
         implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
+    }
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                groupId = omniInferMavenGroup
+                artifactId = "omniinfer-android"
+                version = omniInferMavenVersion
+                pom {
+                    name.set("OmniInfer Android")
+                    description.set("Android local inference server for llama.cpp, MNN, ExecuTorch QNN, and LiteRT-LM.")
+                    url.set("https://github.com/omnimind-ai/OmniInfer")
+                    licenses {
+                        license {
+                            name.set("Apache-2.0")
+                            url.set("https://www.apache.org/licenses/LICENSE-2.0")
+                        }
+                    }
+                }
+            }
+        }
+        repositories {
+            maven {
+                name = "omniInferLocal"
+                url = uri(omniInferMavenRepo)
+            }
+        }
     }
 }

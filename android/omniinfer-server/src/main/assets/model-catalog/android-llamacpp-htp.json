@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "catalog_id": "android-llamacpp-htp",
+  "updated": "2026-06-08",
+  "description": "Android llama.cpp Hexagon HTP GGUF models with OmniInfer-ready load options.",
+  "defaults": {
+    "backend": {
+      "framework": "llama.cpp",
+      "format": "gguf"
+    },
+    "runtime": {
+      "accelerator": "htp",
+      "device": "HTP0",
+      "n_threads": 6,
+      "n_ctx": 8192,
+      "load_options": {
+        "accelerator": "htp",
+        "llama_device": "HTP0",
+        "n_gpu_layers": "99",
+        "batch_size": "1024",
+        "ubatch_size": "1024",
+        "cpu_mask": "0xfc",
+        "cpu_strict": "true"
+      }
+    },
+    "supported_quantizations": [
+      "Q4_0",
+      "Q4_1",
+      "Q8_0",
+      "IQ4_NL",
+      "MXFP4"
+    ]
+  },
+  "models": [
+    {
+      "id": "qwen3.5-0.8b-q4_0-gguf-llamacpp-htp",
+      "display_name": "Qwen3.5 0.8B Q4_0",
+      "family": "Qwen3.5",
+      "parameter_size": "0.8B",
+      "vendor": "Qwen",
+      "license": "Apache-2.0",
+      "modalities": ["text"],
+      "capabilities": ["chat", "reasoning"],
+      "backend": {
+        "framework": "llama.cpp",
+        "format": "gguf",
+        "quantization": "Q4_0"
+      },
+      "runtime": {
+        "accelerator": "htp",
+        "device": "HTP0",
+        "n_threads": 6,
+        "n_ctx": 8192,
+        "load_options": {
+          "accelerator": "htp",
+          "llama_device": "HTP0",
+          "n_gpu_layers": "99",
+          "batch_size": "1024",
+          "ubatch_size": "1024",
+          "cpu_mask": "0xfc",
+          "cpu_strict": "true"
+        }
+      },
+      "sources": [
+        {
+          "provider": "ModelScope",
+          "url": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q4_0.gguf",
+          "file_name": "Qwen3.5-0.8B-Q4_0.gguf",
+          "sha256": "444406ddd926550c724ec18d5120a9d40ded44908a063b0e66e9a7e5464c652c",
+          "size_bytes": 507154688
+        },
+        {
+          "provider": "HuggingFace",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_0.gguf",
+          "file_name": "Qwen3.5-0.8B-Q4_0.gguf",
+          "sha256": "444406ddd926550c724ec18d5120a9d40ded44908a063b0e66e9a7e5464c652c",
+          "size_bytes": 507154688
+        }
+      ],
+      "validation": {
+        "status": "metadata_verified",
+        "notes": "Direct URL, SHA256, and size verified from ModelScope/HuggingFace metadata. Device inference validation is pending."
+      }
+    },
+    {
+      "id": "qwen3.5-2b-q4_0-gguf-llamacpp-htp",
+      "display_name": "Qwen3.5 2B Q4_0",
+      "family": "Qwen3.5",
+      "parameter_size": "2B",
+      "vendor": "Qwen",
+      "license": "Apache-2.0",
+      "modalities": ["text"],
+      "capabilities": ["chat", "reasoning"],
+      "backend": {
+        "framework": "llama.cpp",
+        "format": "gguf",
+        "quantization": "Q4_0"
+      },
+      "runtime": {
+        "accelerator": "htp",
+        "device": "HTP0",
+        "n_threads": 6,
+        "n_ctx": 8192,
+        "load_options": {
+          "accelerator": "htp",
+          "llama_device": "HTP0",
+          "n_gpu_layers": "99",
+          "batch_size": "1024",
+          "ubatch_size": "1024",
+          "cpu_mask": "0xfc",
+          "cpu_strict": "true"
+        }
+      },
+      "sources": [
+        {
+          "provider": "ModelScope",
+          "url": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q4_0.gguf",
+          "file_name": "Qwen3.5-2B-Q4_0.gguf",
+          "sha256": "cd70221bebaee0503e0f6717e174250cd7825aa88438b3aabec9ad55731d9bb1",
+          "size_bytes": 1214873856
+        },
+        {
+          "provider": "HuggingFace",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_0.gguf",
+          "file_name": "Qwen3.5-2B-Q4_0.gguf",
+          "sha256": "cd70221bebaee0503e0f6717e174250cd7825aa88438b3aabec9ad55731d9bb1",
+          "size_bytes": 1214873856
+        }
+      ],
+      "validation": {
+        "status": "validated_on_6014",
+        "device": "nubia P0110 / SM8750 / Adreno 830 / Hexagon v79",
+        "benchmark": "pp512 611.35 tok/s, pp2048 585.57 tok/s, tg128 23.01 tok/s with llama-bench HTP0",
+        "artifact": "/home/zhangguanhuai/repository/benchmark/20260607-6014-pr23989-qwen35-2b-q4-0-repro"
+      }
+    },
+    {
+      "id": "qwen3.5-4b-q4_0-gguf-llamacpp-htp",
+      "display_name": "Qwen3.5 4B Q4_0",
+      "family": "Qwen3.5",
+      "parameter_size": "4B",
+      "vendor": "Qwen",
+      "license": "Apache-2.0",
+      "modalities": ["text"],
+      "capabilities": ["chat", "reasoning"],
+      "backend": {
+        "framework": "llama.cpp",
+        "format": "gguf",
+        "quantization": "Q4_0"
+      },
+      "runtime": {
+        "accelerator": "htp",
+        "device": "HTP0",
+        "n_threads": 6,
+        "n_ctx": 8192,
+        "load_options": {
+          "accelerator": "htp",
+          "llama_device": "HTP0",
+          "n_gpu_layers": "99",
+          "batch_size": "1024",
+          "ubatch_size": "1024",
+          "cpu_mask": "0xfc",
+          "cpu_strict": "true"
+        }
+      },
+      "sources": [
+        {
+          "provider": "ModelScope",
+          "url": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q4_0.gguf",
+          "file_name": "Qwen3.5-4B-Q4_0.gguf",
+          "sha256": "298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb",
+          "size_bytes": 2583221408
+        },
+        {
+          "provider": "HuggingFace",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_0.gguf",
+          "file_name": "Qwen3.5-4B-Q4_0.gguf",
+          "sha256": "298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb",
+          "size_bytes": 2583221408
+        }
+      ],
+      "validation": {
+        "status": "metadata_verified",
+        "notes": "Direct URL, SHA256, and size verified from ModelScope/HuggingFace metadata. Device inference validation is pending."
+      }
+    }
+  ]
+}
