@@ -337,11 +337,23 @@ bash ./scripts/platforms/linux/vllm-linux-cuda/build.sh --package 'vllm==0.9.2'
 `scripts/platforms/linux/build-release.sh` can now package any Linux runtime directories that already exist locally, including:
 
 - `llama.cpp-linux`
+- `llama.cpp-linux-cuda`
 - `llama.cpp-linux-rocm`
 - `llama.cpp-linux-vulkan`
 - `llama.cpp-linux-s390x`
 - `llama.cpp-linux-openvino`
+- `ik_llama.cpp-linux`
+- `ik_llama.cpp-linux-cuda`
 - `vllm-linux-cuda`
+- `mnn-linux`
+
+Runtime discovery is driven by the Linux backend registry rather than a
+hard-coded `llama-server` filename check. External server backends are packaged
+when their registered launcher exists under `bin/`; embedded Python runtimes
+such as `mnn-linux` are packaged when their runtime Python entrypoint exists.
+`llama.cpp` and `ik_llama.cpp` backends copy the minimal binary `bin/` payload,
+while Python runtime backends such as `vllm-linux-cuda` and `mnn-linux` copy the
+runtime environment needed by their launcher or embedded driver.
 
 The portable package exposes `omniinfer` as the real CLI binary.
 

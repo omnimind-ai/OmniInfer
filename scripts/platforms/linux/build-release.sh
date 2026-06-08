@@ -10,6 +10,7 @@ ROCM_SCRIPT="${SCRIPT_DIR}/build-llama-rocm.sh"
 VULKAN_SCRIPT="${SCRIPT_DIR}/build-llama-vulkan.sh"
 S390X_SCRIPT="${SCRIPT_DIR}/build-llama-s390x.sh"
 OPENVINO_SCRIPT="${SCRIPT_DIR}/build-llama-openvino.sh"
+RUNTIME_BACKENDS_HELPER="${SCRIPT_DIR}/release_runtime_backends.py"
 
 PACKAGE_NAME="OmniInfer"
 PLATFORM_TAG="linux-x64"
@@ -177,20 +178,14 @@ fi
 
 # --- discover built backends ---
 
-backends=()
-if [[ -d "${LOCAL_RUNTIME_ROOT}" ]]; then
-  for dir in "${LOCAL_RUNTIME_ROOT}"/*/; do
-    [[ ! -d "${dir}" ]] && continue
-    backend_name="$(basename "${dir}")"
-    if [[ -x "${dir}bin/llama-server" ]]; then
-      backends+=("${backend_name}")
-    fi
-  done
-fi
+[[ ! -f "${RUNTIME_BACKENDS_HELPER}" ]] && { echo "ERROR: Runtime backend helper not found: ${RUNTIME_BACKENDS_HELPER}" >&2; exit 1; }
+
+RUNTIME_BACKENDS_JSON="$(python3 "${RUNTIME_BACKENDS_HELPER}" discover --runtime-root "${LOCAL_RUNTIME_ROOT}" --json)"
+mapfile -t backends < <(printf '%s\n' "${RUNTIME_BACKENDS_JSON}" | python3 -c 'import json, sys; print(*[item["id"] for item in json.load(sys.stdin)], sep="\n")')
 
 if [[ ${#backends[@]} -eq 0 ]]; then
   echo "ERROR: No built backends found under ${LOCAL_RUNTIME_ROOT}." >&2
-  echo "Build at least one backend first (e.g. build-llama-cpu.sh)." >&2
+  echo "Build or install at least one backend first (e.g. build-llama-cpu.sh, vllm-linux-cuda/build.sh, or mnn-linux/build.sh)." >&2
   exit 1
 fi
 
@@ -211,6 +206,7 @@ done
 
 echo "Discovered ${#backends[@]} backend(s): ${backends[*]}"
 echo "Default backend: ${DEFAULT_BACKEND}"
+printf '%s\n' "${RUNTIME_BACKENDS_JSON}" | python3 -c 'import json, sys; [print("  - {id}: {copy_mode} from {source_dir}".format(**item)) for item in json.load(sys.stdin)]'
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
   echo ""
@@ -222,6 +218,8 @@ fi
 
 rm -rf "${RELEASE_ROOT}" "${BUILD_ROOT}"
 mkdir -p "${RUNTIME_ROOT}" "${CONFIG_ROOT}" "${BUILD_ROOT}"
+RUNTIME_BACKENDS_MANIFEST="${BUILD_ROOT}/runtime-backends.json"
+printf '%s\n' "${RUNTIME_BACKENDS_JSON}" > "${RUNTIME_BACKENDS_MANIFEST}"
 
 CLI_ENTRY="${REPO_ROOT}/omniinfer.py"
 
@@ -269,17 +267,9 @@ EOF
 
 # --- copy runtime backends ---
 
-for backend_name in "${backends[@]}"; do
-  source_root="${LOCAL_RUNTIME_ROOT}/${backend_name}"
-  target_root="${RUNTIME_ROOT}/${backend_name}"
-
-  mkdir -p "${target_root}/bin" "${target_root}/logs"
-
-  if [[ -d "${source_root}/bin" ]]; then
-    find "${source_root}/bin" -maxdepth 1 -type f \( -executable -o -name '*.so' -o -name '*.so.*' \) \
-      -exec cp {} "${target_root}/bin/" \;
-  fi
-done
+python3 "${RUNTIME_BACKENDS_HELPER}" copy \
+  --manifest "${RUNTIME_BACKENDS_MANIFEST}" \
+  --target-root "${RUNTIME_ROOT}"
 
 # --- optional: usage doc ---
 
