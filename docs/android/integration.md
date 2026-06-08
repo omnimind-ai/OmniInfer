@@ -2,7 +2,7 @@
 
 This is the short path for embedding OmniInfer into a third-party Android app.
 
-1. Add `android/omniinfer-server` as a Gradle module.
+1. Add `android/omniinfer-server` as a Gradle module, or consume the published AAR.
 2. Call `OmniInferServer.init(applicationContext)`.
 3. Load one local model with `OmniInferServer.loadModel(...)`.
 4. Send OpenAI-compatible requests to `http://127.0.0.1:<port>`.
@@ -36,6 +36,8 @@ Kotlin `2.3.0+` is required because the LiteRT-LM AAR used by OmniInfer is compi
 
 ## Add OmniInfer
 
+### Option A: Source Module
+
 From your app repository root:
 
 ```bash
@@ -52,6 +54,61 @@ git submodule update --init third_party/omniinfer/framework/mnn
 ```
 
 `framework/llama.cpp` is needed only when `omniinfer.backend.llama_cpp=true`. `framework/mnn` is needed only when `omniinfer.backend.mnn=true`. LiteRT-LM does not require OmniInfer native submodules.
+
+### Option B: AAR / Maven
+
+An AAR is an Android Archive. It packages OmniInfer's compiled Kotlin/Java code,
+Android manifest entries, resources, assets, consumer ProGuard rules, and native
+`.so` files. It does not package model weights; apps should download model files
+at runtime or manage them in app-specific storage.
+
+Build a local release AAR from the included test project:
+
+```bash
+cd tmp/test_apps/OmniInferServerTest
+./gradlew :omniinfer-server:assembleRelease
+```
+
+The AAR is written to:
+
+```text
+android/omniinfer-server/build/outputs/aar/omniinfer-server-release.aar
+```
+
+For Maven-style consumption with transitive dependencies, publish to a local
+Maven directory:
+
+```bash
+cd tmp/test_apps/OmniInferServerTest
+./gradlew :omniinfer-server:publishReleasePublicationToOmniInferLocalRepository \
+  -Pomniinfer.maven.version=0.1.0-SNAPSHOT \
+  -Pomniinfer.backend.llama_cpp_htp=true \
+  -Pomniinfer.llama_cpp.htp_prebuilt_dir=/path/to/llama.cpp/lib
+```
+
+Then in the host app:
+
+```kotlin
+repositories {
+    maven("/path/to/OmniInfer/android/omniinfer-server/build/repo")
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation("ai.omnimind:omniinfer-android:0.1.0-SNAPSHOT")
+}
+```
+
+`omniinfer.llama_cpp.htp_prebuilt_dir` should point at a Snapdragon llama.cpp
+package directory containing `libggml-opencl.so`, `libggml-hexagon.so`, and
+`libggml-htp-v*.so`. Published AARs intended for Q4_0 HTP inference must include
+those files.
+
+If you use a flat local AAR instead of Maven metadata, Gradle cannot read the
+POM dependency list. Add Ktor, kotlinx serialization, coroutines, AndroidX Core,
+and LiteRT-LM manually when those backends are enabled, or prefer the Maven path
+above.
 
 ## Configure Gradle
 
@@ -105,18 +162,8 @@ kotlin {
     }
 }
 
-val ktorVersion = "3.1.3"
-
 dependencies {
     implementation(project(":omniinfer-server"))
-
-    // omniinfer-server declares Ktor as compileOnly, so the app provides it.
-    implementation("io.ktor:ktor-server-core:$ktorVersion")
-    implementation("io.ktor:ktor-server-cio:$ktorVersion")
-    implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     // Only needed if you use the OkHttp examples.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
@@ -212,6 +259,44 @@ extraConfig = mapOf("backend_type" to "gpu")
 
 LiteRT-LM options such as `backend_type`, `vision_backend`, `max_images`, and `enable_speculative_decoding` are load-time options. Call `OmniInferServer.unloadModel()` before reloading the same model with different values. See [backends.md](./backends.md) for the full backend table.
 
+## Use The Android Model Catalog
+
+The AAR includes an Android model catalog asset. It lists model names,
+quantization, direct download URLs, SHA256 checksums, and recommended
+`loadModel()` settings. The catalog separates the framework backend from the
+hardware accelerator:
+
+- `backend.framework = "llama.cpp"` means the OmniInfer backend implementation.
+- `runtime.accelerator = "htp"` means Qualcomm Hexagon HTP.
+- `runtime.load_options` can be passed directly as `extraConfig`.
+
+Example for the bundled llama.cpp HTP catalog:
+
+```kotlin
+OmniInferServer.init(applicationContext)
+
+val model = OmniInferServer
+    .listCatalogModels()
+    .first { it.id == "qwen3.5-2b-q4_0-gguf-llamacpp-htp" }
+
+val source = model.sources.first { it.provider == "ModelScope" }
+// Download source.url to app storage, then verify source.sha256.
+val localModelPath = "/sdcard/Android/data/<package>/files/models/${source.fileName}"
+
+OmniInferServer.loadModel(
+    modelPath = localModelPath,
+    backend = model.loadConfig.backend,
+    nThreads = model.loadConfig.nThreads,
+    nCtx = model.loadConfig.nCtx,
+    extraConfig = model.loadConfig.extraConfig,
+)
+```
+
+The first built-in HTP catalog is `android-llamacpp-htp`. It uses Q4_0 GGUF
+files because current llama.cpp Hexagon HTP kernels are optimized for repackable
+quantizations such as Q4_0/Q8_0/MXFP4; do not use Q4_K_M as the default HTP
+performance path.
+
 ## Send Requests
 
 After `loadModel()` returns `true`, call the local OpenAI-compatible endpoint:
@@ -281,7 +366,7 @@ Call `configureNotification()` after `init()` and before `loadModel()`.
 | Area | Check |
 |---|---|
 | Gradle | Kotlin Gradle plugin `2.3.0+`, AGP 8.x, JDK 17 |
-| Dependencies | Host app provides Ktor server dependencies |
+| Dependencies | Use Maven metadata for transitive dependencies, or add them manually for flat AAR |
 | ABI | App packages `arm64-v8a` unless other ABIs are intentional |
 | Backends | Unused OmniInfer backends are disabled in `gradle.properties` |
 | Model path | `modelPath` is absolute and readable by the app process |

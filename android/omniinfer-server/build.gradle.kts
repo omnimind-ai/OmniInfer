@@ -13,6 +13,7 @@ val omniInferMavenVersion: String =
     findProperty("omniinfer.maven.version")?.toString() ?: "0.1.0-SNAPSHOT"
 val omniInferMavenRepo: String =
     findProperty("omniinfer.maven.repo")?.toString() ?: layout.buildDirectory.dir("repo").get().asFile.absolutePath
+val omniInferRepoDir: File = projectDir.parentFile.parentFile
 
 group = omniInferMavenGroup
 version = omniInferMavenVersion
@@ -25,6 +26,41 @@ val enableMnn: Boolean = boolProperty("omniinfer.backend.mnn")
 val enableExecutorchQnn: Boolean = boolProperty("omniinfer.backend.executorch_qnn")
 val enableLiteRtLm: Boolean = boolProperty("omniinfer.backend.litert_lm")
 val enableMnnThreadPool: Boolean = boolProperty("omniinfer.mnn.thread_pool")
+val llamaCppHtpPrebuiltDir: File =
+    findProperty("omniinfer.llama_cpp.htp_prebuilt_dir")?.toString()?.let(::File)
+        ?: File(omniInferRepoDir, "tmp/llama-cpp-submodule-snapdragon-minpkg-8a091c47/lib")
+val enableLlamaCppHtp: Boolean =
+    boolProperty("omniinfer.backend.llama_cpp_htp", enableLlamaCpp && llamaCppHtpPrebuiltDir.isDirectory)
+val llamaCppRuntimeJniDir = layout.buildDirectory.dir("generated/llamaCppRuntimeJniLibs")
+val llamaCppHtpRuntimeFiles = listOf(
+    "libggml-opencl.so",
+    "libggml-hexagon.so",
+    "libggml-htp-v68.so",
+    "libggml-htp-v69.so",
+    "libggml-htp-v73.so",
+    "libggml-htp-v75.so",
+    "libggml-htp-v79.so",
+    "libggml-htp-v81.so",
+)
+
+val syncLlamaCppHtpJniLibs by tasks.registering {
+    description = "Collect llama.cpp Snapdragon HTP runtime libraries for AAR packaging"
+    onlyIf { enableLlamaCppHtp }
+    outputs.dir(llamaCppRuntimeJniDir)
+    doLast {
+        val outputDir = llamaCppRuntimeJniDir.get().dir("arm64-v8a").asFile
+        outputDir.mkdirs()
+        llamaCppHtpRuntimeFiles.forEach { name ->
+            val prebuiltLib = File(llamaCppHtpPrebuiltDir, name).takeIf { it.isFile }
+            val source = prebuiltLib ?: throw GradleException(
+                "Missing llama.cpp HTP runtime library $name. " +
+                    "Pass -Pomniinfer.llama_cpp.htp_prebuilt_dir=/path/to/llama.cpp/lib " +
+                    "or disable -Pomniinfer.backend.llama_cpp_htp=false."
+            )
+            source.copyTo(File(outputDir, name), overwrite = true)
+        }
+    }
+}
 
 // --- ExecuTorch QNN: auto-download pre-built binaries ---
 if (enableExecutorchQnn) {
@@ -116,6 +152,9 @@ android {
                 java.srcDir("src/litertLm/java")
             }
             val jniLibDirs = mutableListOf<File>()
+            if (enableLlamaCppHtp) {
+                jniLibDirs += llamaCppRuntimeJniDir.get().asFile
+            }
             if (enableExecutorchQnn) {
                 jniLibDirs += file("src/main/jniLibs")
             }
@@ -167,6 +206,9 @@ dependencies {
         implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
     }
 }
+
+tasks.matching { it.name.startsWith("merge") && it.name.contains("JniLibFolders") }
+    .configureEach { dependsOn(syncLlamaCppHtpJniLibs) }
 
 afterEvaluate {
     publishing {

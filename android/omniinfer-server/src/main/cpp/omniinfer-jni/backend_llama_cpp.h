@@ -55,6 +55,7 @@ public:
 
       if (!native_lib_dir.empty()) {
         setenv("ADSP_LIBRARY_PATH", native_lib_dir.c_str(), 1);
+        setenv("DSP_LIBRARY_PATH", native_lib_dir.c_str(), 1);
         if (wants_accelerator) {
           load_snapdragon_accelerators(native_lib_dir);
         }

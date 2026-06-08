@@ -19,13 +19,18 @@ Fix: upgrade the host Kotlin Gradle plugin to `2.3.0+`. LiteRT-LM Android is com
 
 Symptom: the app compiles OmniInfer but fails at runtime or compile time with missing Ktor server classes.
 
-Fix: the host app must provide Ktor because `:omniinfer-server` declares Ktor as `compileOnly`.
+Fix: prefer the Maven-published OmniInfer Android artifact so Gradle can resolve
+transitive dependencies from the generated POM. If you use a flat local AAR file,
+Gradle cannot read Maven dependency metadata; add Ktor and kotlinx dependencies
+manually:
 
 ```kotlin
 implementation("io.ktor:ktor-server-core:3.1.3")
 implementation("io.ktor:ktor-server-cio:3.1.3")
 implementation("io.ktor:ktor-server-content-negotiation:3.1.3")
 implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.3")
+implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 ```
 
 ### CMake configure fails with missing Ninja
@@ -82,6 +87,31 @@ Fix: ensure manifest merge keeps `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECI
 ### Native library symbol conflicts
 
 If your app already bundles ggml, llama.cpp, or MNN, exclude the duplicate copy or disable the overlapping OmniInfer backend in the library module.
+
+## llama.cpp HTP
+
+### HTP is not actually selected
+
+Fix: load with `extraConfig["accelerator"] = "htp"` and
+`extraConfig["llama_device"] = "HTP0"`, then check logcat for:
+
+```text
+GGML backend ... OpenCL
+GGML backend ... HTP
+llama.cpp selected device=HTP0
+HTP0 new session
+HTP0-REPACK model buffer
+```
+
+If those rows are missing, the app is not using the Hexagon backend. Confirm the
+AAR packages `libggml-opencl.so`, `libggml-hexagon.so`, and the
+`libggml-htp-v*.so` files for the target Snapdragon generation.
+
+### HTP prefill is much slower than expected
+
+Fix: check the model quantization first. Q4_K_M and other K-quants are not the
+recommended Android HTP path. Use the bundled model catalog and start with Q4_0
+GGUF files before comparing against llama.cpp Snapdragon benchmark numbers.
 
 ## LiteRT-LM
 
