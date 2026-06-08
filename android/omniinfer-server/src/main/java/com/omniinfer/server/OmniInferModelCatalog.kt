@@ -32,9 +32,13 @@ data class OmniInferCatalogModel(
 )
 
 object OmniInferModelCatalog {
-    const val ANDROID_LLAMA_CPP_HTP = "android-llamacpp-htp"
+    const val ANDROID_DEFAULT = "android-default"
+
+    @Deprecated("Use ANDROID_DEFAULT. The default catalog now includes CPU, HTP, and LiteRT GPU entries.")
+    const val ANDROID_LLAMA_CPP_HTP = ANDROID_DEFAULT
 
     private const val ASSET_DIR = "model-catalog"
+    private const val LEGACY_LLAMA_CPP_HTP = "android-llamacpp-htp"
 
     fun listCatalogs(context: Context): List<String> {
         return context.assets.list(ASSET_DIR)
@@ -46,15 +50,15 @@ object OmniInferModelCatalog {
 
     fun readCatalogJson(
         context: Context,
-        catalogId: String = ANDROID_LLAMA_CPP_HTP,
+        catalogId: String = ANDROID_DEFAULT,
     ): String {
-        val path = "$ASSET_DIR/$catalogId.json"
+        val path = "$ASSET_DIR/${normalizeCatalogId(catalogId)}.json"
         return context.assets.open(path).bufferedReader().use { it.readText() }
     }
 
     fun listModels(
         context: Context,
-        catalogId: String = ANDROID_LLAMA_CPP_HTP,
+        catalogId: String = ANDROID_DEFAULT,
     ): List<OmniInferCatalogModel> {
         val catalog = JSONObject(readCatalogJson(context, catalogId))
         val defaults = catalog.optJSONObject("defaults") ?: JSONObject()
@@ -69,7 +73,7 @@ object OmniInferModelCatalog {
     fun findModel(
         context: Context,
         modelId: String,
-        catalogId: String = ANDROID_LLAMA_CPP_HTP,
+        catalogId: String = ANDROID_DEFAULT,
     ): OmniInferCatalogModel? {
         return listModels(context, catalogId).firstOrNull { it.id == modelId }
     }
@@ -77,9 +81,13 @@ object OmniInferModelCatalog {
     fun recommendedLoadConfig(
         context: Context,
         modelId: String,
-        catalogId: String = ANDROID_LLAMA_CPP_HTP,
+        catalogId: String = ANDROID_DEFAULT,
     ): OmniInferModelLoadConfig? {
         return findModel(context, modelId, catalogId)?.loadConfig
+    }
+
+    private fun normalizeCatalogId(catalogId: String): String {
+        return if (catalogId == LEGACY_LLAMA_CPP_HTP) ANDROID_DEFAULT else catalogId
     }
 
     private fun parseModel(model: JSONObject, defaults: JSONObject): OmniInferCatalogModel {

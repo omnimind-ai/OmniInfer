@@ -342,7 +342,8 @@ OmniInferServer.loadModel(
 )
 ```
 
-The first built-in HTP catalog is `android-llamacpp-htp`. It uses Q4_0 GGUF
+The default built-in Android catalog is `android-default`. It includes the
+validated AAR model entries and backend defaults. HTP entries use Q4_0 GGUF
 files because current llama.cpp Hexagon HTP kernels are optimized for repackable
 quantizations such as Q4_0/Q8_0/MXFP4; do not use Q4_K_M as the default HTP
 performance path.

@@ -241,7 +241,7 @@ val generateMavenCentralJavadoc by tasks.registering {
             """
             # OmniInfer Android
 
-            Android local inference server for llama.cpp, MNN, ExecuTorch QNN, and LiteRT-LM.
+            Android local inference server for llama.cpp CPU/HTP and LiteRT-LM GPU.
             API entry point: com.omniinfer.server.OmniInferServer.
             """.trimIndent() + "\n",
         )
@@ -266,7 +266,7 @@ afterEvaluate {
                 artifact(mavenCentralJavadocJar)
                 pom {
                     name.set("OmniInfer Android")
-                    description.set("Android local inference server for llama.cpp, MNN, ExecuTorch QNN, and LiteRT-LM.")
+                    description.set("Android local inference server for llama.cpp CPU/HTP and LiteRT-LM GPU.")
                     inceptionYear.set("2026")
                     url.set(omniInferMavenScmUrl)
                     licenses {

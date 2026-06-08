@@ -79,7 +79,7 @@ kotlin {
 }
 
 dependencies {
-    implementation("ai.omnimind:omniinfer-android:0.1.0-alpha01")
+    implementation("ai.omnimind:omniinfer-android:0.2.3")
 }
 ```
 

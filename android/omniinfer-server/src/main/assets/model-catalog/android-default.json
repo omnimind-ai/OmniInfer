@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_id": "android-llamacpp-htp",
+  "catalog_id": "android-default",
   "updated": "2026-06-09",
   "description": "Android model catalog for the OmniInfer AAR package with llama.cpp Qwen3.5 Q4_0 GGUF entries and LiteRT-LM GPU Gemma4 E2B. Qwen3.5 4B defaults to CPU because HTP generation is not reliable on the validated device.",
   "defaults": {

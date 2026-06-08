@@ -80,14 +80,14 @@ object OmniInferServer {
     }
 
     fun getModelCatalogJson(
-        catalogId: String = OmniInferModelCatalog.ANDROID_LLAMA_CPP_HTP
+        catalogId: String = OmniInferModelCatalog.ANDROID_DEFAULT
     ): String {
         val ctx = appContext ?: return "{}"
         return OmniInferModelCatalog.readCatalogJson(ctx, catalogId)
     }
 
     fun listCatalogModels(
-        catalogId: String = OmniInferModelCatalog.ANDROID_LLAMA_CPP_HTP
+        catalogId: String = OmniInferModelCatalog.ANDROID_DEFAULT
     ): List<OmniInferCatalogModel> {
         val ctx = appContext ?: return emptyList()
         return OmniInferModelCatalog.listModels(ctx, catalogId)
@@ -95,7 +95,7 @@ object OmniInferServer {
 
     fun getRecommendedLoadConfig(
         modelId: String,
-        catalogId: String = OmniInferModelCatalog.ANDROID_LLAMA_CPP_HTP
+        catalogId: String = OmniInferModelCatalog.ANDROID_DEFAULT
     ): OmniInferModelLoadConfig? {
         val ctx = appContext ?: return null
         return OmniInferModelCatalog.recommendedLoadConfig(ctx, modelId, catalogId)

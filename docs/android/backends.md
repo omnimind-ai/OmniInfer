@@ -79,9 +79,9 @@ HTP settings:
 | `extraConfig["cpu_mask"]`, `extraConfig["cpu_strict"]` | Optional CPU thread-pool placement for scheduler/helper work |
 | `extraConfig["backend_type"] = "npu"` | Legacy alias; kept for compatibility, not recommended for new catalog entries |
 
-Use `OmniInferServer.listCatalogModels()` to read the bundled
-`android-llamacpp-htp` catalog. Its `runtime.load_options` map is designed to be
-passed directly as `extraConfig`.
+Use `OmniInferServer.listCatalogModels()` to read the bundled `android-default`
+catalog. Its `runtime.load_options` map is designed to be passed directly as
+`extraConfig`.
 
 For HTP performance, use repackable GGUF quantizations such as Q4_0, Q4_1,
 Q8_0, IQ4_NL, or MXFP4. K-quants such as Q4_K_M can run much slower on this
