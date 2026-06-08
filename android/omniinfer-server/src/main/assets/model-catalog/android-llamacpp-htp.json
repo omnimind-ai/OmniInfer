@@ -2,7 +2,7 @@
   "schema_version": 1,
   "catalog_id": "android-llamacpp-htp",
   "updated": "2026-06-09",
-  "description": "Android model catalog for the OmniInfer AAR package with llama.cpp HTP Qwen3.5 Q4_0 GGUF entries and LiteRT-LM GPU Gemma4 E2B.",
+  "description": "Android model catalog for the OmniInfer AAR package with llama.cpp Qwen3.5 Q4_0 GGUF entries and LiteRT-LM GPU Gemma4 E2B. Qwen3.5 4B defaults to CPU because HTP generation is not reliable on the validated device.",
   "defaults": {
     "backend": {
       "framework": "llama.cpp",
@@ -140,7 +140,7 @@
       }
     },
     {
-      "id": "qwen35-4b-q4-0-gguf-llamacpp-htp",
+      "id": "qwen35-4b-q4-0-gguf-llamacpp-cpu",
       "display_name": "Qwen3.5 4B Q4_0",
       "family": "Qwen3.5",
       "parameter_size": "4B",
@@ -159,16 +159,15 @@
         "quantization": "Q4_0"
       },
       "runtime": {
-        "accelerator": "htp",
-        "device": "HTP0",
+        "accelerator": "cpu",
+        "device": "CPU",
         "n_threads": 6,
         "n_ctx": 8192,
         "load_options": {
-          "accelerator": "htp",
-          "llama_device": "HTP0",
-          "n_gpu_layers": "99",
-          "batch_size": "1024",
-          "ubatch_size": "1024",
+          "accelerator": "cpu",
+          "llama_device": "cpu",
+          "batch_size": "512",
+          "ubatch_size": "512",
           "cpu_mask": "0xfc",
           "cpu_strict": "true"
         }
@@ -190,8 +189,9 @@
         }
       ],
       "validation": {
-        "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
+        "status": "validated_on_6014_cpu",
+        "device": "nubia P0110 / SM8750 / Adreno 830",
+        "notes": "llama.cpp CPU smoke returned correct QWEN_CPU_OK output on 6014. llama.cpp HTP loads but generated incorrect text in prior pp1024 streaming and non-streaming tests, so this catalog entry defaults to CPU."
       }
     },
     {
