@@ -11,6 +11,7 @@ For details that are not needed on the first pass:
 
 | Topic | Document |
 |---|---|
+| AAR / Maven integration | [aar-integration.md](./aar-integration.md) |
 | Backend options and model paths | [backends.md](./backends.md) |
 | HTTP examples, streaming, tools, cancel | [api-examples.md](./api-examples.md) |
 | Multimodal model layout and image requests | [multimodal.md](./multimodal.md) |
