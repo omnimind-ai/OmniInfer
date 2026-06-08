@@ -20,6 +20,12 @@ from service_core.backend_cli_args import (
     parse_backend_chat_extra_args,
     parse_backend_load_extra_args,
 )
+from service_core.advisor import (
+    fit_model as advisor_fit_model,
+    inspect_model as advisor_inspect_model,
+    recommend_models as advisor_recommend_models,
+    system_snapshot as advisor_system_snapshot,
+)
 from service_core.backend_configs import (
     BackendProfile,
     ensure_backend_profile_template,
@@ -96,6 +102,8 @@ class ChatOptions:
 @dataclass(frozen=True)
 class BackendBuildOptions:
     backend: str
+    prebuilt: bool = False
+    from_source: bool = False
 
 
 @dataclass(frozen=True)
@@ -208,9 +216,9 @@ def is_service_running() -> bool:
     return status == 200 and isinstance(payload, dict) and payload.get("status") == "ok"
 
 
-def local_backends() -> dict[str, Any]:
+def _local_runtime_manager() -> RuntimeManager:
     config = get_service_config()
-    manager = RuntimeManager(
+    return RuntimeManager(
         repo_root=str(REPO_ROOT),
         app_root=str(APP_ROOT),
         backend_host="127.0.0.1",
@@ -221,11 +229,61 @@ def local_backends() -> dict[str, Any]:
         backend_overrides=config.get("backends"),
         default_backend_id=str(config.get("default_backend", "")),
     )
+
+
+def local_backends() -> dict[str, Any]:
+    manager = _local_runtime_manager()
     return manager.backends
 
 
 def local_backend_ids() -> list[str]:
     return list(local_backends().keys())
+
+
+def advisor_system() -> dict[str, Any]:
+    manager = _local_runtime_manager()
+    return advisor_system_snapshot(manager.platform, manager.backends)
+
+
+def advisor_inspect(model: str, *, mmproj: str | None = None) -> dict[str, Any]:
+    return advisor_inspect_model(model, mmproj=mmproj)
+
+
+def advisor_fit(
+    model: str,
+    *,
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+    backend: str | None = None,
+) -> dict[str, Any]:
+    manager = _local_runtime_manager()
+    if backend is not None and backend not in manager.backends:
+        available = ", ".join(sorted(manager.backends))
+        raise SystemExit(f"Unsupported backend: {backend}\nAvailable backends: {available}")
+    return advisor_fit_model(
+        model,
+        platform_obj=manager.platform,
+        backends=manager.backends,
+        mmproj=mmproj,
+        ctx_size=ctx_size,
+        backend_filter=backend,
+    )
+
+
+def advisor_recommend(
+    *,
+    task: str | None = None,
+    limit: int = 5,
+    ctx_size: int | None = None,
+) -> dict[str, Any]:
+    manager = _local_runtime_manager()
+    return advisor_recommend_models(
+        platform_obj=manager.platform,
+        backends=manager.backends,
+        task=task,
+        limit=limit,
+        ctx_size=ctx_size,
+    )
 
 
 def is_backend_build_supported() -> bool:
@@ -278,8 +336,14 @@ def backend_build_command(options: BackendBuildOptions) -> tuple[list[str], Path
             "-BuildType",
             "Release",
         ]
+        if options.prebuilt:
+            command.append("-Prebuilt")
     else:
         command = ["bash", str(script_path), "--build-type", "Release"]
+        if options.prebuilt:
+            command.append("--prebuilt")
+        if options.from_source:
+            command.append("--from-source")
     return command, script_path
 
 
@@ -556,7 +620,16 @@ def require_selected_backend() -> AutoSelectResult:
     return AutoSelectResult(backend=backend_id, auto_selected=True)
 
 
-def resolve_model_reference(path_text: str) -> Path:
+def resolve_model_reference(path_text: str, *, backend: Any | None = None) -> Path | str:
+    if backend is not None and getattr(backend, "family", None) == "vllm":
+        text = normalize_path_text(path_text)
+        if not text:
+            raise SystemExit("Model reference must not be empty.")
+        path = absolute_path_from_text(text)
+        if path.exists():
+            return path
+        return text
+
     path = _absolute_existing_path(path_text)
     if not path.exists():
         raise SystemExit(f"Model path does not exist: {path}")
@@ -646,7 +719,7 @@ def build_model_load_payload(options: ModelLoadOptions) -> tuple[dict[str, Any],
         cli_tokens=list(options.backend_extra_args or []),
     )
 
-    model_ref = resolve_model_reference(options.model)
+    model_ref = resolve_model_reference(options.model, backend=backend)
     mmproj_file = resolve_existing_path(options.mmproj, "mmproj file") if options.mmproj else None
     effective_ctx_size = options.ctx_size if options.ctx_size is not None else backend_extras.ctx_size
     if effective_ctx_size is not None and effective_ctx_size <= 0:

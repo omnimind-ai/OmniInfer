@@ -19,7 +19,9 @@ def parse_backend_load_extra_args(backend: BackendSpec, tokens: list[str]) -> Pa
     if not tokens:
         return ParsedBackendExtraArgs()
     if backend.family in {"llama.cpp", "turboquant"}:
-        return _parse_llama_cpp_load_args(tokens)
+        return _parse_llama_cpp_load_args(backend, tokens)
+    if backend.family == "vllm":
+        return _parse_vllm_load_args(tokens)
     if backend.family == "mlx-lm":
         return _parse_mlx_load_args(tokens)
     return _parse_generic_load_args(tokens)
@@ -35,7 +37,7 @@ def parse_backend_chat_extra_args(backend: BackendSpec, tokens: list[str]) -> Pa
     return _parse_generic_chat_args(tokens)
 
 
-def _parse_llama_cpp_load_args(tokens: list[str]) -> ParsedBackendExtraArgs:
+def _parse_llama_cpp_load_args(backend: BackendSpec, tokens: list[str]) -> ParsedBackendExtraArgs:
     parsed = ParsedBackendExtraArgs()
     reserved = {"-m", "--model", "-mm", "--mmproj", "--message", "-p", "--prompt", "--image"}
     i = 0
@@ -48,6 +50,10 @@ def _parse_llama_cpp_load_args(tokens: list[str]) -> ParsedBackendExtraArgs:
             parsed.ctx_size = _parse_int(_take_option_value(tokens, i, inline_value, flag))
             i += 1 if inline_value is not None else 2
             continue
+        if backend.id.startswith("ik_llama.cpp") and flag == "--no-cache-prompt":
+            parsed.launch_args.extend(["-cram", "0"])
+            i += 1
+            continue
         parsed.launch_args.append(token)
         i += 1
     return parsed
@@ -58,6 +64,24 @@ def _parse_mlx_load_args(tokens: list[str]) -> ParsedBackendExtraArgs:
         "mlx-mac does not currently expose backend-native load extra args in OmniInfer; "
         "use the stable CLI options only"
     )
+
+
+def _parse_vllm_load_args(tokens: list[str]) -> ParsedBackendExtraArgs:
+    parsed = ParsedBackendExtraArgs()
+    reserved = {"--model", "--host", "--port", "--api-key"}
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        flag, inline_value = _split_flag_value(token)
+        if flag in reserved:
+            raise ValueError(f"{flag} is managed by OmniInfer and should not be passed as a backend-native extra arg")
+        if flag in {"-c", "--ctx-size", "--max-model-len"}:
+            parsed.ctx_size = _parse_int(_take_option_value(tokens, i, inline_value, flag))
+            i += 1 if inline_value is not None else 2
+            continue
+        parsed.launch_args.append(token)
+        i += 1
+    return parsed
 
 
 def _parse_generic_load_args(tokens: list[str]) -> ParsedBackendExtraArgs:

@@ -364,6 +364,7 @@ def _choose_backend_for_build() -> str | None:
 def _choose_model(*, mark_last_selected: bool = False) -> Path | None:
     while True:
         models = commands.discover_local_models()
+        advisor_recommendations = _advisor_recommendation_map(models)
         remembered = commands.remembered_model_load_options() if mark_last_selected else None
         remembered_path = Path(remembered.model).expanduser() if remembered is not None else None
         items: list[_MenuItem] = []
@@ -373,11 +374,14 @@ def _choose_model(*, mark_last_selected: bool = False) -> Path | None:
             matched_remembered = False
             for model in models:
                 details: list[str] = []
+                is_last_selected = False
                 if remembered_path is not None and _same_model_path(model.path, remembered_path):
                     details.append("last selected")
                     default_index = len(items)
                     matched_remembered = True
-                items.append(_MenuItem(label=model.label, details=details, selected=bool(details)))
+                    is_last_selected = True
+                details.extend(_advisor_model_details(model.path, advisor_recommendations))
+                items.append(_MenuItem(label=model.label, details=details, selected=is_last_selected))
                 model_choices.append(model.path)
             if remembered_path is not None and not matched_remembered and remembered_path.exists():
                 default_index = len(items)
@@ -487,11 +491,56 @@ def _select_model_from_directory(directory: Path) -> Path | None:
     return candidates[index].path
 
 
+def _advisor_recommendation_map(models: list[commands.LocalModel]) -> dict[str, dict[str, Any]]:
+    if not models:
+        return {}
+    try:
+        payload = commands.advisor_recommend(limit=max(len(models), 20))
+    except (SystemExit, OSError, ValueError):
+        return {}
+    rows = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        model_info = row.get("model") if isinstance(row.get("model"), dict) else {}
+        for key in ("input", "model", "model_path"):
+            value = model_info.get(key)
+            if isinstance(value, str) and value.strip():
+                result[_advisor_path_key(value)] = row
+    return result
+
+
+def _advisor_path_key(value: str | Path) -> str:
+    try:
+        return str(Path(value).expanduser().resolve())
+    except OSError:
+        return os.path.abspath(os.path.expanduser(str(value)))
+
+
+def _advisor_model_details(model_path: Path, recommendations: dict[str, dict[str, Any]]) -> list[str]:
+    row = recommendations.get(_advisor_path_key(model_path))
+    if not row:
+        return []
+    recommended = row.get("recommended") if isinstance(row.get("recommended"), dict) else {}
+    details: list[str] = []
+    fit = str(recommended.get("fit") or "").strip()
+    if fit:
+        details.append(f"advisor {fit}")
+    backend = str(recommended.get("backend") or "").strip()
+    if backend:
+        details.append(backend)
+    warnings = row.get("warnings") if isinstance(row.get("warnings"), list) else []
+    if warnings:
+        details.append("warning")
+    return details
+
+
 def _try_load_remembered_model(options: commands.ModelLoadOptions) -> str | None:
     _print_section("Resume", "Loading your last selected backend and model")
     _print_kv("Model", options.model)
     try:
-        backend = _load_model(options, show_model=False)
+        backend = _load_model(options, show_model=False, advisor_preflight=False)
     except SystemExit as exc:
         _print_notice(f"Could not load previous model: {exc}", kind="warning")
         print()
@@ -516,7 +565,14 @@ def _load_model_after_backend_switch() -> str | None:
     return _load_model(commands.ModelLoadOptions(model=str(model)))
 
 
-def _load_model(options: commands.ModelLoadOptions, *, show_model: bool = True) -> str | None:
+def _load_model(
+    options: commands.ModelLoadOptions,
+    *,
+    show_model: bool = True,
+    advisor_preflight: bool = True,
+) -> str | None:
+    if advisor_preflight:
+        options = _advisor_preflight(options)
     print()
     if show_model:
         _print_kv("Model", options.model)
@@ -552,6 +608,123 @@ def _load_model(options: commands.ModelLoadOptions, *, show_model: bool = True) 
     print()
     backend = response.get("selected_backend")
     return str(backend) if backend else None
+
+
+def _advisor_preflight(options: commands.ModelLoadOptions) -> commands.ModelLoadOptions:
+    try:
+        payload = commands.advisor_fit(
+            options.model,
+            mmproj=options.mmproj,
+            ctx_size=options.ctx_size,
+        )
+    except (SystemExit, OSError, ValueError) as exc:
+        _print_notice(f"Advisor skipped: {exc}", kind="warning")
+        return options
+
+    recommended = payload.get("recommended") if isinstance(payload.get("recommended"), dict) else None
+    warnings = payload.get("warnings") if isinstance(payload.get("warnings"), list) else []
+    if recommended is None:
+        for warning in warnings[:2]:
+            _print_notice(f"Advisor: {warning}", kind="warning")
+        return options
+
+    _print_advisor_preflight_summary(payload)
+    while True:
+        choice = _prompt_basic("Advisor", default="")
+        action = choice.strip().lower()
+        if action in {"", "y", "yes", "load", "enter"}:
+            _apply_advisor_backend(recommended)
+            return options
+        if action in {"a", "advisor", "details", "detail"}:
+            _print_advisor_fit_details(payload)
+            continue
+        if action in {"b", "backend"}:
+            selected_backend = _choose_backend()
+            if selected_backend:
+                _print_notice(f"Using backend: {selected_backend}", kind="success")
+            return options
+        if action in {"s", "skip", "selected", "current"}:
+            return options
+        if action in {"q", "quit", "cancel"}:
+            raise SystemExit("Model load cancelled.")
+        _print_notice("Use Enter to load, A for details, B to change backend, or S to keep current.", kind="warning")
+
+
+def _apply_advisor_backend(recommended: dict[str, Any]) -> None:
+    backend = str(recommended.get("backend") or "").strip()
+    if not backend:
+        return
+    if not recommended.get("installed"):
+        _print_notice(f"Advisor recommended {backend}, but it is not installed.", kind="warning")
+        return
+    try:
+        result = commands.select_backend(backend)
+    except SystemExit as exc:
+        _print_notice(f"Could not apply advisor backend: {exc}", kind="warning")
+        return
+    _print_notice(f"Advisor selected backend: {result.backend}", kind="success")
+
+
+def _print_advisor_preflight_summary(payload: dict[str, Any]) -> None:
+    recommended = payload.get("recommended") if isinstance(payload.get("recommended"), dict) else {}
+    model_info = payload.get("model") if isinstance(payload.get("model"), dict) else {}
+    estimate = model_info.get("estimate") if isinstance(model_info.get("estimate"), dict) else {}
+    warnings = payload.get("warnings") if isinstance(payload.get("warnings"), list) else []
+    backend = str(recommended.get("backend") or "-")
+    fit = str(recommended.get("fit") or "unknown")
+    required = _format_gib(recommended.get("memory_required_gib"))
+    available = _format_gib(recommended.get("memory_available_gib"))
+
+    _print_section("Advisor", "Load preflight")
+    _print_kv("Recommended", f"{backend} ({fit})")
+    _print_kv("Memory", f"{required} required / {available} available")
+    _print_kv("Estimate", str(estimate.get("confidence") or "unknown"))
+    for warning in warnings[:2]:
+        _print_notice(f"Advisor: {warning}", kind="warning")
+    _print_kv("Action", "Enter load recommendation · A details · B backend · S keep current")
+
+
+def _print_advisor_fit_details(payload: dict[str, Any]) -> None:
+    recommended = payload.get("recommended") if isinstance(payload.get("recommended"), dict) else {}
+    alternatives = payload.get("alternatives") if isinstance(payload.get("alternatives"), list) else []
+    model_info = payload.get("model") if isinstance(payload.get("model"), dict) else {}
+    estimate = model_info.get("estimate") if isinstance(model_info.get("estimate"), dict) else {}
+    _print_section("Advisor Details", "Why this load shape was suggested")
+    _print_kv("Model", str(model_info.get("model") or "-"))
+    _print_kv("Format", str(model_info.get("format") or "-"))
+    _print_kv("Quantization", str(model_info.get("quantization") or "-"))
+    _print_kv("Recommended backend", str(recommended.get("backend") or "-"))
+    _print_kv("Fit", str(recommended.get("fit") or "-"))
+    _print_kv("Memory", f"{_format_gib(recommended.get('memory_required_gib'))} required / {_format_gib(recommended.get('memory_available_gib'))} available")
+    _print_kv("Estimate source", str(estimate.get("estimate_source") or "-"))
+    _print_kv("Confidence", str(estimate.get("confidence") or "-"))
+    if payload.get("next_command"):
+        _print_kv("Command", str(payload["next_command"]))
+    if alternatives:
+        print(_THEME.dim("Alternatives"))
+        for candidate in alternatives[:5]:
+            print(
+                "  "
+                f"{candidate.get('backend')}: "
+                f"fit={candidate.get('fit')}, "
+                f"installed={'yes' if candidate.get('installed') else 'no'}"
+            )
+    notes = estimate.get("notes") if isinstance(estimate.get("notes"), list) else []
+    for note in notes[:3]:
+        print(_THEME.dim(f"  note: {note}"))
+    warnings = payload.get("warnings") if isinstance(payload.get("warnings"), list) else []
+    for warning in warnings[:5]:
+        _print_notice(f"Advisor: {warning}", kind="warning")
+    print()
+
+
+def _format_gib(value: Any) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):.2f} GiB"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _server_child_args(service_args: list[str], backend: str) -> list[str]:

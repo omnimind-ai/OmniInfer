@@ -398,10 +398,16 @@ class MnnDriverTests(unittest.TestCase):
     def setUp(self) -> None:
         self.driver = MnnLinuxDriver()
 
-    def _write_model_dir(self, *, vision: bool, visual_asset: bool = False) -> str:
+    def _write_model_dir(self, *, vision: bool, visual_asset: bool = False, prompt_template: str | None = None) -> str:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         config = {"is_visual": vision}
+        if prompt_template:
+            config["llm_config"] = "llm_config.json"
+            Path(tmpdir.name, "llm_config.json").write_text(
+                json.dumps({"prompt_template": prompt_template}),
+                encoding="utf-8",
+            )
         Path(tmpdir.name, "config.json").write_text(json.dumps(config), encoding="utf-8")
         if visual_asset:
             Path(tmpdir.name, "visual.mnn").write_text("", encoding="utf-8")
@@ -428,6 +434,22 @@ class MnnDriverTests(unittest.TestCase):
         self.assertEqual(response["usage"]["completion_tokens"], 3)
         self.assertIn("predicted_per_second", response["timings"])
         self.assertFalse(fake_cv.loaded_paths)
+
+    def test_text_chat_completion_uses_model_prompt_template(self) -> None:
+        template = "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n"
+        model_dir = self._write_model_dir(vision=False, prompt_template=template)
+        fake_cv = _FakeCvModule()
+        payload = {"model": "demo-model", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 16}
+        modules, _ = _mnn_fake_modules(fake_cv)
+
+        with patch.dict(sys.modules, modules, clear=False):
+            state = self.driver.load_model(model_path=model_dir, model_ref="demo", mmproj_path=None, ctx_size=None)
+            self.driver.chat_completion(state, dict(payload))
+
+        self.assertEqual(
+            state.model.last_prompt,
+            "<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+        )
 
     def test_text_streaming(self) -> None:
         model_dir = self._write_model_dir(vision=False)

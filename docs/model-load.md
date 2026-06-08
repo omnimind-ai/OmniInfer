@@ -25,7 +25,7 @@ This document defines the stable gateway contract for loading a model through
 
 | Field | Type | Scope | Reloads runtime | Notes |
 |---|---:|---|---:|---|
-| `model` | string | load | yes | Required. Relative paths resolve under the selected backend model root. |
+| `model` | string | load | yes | Required. Relative paths resolve under the selected backend model root for file/directory backends. Reference backends such as `vllm-linux-cuda` pass this string directly to the backend. |
 | `backend` | string | load | maybe | Optional. If omitted, OmniInfer uses selected or automatic backend logic. |
 | `mmproj` | string | load | yes | Optional multimodal projector override. |
 | `ctx_size` / `ctx-size` | integer | load | yes | Optional context length override. |
@@ -83,6 +83,20 @@ backend cannot use, the response includes a warning:
 Clients should treat warnings as user-visible diagnostics, not fatal errors.
 For configuration screens that must reject unsupported settings, send
 `strict_capabilities: true`.
+
+## Backend-Specific Notes
+
+`vllm-linux-cuda` runs the official vLLM OpenAI-compatible server. OmniInfer
+starts it as:
+
+```text
+vllm serve <model> --host <loopback-host> --port <backend-port>
+```
+
+For this backend, `ctx_size` maps to vLLM's `--max-model-len`, and OmniInfer
+adds `--served-model-name local` unless the user supplies a backend-native
+`--served-model-name` in `launch_args`. `mmproj` is not supported and is ignored
+with a warning unless `strict_capabilities` is true.
 
 ## Chat Requests
 

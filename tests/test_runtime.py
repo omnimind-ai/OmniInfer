@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -221,6 +222,22 @@ class CliParserTests(unittest.TestCase):
             args = build_parser().parse_args(["build", "llama.cpp-cpu"])
         self.assertEqual(args.command, "build")
         self.assertEqual(args.backend_name, "llama.cpp-cpu")
+        self.assertFalse(args.prebuilt)
+        self.assertFalse(args.from_source)
+
+    def test_build_command_parses_prebuilt_mode(self) -> None:
+        with patch("service_core.commands.is_backend_build_supported", return_value=True):
+            args = build_parser().parse_args(["build", "llama.cpp-cpu", "--prebuilt"])
+        self.assertEqual(args.backend_name, "llama.cpp-cpu")
+        self.assertTrue(args.prebuilt)
+        self.assertFalse(args.from_source)
+
+    def test_build_command_parses_from_source_mode(self) -> None:
+        with patch("service_core.commands.is_backend_build_supported", return_value=True):
+            args = build_parser().parse_args(["build", "llama.cpp-cpu", "--from-source"])
+        self.assertEqual(args.backend_name, "llama.cpp-cpu")
+        self.assertFalse(args.prebuilt)
+        self.assertTrue(args.from_source)
 
     def test_build_command_is_hidden_in_packaged_release(self) -> None:
         with patch("service_core.commands.is_backend_build_supported", return_value=False):
@@ -412,16 +429,21 @@ class CliParserTests(unittest.TestCase):
             ["--cloudflare", "--cloudflared-path", "/opt/bin/cloudflared", "--cloudflare-no-print-key"]
         )
 
-    def test_serve_help_forwards_to_service_without_hidden_window_restart(self) -> None:
+    def test_serve_help_prints_cli_orchestration_help_without_starting_service(self) -> None:
+        output = io.StringIO()
         try:
             with patch("service_core.service.main", return_value=0) as service_main:
-                result = cli.main(["serve", "-h"])
+                with redirect_stdout(output):
+                    result = cli.main(["serve", "-h"])
         finally:
             cli._cli_port_override = None
             commands.set_port_override(None)
 
         self.assertEqual(result, 0)
-        service_main.assert_called_once_with(["-h"])
+        service_main.assert_not_called()
+        self.assertIn("--model", output.getvalue())
+        self.assertIn("--detach", output.getvalue())
+        self.assertIn("serve stop", output.getvalue())
 
     def test_server_alias_forwards_to_service(self) -> None:
         try:
@@ -635,12 +657,12 @@ class CommandHelperTests(unittest.TestCase):
                 patch("service_core.commands.local_backends", return_value={"llama.cpp-cpu": object()}),
             ):
                 command, script_path = commands.backend_build_command(
-                    commands.BackendBuildOptions(backend="llama.cpp-cpu")
+                    commands.BackendBuildOptions(backend="llama.cpp-cpu", prebuilt=True)
                 )
 
         self.assertEqual(script_path, script)
         self.assertEqual(command[:5], ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        self.assertEqual(command[-2:], ["-BuildType", "Release"])
+        self.assertEqual(command[-3:], ["-BuildType", "Release", "-Prebuilt"])
 
     def test_backend_build_command_resolves_macos_script_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -656,11 +678,11 @@ class CommandHelperTests(unittest.TestCase):
                 patch("service_core.commands.local_backends", return_value={"llama.cpp-mac": object()}),
             ):
                 command, script_path = commands.backend_build_command(
-                    commands.BackendBuildOptions(backend="llama.cpp-mac")
+                    commands.BackendBuildOptions(backend="llama.cpp-mac", from_source=True)
                 )
 
         self.assertEqual(script_path, script)
-        self.assertEqual(command, ["bash", str(script), "--build-type", "Release"])
+        self.assertEqual(command, ["bash", str(script), "--build-type", "Release", "--from-source"])
 
     def test_backend_build_rejected_when_frozen(self) -> None:
         with patch("service_core.commands.sys.frozen", True, create=True):
@@ -874,6 +896,47 @@ class CommandHelperTests(unittest.TestCase):
             resolved = commands.resolve_model_reference(f'"{model}"')
 
             self.assertEqual(resolved.resolve(), model.resolve())
+
+    def test_vllm_model_reference_accepts_hf_id(self) -> None:
+        backend = BackendSpec(
+            id="vllm-linux-cuda",
+            label="vLLM Linux CUDA",
+            family="vllm",
+            runtime_dir=".",
+            launcher_path=None,
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=[],
+        )
+
+        resolved = commands.resolve_model_reference(
+            "hf-internal-testing/tiny-random-LlamaForCausalLM",
+            backend=backend,
+        )
+
+        self.assertEqual(resolved, "hf-internal-testing/tiny-random-LlamaForCausalLM")
+
+    def test_vllm_model_reference_keeps_existing_local_path(self) -> None:
+        backend = BackendSpec(
+            id="vllm-linux-cuda",
+            label="vLLM Linux CUDA",
+            family="vllm",
+            runtime_dir=".",
+            launcher_path=None,
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=[],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model_dir = root / "local-transformers-model"
+            model_dir.mkdir()
+
+            resolved = commands.resolve_model_reference(str(model_dir), backend=backend)
+
+            self.assertEqual(resolved.resolve(), model_dir.resolve())
 
     def test_tui_manual_model_directory_accepts_quoted_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

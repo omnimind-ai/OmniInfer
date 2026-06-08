@@ -44,6 +44,7 @@ class MnnLoadedModel:
     model_ref: str
     supports_vision: bool
     config: dict[str, Any]
+    prompt_template: str | None = None
     temp_files: list[str] = field(default_factory=list)
 
 
@@ -71,6 +72,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         model.set_config(config)
         model.load()
         supports_vision = self._config_supports_vision(config_path)
+        prompt_template = self._load_prompt_template(config_path)
         logger.info("MNN model loaded: %s (vision=%s)", model_ref, supports_vision)
         return MnnLoadedModel(
             model=model,
@@ -79,6 +81,7 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
             model_ref=model_ref,
             supports_vision=supports_vision,
             config=config,
+            prompt_template=prompt_template,
         )
 
     def unload_model(self, state: Any) -> None:
@@ -195,13 +198,42 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
                 continue
             prompt_messages.append({"role": role, "content": str(content or "")})
 
-        prompt_text = state.model.apply_chat_template(prompt_messages)
+        prompt_text = self._format_prompt(state, prompt_messages)
         prompt_tokens = len(state.model.tokenizer_encode(prompt_text))
         if not images:
             return prompt_text, prompt_tokens
 
         state.temp_files.extend(temp_files)
         return {"text": prompt_text, "images": images}, prompt_tokens
+
+    def _format_prompt(self, state: MnnLoadedModel, messages: list[dict[str, str]]) -> str:
+        if state.prompt_template:
+            return self._format_prompt_template(state.prompt_template, messages)
+        return str(state.model.apply_chat_template(messages))
+
+    def _format_prompt_template(self, template: str, messages: list[dict[str, str]]) -> str:
+        if "<|im_start|>user" in template and "<|im_start|>assistant" in template:
+            parts = []
+            for message in messages:
+                role = str(message.get("role") or "user")
+                if role not in {"system", "user", "assistant"}:
+                    role = "user"
+                parts.append(f"<|im_start|>{role}\n{message.get('content', '')}<|im_end|>")
+            parts.append("<|im_start|>assistant\n")
+            return "\n".join(parts)
+
+        content = self._template_content(messages)
+        if "%s" in template:
+            try:
+                return template % content
+            except TypeError:
+                return template.replace("%s", content, 1)
+        return f"{template}{content}"
+
+    def _template_content(self, messages: list[dict[str, str]]) -> str:
+        if len(messages) == 1:
+            return str(messages[0].get("content") or "")
+        return "\n".join(f"{item.get('role', 'user')}: {item.get('content', '')}" for item in messages)
 
     def _load_image_part(
         self,
@@ -277,6 +309,41 @@ class MnnLinuxDriver(EmbeddedBackendDriver):
         if (config_file.parent / "visual.mnn").is_file():
             return True
         return isinstance(payload.get("mllm"), dict)
+
+    def _load_prompt_template(self, config_path: str) -> str | None:
+        config_file = Path(config_path)
+        try:
+            config = json.loads(config_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            config = {}
+
+        base_dir = Path(str(config.get("base_dir") or config_file.parent)).expanduser()
+        if not base_dir.is_absolute():
+            base_dir = (config_file.parent / base_dir).resolve()
+
+        candidates: list[Path] = []
+        llm_config = config.get("llm_config")
+        if isinstance(llm_config, str) and llm_config:
+            llm_config_path = Path(llm_config)
+            if not llm_config_path.is_absolute():
+                llm_config_path = base_dir / llm_config_path
+            candidates.append(llm_config_path)
+        candidates.extend([base_dir / "llm_config.json", config_file])
+
+        seen: set[Path] = set()
+        for candidate in candidates:
+            candidate = candidate.resolve()
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            template = payload.get("prompt_template")
+            if isinstance(template, str) and template:
+                return template
+        return None
 
     def _resolve_config_path(self, model_path: str) -> str:
         path = Path(model_path).expanduser().resolve()

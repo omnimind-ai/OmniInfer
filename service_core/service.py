@@ -113,6 +113,10 @@ def resolve_api_key(cli_value: str | None, config: dict[str, Any], *, generate_s
     raw = (cli_value if cli_value is not None else str(config.get("api_key", ""))).strip()
     if not raw:
         raw = os.environ.get("OMNIINFER_API_KEY", "").strip()
+    if raw.lower() == "auto":
+        if generate_session_key:
+            return ResolvedApiKey("oi_" + secrets.token_urlsafe(24), generated=True)
+        return ResolvedApiKey("")
     if raw:
         return ResolvedApiKey(raw, generated=False)
     if generate_session_key:
@@ -1765,6 +1769,10 @@ class OmniHandler(BaseHTTPRequestHandler):
                 self._send_json(409, {"error": {"message": "selected backend is not ready"}})
                 return
             host, port = target
+            current_proxy_model_ref = getattr(self.manager, "current_proxy_model_ref", None)
+            proxy_model_ref = current_proxy_model_ref() if callable(current_proxy_model_ref) else None
+            if isinstance(proxy_model_ref, str) and proxy_model_ref.strip():
+                payload["model"] = proxy_model_ref
 
             if payload.get("stream") is True:
                 self._debug(f"proxy stream -> http://{host}:{port}/v1/chat/completions")

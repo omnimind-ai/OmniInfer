@@ -118,6 +118,7 @@ class LoadedRuntime:
     launch_command: list[str] = field(default_factory=list)
     log_path: str | None = None
     log_handle: TextIOWrapper | None = None
+    proxy_model_ref: str | None = None
     embedded_driver: EmbeddedBackendDriver | None = None
     embedded_state: Any = None
     load_warnings: list[dict[str, str]] = field(default_factory=list)
@@ -129,6 +130,7 @@ class ExternalRuntimeLaunch:
     port: int
     ctx_size: int | None
     log_file_name: str
+    proxy_model_ref: str | None = None
 
 
 def _summarize_backend_startup_failure(lines: list[str], *, max_lines: int = 6) -> str:
@@ -181,6 +183,12 @@ def _launch_arg_int(args: list[str], flags: tuple[str, ...]) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _runtime_ctx_flags(runtime: LoadedRuntime | None) -> tuple[str, ...]:
+    if runtime and runtime.backend_id.startswith("vllm-"):
+        return ("--max-model-len",)
+    return ("-c", "--ctx-size")
+
+
 def _effective_runtime_parameters(runtime: LoadedRuntime | None) -> dict[str, int | None]:
     if runtime is None:
         return {
@@ -192,7 +200,7 @@ def _effective_runtime_parameters(runtime: LoadedRuntime | None) -> dict[str, in
             "ubatch_size": None,
         }
     return {
-        "ctx_size": runtime.ctx_size,
+        "ctx_size": runtime.ctx_size or _launch_arg_int(runtime.launch_args, _runtime_ctx_flags(runtime)),
         "ngl": _launch_arg_int(runtime.launch_args, ("-ngl", "--n-gpu-layers")),
         "threads": _launch_arg_int(runtime.launch_args, ("-t", "--threads")),
         "threads_batch": _launch_arg_int(runtime.launch_args, ("-tb", "--threads-batch")),
@@ -387,6 +395,16 @@ class RuntimeManager:
             launch_args = None
         return mmproj, ctx_size, launch_args
 
+    def _model_ref(self, backend: BackendSpec, model_path: str) -> str:
+        if backend.model_artifact == "reference":
+            return model_path
+        return display_path_reference(model_path, backend.models_dir)
+
+    def _model_paths_match(self, backend: BackendSpec, current: str, wanted: str) -> bool:
+        if backend.model_artifact == "reference":
+            return current == wanted
+        return Path(current).resolve() == Path(wanted).resolve()
+
     def _get_backend(self, backend_id: str | None = None) -> BackendSpec:
         target = self._normalize_backend_id(backend_id) or self.selected_backend_id
         if target not in self.backends:
@@ -417,15 +435,15 @@ class RuntimeManager:
         if ctx_size is None:
             compare_current_launch_args = self._without_server_arg(
                 compare_current_launch_args,
-                ("-c", "--ctx-size"),
+                self._ctx_size_flags_for_backend(backend),
             )
             compare_wanted_launch_args = self._without_server_arg(
                 compare_wanted_launch_args,
-                ("-c", "--ctx-size"),
+                self._ctx_size_flags_for_backend(backend),
             )
         return (
             runtime.backend_id == backend.id
-            and Path(runtime.model_path).resolve() == Path(model_path).resolve()
+            and self._model_paths_match(backend, runtime.model_path, model_path)
             and current_mmproj == wanted_mmproj
             and (ctx_size is None or runtime.ctx_size == ctx_size)
             and compare_current_launch_args == compare_wanted_launch_args
@@ -483,6 +501,8 @@ class RuntimeManager:
                 pass
 
     def _resolve_model_path(self, backend: BackendSpec, model: str) -> tuple[str, str | None]:
+        if backend.model_artifact == "reference":
+            return model, None
         path = Path(model).expanduser()
         if not path.is_absolute():
             if not backend.models_dir:
@@ -504,6 +524,10 @@ class RuntimeManager:
             if not target.is_file():
                 logger.error("Model file not found: %s", model_path)
                 raise FileNotFoundError(f"model file not found: {model_path}")
+            return
+        if backend.model_artifact == "reference":
+            if not model_path.strip():
+                raise ValueError("model reference must not be empty")
             return
         if not target.exists():
             logger.error("Model path not found: %s", model_path)
@@ -586,7 +610,7 @@ class RuntimeManager:
         if on_progress:
             on_progress({"type": "status", "message": f"Loading model via {backend.id}..."})
         driver = get_embedded_backend_driver(backend.id)
-        model_ref = display_path_reference(model_path, backend.models_dir)
+        model_ref = self._model_ref(backend, model_path)
         state = driver.load_model(
             model_path=model_path,
             model_ref=model_ref,
@@ -698,7 +722,7 @@ class RuntimeManager:
             self.loaded_runtime = LoadedRuntime(
                 backend_id=backend.id,
                 model_path=model_path,
-                model_ref=display_path_reference(model_path, backend.models_dir),
+                model_ref=self._model_ref(backend, model_path),
                 mmproj_path=mmproj_path,
                 mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
                 ctx_size=launch.ctx_size,
@@ -711,6 +735,7 @@ class RuntimeManager:
                 launch_command=list(launch.cmd),
                 log_path=str(log_path),
                 log_handle=log_handle,
+                proxy_model_ref=launch.proxy_model_ref,
             )
             logger.error("Backend %s did not become ready within %ds", backend.id, self.startup_timeout_s)
             if on_progress:
@@ -724,7 +749,7 @@ class RuntimeManager:
         runtime = LoadedRuntime(
             backend_id=backend.id,
             model_path=model_path,
-            model_ref=display_path_reference(model_path, backend.models_dir),
+            model_ref=self._model_ref(backend, model_path),
             mmproj_path=mmproj_path,
             mmproj_ref=display_path_reference(mmproj_path, backend.models_dir) if mmproj_path else None,
             ctx_size=launch.ctx_size,
@@ -737,6 +762,7 @@ class RuntimeManager:
             launch_command=list(launch.cmd),
             log_path=str(log_path),
             log_handle=log_handle,
+            proxy_model_ref=launch.proxy_model_ref,
         )
         self.loaded_runtime = runtime
         return runtime
@@ -751,18 +777,27 @@ class RuntimeManager:
     ) -> ExternalRuntimeLaunch:
         target_port = self.backend_port if self.backend_port > 0 else pick_available_port(self.backend_host)
         server_args = list(backend.default_args if launch_args is None else launch_args)
+        ctx_flags = self._ctx_size_flags_for_backend(backend)
         if ctx_size is not None:
-            server_args = self._with_server_arg(server_args, ("-c", "--ctx-size"), ctx_size)
+            server_args = self._with_server_arg(server_args, ctx_flags, ctx_size)
         effective_ctx_size = parse_optional_int(
-            self._extract_server_arg_value(server_args, ("-c", "--ctx-size"))
+            self._extract_server_arg_value(server_args, ctx_flags)
         )
 
         protocol = backend.external_server_protocol or "llama.cpp-server"
-        if protocol != "llama.cpp-server":
-            raise RuntimeError(f"unsupported external runtime protocol for {backend.id}: {protocol}")
-
         if not backend.launcher_path:
             raise FileNotFoundError(f"backend launcher not found: {backend.id}")
+
+        if protocol == "vllm-openai-server":
+            return self._prepare_vllm_openai_runtime_launch(
+                backend,
+                model_path,
+                target_port=target_port,
+                server_args=server_args,
+                effective_ctx_size=effective_ctx_size,
+            )
+        if protocol != "llama.cpp-server":
+            raise RuntimeError(f"unsupported external runtime protocol for {backend.id}: {protocol}")
 
         log_dir = Path(backend.runtime_dir) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -789,6 +824,42 @@ class RuntimeManager:
             port=target_port,
             ctx_size=effective_ctx_size,
             log_file_name=backend.log_file_name or "runtime.log",
+        )
+
+    def _ctx_size_flags_for_backend(self, backend: BackendSpec) -> tuple[str, ...]:
+        if backend.external_server_protocol == "vllm-openai-server":
+            return ("--max-model-len",)
+        return ("-c", "--ctx-size")
+
+    def _prepare_vllm_openai_runtime_launch(
+        self,
+        backend: BackendSpec,
+        model_path: str,
+        *,
+        target_port: int,
+        server_args: list[str],
+        effective_ctx_size: int | None,
+    ) -> ExternalRuntimeLaunch:
+        if not self._extract_server_arg_value(server_args, ("--served-model-name",)):
+            server_args = ["--served-model-name", "local", *server_args]
+        served_model_name = self._extract_server_arg_value(server_args, ("--served-model-name",))
+
+        cmd = [
+            backend.launcher_path,
+            "serve",
+            model_path,
+            "--host",
+            self.backend_host,
+            "--port",
+            str(target_port),
+            *server_args,
+        ]
+        return ExternalRuntimeLaunch(
+            cmd=cmd,
+            port=target_port,
+            ctx_size=effective_ctx_size,
+            log_file_name=backend.log_file_name or "runtime.log",
+            proxy_model_ref=served_model_name,
         )
 
     def _best_installed_backend_id(self) -> str | None:
@@ -941,11 +1012,11 @@ class RuntimeManager:
                     if ctx_size is None:
                         compare_current_launch_args = self._without_server_arg(
                             compare_current_launch_args,
-                            ("-c", "--ctx-size"),
+                            self._ctx_size_flags_for_backend(current_backend),
                         )
                         compare_desired_launch_args = self._without_server_arg(
                             compare_desired_launch_args,
-                            ("-c", "--ctx-size"),
+                            self._ctx_size_flags_for_backend(current_backend),
                         )
                     if (
                         (ctx_size is None or self.loaded_runtime.ctx_size == ctx_size)
@@ -1135,6 +1206,16 @@ class RuntimeManager:
             return runtime.host, runtime.port
         return None
 
+    def current_proxy_model_ref(self) -> str | None:
+        runtime = self.loaded_runtime
+        if (
+            runtime
+            and self._is_runtime_running_locked()
+            and runtime.runtime_mode == "external_server"
+        ):
+            return runtime.proxy_model_ref
+        return None
+
     def current_runtime_mode(self) -> str | None:
         runtime = self.loaded_runtime
         if runtime and self._is_runtime_running_locked():
@@ -1168,6 +1249,7 @@ class RuntimeManager:
             "backend_port": runtime.port if runtime else None,
             "launch_args": list(runtime.launch_args) if runtime else [],
             "launch_command": list(runtime.launch_command) if runtime else [],
+            "proxy_model": runtime.proxy_model_ref if runtime else None,
             "backend_log": runtime.log_path if runtime else None,
             "effective_parameters": _effective_runtime_parameters(runtime),
         }

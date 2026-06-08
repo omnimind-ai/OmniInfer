@@ -1,5 +1,6 @@
 param(
-    [string]$BuildType = "Release"
+    [string]$BuildType = "Release",
+    [switch]$Prebuilt
 )
 
 $ErrorActionPreference = "Stop"
@@ -7,10 +8,20 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = Resolve-Path (Join-Path $ScriptRoot "..\..\..\..")
 $PackageRoot = Join-Path $RepoRoot ".local\runtime\windows\llama.cpp-windows-arm64"
-$LlamaRoot = Resolve-Path (Join-Path $RepoRoot "framework\llama.cpp")
+$ModelsRoot = Join-Path $RepoRoot ".local\models"
+$LlamaRoot = Join-Path $RepoRoot "framework\llama.cpp"
 $BuildRoot = Join-Path $PackageRoot "build\llama.cpp-windows-arm64"
 $BinRoot = Join-Path $PackageRoot "bin"
 $ToolchainFile = Join-Path $LlamaRoot "cmake\arm64-windows-llvm.cmake"
+
+if ($Prebuilt) {
+    & (Join-Path $RepoRoot "scripts\platforms\common\install-prebuilt.ps1") `
+        -Platform "windows" `
+        -Backend "llama.cpp-windows-arm64" `
+        -RuntimeDir $PackageRoot `
+        -ModelsDir $ModelsRoot
+    exit $LASTEXITCODE
+}
 
 function Require-Command {
     param([string]$Name)

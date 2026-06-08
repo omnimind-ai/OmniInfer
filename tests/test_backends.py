@@ -81,6 +81,41 @@ class CliArgParserTests(unittest.TestCase):
         self.assertIsNone(parsed.ctx_size)
         self.assertEqual(parsed.launch_args, [])
 
+    def test_ik_load_args_map_no_cache_prompt(self) -> None:
+        backend = make_backend("ik_llama.cpp-linux-cuda", "llama.cpp")
+
+        parsed = parse_backend_load_extra_args(
+            backend,
+            ["-ngl", "999", "--no-cache-prompt", "--ignore-eos"],
+        )
+
+        self.assertEqual(parsed.launch_args, ["-ngl", "999", "-cram", "0", "--ignore-eos"])
+
+    def test_official_llama_load_args_keep_no_cache_prompt(self) -> None:
+        backend = make_backend("llama.cpp-linux-cuda", "llama.cpp")
+
+        parsed = parse_backend_load_extra_args(backend, ["--no-cache-prompt"])
+
+        self.assertEqual(parsed.launch_args, ["--no-cache-prompt"])
+
+    def test_vllm_load_args_map_max_model_len_to_ctx_size(self) -> None:
+        backend = make_backend("vllm-linux-cuda", "vllm")
+
+        parsed = parse_backend_load_extra_args(
+            backend,
+            ["--max-model-len", "8192", "--tensor-parallel-size", "2"],
+        )
+
+        self.assertEqual(parsed.ctx_size, 8192)
+        self.assertEqual(parsed.launch_args, ["--tensor-parallel-size", "2"])
+
+    def test_vllm_rejects_managed_server_args(self) -> None:
+        backend = make_backend("vllm-linux-cuda", "vllm")
+
+        for flag in ["--model", "--host", "--port", "--api-key"]:
+            with self.assertRaises(ValueError, msg=f"{flag} should be rejected"):
+                parse_backend_load_extra_args(backend, [flag, "value"])
+
     def test_reserved_flags_rejected_in_load_args(self) -> None:
         backend = make_backend("llama.cpp-cpu", "llama.cpp")
         for flag in ["-m", "--model", "-mm", "--mmproj"]:
@@ -111,7 +146,7 @@ class PlatformRegistrationTests(unittest.TestCase):
 
     def test_linux_platform_registers_all_expected_backends(self) -> None:
         ids = {t.id for t in LinuxPlatform().backend_templates}
-        for expected in ["llama.cpp-linux", "mnn-linux"]:
+        for expected in ["llama.cpp-linux", "mnn-linux", "vllm-linux-cuda"]:
             self.assertIn(expected, ids)
 
     def test_ik_templates_enable_jinja_without_unsupported_reasoning_flag(self) -> None:
@@ -184,6 +219,15 @@ class PlatformRegistrationTests(unittest.TestCase):
         env = LinuxPlatform().prepare_runtime_env({"OMNIINFER_CUDA_VISIBLE_DEVICES": "2"}, backend)
 
         self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "2")
+
+    def test_vllm_backend_is_cuda_compatible(self) -> None:
+        backend = next(t for t in LinuxPlatform().backend_templates if t.id == "vllm-linux-cuda")
+
+        self.assertEqual(backend.family, "vllm")
+        self.assertEqual(backend.model_artifact, "reference")
+        self.assertFalse(backend.supports_mmproj)
+        self.assertEqual(backend.external_server_protocol, "vllm-openai-server")
+        self.assertIn("vllm-linux-cuda", LinuxPlatform().gpu_backend_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +312,53 @@ class EmbeddedBackendTests(unittest.TestCase):
             self.assertEqual(backend.runtime_mode, "embedded")
             self.assertFalse(backend.supports_mmproj)
             self.assertFalse(backend.supports_ctx_size)
+
+
+class VllmLaunchCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        repo_root = Path(self.temp_dir.name)
+        runtime_bin = repo_root / ".local" / "runtime" / "linux" / "vllm-linux-cuda" / "bin"
+        runtime_bin.mkdir(parents=True)
+        self.launcher_path = runtime_bin / "vllm"
+        self.launcher_path.write_text("", encoding="utf-8")
+
+        with patch("service_core.runtime.current_host_platform", return_value=LinuxPlatform()):
+            self.manager = RuntimeManager(
+                repo_root=str(repo_root),
+                app_root=str(repo_root),
+                backend_host="127.0.0.1",
+                backend_port=9101,
+                startup_timeout_s=10,
+                default_backend_id="vllm-linux-cuda",
+            )
+
+        backend = self.manager.backends["vllm-linux-cuda"]
+        self.launch = self.manager._prepare_external_runtime_launch(
+            backend,
+            model_path="Qwen/Qwen3.5-4B-Instruct",
+            mmproj_path=None,
+            ctx_size=8192,
+            launch_args=["--gpu-memory-utilization", "0.85"],
+        )
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_vllm_command_shape(self) -> None:
+        cmd = self.launch.cmd
+        self.assertEqual(cmd[:3], [str(self.launcher_path.resolve()), "serve", "Qwen/Qwen3.5-4B-Instruct"])
+        self.assertEqual(cmd[cmd.index("--host") + 1], "127.0.0.1")
+        self.assertEqual(cmd[cmd.index("--port") + 1], "9101")
+        self.assertEqual(cmd[cmd.index("--max-model-len") + 1], "8192")
+        self.assertEqual(cmd[cmd.index("--served-model-name") + 1], "local")
+        self.assertEqual(cmd[cmd.index("--gpu-memory-utilization") + 1], "0.85")
+
+    def test_vllm_effective_ctx_and_log_name(self) -> None:
+        self.assertEqual(self.launch.port, 9101)
+        self.assertEqual(self.launch.ctx_size, 8192)
+        self.assertEqual(self.launch.log_file_name, "vllm-server.log")
+        self.assertEqual(self.launch.proxy_model_ref, "local")
 
 
 if __name__ == "__main__":

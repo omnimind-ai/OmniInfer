@@ -1,7 +1,8 @@
 param(
     [string]$BuildType = "Release",
     [string]$GpuTargets = "",
-    [string]$RocwmmaInclude = ""
+    [string]$RocwmmaInclude = "",
+    [switch]$Prebuilt
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,9 +10,19 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = Resolve-Path (Join-Path $ScriptRoot "..\..\..\..")
 $PackageRoot = Join-Path $RepoRoot ".local\runtime\windows\llama.cpp-hip"
-$LlamaRoot = Resolve-Path (Join-Path $RepoRoot "framework\llama.cpp")
+$ModelsRoot = Join-Path $RepoRoot ".local\models"
+$LlamaRoot = Join-Path $RepoRoot "framework\llama.cpp"
 $BuildRoot = Join-Path $PackageRoot "build\llama.cpp-hip"
 $BinRoot = Join-Path $PackageRoot "bin"
+
+if ($Prebuilt) {
+    & (Join-Path $RepoRoot "scripts\platforms\common\install-prebuilt.ps1") `
+        -Platform "windows" `
+        -Backend "llama.cpp-hip" `
+        -RuntimeDir $PackageRoot `
+        -ModelsDir $ModelsRoot
+    exit $LASTEXITCODE
+}
 
 function Require-Command {
     param([string]$Name)

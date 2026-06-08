@@ -1,8 +1,98 @@
 {
-  "windows": {
-    "llama.cpp-cpu": "https://github.com/ggml-org/llama.cpp/releases/download/b8864/llama-b8864-bin-win-cpu-x64.zip",
-    "llama.cpp-cuda": "https://github.com/ggml-org/llama.cpp/releases/download/b8864/llama-b8864-bin-win-cuda-12.4-x64.zip",
-    "llama.cpp-hip": "https://github.com/ggml-org/llama.cpp/releases/download/b8864/llama-b8864-bin-win-hip-radeon-x64.zip",
-    "llama.cpp-vulkan": "https://github.com/ggml-org/llama.cpp/releases/download/b8864/llama-b8864-bin-win-vulkan-x64.zip"
+  "schema_version": 2,
+  "mirrors": [
+    "https://ghfast.top/"
+  ],
+  "platforms": {
+    "linux": {
+      "llama.cpp-linux": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-x64.tar.gz",
+        "archive": "tar.gz",
+        "launcher": "llama-server"
+      },
+      "llama.cpp-linux-rocm": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-rocm-7.2-x64.tar.gz",
+        "archive": "tar.gz",
+        "launcher": "llama-server"
+      },
+      "llama.cpp-linux-vulkan": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-vulkan-x64.tar.gz",
+        "archive": "tar.gz",
+        "launcher": "llama-server"
+      },
+      "llama.cpp-linux-s390x": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-s390x.tar.gz",
+        "archive": "tar.gz",
+        "launcher": "llama-server"
+      },
+      "llama.cpp-linux-openvino": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-openvino-2026.0-x64.tar.gz",
+        "archive": "tar.gz",
+        "launcher": "llama-server"
+      }
+    },
+    "macos": {
+      "llama.cpp-mac": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-macos-arm64.tar.gz",
+        "archive": "tar.gz",
+        "launcher": "llama-server"
+      },
+      "llama.cpp-mac-intel": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-macos-x64.tar.gz",
+        "archive": "tar.gz",
+        "launcher": "llama-server"
+      }
+    },
+    "windows": {
+      "llama.cpp-cpu": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cpu-x64.zip",
+        "archive": "zip",
+        "launcher": "llama-server.exe"
+      },
+      "llama.cpp-cuda": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cuda-12.4-x64.zip",
+        "archive": "zip",
+        "launcher": "llama-server.exe"
+      },
+      "llama.cpp-hip": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-hip-radeon-x64.zip",
+        "archive": "zip",
+        "launcher": "llama-server.exe"
+      },
+      "llama.cpp-vulkan": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-vulkan-x64.zip",
+        "archive": "zip",
+        "launcher": "llama-server.exe"
+      },
+      "llama.cpp-windows-arm64": {
+        "source": "ggml-org/llama.cpp",
+        "tag": "b9500",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cpu-arm64.zip",
+        "archive": "zip",
+        "launcher": "llama-server.exe"
+      }
+    }
   }
 }

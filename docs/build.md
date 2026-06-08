@@ -1,6 +1,6 @@
 # Building OmniInfer
 
-This guide explains how OmniInfer builds local runtime backends from a source checkout.
+This guide explains how OmniInfer builds or installs local runtime backends from a source checkout.
 
 ## Build Model
 
@@ -37,6 +37,8 @@ Additional framework notes:
 
 - `framework/llama-cpp-turboquant` is required for `turboquant-mac`
 - `mlx-mac` is embedded and uses Python packages instead of building `framework/mlx`
+- `framework/vllm` pins the upstream vLLM source release used for provenance and future source-build work
+- `vllm-linux-cuda` installs vLLM Python wheels into an OmniInfer-managed local venv by default, which matches vLLM's normal binary distribution path
 
 Submodule behavior:
 
@@ -44,12 +46,40 @@ Submodule behavior:
 - macOS `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`
 - macOS `turboquant-mac` can bootstrap `framework/llama-cpp-turboquant` automatically unless you pass `--no-bootstrap`
 - Windows `llama.cpp-*` scripts do not bootstrap submodules automatically; initialize `framework/llama.cpp` first if it is missing
+- `vllm-linux-cuda` does not bootstrap `framework/vllm` during normal wheel installation
 
 Example:
 
 ```bash
 git submodule update --init --recursive framework/llama.cpp
 ```
+
+## Prebuilt Runtime Installs
+
+Backend scripts may support a prebuilt install mode. On Linux, backend scripts default to non-build installation; pass `--from-source` when you explicitly want a local source build.
+
+```bash
+./omniinfer build <backend>
+./omniinfer build <backend> --from-source
+```
+
+or directly:
+
+```bash
+bash scripts/platforms/linux/llama.cpp-linux/build.sh --prebuilt
+bash scripts/platforms/linux/llama.cpp-linux/build.sh --from-source
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/platforms/windows/llama.cpp-cpu/build.ps1 -Prebuilt
+```
+
+The per-runtime script owns the install behavior. The interactive installers and CLI only route to that script. Shared llama.cpp release URLs live in `scripts/prebuilt_backends.json`, but a backend is only offered as prebuilt when that catalog contains a matching entry for the current platform.
+
+Prebuilt versioning is explicit:
+
+- `scripts/prebuilt_backends.json` records the upstream source, release tag, archive URL, archive type, and launcher name.
+- A prebuilt llama.cpp runtime is an upstream release artifact. It is only source-aligned when the catalog tag and `framework/llama.cpp` submodule are pinned to the same upstream release tag or commit.
+- The current llama.cpp catalog and `framework/llama.cpp` submodule are both pinned to upstream release `b9500`.
+- If no official asset exists, leave the catalog entry absent. For example, llama.cpp `b9500` publishes Linux CPU, ROCm, Vulkan, OpenVINO, macOS, and Windows CUDA assets, but not a Linux CUDA archive.
+- Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and download URL used.
 
 ## Runtime Output Layout
 
@@ -66,6 +96,7 @@ Current desktop runtime directories:
 - Linux x64 Vulkan: `.local/runtime/linux/llama.cpp-linux-vulkan`
 - Linux s390x CPU: `.local/runtime/linux/llama.cpp-linux-s390x`
 - Linux x64 OpenVINO: `.local/runtime/linux/llama.cpp-linux-openvino`
+- Linux x64 vLLM CUDA: `.local/runtime/linux/vllm-linux-cuda`
 - macOS Apple Silicon Metal: `.local/runtime/macos/llama.cpp-mac`
 - macOS Intel x64 CPU: `.local/runtime/macos/llama.cpp-mac-intel`
 - macOS TurboQuant: `.local/runtime/macos/turboquant-mac`
@@ -195,9 +226,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 - `scripts/platforms/linux/build-llama-vulkan.sh`
 - `scripts/platforms/linux/build-llama-s390x.sh`
 - `scripts/platforms/linux/build-llama-openvino.sh`
+- `scripts/platforms/linux/vllm-linux-cuda/build.sh`
 - `scripts/platforms/linux/build-release.sh`
 
 ### Backend Notes
+
+Linux backend script behavior:
+
+| Backend | Default action | Source build action |
+|---|---|---|
+| `llama.cpp-linux` | Downloads official `b9500` Linux CPU archive | `--from-source` builds `framework/llama.cpp` with CPU settings |
+| `llama.cpp-linux-rocm` | Downloads official `b9500` ROCm archive | `--from-source` builds `framework/llama.cpp` with ROCm settings |
+| `llama.cpp-linux-vulkan` | Downloads official `b9500` Vulkan archive | `--from-source` builds `framework/llama.cpp` with Vulkan settings |
+| `llama.cpp-linux-s390x` | Downloads official `b9500` s390x archive | `--from-source` builds `framework/llama.cpp` for s390x |
+| `llama.cpp-linux-openvino` | Downloads official `b9500` OpenVINO archive | `--from-source` builds `framework/llama.cpp` with OpenVINO settings |
+| `llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message because upstream `b9500` has no Linux CUDA archive | `--from-source` builds `framework/llama.cpp` with CUDA settings |
+| `vllm-linux-cuda` | Creates an OmniInfer-managed venv and installs vLLM wheels | Not a C++ source build path |
+| `mnn-linux` | Creates an OmniInfer-managed venv and installs the official `MNN==3.5.0` wheel | `--from-source` builds PyMNN from `framework/mnn` |
+| `ik_llama.cpp-linux` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/ik_llama.cpp` CPU |
+| `ik_llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/ik_llama.cpp` CUDA |
+| `omniinfer-native-linux` | Fails with a clear "no prebuilt configured" message | `--from-source` builds `framework/omniinfer-native` |
 
 `llama.cpp-linux`:
 
@@ -224,6 +272,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 - Requires: OpenVINO runtime and build environment
 - The script accepts `--openvino-root` and also honors `OPENVINO_ROOT`
 - Runtime selection remains controlled at inference time with environment variables such as `GGML_OPENVINO_DEVICE=CPU` or `GGML_OPENVINO_DEVICE=GPU`
+
+`vllm-linux-cuda`:
+
+- Target: Linux x64 CUDA
+- Uses the official vLLM OpenAI-compatible server through `vllm serve`
+- Installs into `.local/runtime/linux/vllm-linux-cuda` without `sudo`
+- Requires a CUDA-capable NVIDIA GPU and a vLLM-compatible Python/PyTorch wheel stack
+- Accepts HuggingFace model IDs, local snapshot directories, or other model references that vLLM can load
+
+`mnn-linux`:
+
+- Target: Linux embedded PyMNN runtime
+- Default path installs the official `MNN==3.5.0` Python wheel into `.local/runtime/linux/mnn-linux/venv`
+- The MNN GitHub release also publishes a Linux x64 CPU/OpenCL zip, but OmniInfer's embedded driver needs the Python modules `MNN`, `MNN.cv`, and `MNN.llm`, so the wheel is the default prebuilt path
+- `--from-source` keeps the previous PyMNN source-build path and is required for `--opencl` / `--cuda`
 
 ### Build Commands
 
@@ -257,6 +320,18 @@ Linux x64 OpenVINO:
 bash ./scripts/platforms/linux/build-llama-openvino.sh --openvino-root /opt/intel/openvino
 ```
 
+Linux x64 vLLM CUDA:
+
+```bash
+bash ./scripts/platforms/linux/vllm-linux-cuda/build.sh --smoke-test
+```
+
+Pin a specific vLLM wheel when reproducibility matters:
+
+```bash
+bash ./scripts/platforms/linux/vllm-linux-cuda/build.sh --package 'vllm==0.9.2'
+```
+
 ### Linux Portable Packaging
 
 `scripts/platforms/linux/build-release.sh` can now package any Linux runtime directories that already exist locally, including:
@@ -266,6 +341,7 @@ bash ./scripts/platforms/linux/build-llama-openvino.sh --openvino-root /opt/inte
 - `llama.cpp-linux-vulkan`
 - `llama.cpp-linux-s390x`
 - `llama.cpp-linux-openvino`
+- `vllm-linux-cuda`
 
 The portable package exposes `omniinfer` as the real CLI binary.
 

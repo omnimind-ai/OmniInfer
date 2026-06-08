@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import platform
 
-from service_core.backends import LINUX_IK_LLAMA_CPP_TEMPLATES, LINUX_LLAMA_CPP_TEMPLATES, LINUX_MNN_TEMPLATES
+from service_core.backends import (
+    LINUX_IK_LLAMA_CPP_TEMPLATES,
+    LINUX_LLAMA_CPP_TEMPLATES,
+    LINUX_MNN_TEMPLATES,
+    LINUX_VLLM_TEMPLATES,
+)
 from service_core.platforms.base import HostPlatform
 
 
@@ -23,7 +28,7 @@ class LinuxPlatform(HostPlatform):
 
     @property
     def backend_templates(self):
-        return LINUX_LLAMA_CPP_TEMPLATES + LINUX_IK_LLAMA_CPP_TEMPLATES + LINUX_MNN_TEMPLATES
+        return LINUX_LLAMA_CPP_TEMPLATES + LINUX_IK_LLAMA_CPP_TEMPLATES + LINUX_MNN_TEMPLATES + LINUX_VLLM_TEMPLATES
 
     @property
     def catalog_backend_aliases(self) -> dict[str, str]:
@@ -38,4 +43,11 @@ class LinuxPlatform(HostPlatform):
 
     @property
     def gpu_backend_ids(self) -> frozenset[str]:
-        return frozenset({"llama.cpp-linux-cuda", "llama.cpp-linux-rocm", "llama.cpp-linux-vulkan", "omniinfer-native-linux", "ik_llama.cpp-linux-cuda"})
+        return frozenset({
+            "llama.cpp-linux-cuda",
+            "llama.cpp-linux-rocm",
+            "llama.cpp-linux-vulkan",
+            "omniinfer-native-linux",
+            "ik_llama.cpp-linux-cuda",
+            "vllm-linux-cuda",
+        })

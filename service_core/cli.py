@@ -7,6 +7,8 @@ import logging
 import os
 import platform
 import re
+import secrets
+import signal
 import sys
 import threading
 import textwrap
@@ -15,16 +17,19 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from service_core import commands
+from service_core.remote_access import parse_trycloudflare_url
 from service_core.service import APP_ROOT, REPO_ROOT, load_app_config
 
 
 _cli_port_override: int | None = None
 DEFAULT_IMAGE_PATH = Path(REPO_ROOT) / "tests" / "pictures" / "test1.png"
 SYSTEM_CHOICES = ("linux", "mac", "windows")
+PUBLIC_SMOKE_PROMPT = "Reply exactly: omniinfer-public-ok"
 
 
 HELP_TEXT = """\
@@ -32,6 +37,8 @@ OmniInfer CLI
 
 Common commands:
   omniinfer
+  omniinfer advisor system
+  omniinfer advisor fit /path/to/model.gguf
   omniinfer backend list
   omniinfer backend select <backend>
   omniinfer status
@@ -39,7 +46,9 @@ Common commands:
   omniinfer load -m /path/to/model.gguf --config
   omniinfer chat "Introduce yourself in one sentence."
   omniinfer chat "Describe this image." --image photo.png
-  omniinfer serve --lan
+  omniinfer serve --cloudflare --model /path/to/model.gguf --ctx-size 8192
+  omniinfer serve status --port 9000
+  omniinfer serve stop --port 9000
   omniinfer shutdown
 
 Design notes:
@@ -53,6 +62,7 @@ Design notes:
 Command map:
   backend list              -> show available backends
   backend select <backend>  -> choose a backend
+  advisor system/fit        -> inspect hardware and model fit before loading
   status                    -> show service status, selected backend, and loaded model
   load                      -> load a model
   model list                -> show models supported on the current system
@@ -61,7 +71,7 @@ Command map:
   chat                      -> run text or multimodal inference on the loaded model
   backend stop              -> stop the currently running backend process
   shutdown                  -> stop the OmniInfer service
-  serve                     -> open the server launcher UI; use --lan to expose inference endpoints on the local network
+  serve                     -> start the gateway; add --cloudflare/--lan for remote inference access
   completion bash           -> print the bash completion script
 """
 
@@ -99,6 +109,51 @@ _omniinfer_completion() {
 }
 
 complete -o bashdefault -o default -F _omniinfer_completion omniinfer
+"""
+
+
+SERVE_HELP_TEXT = """\
+usage: omniinfer serve [status|stop] [options]
+
+Start and manage the OmniInfer gateway.
+
+Common examples:
+  omniinfer serve --cloudflare --model /path/to/model.gguf
+  omniinfer serve --cloudflare --backend llama.cpp-linux-cuda --model /path/to/model.gguf --ctx-size 8192 --api-key auto --detach --smoke-test
+  omniinfer serve status --port 9000
+  omniinfer serve stop --port 9000
+
+Controls:
+  status                  Show the service status for the selected port
+  stop                    Stop the service on the selected port
+  -m, --model PATH        Load this model after the gateway is healthy
+  -mm, --mmproj PATH      Optional mmproj for GGUF vision models
+  --ctx-size N            Context length used when loading the model
+  --backend BACKEND       Select this backend before loading the model
+  --detach                Keep the service running in the background
+  --smoke-test            Run a short chat completion after loading
+  --no-smoke-test         Disable smoke testing if enabled by a wrapper
+
+Remote access:
+  --cloudflare            Expose inference through Cloudflare Quick Tunnel
+  --lan                   Expose inference to the local network
+  --api-key KEY|auto      API key for remote clients; auto generates one
+  --cloudflare-no-print-key
+                          Do not print the key in Cloudflare output
+  --allow-insecure-lan    Allow LAN access without an API key
+  --allow-remote-management
+                          Allow authenticated remote /omni/* access
+
+Gateway:
+  --port PORT             Gateway port
+  --host HOST             Advanced bind override; not needed for --cloudflare
+  --cloudflared-path PATH Override the managed cloudflared binary
+  --default-thinking on|off
+  --window-mode visible|hidden
+  --startup-timeout N
+  --log-level DEBUG|INFO|WARNING|ERROR
+  --verbose
+  --debug-body
 """
 
 
@@ -232,6 +287,126 @@ def print_backend_list(scope: str = "compatible", json_output: bool = False) -> 
     return 0
 
 
+def _dump_json(payload: Any) -> int:
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def print_advisor_system(json_output: bool = False) -> int:
+    payload = commands.advisor_system()
+    if json_output:
+        return _dump_json(payload)
+
+    host = payload.get("host") if isinstance(payload.get("host"), dict) else {}
+    cuda = payload.get("cuda") if isinstance(payload.get("cuda"), dict) else {}
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    print("OmniInfer Advisor System")
+    print(f"System: {host.get('system')} ({host.get('machine')})")
+    print(f"CPU cores: {host.get('cpu_cores') or '-'}")
+    print(f"RAM: {host.get('available_ram_gib') or '-'} GiB available / {host.get('total_ram_gib') or '-'} GiB total")
+    devices = cuda.get("visible_devices") or cuda.get("devices") or []
+    if devices:
+        print("CUDA devices:")
+        for device in devices:
+            print(
+                "  "
+                f"GPU {device.get('index')}: {device.get('name')} "
+                f"free={device.get('free_gib')} GiB total={device.get('total_gib')} GiB util={device.get('utilization_pct')}%"
+            )
+    else:
+        print("CUDA devices: none detected")
+    print(f"Recommended installed backend: {summary.get('recommended_installed_backend') or '-'}")
+    print("Backends:")
+    for backend in payload.get("backends", []):
+        if not isinstance(backend, dict):
+            continue
+        installed = "yes" if backend.get("installed") else "no"
+        compatible = "yes" if backend.get("hardware_compatible") else "no"
+        print(f"  {backend.get('id')}: installed={installed}, compatible={compatible}, family={backend.get('family')}")
+    return 0
+
+
+def print_advisor_inspect(model: str, *, mmproj: str | None = None, json_output: bool = False) -> int:
+    payload = commands.advisor_inspect(model, mmproj=mmproj)
+    if json_output:
+        return _dump_json(payload)
+    print("OmniInfer Advisor Inspect")
+    print(f"Model: {payload.get('model')}")
+    print(f"Format: {payload.get('format')}")
+    print(f"Size: {payload.get('size_gib') or '-'} GiB")
+    print(f"mmproj: {payload.get('mmproj') or '-'}")
+    print(f"Quantization: {payload.get('quantization') or '-'}")
+    print(f"Params: {payload.get('params_b') or '-'}B")
+    print(f"Capabilities: {', '.join(payload.get('capabilities') or []) or '-'}")
+    estimate = payload.get("estimate") if isinstance(payload.get("estimate"), dict) else {}
+    print(f"Estimated memory: {estimate.get('estimated_gpu_memory_gib') or '-'} GiB ({estimate.get('confidence') or 'unknown'} confidence)")
+    for warning in payload.get("warnings", []):
+        print(f"Warning: {warning}")
+    return 0
+
+
+def print_advisor_fit(
+    model: str,
+    *,
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+    backend: str | None = None,
+    json_output: bool = False,
+) -> int:
+    payload = commands.advisor_fit(model, mmproj=mmproj, ctx_size=ctx_size, backend=backend)
+    if json_output:
+        return _dump_json(payload)
+    print("OmniInfer Advisor Fit")
+    model_info = payload.get("model") if isinstance(payload.get("model"), dict) else {}
+    print(f"Model: {model_info.get('model')}")
+    print(f"Context size: {payload.get('context_size')}")
+    recommended = payload.get("recommended") if isinstance(payload.get("recommended"), dict) else None
+    if recommended:
+        print(f"Recommended backend: {recommended.get('backend')}")
+        print(f"Fit: {recommended.get('fit')}")
+        print(f"Installed: {'yes' if recommended.get('installed') else 'no'}")
+        print(f"Memory: {recommended.get('memory_required_gib')} GiB required / {recommended.get('memory_available_gib') or '-'} GiB available")
+    else:
+        print("Recommended backend: -")
+    if payload.get("next_command"):
+        print(f"Next command: {payload['next_command']}")
+    alternatives = payload.get("alternatives") if isinstance(payload.get("alternatives"), list) else []
+    if alternatives:
+        print("Alternatives:")
+        for candidate in alternatives[:5]:
+            print(f"  {candidate.get('backend')}: fit={candidate.get('fit')}, installed={'yes' if candidate.get('installed') else 'no'}")
+    for warning in payload.get("warnings", []):
+        print(f"Warning: {warning}")
+    return 0
+
+
+def print_advisor_recommend(
+    *,
+    task: str | None = None,
+    limit: int = 5,
+    ctx_size: int | None = None,
+    json_output: bool = False,
+) -> int:
+    payload = commands.advisor_recommend(task=task, limit=limit, ctx_size=ctx_size)
+    if json_output:
+        return _dump_json(payload)
+    print("OmniInfer Advisor Recommend")
+    print(f"Task: {payload.get('task')}")
+    print(f"Models scanned: {payload.get('models_scanned')}")
+    rows = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+    if not rows:
+        print("No local model recommendations found.")
+        return 0
+    for index, row in enumerate(rows, 1):
+        model_info = row.get("model") if isinstance(row.get("model"), dict) else {}
+        recommended = row.get("recommended") if isinstance(row.get("recommended"), dict) else {}
+        print(f"{index}. {model_info.get('model')}")
+        print(f"   backend={recommended.get('backend')} fit={recommended.get('fit')} score={row.get('score')}")
+        if row.get("next_command"):
+            print(f"   command={row.get('next_command')}")
+    return 0
+
+
 def select_backend(name: str) -> int:
     result = commands.select_backend(name)
     print(f"Selected backend: {result.backend}")
@@ -244,15 +419,22 @@ def select_backend(name: str) -> int:
     return 0
 
 
-def build_backend(name: str) -> int:
-    options = commands.BackendBuildOptions(backend=name)
+def build_backend(name: str, *, prebuilt: bool = False, from_source: bool = False) -> int:
+    options = commands.BackendBuildOptions(backend=name, prebuilt=prebuilt, from_source=from_source)
     command, _script_path = commands.backend_build_command(options)
-    print(f"Building backend: {name}")
-    print("Build type: Release")
+    action = "Building backend" if from_source else "Installing backend"
+    print(f"{action}: {name}")
+    if from_source:
+        install_mode = "source"
+    elif prebuilt:
+        install_mode = "prebuilt"
+    else:
+        install_mode = "default"
+    print(f"Install mode: {install_mode}")
     print("Command: " + " ".join(command))
 
     result = commands.build_backend(options)
-    print(f"Backend build completed: {result.backend}")
+    print(f"Backend {'build' if from_source else 'install'} completed: {result.backend}")
     if result.binary_path:
         print(f"Binary: {result.binary_path}")
     return 0
@@ -721,6 +903,506 @@ def shutdown_service() -> int:
     return 0
 
 
+@dataclass(frozen=True)
+class _ServePlan:
+    action: str | None
+    service_args: list[str]
+    backend: str | None
+    model: str | None
+    mmproj: str | None
+    ctx_size: int | None
+    detach: bool
+    smoke_test: bool
+    api_key: str | None
+    api_key_generated: bool
+    print_api_key: bool
+
+
+def _pop_option(args: list[str], names: set[str]) -> tuple[list[str], str | None]:
+    result: list[str] = []
+    value: str | None = None
+    index = 0
+    while index < len(args):
+        token = args[index]
+        matched_inline = False
+        for name in names:
+            prefix = f"{name}="
+            if token.startswith(prefix):
+                value = token.split("=", 1)[1]
+                matched_inline = True
+                break
+        if matched_inline:
+            index += 1
+            continue
+        if token in names:
+            if index + 1 >= len(args):
+                raise SystemExit(f"{token} requires a value")
+            value = args[index + 1]
+            index += 2
+            continue
+        result.append(token)
+        index += 1
+    return result, value
+
+
+def _pop_flag(args: list[str], name: str) -> tuple[list[str], bool]:
+    removed = False
+    result: list[str] = []
+    for token in args:
+        if token == name:
+            removed = True
+            continue
+        result.append(token)
+    return result, removed
+
+
+def _parse_optional_int(value: str | None, *, option: str) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise SystemExit(f"{option} must be an integer") from exc
+    if parsed <= 0:
+        raise SystemExit(f"{option} must be positive")
+    return parsed
+
+
+def _generate_session_api_key() -> str:
+    return "oi_" + secrets.token_urlsafe(24)
+
+
+def _parse_serve_plan(service_args: list[str]) -> _ServePlan:
+    args = list(service_args)
+    action: str | None = None
+    if args and args[0] in {"status", "stop"}:
+        action = args.pop(0)
+
+    args, backend = _pop_option(args, {"--backend"})
+    args, model = _pop_option(args, {"-m", "--model"})
+    args, mmproj = _pop_option(args, {"-mm", "--mmproj"})
+    args, ctx_text = _pop_option(args, {"--ctx-size"})
+    args, api_key = _pop_option(args, {"--api-key"})
+    args, detach = _pop_flag(args, "--detach")
+    args, smoke_test = _pop_flag(args, "--smoke-test")
+    args, no_smoke_test = _pop_flag(args, "--no-smoke-test")
+    if smoke_test and no_smoke_test:
+        raise SystemExit("Use either --smoke-test or --no-smoke-test, not both.")
+    if no_smoke_test:
+        smoke_test = False
+
+    remote_request = _flag_in_argv(args, "--cloudflare") or _flag_in_argv(args, "--lan")
+    allow_insecure = _flag_in_argv(args, "--allow-insecure-lan")
+    api_key_generated = False
+    env_key = os.environ.get("OMNIINFER_API_KEY", "").strip()
+    if api_key is not None and api_key.strip().lower() == "auto":
+        api_key = _generate_session_api_key()
+        api_key_generated = True
+    elif api_key is None and remote_request and not allow_insecure:
+        if env_key:
+            api_key = env_key
+        else:
+            api_key = _generate_session_api_key()
+            api_key_generated = True
+
+    return _ServePlan(
+        action=action,
+        service_args=args,
+        backend=backend,
+        model=model,
+        mmproj=mmproj,
+        ctx_size=_parse_optional_int(ctx_text, option="--ctx-size"),
+        detach=detach,
+        smoke_test=smoke_test,
+        api_key=api_key,
+        api_key_generated=api_key_generated,
+        print_api_key=not _flag_in_argv(args, "--cloudflare-no-print-key"),
+    )
+
+
+def _serve_plan_needs_orchestration(plan: _ServePlan) -> bool:
+    return bool(
+        plan.action
+        or plan.backend
+        or plan.model
+        or plan.mmproj
+        or plan.ctx_size
+        or plan.detach
+        or plan.smoke_test
+    )
+
+
+def _serve_port(service_args: list[str]) -> int:
+    config = load_app_config(APP_ROOT)
+    text = _value_from_argv(service_args, "--port") or str(config.get("port", "9000"))
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise SystemExit("--port must be an integer") from exc
+
+
+def _serve_log_path(port: int) -> Path:
+    return Path(APP_ROOT) / ".local" / "logs" / f"serve-{port}.log"
+
+
+def _serve_pid_path(port: int) -> Path:
+    return Path(APP_ROOT) / ".local" / "run" / f"serve-{port}.json"
+
+
+def _read_json_path(path: Path) -> dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _write_serve_pid_file(
+    *,
+    port: int,
+    process: subprocess.Popen[Any],
+    log_path: Path,
+    public_url: str | None,
+    state: dict[str, Any] | None,
+) -> None:
+    path = _serve_pid_path(port)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {
+        "pid": process.pid,
+        "port": port,
+        "log": str(log_path),
+        "public_url": public_url,
+        "openai_base_url": f"{public_url.rstrip('/')}/v1" if public_url else None,
+    }
+    if isinstance(state, dict):
+        payload.update(
+            {
+                "backend": state.get("backend"),
+                "model": state.get("model"),
+                "mmproj": state.get("mmproj"),
+                "ctx_size": state.get("ctx_size"),
+                "backend_ready": state.get("backend_ready"),
+                "backend_pid": state.get("backend_pid"),
+                "backend_port": state.get("backend_port"),
+            }
+        )
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+
+def _serve_child_command(service_args: list[str]) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "serve", *service_args]
+    return [sys.executable, str(Path(REPO_ROOT) / "omniinfer.py"), "serve", *service_args]
+
+
+def _start_serve_child(plan: _ServePlan, *, port: int, log_path: Path) -> subprocess.Popen[Any]:
+    env = os.environ.copy()
+    env["OMNIINFER_SERVE_DIRECT"] = "1"
+    if plan.api_key:
+        env["OMNIINFER_API_KEY"] = plan.api_key
+    command = _serve_child_command(plan.service_args)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as log_handle:
+        log_handle.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] launching OmniInfer serve: {' '.join(command)}\n")
+        log_handle.flush()
+        popen_kwargs: dict[str, Any] = {
+            "cwd": str(APP_ROOT),
+            "env": env,
+            "stdout": log_handle,
+            "stderr": subprocess.STDOUT,
+        }
+        if os.name != "nt":
+            popen_kwargs["start_new_session"] = True
+        else:  # pragma: no cover - Windows process-group behavior
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        process = subprocess.Popen(command, **popen_kwargs)
+    print(f"Starting OmniInfer service on port {port}...")
+    print(f"Log: {log_path}")
+    return process
+
+
+def _cleanup_serve_child(process: subprocess.Popen[Any], *, port: int) -> None:
+    global _cli_port_override
+    _cli_port_override = port
+    commands.set_port_override(port)
+    try:
+        commands.shutdown_service(wait_timeout_s=5.0)
+    except BaseException:
+        pass
+
+    if os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except OSError:
+            pass
+    elif process.poll() is None:  # pragma: no cover - Windows process cleanup
+        process.terminate()
+
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        if os.name != "nt":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        else:  # pragma: no cover - Windows process cleanup
+            process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _wait_for_cloudflare_url(log_path: Path, *, timeout_s: int) -> str | None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        text = _tail_file(log_path, max_chars=8000)
+        for line in reversed(text.splitlines()):
+            url = parse_trycloudflare_url(line)
+            if url:
+                return url
+        time.sleep(0.25)
+    return None
+
+
+def _request_json_url(
+    method: str,
+    url: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    api_key: str | None = None,
+    timeout: float = 60.0,
+) -> tuple[int, Any]:
+    headers = {"Accept": "application/json"}
+    body = None
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
+    request = urllib.request.Request(url=url, data=body, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+            return response.getcode(), try_parse_json(raw)
+    except urllib.error.HTTPError as exc:
+        parsed = try_parse_json(exc.read())
+        raise SystemExit(f"{method} {url} failed with status {exc.code}: {parsed}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise SystemExit(f"{method} {url} failed: {exc}") from exc
+
+
+def _serve_state(host: str, port: int) -> dict[str, Any]:
+    _code, payload = _request_json_url("GET", f"http://{host}:{port}/health?deep=true", timeout=10.0)
+    if not isinstance(payload, dict):
+        raise SystemExit("Service health response has an unexpected format.")
+    omni = payload.get("omni")
+    return omni if isinstance(omni, dict) else payload
+
+
+def _serve_smoke(base_url: str, *, api_key: str | None) -> str:
+    payload = {
+        "model": "omniinfer",
+        "messages": [{"role": "user", "content": PUBLIC_SMOKE_PROMPT}],
+        "temperature": 0,
+        "max_tokens": 16,
+        "stream": False,
+    }
+    _code, response = _request_json_url(
+        "POST",
+        f"{base_url.rstrip('/')}/v1/chat/completions",
+        payload=payload,
+        api_key=api_key,
+        timeout=120.0,
+    )
+    if not isinstance(response, dict):
+        raise SystemExit("Smoke test response has an unexpected format.")
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise SystemExit("Smoke test response did not include choices.")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        raise SystemExit("Smoke test response did not include a message.")
+    content = str(message.get("content") or "").strip()
+    if not content:
+        raise SystemExit("Smoke test returned an empty response.")
+    return content
+
+
+def _print_serve_ready(
+    *,
+    port: int,
+    state: dict[str, Any],
+    public_url: str | None,
+    api_key: str | None,
+    print_api_key: bool,
+    log_path: Path,
+    smoke_text: str | None,
+) -> None:
+    print()
+    print("OmniInfer service is ready")
+    local_base_url = f"http://127.0.0.1:{port}/v1"
+    if public_url:
+        print(f"OpenAI Base URL: {public_url.rstrip('/')}/v1")
+        print(f"Health URL: {public_url.rstrip('/')}/health")
+    print(f"Local Base URL: {local_base_url}")
+    if api_key and print_api_key:
+        print(f"API Key: {api_key}")
+    print(f"Backend: {state.get('backend') or '-'}")
+    print(f"Backend ready: {'yes' if state.get('backend_ready') else 'no'}")
+    print(f"Model: {state.get('model') or '-'}")
+    print(f"mmproj: {state.get('mmproj') or '-'}")
+    print(f"ctx-size: {state.get('ctx_size') or '-'}")
+    if smoke_text is not None:
+        print(f"Smoke: {smoke_text}")
+    print(f"Log: {log_path}")
+    print(f"Stop: ./omniinfer serve stop --port {port}")
+    if public_url:
+        print("Curl:")
+        auth = f" -H 'Authorization: Bearer {api_key}'" if api_key and print_api_key else ""
+        print(
+            "  curl -sS"
+            f"{auth} -H 'Content-Type: application/json' "
+            f"{public_url.rstrip('/')}/v1/chat/completions "
+            "-d '{\"model\":\"omniinfer\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"stream\":false}'"
+        )
+
+
+def _configure_serve_runtime(plan: _ServePlan, *, port: int) -> dict[str, Any]:
+    global _cli_port_override
+    _cli_port_override = port
+    commands.set_port_override(port)
+    if plan.backend:
+        selected = commands.select_backend(plan.backend)
+        print(f"Selected backend: {selected.backend}")
+    if plan.model:
+        response, selection = commands.load_model(
+            commands.ModelLoadOptions(
+                model=plan.model,
+                mmproj=plan.mmproj,
+                ctx_size=plan.ctx_size,
+            )
+        )
+        if selection.auto_selected:
+            print(f"No backend selected. Auto-selected: {selection.backend}")
+        print(f"Model loaded: {response.get('selected_model') or plan.model}")
+    host, _port, _timeout = _detached_health_target(plan.service_args)
+    return _serve_state(host, port)
+
+
+def serve_status(service_args: list[str]) -> int:
+    port = _serve_port(service_args)
+    host, _port, _timeout = _detached_health_target(service_args)
+    try:
+        state = _serve_state(host, port)
+    except SystemExit as exc:
+        print(f"OmniInfer service is not running on port {port}: {exc}")
+        return 0
+    pid_info = _read_json_path(_serve_pid_path(port))
+    print("OmniInfer Serve Status")
+    print(f"Port: {port}")
+    if pid_info.get("pid"):
+        print(f"PID: {pid_info.get('pid')}")
+    if pid_info.get("public_url"):
+        print(f"OpenAI Base URL: {str(pid_info['public_url']).rstrip('/')}/v1")
+    print(f"Backend: {state.get('backend') or '-'}")
+    print(f"Backend ready: {'yes' if state.get('backend_ready') else 'no'}")
+    print(f"Model: {state.get('model') or '-'}")
+    print(f"ctx-size: {state.get('ctx_size') or '-'}")
+    if pid_info.get("log"):
+        print(f"Log: {pid_info.get('log')}")
+    return 0
+
+
+def serve_stop(service_args: list[str]) -> int:
+    global _cli_port_override
+    port = _serve_port(service_args)
+    _cli_port_override = port
+    commands.set_port_override(port)
+    stopped = commands.shutdown_service(wait_timeout_s=10.0)
+    pid_path = _serve_pid_path(port)
+    if pid_path.exists():
+        try:
+            pid_path.unlink()
+        except OSError:
+            pass
+    if stopped:
+        print(f"OmniInfer service stopped on port {port}")
+    else:
+        print(f"OmniInfer service is not running on port {port}")
+    return 0
+
+
+def serve_orchestrated(plan: _ServePlan) -> int:
+    port = _serve_port(plan.service_args)
+    health_host, health_port, startup_timeout = _detached_health_target(plan.service_args)
+    log_path = _serve_log_path(port)
+    process = _start_serve_child(plan, port=port, log_path=log_path)
+    try:
+        _wait_for_detached_health(
+            process,
+            host=health_host,
+            port=health_port,
+            timeout_s=startup_timeout,
+            log_path=log_path,
+        )
+        public_url = _wait_for_cloudflare_url(log_path, timeout_s=startup_timeout) if _flag_in_argv(plan.service_args, "--cloudflare") else None
+        state = _configure_serve_runtime(plan, port=port)
+        smoke_text = None
+        smoke_failed = False
+        if plan.smoke_test:
+            base_url = public_url or f"http://127.0.0.1:{port}"
+            try:
+                smoke_text = _serve_smoke(base_url, api_key=plan.api_key if public_url else None)
+            except (Exception, SystemExit) as exc:
+                smoke_failed = True
+                smoke_text = f"failed: {exc}"
+        _write_serve_pid_file(
+            port=port,
+            process=process,
+            log_path=log_path,
+            public_url=public_url,
+            state=state,
+        )
+        _print_serve_ready(
+            port=port,
+            state=state,
+            public_url=public_url,
+            api_key=plan.api_key,
+            print_api_key=plan.print_api_key,
+            log_path=log_path,
+            smoke_text=smoke_text,
+        )
+        if plan.detach:
+            return 1 if smoke_failed else 0
+        print("Press Ctrl+C to stop.")
+        try:
+            return int(process.wait())
+        except KeyboardInterrupt:
+            commands.shutdown_service(wait_timeout_s=10.0)
+            return 0
+    except BaseException:
+        _cleanup_serve_child(process, port=port)
+        raise
+
+
+def serve_command(service_args: list[str]) -> int:
+    if _is_help_request(service_args):
+        return print_serve_help()
+    plan = _parse_serve_plan(service_args)
+    if plan.action == "status":
+        return serve_status(plan.service_args)
+    if plan.action == "stop":
+        return serve_stop(plan.service_args)
+    if _serve_plan_needs_orchestration(plan):
+        return serve_orchestrated(plan)
+    return serve_interactive_or_foreground(service_args)
+
+
 def _requested_window_mode(argv: list[str]) -> str:
     mode = "hidden"
     for idx, token in enumerate(argv):
@@ -937,6 +1619,11 @@ def print_completion(shell: str) -> int:
     return 0
 
 
+def print_serve_help() -> int:
+    print(SERVE_HELP_TEXT)
+    return 0
+
+
 def complete_backend_name(prefix: str) -> list[str]:
     return [item for item in local_backend_ids() if item.startswith(prefix)]
 
@@ -947,12 +1634,14 @@ def handle_hidden_completion(argv: list[str]) -> int:
     current = words[cword] if 0 <= cword < len(words) else ""
     previous = words[cword - 1] if cword - 1 >= 0 else ""
 
-    top_level = ["backend", "status", "ps", "model", "load", "thinking", "chat", "shutdown", "serve", "completion"]
+    top_level = ["advisor", "backend", "status", "ps", "model", "load", "thinking", "chat", "shutdown", "serve", "completion"]
     if commands.is_backend_build_supported():
         top_level.insert(1, "build")
     backend_sub = ["list", "select", "stop"]
+    advisor_sub = ["system", "inspect", "fit", "recommend"]
     model_sub = ["list", "load"]
     thinking_sub = ["show", "set"]
+    serve_sub = ["status", "stop"]
 
     suggestions: list[str] = []
     if cword <= 0:
@@ -965,6 +1654,11 @@ def handle_hidden_completion(argv: list[str]) -> int:
             suggestions = backend_sub
         elif len(words) > 1 and words[1] == "select":
             suggestions = complete_backend_name(current)
+    elif words and words[0] == "advisor":
+        if cword == 1:
+            suggestions = advisor_sub
+        elif previous in {"--backend"}:
+            suggestions = complete_backend_name(current)
     elif words and words[0] == "model":
         if cword == 1:
             suggestions = model_sub
@@ -975,6 +1669,11 @@ def handle_hidden_completion(argv: list[str]) -> int:
             suggestions = thinking_sub
         elif previous == "set":
             suggestions = [item for item in ("on", "off") if item.startswith(current)]
+    elif words and words[0] == "serve":
+        if cword == 1 and not current.startswith("-"):
+            suggestions = serve_sub
+        elif previous == "--backend":
+            suggestions = complete_backend_name(current)
     elif previous in {"--think"}:
         suggestions = [item for item in ("on", "off") if item.startswith(current)]
     elif previous in {"--system"}:
@@ -1008,6 +1707,9 @@ def build_parser() -> argparse.ArgumentParser:
     if commands.is_backend_build_supported():
         build = sub.add_parser("build", help="Build a backend from this source checkout")
         build.add_argument("backend_name", help="Backend name")
+        build_mode = build.add_mutually_exclusive_group()
+        build_mode.add_argument("--prebuilt", action="store_true", help="Install the backend from a configured prebuilt archive")
+        build_mode.add_argument("--from-source", action="store_true", help="Build the backend from the checked-out source submodule")
 
     sub.add_parser("status", help="Show current status")
 
@@ -1024,6 +1726,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     load_alias = sub.add_parser("load", help="Load a model")
     add_model_load_arguments(load_alias)
+
+    advisor = sub.add_parser("advisor", help="Hardware and model advisor commands")
+    advisor_sub = advisor.add_subparsers(dest="advisor_command")
+    advisor_system = advisor_sub.add_parser("system", help="Inspect local hardware and OmniInfer runtimes")
+    advisor_system.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    advisor_inspect = advisor_sub.add_parser("inspect", help="Inspect a model reference or local model artifact")
+    advisor_inspect.add_argument("model", help="Model path, model directory, or backend reference")
+    advisor_inspect.add_argument("-mm", "--mmproj", help="Optional mmproj path")
+    advisor_inspect.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    advisor_fit = advisor_sub.add_parser("fit", help="Recommend a backend and launch shape for a model")
+    advisor_fit.add_argument("model", help="Model path, model directory, or backend reference")
+    advisor_fit.add_argument("-mm", "--mmproj", help="Optional mmproj path")
+    advisor_fit.add_argument("--ctx-size", type=int, help="Context length used for estimation")
+    advisor_fit.add_argument("--backend", help="Restrict analysis to a single backend")
+    advisor_fit.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    advisor_recommend = advisor_sub.add_parser("recommend", help="Recommend from locally managed model files")
+    advisor_recommend.add_argument("--task", help="Optional task filter: chat, coding, vision, embedding")
+    advisor_recommend.add_argument("-n", "--limit", type=int, default=5, help="Maximum recommendations to show")
+    advisor_recommend.add_argument("--ctx-size", type=int, help="Context length used for estimation")
+    advisor_recommend.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
     thinking = sub.add_parser("thinking", help="Default thinking controls")
     thinking_sub = thinking.add_subparsers(dest="thinking_command")
@@ -1064,7 +1786,7 @@ def main(argv: list[str] | None = None) -> int:
         args, unknown_args = parser.parse_known_args(argv[:1])
         _cli_port_override = args.port
         commands.set_port_override(args.port)
-        return serve_interactive_or_foreground(_service_args_from_cli(args, argv[1:]))
+        return serve_command(_service_args_from_cli(args, argv[1:]))
 
     from service_core.logger import setup_logging
 
@@ -1102,7 +1824,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
-        return build_backend(args.backend_name)
+        return build_backend(
+            args.backend_name,
+            prebuilt=getattr(args, "prebuilt", False),
+            from_source=getattr(args, "from_source", False),
+        )
+
+    if args.command == "advisor":
+        if unknown_args:
+            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+        if args.advisor_command == "system":
+            return print_advisor_system(json_output=getattr(args, "json_output", False))
+        if args.advisor_command == "inspect":
+            return print_advisor_inspect(args.model, mmproj=getattr(args, "mmproj", None), json_output=getattr(args, "json_output", False))
+        if args.advisor_command == "fit":
+            return print_advisor_fit(
+                args.model,
+                mmproj=getattr(args, "mmproj", None),
+                ctx_size=getattr(args, "ctx_size", None),
+                backend=getattr(args, "backend", None),
+                json_output=getattr(args, "json_output", False),
+            )
+        if args.advisor_command == "recommend":
+            return print_advisor_recommend(
+                task=getattr(args, "task", None),
+                limit=getattr(args, "limit", 5),
+                ctx_size=getattr(args, "ctx_size", None),
+                json_output=getattr(args, "json_output", False),
+            )
+        parser.error("advisor requires a subcommand: system / inspect / fit / recommend")
 
     if args.command == "status":
         if unknown_args:
@@ -1137,7 +1887,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
         return shutdown_service()
     if args.command == "serve":
-        return serve_interactive_or_foreground(_service_args_from_cli(args, unknown_args))
+        return serve_command(_service_args_from_cli(args, unknown_args))
     if args.command == "completion":
         if unknown_args:
             parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")

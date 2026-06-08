@@ -8,7 +8,7 @@ Android and iOS use the embedded modules under `android/` and `ios/`.
 If you are running OmniInfer from a source checkout, prepare at least one local runtime backend before using the CLI.
 
 - Windows: build one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip` first. See [Build Guide: Windows](build.md#windows).
-- Linux: build one of `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino` first. See [Build Guide: Linux](build.md#linux).
+- Linux: build one of `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, `llama.cpp-linux-openvino`, or `vllm-linux-cuda` first. See [Build Guide: Linux](build.md#linux).
 - macOS: build `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
@@ -35,6 +35,8 @@ Linux and macOS:
 ```
 
 Run `./omniinfer` without arguments in an interactive terminal to open the basic TUI. On first use, the TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop. When a manual directory is scanned, the selected model is linked into `.local/models/<detected-model-dir>/<model-file>` instead of preserving unrelated parent folders. Later TUI launches automatically reload the last selected backend and model when the model path still exists.
+
+The TUI also surfaces the advisor without adding a setup step. Managed model rows show small advisor fit/backend badges when local recommendations are available. Before a newly selected model is loaded, the TUI shows a short advisor preflight with the recommended backend, fit, and memory estimate. Press Enter to apply the recommendation and continue, `A` for details, `B` to choose another backend, `S` to keep the current backend, or `Q` to cancel. Automatic reload of the last model skips this preflight so repeat launches stay fast.
 
 Windows:
 
@@ -67,19 +69,26 @@ In the table output, empty `Selected` or `Installed` cells mean the state is fal
 
 ### 2. Build a backend from source, optional
 
-Source checkouts on Linux, macOS, and Windows can build a compatible backend through the CLI:
+Source checkouts on Linux, macOS, and Windows can install a compatible backend through the CLI:
 
 ```sh
 ./omniinfer build <backend>
+```
+
+Linux backend scripts default to non-build installation. Use `--from-source` when you explicitly want to compile from the checked-out source submodule:
+
+```sh
+./omniinfer build <backend> --from-source
 ```
 
 Windows:
 
 ```powershell
 .\omniinfer.ps1 build <backend>
+.\omniinfer.ps1 build <backend> --prebuilt
 ```
 
-The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*`, uses a `Release` build, and verifies that the backend launcher exists after the build.
+The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*` and verifies that the backend launcher exists after the install. `--prebuilt` is still accepted for explicit prebuilt installs where supported.
 
 Packaged releases intentionally do not provide this command because they are designed to run from the included `runtime/` directory without requiring a compiler, CUDA toolkit, CMake, or other build tools.
 
@@ -99,7 +108,7 @@ Windows:
 
 Examples:
 
-- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, or `llama.cpp-linux-openvino`
+- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, `llama.cpp-linux-openvino`, or `vllm-linux-cuda`
 - macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac`
 - Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`
 
@@ -126,6 +135,39 @@ Example:
 }
 ```
 
+### 3.5. Ask the advisor before loading, optional
+
+The advisor is a local preflight layer. It does not start the gateway or load a model. Use it to inspect current hardware, installed runtimes, model format, approximate memory fit, and a suggested load command.
+
+Inspect hardware and runtime availability:
+
+```sh
+./omniinfer advisor system
+./omniinfer advisor system --json
+```
+
+Inspect a model artifact:
+
+```sh
+./omniinfer advisor inspect /path/to/model.gguf
+./omniinfer advisor inspect /path/to/model-directory --json
+```
+
+Estimate fit and get a recommended backend:
+
+```sh
+./omniinfer advisor fit /path/to/model.gguf --ctx-size 8192
+./omniinfer advisor fit Qwen/Qwen2.5-7B-Instruct --backend vllm-linux-cuda --json
+```
+
+Recommend from OmniInfer-managed local model directories:
+
+```sh
+./omniinfer advisor recommend --task coding -n 5
+```
+
+Advisor memory numbers are estimates based on local file size, context length, and conservative overhead. Backend startup logs and real benchmark results remain authoritative.
+
 ### 4. Load a model
 
 Default path:
@@ -140,6 +182,7 @@ For `llama.cpp-*`, OmniInfer accepts either a model file or a model directory. I
 - the optional `mmproj` GGUF
 
 For `mlx-mac`, OmniInfer passes the model directory directly to the embedded backend.
+For `vllm-linux-cuda`, OmniInfer passes the model string directly to `vllm serve`, so it can be a HuggingFace model ID, a local snapshot directory, or another reference accepted by vLLM.
 
 Explicit file path:
 
@@ -177,6 +220,7 @@ For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or
 ```
 
 The backend config JSON is where advanced users should put backend-native launch parameters such as `-ngl`, `--threads`, and other backend-specific options.
+For `vllm-linux-cuda`, use `--max-model-len` or the stable OmniInfer `ctx_size` option for context length; OmniInfer maps it to vLLM's `--max-model-len`.
 
 You can also skip `--config` entirely and pass backend-native extra args directly after the stable OmniInfer args. OmniInfer parses those extra args according to the currently selected backend.
 
@@ -185,6 +229,13 @@ Example:
 ```powershell
 .\omniinfer.ps1 backend select llama.cpp-vulkan
 .\omniinfer.ps1 load -m C:\models\Qwen3 -ngl 99 -t 8
+```
+
+vLLM example:
+
+```sh
+./omniinfer backend select vllm-linux-cuda
+./omniinfer load -m Qwen/Qwen3.5-4B-Instruct -- --max-model-len 8192 --gpu-memory-utilization 0.85
 ```
 
 ### 4. Chat
@@ -272,13 +323,33 @@ To create a temporary public HTTPS URL without router port forwarding, use Cloud
 ./omniinfer serve --cloudflare
 ```
 
+If you already know the model to serve, the same command can start the gateway, open the tunnel, select a backend, load the model, and run a short validation request:
+
+```sh
+./omniinfer serve \
+  --cloudflare \
+  --backend llama.cpp-linux-cuda \
+  --model /path/to/model.gguf \
+  --ctx-size 8192 \
+  --api-key auto \
+  --detach \
+  --smoke-test
+```
+
 Windows:
 
 ```powershell
 .\omniinfer.ps1 serve --cloudflare
 ```
 
-Cloudflare mode uses the same launcher in an interactive terminal, keeps OmniInfer bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).
+Cloudflare mode uses the same launcher in an interactive terminal when no `--model` is supplied, keeps OmniInfer bound to `127.0.0.1`, downloads or updates a managed `cloudflared` binary under `.local/tools/cloudflared`, prints a temporary `https://*.trycloudflare.com` URL, and requires an API key for remote inference requests. Quick Tunnel is intended for testing and short-lived access; use non-streaming requests for the most reliable behavior. See [Remote Access](remote-access.md).
+
+Detached services can be checked or stopped without remembering process IDs:
+
+```sh
+./omniinfer serve status --port 9000
+./omniinfer serve stop --port 9000
+```
 
 LAN and Cloudflare access can run at the same time:
 

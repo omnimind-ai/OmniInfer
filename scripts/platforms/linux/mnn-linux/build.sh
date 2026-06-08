@@ -6,10 +6,13 @@ BUILD_TYPE="Release"
 DRY_RUN=0
 BOOTSTRAP_SUBMODULE=1
 WITH_OPENCL=0
+WITH_CUDA=0
 JOBS=""
 PYTHON_BIN="${OMNIINFER_MNN_PYTHON:-python3}"
+MNN_PACKAGE="${OMNIINFER_MNN_PIP_PACKAGE:-MNN==3.5.0}"
 CLEAN_BUILD=0
 SMOKE_TEST=0
+BUILD_FROM_SOURCE=0
 
 check_deps() {
   local rc=0
@@ -33,10 +36,13 @@ Usage: build-mnn-linux.sh [options]
 Options:
   --build-type <type>   Build type for MNN core, default: Release
   --python <path>       Python interpreter used to create the local venv
+  --package <spec>      pip package spec for default wheel install, default: MNN==3.5.0
   --jobs <n>            Parallel build jobs, default: nproc
-  --opencl              Build MNN with OpenCL enabled
+  --opencl              Build MNN with OpenCL enabled; requires --from-source
+  --cuda                Build MNN with CUDA enabled; requires --from-source
   --clean               Remove previous MNN build products and recreate the venv
   --no-bootstrap        Do not auto-initialize the MNN git submodule
+  --from-source         Build from the checked-out MNN source submodule
   --smoke-test          Verify the installed Python package imports `MNN.llm`
   --dry-run             Print actions without executing them
   -h, --help            Show this help text
@@ -53,6 +59,10 @@ while (($# > 0)); do
       PYTHON_BIN="${2:?missing value for --python}"
       shift 2
       ;;
+    --package)
+      MNN_PACKAGE="${2:?missing value for --package}"
+      shift 2
+      ;;
     --jobs)
       JOBS="${2:?missing value for --jobs}"
       shift 2
@@ -61,12 +71,20 @@ while (($# > 0)); do
       WITH_OPENCL=1
       shift
       ;;
+    --cuda)
+      WITH_CUDA=1
+      shift
+      ;;
     --clean)
       CLEAN_BUILD=1
       shift
       ;;
     --no-bootstrap)
       BOOTSTRAP_SUBMODULE=0
+      shift
+      ;;
+    --from-source)
+      BUILD_FROM_SOURCE=1
       shift
       ;;
     --smoke-test)
@@ -104,11 +122,47 @@ MNN_ROOT="${REPO_ROOT}/framework/mnn"
 PIP_PACKAGE_ROOT="${MNN_ROOT}/pymnn/pip_package"
 BUILD_ROOT="${MNN_ROOT}/pymnn_build"
 
+if [[ ${BUILD_FROM_SOURCE} -eq 0 && (${WITH_OPENCL} -eq 1 || ${WITH_CUDA} -eq 1) ]]; then
+  echo "--opencl and --cuda are source-build options for mnn-linux." >&2
+  echo "Re-run with --from-source, or omit them to install the MNN wheel." >&2
+  exit 1
+fi
+
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Required command '$1' was not found in PATH." >&2
     exit 1
   fi
+}
+
+python_has_headers() {
+  "$1" - <<'PY' >/dev/null 2>&1
+import sysconfig
+from pathlib import Path
+
+include_dir = sysconfig.get_paths().get("include")
+raise SystemExit(0 if include_dir and (Path(include_dir) / "Python.h").is_file() else 1)
+PY
+}
+
+select_python_with_headers() {
+  if python_has_headers "${PYTHON_BIN}"; then
+    return
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    local candidate=""
+    candidate="$(uv python find --managed-python --no-python-downloads 3.13 2>/dev/null || true)"
+    if [[ -n "${candidate}" ]] && python_has_headers "${candidate}"; then
+      echo "${PYTHON_BIN} does not provide Python.h; using uv-managed Python: ${candidate}"
+      PYTHON_BIN="${candidate}"
+      return
+    fi
+  fi
+
+  echo "${PYTHON_BIN} does not provide Python.h, which is required to build PyMNN." >&2
+  echo "Install python3-dev/python3-venv, pass --python to a Python with headers, or install a uv-managed Python." >&2
+  exit 1
 }
 
 detect_jobs() {
@@ -128,6 +182,179 @@ run_cmd() {
   if [[ ${DRY_RUN} -eq 0 ]]; then
     "$@"
   fi
+}
+
+configure_cuda_env() {
+  if [[ ${WITH_CUDA} -eq 0 ]]; then
+    return
+  fi
+
+  local cuda_root="${CUDAToolkit_ROOT:-${CUDA_HOME:-${CUDA_PATH:-}}}"
+  if [[ -z "${cuda_root}" ]]; then
+    for candidate in "${HOME}/.local/cuda-12.5" /usr/local/cuda /usr/local/cuda-12.5; do
+      if [[ -f "${candidate}/include/cuda_runtime.h" && -d "${candidate}/lib64" ]]; then
+        cuda_root="${candidate}"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "${cuda_root}" || ! -f "${cuda_root}/include/cuda_runtime.h" ]]; then
+    echo "CUDA headers were not found. Set CUDAToolkit_ROOT or CUDA_HOME before --cuda." >&2
+    exit 1
+  fi
+  if [[ ! -d "${cuda_root}/lib64" ]]; then
+    echo "CUDA library directory was not found: ${cuda_root}/lib64" >&2
+    exit 1
+  fi
+
+  export CUDAToolkit_ROOT="${cuda_root}"
+  export CUDA_HOME="${cuda_root}"
+  export CUDA_PATH="${cuda_root}"
+  export PATH="${cuda_root}/bin:${PATH}"
+  export CPATH="${cuda_root}/include${CPATH:+:${CPATH}}"
+  export LIBRARY_PATH="${cuda_root}/lib64${LIBRARY_PATH:+:${LIBRARY_PATH}}"
+  export LD_LIBRARY_PATH="${cuda_root}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+}
+
+append_path_list() {
+  local var_name="$1"
+  local new_value="$2"
+  local old_value="${!var_name:-}"
+  if [[ -z "${new_value}" ]]; then
+    return
+  fi
+  if [[ -n "${old_value}" ]]; then
+    printf -v "${var_name}" '%s:%s' "${old_value}" "${new_value}"
+  else
+    printf -v "${var_name}" '%s' "${new_value}"
+  fi
+  export "${var_name}"
+}
+
+append_cuda_component_env() {
+  if [[ ${WITH_CUDA} -eq 0 ]]; then
+    return
+  fi
+
+  local extra_roots="${OMNIINFER_MNN_CUDA_EXTRA_ROOTS:-}"
+  if [[ -x "${VENV_ROOT}/bin/python3" ]]; then
+    local venv_roots=""
+    venv_roots="$("${VENV_ROOT}/bin/python3" - <<'PY'
+import site
+from pathlib import Path
+
+roots = []
+for base in site.getsitepackages():
+    nvidia_root = Path(base) / "nvidia"
+    if not nvidia_root.is_dir():
+        continue
+    for child in nvidia_root.iterdir():
+        if child.is_dir() and ((child / "include").is_dir() or (child / "lib").is_dir()):
+            roots.append(str(child))
+print(":".join(roots))
+PY
+)"
+    if [[ -n "${venv_roots}" ]]; then
+      extra_roots="${extra_roots:+${extra_roots}:}${venv_roots}"
+    fi
+  fi
+
+  if [[ -z "${extra_roots}" ]]; then
+    return
+  fi
+
+  local include_dirs="" lib_dirs="" root=""
+  local old_ifs="${IFS}"
+  IFS=':'
+  for root in ${extra_roots}; do
+    if [[ -d "${root}/include" ]]; then
+      include_dirs="${include_dirs:+${include_dirs}:}${root}/include"
+    fi
+    if [[ -d "${root}/lib" ]]; then
+      lib_dirs="${lib_dirs:+${lib_dirs}:}${root}/lib"
+    fi
+    if [[ -d "${root}/lib64" ]]; then
+      lib_dirs="${lib_dirs:+${lib_dirs}:}${root}/lib64"
+    fi
+  done
+  IFS="${old_ifs}"
+
+  append_path_list CPATH "${include_dirs}"
+  append_path_list CMAKE_INCLUDE_PATH "${include_dirs}"
+  append_path_list LIBRARY_PATH "${lib_dirs}"
+  append_path_list LD_LIBRARY_PATH "${lib_dirs}"
+  append_path_list CMAKE_LIBRARY_PATH "${lib_dirs}"
+}
+
+cuda_component_lib_dirs() {
+  if [[ ! -x "${VENV_ROOT}/bin/python3" ]]; then
+    return
+  fi
+  "${VENV_ROOT}/bin/python3" - <<'PY'
+import site
+from pathlib import Path
+
+dirs = []
+for base in site.getsitepackages():
+    nvidia_root = Path(base) / "nvidia"
+    if not nvidia_root.is_dir():
+        continue
+    for child in nvidia_root.iterdir():
+        for lib_dir in (child / "lib", child / "lib64"):
+            if lib_dir.is_dir():
+                dirs.append(str(lib_dir))
+print(":".join(dirs))
+PY
+}
+
+create_venv() {
+  if "${PYTHON_BIN}" -m venv "${VENV_ROOT}"; then
+    return
+  fi
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "Failed to create venv with ${PYTHON_BIN}, and uv was not found for fallback." >&2
+    echo "Install python3-venv or provide a Python with ensurepip via --python." >&2
+    exit 1
+  fi
+
+  echo "Falling back to uv venv because ${PYTHON_BIN} could not create a venv."
+  rm -rf "${VENV_ROOT}"
+  local resolved_python="${PYTHON_BIN}"
+  if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    resolved_python="$(command -v "${PYTHON_BIN}")"
+  fi
+  uv venv --python "${resolved_python}" "${VENV_ROOT}"
+}
+
+install_python_deps() {
+  if "${VENV_ROOT}/bin/python3" -m pip --version >/dev/null 2>&1; then
+    "${VENV_ROOT}/bin/python3" -m pip install --upgrade pip setuptools wheel numpy
+    return
+  fi
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "The MNN venv does not have pip, and uv was not found for dependency install." >&2
+    exit 1
+  fi
+
+  uv pip install --python "${VENV_ROOT}/bin/python3" --upgrade pip setuptools wheel numpy
+}
+
+install_mnn_wheel() {
+  if command -v uv >/dev/null 2>&1; then
+    run_cmd uv pip install --python "${VENV_ROOT}/bin/python3" "${MNN_PACKAGE}"
+    return
+  fi
+
+  if "${VENV_ROOT}/bin/python3" -m pip --version >/dev/null 2>&1; then
+    run_cmd "${VENV_ROOT}/bin/python3" -m pip install "${MNN_PACKAGE}"
+    return
+  fi
+
+  echo "The MNN venv does not have pip, and uv was not found for wheel install." >&2
+  exit 1
 }
 
 ensure_mnn_root() {
@@ -158,38 +385,83 @@ if [[ -z "${JOBS}" ]]; then
   JOBS="$(detect_jobs)"
 fi
 
-ensure_mnn_root
 require_command "${PYTHON_BIN}"
+if [[ ${BUILD_FROM_SOURCE} -eq 1 ]]; then
+  ensure_mnn_root
+  select_python_with_headers
+  configure_cuda_env
+fi
 prepare_runtime_dirs
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "Will create/update venv under ${VENV_ROOT}"
-  echo "Will build PyMNN with LLM support from ${PIP_PACKAGE_ROOT}"
+  if [[ ${BUILD_FROM_SOURCE} -eq 1 ]]; then
+    echo "Will build PyMNN with LLM support from ${PIP_PACKAGE_ROOT}"
+  else
+    echo "Will install MNN wheel package: ${MNN_PACKAGE}"
+  fi
   exit 0
 fi
 
 if [[ ! -x "${VENV_ROOT}/bin/python3" ]]; then
-  "${PYTHON_BIN}" -m venv "${VENV_ROOT}"
+  create_venv
 fi
 
-"${VENV_ROOT}/bin/python3" -m pip install --upgrade pip setuptools wheel numpy
+install_python_deps
+if [[ ${BUILD_FROM_SOURCE} -eq 0 ]]; then
+  install_mnn_wheel
+  if [[ ${SMOKE_TEST} -eq 1 ]]; then
+    "${VENV_ROOT}/bin/python3" - <<'PY'
+import MNN
+import MNN.cv
+import MNN.llm
+print("MNN Python runtime is available")
+PY
+  fi
+  echo
+  echo "Linux MNN wheel runtime is ready."
+  echo "Python runtime: ${VENV_ROOT}/bin/python3"
+  echo "Models directory: ${MODELS_ROOT}"
+  echo "Next step:"
+  echo "  ./omniinfer backend select mnn-linux"
+  echo "  ./omniinfer model load -m /absolute/path/to/mnn-model-dir-or-config.json"
+  exit 0
+fi
+
+append_cuda_component_env
 
 pushd "${PIP_PACKAGE_ROOT}" >/dev/null
 DEPS_ARGS=(llm)
 if [[ ${WITH_OPENCL} -eq 1 ]]; then
   DEPS_ARGS+=(opencl)
 fi
+if [[ ${WITH_CUDA} -eq 1 ]]; then
+  DEPS_ARGS+=(cuda)
+fi
+DEPS_SPEC="$(IFS=,; echo "${DEPS_ARGS[*]}")"
 PROJECT_ROOT="${MNN_ROOT}" \
-  "${VENV_ROOT}/bin/python3" build_deps.py "${DEPS_ARGS[@]}"
+  "${VENV_ROOT}/bin/python3" build_deps.py "${DEPS_SPEC}"
 
 PROJECT_ROOT="${MNN_ROOT}" \
   MNN_BUILD_DIR="${BUILD_ROOT}" \
   MAX_JOBS="${JOBS}" \
-  "${VENV_ROOT}/bin/python3" setup.py install --deps "$(IFS=,; echo "${DEPS_ARGS[*]}")"
+  "${VENV_ROOT}/bin/python3" setup.py install --deps "${DEPS_SPEC}"
 popd >/dev/null
+
+WRAPPER_LIBRARY_PATH="${VENV_ROOT}/lib"
+if [[ ${WITH_CUDA} -eq 1 ]]; then
+  if [[ -n "${CUDA_HOME:-}" && -d "${CUDA_HOME}/lib64" ]]; then
+    WRAPPER_LIBRARY_PATH="${WRAPPER_LIBRARY_PATH}:${CUDA_HOME}/lib64"
+  fi
+  CUDA_COMPONENT_LIB_DIRS="$(cuda_component_lib_dirs)"
+  if [[ -n "${CUDA_COMPONENT_LIB_DIRS}" ]]; then
+    WRAPPER_LIBRARY_PATH="${WRAPPER_LIBRARY_PATH}:${CUDA_COMPONENT_LIB_DIRS}"
+  fi
+fi
 
 cat > "${BIN_ROOT}/python3" <<EOF
 #!/usr/bin/env bash
+export LD_LIBRARY_PATH="${WRAPPER_LIBRARY_PATH}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
 exec "${VENV_ROOT}/bin/python3" "\$@"
 EOF
 chmod +x "${BIN_ROOT}/python3"

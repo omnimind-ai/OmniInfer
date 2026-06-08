@@ -143,13 +143,13 @@ fi
 # --- optional backend builds ---
 
 if [[ ${BUILD_CPU_BACKEND} -eq 1 ]]; then
-  CPU_ARGS=(--build-type "${BUILD_TYPE}")
+  CPU_ARGS=(--from-source --build-type "${BUILD_TYPE}")
   [[ ${DRY_RUN} -eq 1 ]] && CPU_ARGS+=(--dry-run)
   run_cmd bash "${CPU_SCRIPT}" "${CPU_ARGS[@]}"
 fi
 
 if [[ ${BUILD_ROCM_BACKEND} -eq 1 ]]; then
-  ROCM_ARGS=(--build-type "${BUILD_TYPE}")
+  ROCM_ARGS=(--from-source --build-type "${BUILD_TYPE}")
   [[ -n "${GPU_TARGETS}" ]] && ROCM_ARGS+=(--gpu-targets "${GPU_TARGETS}")
   [[ -n "${ROCM_PATH_OVERRIDE}" ]] && ROCM_ARGS+=(--rocm-path "${ROCM_PATH_OVERRIDE}")
   [[ ${DRY_RUN} -eq 1 ]] && ROCM_ARGS+=(--dry-run)
@@ -157,19 +157,19 @@ if [[ ${BUILD_ROCM_BACKEND} -eq 1 ]]; then
 fi
 
 if [[ ${BUILD_VULKAN_BACKEND} -eq 1 ]]; then
-  VULKAN_ARGS=(--build-type "${BUILD_TYPE}")
+  VULKAN_ARGS=(--from-source --build-type "${BUILD_TYPE}")
   [[ ${DRY_RUN} -eq 1 ]] && VULKAN_ARGS+=(--dry-run)
   run_cmd bash "${VULKAN_SCRIPT}" "${VULKAN_ARGS[@]}"
 fi
 
 if [[ ${BUILD_S390X_BACKEND} -eq 1 ]]; then
-  S390X_ARGS=(--build-type "${BUILD_TYPE}")
+  S390X_ARGS=(--from-source --build-type "${BUILD_TYPE}")
   [[ ${DRY_RUN} -eq 1 ]] && S390X_ARGS+=(--dry-run)
   run_cmd bash "${S390X_SCRIPT}" "${S390X_ARGS[@]}"
 fi
 
 if [[ ${BUILD_OPENVINO_BACKEND} -eq 1 ]]; then
-  OPENVINO_ARGS=(--build-type "${BUILD_TYPE}")
+  OPENVINO_ARGS=(--from-source --build-type "${BUILD_TYPE}")
   [[ -n "${OPENVINO_ROOT_OVERRIDE}" ]] && OPENVINO_ARGS+=(--openvino-root "${OPENVINO_ROOT_OVERRIDE}")
   [[ ${DRY_RUN} -eq 1 ]] && OPENVINO_ARGS+=(--dry-run)
   run_cmd bash "${OPENVINO_SCRIPT}" "${OPENVINO_ARGS[@]}"

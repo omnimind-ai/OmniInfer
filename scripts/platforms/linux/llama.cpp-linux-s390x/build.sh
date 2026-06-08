@@ -8,6 +8,7 @@ JOBS=""
 CLEAN_BUILD=0
 BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
+INSTALL_PREBUILT=1
 
 check_deps() {
   local rc=0
@@ -33,6 +34,8 @@ Options:
   --jobs <n>           Parallel build jobs, default: nproc
   --clean              Remove the previous build directory before configuring
   --no-bootstrap       Do not auto-initialize the llama.cpp git submodule
+  --prebuilt           Download and install the configured upstream prebuilt archive
+  --from-source        Build from the checked-out source submodule instead of installing a prebuilt archive
   --smoke-test         Run `llama-server --version` after the build completes
   --dry-run            Print actions without executing them
   -h, --help           Show this help message
@@ -55,6 +58,14 @@ while (($# > 0)); do
       ;;
     --no-bootstrap)
       BOOTSTRAP_SUBMODULE=0
+      shift
+      ;;
+    --prebuilt)
+      INSTALL_PREBUILT=1
+      shift
+      ;;
+    --from-source)
+      INSTALL_PREBUILT=0
       shift
       ;;
     --smoke-test)
@@ -89,6 +100,26 @@ BUILD_ROOT="${PACKAGE_ROOT}/build/llama.cpp-linux-s390x"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
 MODELS_ROOT="${REPO_ROOT}/.local/models"
+
+if [[ ${INSTALL_PREBUILT} -eq 1 ]]; then
+  PREBUILT_ARGS=(
+    --catalog "${REPO_ROOT}/scripts/prebuilt_backends.json"
+    --platform linux
+    --backend llama.cpp-linux-s390x
+    --runtime-dir "${PACKAGE_ROOT}"
+    --models-dir "${MODELS_ROOT}"
+  )
+  [[ ${DRY_RUN} -eq 1 ]] && PREBUILT_ARGS+=(--dry-run)
+  set +e
+  python3 "${REPO_ROOT}/scripts/platforms/common/install-prebuilt.py" "${PREBUILT_ARGS[@]}"
+  rc=$?
+  set -e
+  if [[ ${rc} -ne 0 ]]; then
+    echo "Re-run with --from-source to build from framework/llama.cpp." >&2
+    exit ${rc}
+  fi
+  exit 0
+fi
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
