@@ -100,6 +100,12 @@ Add these permissions:
 OmniInfer's AAR contributes its service declaration through manifest merge. The
 host app does not need to declare `OmniInferService` manually.
 
+`POST_NOTIFICATIONS` is not required by model inference itself. It is needed on
+Android 13+ when the host app targets API 33+ and wants OmniInfer's foreground
+service notification to be visible. If the user denies this runtime permission,
+the model can still run, but the app should handle notification permission UX
+according to its own foreground-service policy.
+
 OmniInfer serves HTTP on localhost. If your app targets Android 9+ and uses the
 HTTP endpoint directly, allow cleartext traffic for `127.0.0.1`.
 

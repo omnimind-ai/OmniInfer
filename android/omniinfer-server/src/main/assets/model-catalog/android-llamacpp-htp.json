@@ -696,7 +696,7 @@
     {
       "id": "gemma4-e2b-q4-0-gguf-llamacpp-htp",
       "display_name": "Gemma4 E2B Q4_0",
-      "family": "Gemma 3n",
+      "family": "Gemma 4",
       "parameter_size": "E2B",
       "vendor": "Google",
       "license": "Gemma Terms of Use",
@@ -730,193 +730,28 @@
       "sources": [
         {
           "provider": "ModelScope",
-          "url": "https://modelscope.cn/models/unsloth/gemma-3n-E2B-it-GGUF/resolve/master/gemma-3n-E2B-it-Q4_0.gguf",
-          "file_name": "gemma-3n-E2B-it-Q4_0.gguf",
-          "sha256": "257b9e470a88e287aa72968726701142264f0092fd5af74f256e9c1ce522a06a",
-          "size_bytes": 2965687648
+          "url": "https://modelscope.cn/models/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/master/gemma-4-E2B_q4_0-it.gguf",
+          "file_name": "gemma-4-E2B_q4_0-it.gguf",
+          "sha256": "3646b4c147cd235a44d91df1546d3b7d8e29b547dbe4e1f80856419aa455e6fd",
+          "size_bytes": 3349514112
         },
         {
           "provider": "HuggingFace",
-          "url": "https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q4_0.gguf",
-          "file_name": "gemma-3n-E2B-it-Q4_0.gguf",
-          "sha256": "257b9e470a88e287aa72968726701142264f0092fd5af74f256e9c1ce522a06a",
-          "size_bytes": 2965687648
+          "url": "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf",
+          "file_name": "gemma-4-E2B_q4_0-it.gguf",
+          "sha256": "3646b4c147cd235a44d91df1546d3b7d8e29b547dbe4e1f80856419aa455e6fd",
+          "size_bytes": 3349514112
         }
       ],
       "validation": {
         "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
-      }
-    },
-    {
-      "id": "gemma4-e2b-q4-1-gguf-llamacpp-htp",
-      "display_name": "Gemma4 E2B Q4_1",
-      "family": "Gemma 3n",
-      "parameter_size": "E2B",
-      "vendor": "Google",
-      "license": "Gemma Terms of Use",
-      "modalities": [
-        "text"
-      ],
-      "capabilities": [
-        "chat",
-        "reasoning"
-      ],
-      "backend": {
-        "framework": "llama.cpp",
-        "format": "gguf",
-        "quantization": "Q4_1"
-      },
-      "runtime": {
-        "accelerator": "htp",
-        "device": "HTP0",
-        "n_threads": 6,
-        "n_ctx": 8192,
-        "load_options": {
-          "accelerator": "htp",
-          "llama_device": "HTP0",
-          "n_gpu_layers": "99",
-          "batch_size": "1024",
-          "ubatch_size": "1024",
-          "cpu_mask": "0xfc",
-          "cpu_strict": "true"
-        }
-      },
-      "sources": [
-        {
-          "provider": "ModelScope",
-          "url": "https://modelscope.cn/models/unsloth/gemma-3n-E2B-it-GGUF/resolve/master/gemma-3n-E2B-it-Q4_1.gguf",
-          "file_name": "gemma-3n-E2B-it-Q4_1.gguf",
-          "sha256": "11737a0bb3d46bef3c56f896d2c43f42a7620e8329e43ccf5d44b2beb159e081",
-          "size_bytes": 3078540640
-        },
-        {
-          "provider": "HuggingFace",
-          "url": "https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q4_1.gguf",
-          "file_name": "gemma-3n-E2B-it-Q4_1.gguf",
-          "sha256": "11737a0bb3d46bef3c56f896d2c43f42a7620e8329e43ccf5d44b2beb159e081",
-          "size_bytes": 3078540640
-        }
-      ],
-      "validation": {
-        "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
-      }
-    },
-    {
-      "id": "gemma4-e2b-q8-0-gguf-llamacpp-htp",
-      "display_name": "Gemma4 E2B Q8_0",
-      "family": "Gemma 3n",
-      "parameter_size": "E2B",
-      "vendor": "Google",
-      "license": "Gemma Terms of Use",
-      "modalities": [
-        "text"
-      ],
-      "capabilities": [
-        "chat",
-        "reasoning"
-      ],
-      "backend": {
-        "framework": "llama.cpp",
-        "format": "gguf",
-        "quantization": "Q8_0"
-      },
-      "runtime": {
-        "accelerator": "htp",
-        "device": "HTP0",
-        "n_threads": 6,
-        "n_ctx": 8192,
-        "load_options": {
-          "accelerator": "htp",
-          "llama_device": "HTP0",
-          "n_gpu_layers": "99",
-          "batch_size": "1024",
-          "ubatch_size": "1024",
-          "cpu_mask": "0xfc",
-          "cpu_strict": "true"
-        }
-      },
-      "sources": [
-        {
-          "provider": "ModelScope",
-          "url": "https://modelscope.cn/models/unsloth/gemma-3n-E2B-it-GGUF/resolve/master/gemma-3n-E2B-it-Q8_0.gguf",
-          "file_name": "gemma-3n-E2B-it-Q8_0.gguf",
-          "sha256": "cc1a031fe99ebb066f61f3b94dd1ae324f1648f9ebdcfbfa3f97214054b68e15",
-          "size_bytes": 4788112736
-        },
-        {
-          "provider": "HuggingFace",
-          "url": "https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q8_0.gguf",
-          "file_name": "gemma-3n-E2B-it-Q8_0.gguf",
-          "sha256": "cc1a031fe99ebb066f61f3b94dd1ae324f1648f9ebdcfbfa3f97214054b68e15",
-          "size_bytes": 4788112736
-        }
-      ],
-      "validation": {
-        "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
-      }
-    },
-    {
-      "id": "gemma4-e2b-iq4-nl-gguf-llamacpp-htp",
-      "display_name": "Gemma4 E2B IQ4_NL",
-      "family": "Gemma 3n",
-      "parameter_size": "E2B",
-      "vendor": "Google",
-      "license": "Gemma Terms of Use",
-      "modalities": [
-        "text"
-      ],
-      "capabilities": [
-        "chat",
-        "reasoning"
-      ],
-      "backend": {
-        "framework": "llama.cpp",
-        "format": "gguf",
-        "quantization": "IQ4_NL"
-      },
-      "runtime": {
-        "accelerator": "htp",
-        "device": "HTP0",
-        "n_threads": 6,
-        "n_ctx": 8192,
-        "load_options": {
-          "accelerator": "htp",
-          "llama_device": "HTP0",
-          "n_gpu_layers": "99",
-          "batch_size": "1024",
-          "ubatch_size": "1024",
-          "cpu_mask": "0xfc",
-          "cpu_strict": "true"
-        }
-      },
-      "sources": [
-        {
-          "provider": "ModelScope",
-          "url": "https://modelscope.cn/models/unsloth/gemma-3n-E2B-it-GGUF/resolve/master/gemma-3n-E2B-it-IQ4_NL.gguf",
-          "file_name": "gemma-3n-E2B-it-IQ4_NL.gguf",
-          "sha256": "c45dc359c6c2d008774c67fc7c966d8ffb6773d82a1a489ce837996aba2665dc",
-          "size_bytes": 2966474080
-        },
-        {
-          "provider": "HuggingFace",
-          "url": "https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-IQ4_NL.gguf",
-          "file_name": "gemma-3n-E2B-it-IQ4_NL.gguf",
-          "sha256": "c45dc359c6c2d008774c67fc7c966d8ffb6773d82a1a489ce837996aba2665dc",
-          "size_bytes": 2966474080
-        }
-      ],
-      "validation": {
-        "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
+        "notes": "ModelScope official Google Gemma4 QAT Q4_0 GGUF metadata verified; HuggingFace URL mirrors the same official repository path."
       }
     },
     {
       "id": "gemma4-e4b-q4-0-gguf-llamacpp-htp",
       "display_name": "Gemma4 E4B Q4_0",
-      "family": "Gemma 3n",
+      "family": "Gemma 4",
       "parameter_size": "E4B",
       "vendor": "Google",
       "license": "Gemma Terms of Use",
@@ -950,187 +785,22 @@
       "sources": [
         {
           "provider": "ModelScope",
-          "url": "https://modelscope.cn/models/unsloth/gemma-3n-E4B-it-GGUF/resolve/master/gemma-3n-E4B-it-Q4_0.gguf",
-          "file_name": "gemma-3n-E4B-it-Q4_0.gguf",
-          "sha256": "2d6d4a1ebc75908d03d7bd81c970e72ebabdbe4321d71f8b1b8cef3461dd170f",
-          "size_bytes": 4395784320
+          "url": "https://modelscope.cn/models/google/gemma-4-E4B-it-qat-q4_0-gguf/resolve/master/gemma-4-E4B_q4_0-it.gguf",
+          "file_name": "gemma-4-E4B_q4_0-it.gguf",
+          "sha256": "e8b6a059ba86947a44ace84d6e5679795bc41862c25c30513142588f0e9dba1d",
+          "size_bytes": 5154939136
         },
         {
           "provider": "HuggingFace",
-          "url": "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_0.gguf",
-          "file_name": "gemma-3n-E4B-it-Q4_0.gguf",
-          "sha256": "2d6d4a1ebc75908d03d7bd81c970e72ebabdbe4321d71f8b1b8cef3461dd170f",
-          "size_bytes": 4395784320
+          "url": "https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf/resolve/main/gemma-4-E4B_q4_0-it.gguf",
+          "file_name": "gemma-4-E4B_q4_0-it.gguf",
+          "sha256": "e8b6a059ba86947a44ace84d6e5679795bc41862c25c30513142588f0e9dba1d",
+          "size_bytes": 5154939136
         }
       ],
       "validation": {
         "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
-      }
-    },
-    {
-      "id": "gemma4-e4b-q4-1-gguf-llamacpp-htp",
-      "display_name": "Gemma4 E4B Q4_1",
-      "family": "Gemma 3n",
-      "parameter_size": "E4B",
-      "vendor": "Google",
-      "license": "Gemma Terms of Use",
-      "modalities": [
-        "text"
-      ],
-      "capabilities": [
-        "chat",
-        "reasoning"
-      ],
-      "backend": {
-        "framework": "llama.cpp",
-        "format": "gguf",
-        "quantization": "Q4_1"
-      },
-      "runtime": {
-        "accelerator": "htp",
-        "device": "HTP0",
-        "n_threads": 6,
-        "n_ctx": 8192,
-        "load_options": {
-          "accelerator": "htp",
-          "llama_device": "HTP0",
-          "n_gpu_layers": "99",
-          "batch_size": "1024",
-          "ubatch_size": "1024",
-          "cpu_mask": "0xfc",
-          "cpu_strict": "true"
-        }
-      },
-      "sources": [
-        {
-          "provider": "ModelScope",
-          "url": "https://modelscope.cn/models/unsloth/gemma-3n-E4B-it-GGUF/resolve/master/gemma-3n-E4B-it-Q4_1.gguf",
-          "file_name": "gemma-3n-E4B-it-Q4_1.gguf",
-          "sha256": "33d0a74eaebbffac24168a144034528fccc777619926582e9f0e725a861bde51",
-          "size_bytes": 4632828032
-        },
-        {
-          "provider": "HuggingFace",
-          "url": "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_1.gguf",
-          "file_name": "gemma-3n-E4B-it-Q4_1.gguf",
-          "sha256": "33d0a74eaebbffac24168a144034528fccc777619926582e9f0e725a861bde51",
-          "size_bytes": 4632828032
-        }
-      ],
-      "validation": {
-        "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
-      }
-    },
-    {
-      "id": "gemma4-e4b-q8-0-gguf-llamacpp-htp",
-      "display_name": "Gemma4 E4B Q8_0",
-      "family": "Gemma 3n",
-      "parameter_size": "E4B",
-      "vendor": "Google",
-      "license": "Gemma Terms of Use",
-      "modalities": [
-        "text"
-      ],
-      "capabilities": [
-        "chat",
-        "reasoning"
-      ],
-      "backend": {
-        "framework": "llama.cpp",
-        "format": "gguf",
-        "quantization": "Q8_0"
-      },
-      "runtime": {
-        "accelerator": "htp",
-        "device": "HTP0",
-        "n_threads": 6,
-        "n_ctx": 8192,
-        "load_options": {
-          "accelerator": "htp",
-          "llama_device": "HTP0",
-          "n_gpu_layers": "99",
-          "batch_size": "1024",
-          "ubatch_size": "1024",
-          "cpu_mask": "0xfc",
-          "cpu_strict": "true"
-        }
-      },
-      "sources": [
-        {
-          "provider": "ModelScope",
-          "url": "https://modelscope.cn/models/unsloth/gemma-3n-E4B-it-GGUF/resolve/master/gemma-3n-E4B-it-Q8_0.gguf",
-          "file_name": "gemma-3n-E4B-it-Q8_0.gguf",
-          "sha256": "80e3a8cff3f29b2d2a6f580d8aaaf9269fff767c48eacf4306294718a76eb262",
-          "size_bytes": 7353292928
-        },
-        {
-          "provider": "HuggingFace",
-          "url": "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q8_0.gguf",
-          "file_name": "gemma-3n-E4B-it-Q8_0.gguf",
-          "sha256": "80e3a8cff3f29b2d2a6f580d8aaaf9269fff767c48eacf4306294718a76eb262",
-          "size_bytes": 7353292928
-        }
-      ],
-      "validation": {
-        "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
-      }
-    },
-    {
-      "id": "gemma4-e4b-iq4-nl-gguf-llamacpp-htp",
-      "display_name": "Gemma4 E4B IQ4_NL",
-      "family": "Gemma 3n",
-      "parameter_size": "E4B",
-      "vendor": "Google",
-      "license": "Gemma Terms of Use",
-      "modalities": [
-        "text"
-      ],
-      "capabilities": [
-        "chat",
-        "reasoning"
-      ],
-      "backend": {
-        "framework": "llama.cpp",
-        "format": "gguf",
-        "quantization": "IQ4_NL"
-      },
-      "runtime": {
-        "accelerator": "htp",
-        "device": "HTP0",
-        "n_threads": 6,
-        "n_ctx": 8192,
-        "load_options": {
-          "accelerator": "htp",
-          "llama_device": "HTP0",
-          "n_gpu_layers": "99",
-          "batch_size": "1024",
-          "ubatch_size": "1024",
-          "cpu_mask": "0xfc",
-          "cpu_strict": "true"
-        }
-      },
-      "sources": [
-        {
-          "provider": "ModelScope",
-          "url": "https://modelscope.cn/models/unsloth/gemma-3n-E4B-it-GGUF/resolve/master/gemma-3n-E4B-it-IQ4_NL.gguf",
-          "file_name": "gemma-3n-E4B-it-IQ4_NL.gguf",
-          "sha256": "15c17596d0a84667bb908d168999e8c8b614190da1a566c12340904f0b6b0ee5",
-          "size_bytes": 4391983232
-        },
-        {
-          "provider": "HuggingFace",
-          "url": "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-IQ4_NL.gguf",
-          "file_name": "gemma-3n-E4B-it-IQ4_NL.gguf",
-          "sha256": "15c17596d0a84667bb908d168999e8c8b614190da1a566c12340904f0b6b0ee5",
-          "size_bytes": 4391983232
-        }
-      ],
-      "validation": {
-        "status": "metadata_verified",
-        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
+        "notes": "ModelScope official Google Gemma4 QAT Q4_0 GGUF metadata verified; HuggingFace URL mirrors the same official repository path."
       }
     }
   ]
