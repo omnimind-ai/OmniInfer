@@ -40,6 +40,26 @@ In the root `gradle.properties`:
 android.useAndroidX=true
 ```
 
+Find the latest released version on Maven Central:
+
+```text
+https://central.sonatype.com/artifact/io.github.omnimind-ai/omniinfer
+```
+
+For larger apps, keep the version in `gradle/libs.versions.toml`:
+
+```toml
+[versions]
+omniinfer = "0.2.3"
+
+[libraries]
+omniinfer = { module = "io.github.omnimind-ai:omniinfer", version.ref = "omniinfer" }
+```
+
+Then use `implementation(libs.omniinfer)` in the app module. Pin an exact
+version for reproducible builds; avoid dynamic versions such as `+` in
+production.
+
 In the app module:
 
 ```kotlin
@@ -79,7 +99,7 @@ kotlin {
 }
 
 dependencies {
-    implementation("io.github.omnimind-ai:omniinfer:0.2.3")
+    implementation(libs.omniinfer)
 }
 ```
 
