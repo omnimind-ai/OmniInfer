@@ -150,14 +150,13 @@ val target = File(modelDir, source.fileName)
 ```
 
 Download `source.url` into `target`, verify `source.sha256`, then call
-`loadModel()`. `modelPath` is the absolute path to the model entry file:
+`loadModel()`. This AAR package contains llama.cpp CPU, llama.cpp HTP, and
+LiteRT-LM GPU. `modelPath` is the absolute path to the model entry file:
 
 | Format | `modelPath` value |
 |---|---|
 | GGUF / llama.cpp | Path to the `.gguf` file |
 | LiteRT-LM | Path to the `.litertlm` file |
-| MNN | Path to the model directory's `config.json` |
-| ExecuTorch QNN | Path to the `.pte` file |
 
 Do not pass the containing directory for GGUF or LiteRT-LM models. Do not rely
 on `/data/local/tmp` in production apps; normal Android app UIDs often cannot
@@ -176,8 +175,8 @@ val ok = OmniInferServer.loadModel(
 OmniInfer first matches `modelPath` against the bundled catalog file names. If
 it finds a match, it applies the catalog's backend, thread, context, and load
 defaults automatically. If there is no catalog match, it falls back by file
-extension: `.gguf` -> `llama.cpp/cpu`, `.litertlm` -> `litert/gpu`,
-`config.json` -> `mnn/cpu`, `.pte` -> `executorch-qnn`.
+extension for the backends included in this AAR: `.gguf` -> `llama.cpp/cpu`,
+`.litertlm` -> `litert/gpu`.
 
 For explicit selection, use these public backend names:
 
