@@ -101,6 +101,52 @@ class ServeOrchestrationTests(unittest.TestCase):
         write_pid.assert_called_once()
         print_ready.assert_called_once()
 
+    def test_detached_smoke_failure_keeps_started_service(self) -> None:
+        plan = cli._parse_serve_plan(
+            [
+                "--cloudflare",
+                "--port",
+                "19189",
+                "--model",
+                "/models/qwen.gguf",
+                "--api-key",
+                "secret",
+                "--detach",
+                "--smoke-test",
+            ]
+        )
+
+        class FakeProcess:
+            pid = 12345
+
+            def poll(self) -> None:
+                return None
+
+        with (
+            patch("service_core.cli._start_serve_child", return_value=FakeProcess()),
+            patch("service_core.cli._wait_for_detached_health"),
+            patch("service_core.cli._wait_for_cloudflare_url", return_value="https://example.trycloudflare.com"),
+            patch(
+                "service_core.cli._configure_serve_runtime",
+                return_value={
+                    "backend": "llama.cpp-linux-cuda",
+                    "backend_ready": True,
+                    "model": "/models/qwen.gguf",
+                },
+            ),
+            patch("service_core.cli._serve_smoke", side_effect=SystemExit("dns failed")),
+            patch("service_core.cli._write_serve_pid_file") as write_pid,
+            patch("service_core.cli._print_serve_ready") as print_ready,
+            patch("service_core.cli._cleanup_serve_child") as cleanup,
+        ):
+            result = cli.serve_orchestrated(plan)
+
+        self.assertEqual(result, 1)
+        write_pid.assert_called_once()
+        print_ready.assert_called_once()
+        cleanup.assert_not_called()
+        self.assertIn("dns failed", print_ready.call_args.kwargs["smoke_text"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import secrets
+import signal
 import sys
 import threading
 import textwrap
@@ -1123,6 +1124,39 @@ def _start_serve_child(plan: _ServePlan, *, port: int, log_path: Path) -> subpro
     return process
 
 
+def _cleanup_serve_child(process: subprocess.Popen[Any], *, port: int) -> None:
+    global _cli_port_override
+    _cli_port_override = port
+    commands.set_port_override(port)
+    try:
+        commands.shutdown_service(wait_timeout_s=5.0)
+    except BaseException:
+        pass
+
+    if os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except OSError:
+            pass
+    elif process.poll() is None:  # pragma: no cover - Windows process cleanup
+        process.terminate()
+
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        if os.name != "nt":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        else:  # pragma: no cover - Windows process cleanup
+            process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def _wait_for_cloudflare_url(log_path: Path, *, timeout_s: int) -> str | None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -1319,9 +1353,14 @@ def serve_orchestrated(plan: _ServePlan) -> int:
         public_url = _wait_for_cloudflare_url(log_path, timeout_s=startup_timeout) if _flag_in_argv(plan.service_args, "--cloudflare") else None
         state = _configure_serve_runtime(plan, port=port)
         smoke_text = None
+        smoke_failed = False
         if plan.smoke_test:
             base_url = public_url or f"http://127.0.0.1:{port}"
-            smoke_text = _serve_smoke(base_url, api_key=plan.api_key if public_url else None)
+            try:
+                smoke_text = _serve_smoke(base_url, api_key=plan.api_key if public_url else None)
+            except (Exception, SystemExit) as exc:
+                smoke_failed = True
+                smoke_text = f"failed: {exc}"
         _write_serve_pid_file(
             port=port,
             process=process,
@@ -1339,7 +1378,7 @@ def serve_orchestrated(plan: _ServePlan) -> int:
             smoke_text=smoke_text,
         )
         if plan.detach:
-            return 0
+            return 1 if smoke_failed else 0
         print("Press Ctrl+C to stop.")
         try:
             return int(process.wait())
@@ -1347,12 +1386,7 @@ def serve_orchestrated(plan: _ServePlan) -> int:
             commands.shutdown_service(wait_timeout_s=10.0)
             return 0
     except BaseException:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
+        _cleanup_serve_child(process, port=port)
         raise
 
 
