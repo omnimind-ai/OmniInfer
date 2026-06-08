@@ -35,6 +35,7 @@ data class OmniInferLoadOptions(
  */
 object OmniInferServer {
     private const val TAG = "OmniInferServer"
+    private const val UNSUPPORTED_AUTO_BACKEND = "__unsupported_auto_backend__"
 
     private var appContext: Context? = null
     private var serverPort: Int = 9099
@@ -131,7 +132,7 @@ object OmniInferServer {
 
     /**
      * Load a model and start the server.
-     * @param modelPath absolute path to model file (GGUF, .litertlm, config.json, or .pte)
+     * @param modelPath absolute path to model file (GGUF or .litertlm for auto backend inference)
      * @param backend backend selector: "auto", "llama.cpp/cpu", "llama.cpp/htp", "litert/gpu",
      *   or a legacy framework name such as "llama.cpp" / "litert".
      * @param port local server port (default 9099)
@@ -182,6 +183,12 @@ object OmniInferServer {
             extraConfig = extraConfig,
             preferCatalogDefaults = preferCatalogDefaults,
         )
+        if (resolved.selector == UNSUPPORTED_AUTO_BACKEND) {
+            lastError = "Auto backend inference supports catalog models, .gguf, and .litertlm/.litert files in this AAR. " +
+                "Pass a supported backend selector explicitly for other formats."
+            Log.e(TAG, lastError)
+            return false
+        }
         val loadKey = resolved.loadKey(modelPath, port)
 
         if (serverRunning && serverPort != port) {
@@ -443,9 +450,7 @@ object OmniInferServer {
         return when {
             lower.endsWith(".litertlm") || lower.endsWith(".litert") -> OmniInferBackend.LITERT_GPU
             lower.endsWith(".gguf") -> OmniInferBackend.LLAMA_CPP_CPU
-            lower.endsWith("config.json") -> "mnn/cpu"
-            lower.endsWith(".pte") -> "executorch-qnn"
-            else -> OmniInferBackend.LLAMA_CPP_CPU
+            else -> UNSUPPORTED_AUTO_BACKEND
         }
     }
 
