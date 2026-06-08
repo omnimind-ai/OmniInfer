@@ -14,12 +14,17 @@
 #include "mtmd-helper.h"
 #include "ggml.h"
 #include "ggml-backend.h"
+#include "ggml-cpu.h"
 
 #include <android/log.h>
 #include <chrono>
 #include <unistd.h>
 #include <sstream>
 #include <dirent.h>
+#include <cstdlib>
+#include <dlfcn.h>
+#include <vector>
+#include <cstring>
 
 namespace omniinfer {
 
@@ -27,8 +32,19 @@ class LlamaCppBackend : public InferenceBackend {
 public:
   ~LlamaCppBackend() override { release(); }
 
-  bool load(const std::string& model_path, const std::string& /*config_json*/,
+  bool load(const std::string& model_path, const std::string& config_json,
             const std::string& native_lib_dir, int n_threads, int n_ctx) override {
+    std::string llama_device = extract_string(config_json, "llama_device");
+    if (llama_device.empty()) llama_device = extract_string(config_json, "device");
+    std::string accelerator = extract_string(config_json, "accelerator");
+    if (accelerator.empty()) accelerator = extract_string(config_json, "compute_unit");
+    std::string backend_type = extract_string(config_json, "backend_type");
+    const bool wants_htp = accelerator == "htp" || accelerator == "npu" ||
+                           backend_type == "npu";
+    if (llama_device.empty() && wants_htp) llama_device = "HTP0";
+    const bool wants_accelerator =
+        !llama_device.empty() && llama_device != "cpu" && llama_device != "none";
+
     std::call_once(s_backend_init, [&]() {
       // Route ggml logs to Android logcat so backend selection is visible.
       ggml_log_set([](enum ggml_log_level level, const char* text, void*) {
@@ -38,22 +54,44 @@ public:
       }, nullptr);
 
       if (!native_lib_dir.empty()) {
+        setenv("ADSP_LIBRARY_PATH", native_lib_dir.c_str(), 1);
+        setenv("DSP_LIBRARY_PATH", native_lib_dir.c_str(), 1);
+        if (wants_accelerator) {
+          load_snapdragon_accelerators(native_lib_dir);
+        }
         ggml_backend_load_all_from_path(native_lib_dir.c_str());
       } else {
         ggml_backend_load_all();
       }
       llama_backend_init();
 
-      // Log which backends were loaded (confirms variant selection).
-      size_t n = ggml_backend_reg_count();
-      for (size_t i = 0; i < n; i++) {
-        auto reg = ggml_backend_reg_get(i);
-        __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
-            "GGML backend [%zu]: %s", i, ggml_backend_reg_name(reg));
-      }
+      log_ggml_backends("after load_all");
     });
 
     llama_model_params mp = llama_model_default_params();
+    std::vector<ggml_backend_dev_t> selected_devices;
+    if (wants_accelerator) {
+      auto* dev = ggml_backend_dev_by_name(llama_device.c_str());
+      if ((!dev || ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) &&
+          !native_lib_dir.empty()) {
+        load_snapdragon_accelerators(native_lib_dir);
+        log_ggml_backends("after explicit accelerator load");
+        dev = ggml_backend_dev_by_name(llama_device.c_str());
+      }
+      if (!dev || ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+        __android_log_print(ANDROID_LOG_ERROR, "OmniInferJni",
+            "llama.cpp device not available: %s", llama_device.c_str());
+        return false;
+      }
+      selected_devices.push_back(dev);
+      selected_devices.push_back(nullptr);
+      mp.devices = selected_devices.data();
+      mp.n_gpu_layers = extract_int(config_json, "n_gpu_layers", 99);
+      mp.use_mmap = extract_bool(config_json, "mmap", false);
+      __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+          "llama.cpp selected device=%s n_gpu_layers=%d mmap=%s",
+          llama_device.c_str(), mp.n_gpu_layers, mp.use_mmap ? "true" : "false");
+    }
     model_ = llama_model_load_from_file(model_path.c_str(), mp);
     if (!model_) return false;
 
@@ -61,22 +99,36 @@ public:
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = n_ctx;
-    cp.n_batch = 512;
-    cp.n_ubatch = 512;
+    const int default_batch = wants_htp ? 1024 : 512;
+    int n_batch = extract_int_any(config_json, default_batch, "n_batch", "batch_size");
+    int n_ubatch = extract_int_any(config_json, n_batch, "n_ubatch", "ubatch_size");
+    n_batch = n_batch > 0 ? n_batch : default_batch;
+    n_ubatch = n_ubatch > 0 ? n_ubatch : n_batch;
+    cp.n_batch = static_cast<uint32_t>(n_batch);
+    cp.n_ubatch = static_cast<uint32_t>(n_ubatch);
     cp.n_threads = eff_threads;
     cp.n_threads_batch = eff_threads;
     cp.type_k = GGML_TYPE_F16;                          // KV cache quantization: 50% memory reduction
     cp.type_v = GGML_TYPE_F16;
     cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;  // Flash attention: faster prefill, less memory
+    cp.no_perf = false;
+    cp.swa_full = false;  // Match llama.cpp common_params / CLI defaults.
     ctx_ = llama_init_from_model(model_, cp);
     if (!ctx_) { llama_model_free(model_); model_ = nullptr; return false; }
+
+    attach_threadpool(config_json, wants_htp, eff_threads);
 
     sampler_ = common_sampler_init(model_, default_sampling_);
 
     chat_templates_ = common_chat_templates_init(model_, "");
-    batch_ = llama_batch_init(512, 0, 1);
+    batch_ = llama_batch_init(n_batch, 0, 1);
     n_ctx_ = n_ctx;
+    n_batch_ = n_batch;
     n_threads_ = eff_threads;
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "llama.cpp context configured: ctx=%d batch=%d ubatch=%d threads=%d backend_type=%s accelerator=%s device=%s",
+        n_ctx, n_batch, n_ubatch, eff_threads, backend_type.c_str(),
+        accelerator.c_str(), llama_device.c_str());
 
     // Auto-discover mmproj in same directory for multimodal models.
     std::string mmproj_path = find_mmproj(model_path);
@@ -108,9 +160,6 @@ public:
       int max_tokens,
       std::atomic<bool>& graceful_stop,
       const std::string& sampling_json = "") override {
-
-    apply_sampling_params(sampling_json);
-    common_sampler_reset(sampler_);
 
     // Build full messages vector.
     std::vector<common_chat_msg> messages;
@@ -150,6 +199,7 @@ public:
     inputs.messages = messages;
     inputs.add_generation_prompt = true;
     inputs.use_jinja = true;
+    inputs.reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
     inputs.enable_thinking = thinking_enabled;
 
     // Parse and set tools if provided.
@@ -165,6 +215,8 @@ public:
     }
 
     common_chat_params params = common_chat_templates_apply(chat_templates_.get(), inputs);
+    apply_sampling_params(sampling_json, params);
+    common_sampler_reset(sampler_);
 
     // Build parser params for tool call detection.
     common_chat_parser_params parser_params(params);
@@ -236,7 +288,7 @@ public:
         // Create bitmaps for all images.
         std::vector<mtmd_bitmap*> bmps;
         for (const auto& img : images) {
-          auto* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, img.data(), img.size());
+          auto* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, img.data(), img.size(), false);
           if (bmp) bmps.push_back(bmp);
         }
         if (bmps.empty()) return "";
@@ -359,6 +411,14 @@ full_prefill:
 
     // Generate tokens.
     common_sampler_reset(sampler_);
+    if (!is_multimodal) {
+      // Match llama.cpp CLI/server: prompt tokens participate in sampler history
+      // for repetition penalties, DRY, and other history-aware samplers, but do
+      // not trigger generation-only grammar handling.
+      for (llama_token tok : prev_prompt_tokens_) {
+        common_sampler_accept(sampler_, tok, false);
+      }
+    }
     const llama_vocab* vocab = llama_model_get_vocab(model_);
     std::string full_response;
     int n_reasoning_tokens = 0;
@@ -545,7 +605,20 @@ private:
     if (sampler_) { common_sampler_free(sampler_); sampler_ = nullptr; }
     chat_templates_.reset();
     llama_batch_free(batch_); batch_ = {};
-    if (ctx_) { llama_free(ctx_); ctx_ = nullptr; }
+    if (ctx_) {
+      llama_detach_threadpool(ctx_);
+      llama_free(ctx_);
+      ctx_ = nullptr;
+    }
+    if (threadpool_free_fn_ && threadpool_) {
+      threadpool_free_fn_(threadpool_);
+      threadpool_ = nullptr;
+    }
+    if (threadpool_free_fn_ && threadpool_batch_) {
+      threadpool_free_fn_(threadpool_batch_);
+      threadpool_batch_ = nullptr;
+    }
+    threadpool_free_fn_ = nullptr;
     if (model_) { llama_model_free(model_); model_ = nullptr; }
   }
 
@@ -564,23 +637,56 @@ private:
     return (end > pos) ? json.substr(pos, end - pos) : "";
   }
 
-  // Apply per-request sampling parameters. Rebuilds the sampler only when needed.
-  void apply_sampling_params(const std::string& json) {
-    if (json.empty()) return;  // no overrides — keep current sampler
+  // Apply per-request sampling parameters.
+  void apply_sampling_params(const std::string& json, const common_chat_params& chat_params) {
     common_params_sampling sp = default_sampling_;
+    sp.generation_prompt = chat_params.generation_prompt;
+    if (!chat_params.grammar.empty()) {
+      sp.grammar = {COMMON_GRAMMAR_TYPE_TOOL_CALLS, chat_params.grammar};
+    }
+    sp.grammar_lazy = chat_params.grammar_lazy;
+    sp.grammar_triggers = chat_params.grammar_triggers;
+    for (const auto& token_text : chat_params.preserved_tokens) {
+      auto ids = common_tokenize(llama_model_get_vocab(model_), token_text, false, true);
+      if (ids.size() == 1) {
+        sp.preserved_tokens.insert(ids[0]);
+      }
+    }
+    if (!chat_params.thinking_start_tag.empty()) {
+      sp.reasoning_budget_start =
+          common_tokenize(llama_model_get_vocab(model_), chat_params.thinking_start_tag, false, true);
+    }
+    if (!chat_params.thinking_end_tag.empty()) {
+      sp.reasoning_budget_end =
+          common_tokenize(llama_model_get_vocab(model_), chat_params.thinking_end_tag, false, true);
+      sp.reasoning_budget_forced =
+          common_tokenize(llama_model_get_vocab(model_), chat_params.thinking_end_tag, false, true);
+    }
     auto f = [&](const char* key) -> std::optional<float> {
       auto v = json_num(json, key);
       return v.empty() ? std::nullopt : std::optional<float>(std::stof(v));
     };
     if (auto v = f("temperature"))       sp.temp = *v;
     if (auto v = f("top_p"))             sp.top_p = *v;
+    if (auto v = f("min_p"))             sp.min_p = *v;
+    if (auto v = f("typical_p"))         sp.typ_p = *v;
     if (auto v = f("repetition_penalty"))sp.penalty_repeat = *v;
+    if (auto v = f("repeat_penalty"))    sp.penalty_repeat = *v;
     if (auto v = f("frequency_penalty")) sp.penalty_freq = *v;
     if (auto v = f("presence_penalty"))  sp.penalty_present = *v;
     auto tk = json_num(json, "top_k");
     if (!tk.empty()) sp.top_k = std::stoi(tk);
+    auto seed = json_num(json, "seed");
+    if (!seed.empty()) sp.seed = static_cast<uint32_t>(std::stoll(seed));
+    auto repeat_last_n = json_num(json, "repeat_last_n");
+    if (!repeat_last_n.empty()) sp.penalty_last_n = std::stoi(repeat_last_n);
     common_sampler_free(sampler_);
     sampler_ = common_sampler_init(model_, sp);
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "llama.cpp sampling overrides: seed=%u temp=%.3f top_k=%d top_p=%.3f min_p=%.3f typical_p=%.3f repeat_penalty=%.3f freq_penalty=%.3f presence_penalty=%.3f repeat_last_n=%d generation_prompt_bytes=%zu grammar=%s preserved=%zu triggers=%zu",
+        sp.seed, sp.temp, sp.top_k, sp.top_p, sp.min_p, sp.typ_p, sp.penalty_repeat,
+        sp.penalty_freq, sp.penalty_present, sp.penalty_last_n, sp.generation_prompt.size(),
+        sp.grammar.empty() ? "false" : "true", sp.preserved_tokens.size(), sp.grammar_triggers.size());
   }
 
   // Scan model directory for mmproj*.gguf file.
@@ -601,6 +707,237 @@ private:
     }
     closedir(dp);
     return result;
+  }
+
+  static int extract_int(const std::string& json, const std::string& key, int fallback) {
+    std::string pattern = "\"" + key + "\":";
+    size_t pos = json.find(pattern);
+    if (pos == std::string::npos) return fallback;
+    pos += pattern.size();
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '"')) pos++;
+    char* end = nullptr;
+    long v = strtol(json.c_str() + pos, &end, 10);
+    return end == json.c_str() + pos ? fallback : (int)v;
+  }
+
+  template <typename... Keys>
+  static int extract_int_any(const std::string& json, int fallback, Keys... keys) {
+    int value = fallback;
+    bool found = false;
+    (([&]() {
+      if (!found) {
+        int v = extract_int(json, keys, fallback);
+        if (v != fallback || json.find("\"" + std::string(keys) + "\":") != std::string::npos) {
+          value = v;
+          found = true;
+        }
+      }
+    }()), ...);
+    return value;
+  }
+
+  static bool extract_bool(const std::string& json, const std::string& key, bool fallback) {
+    std::string value = extract_string(json, key);
+    if (value == "true" || value == "1") return true;
+    if (value == "false" || value == "0") return false;
+    std::string pattern = "\"" + key + "\":";
+    size_t pos = json.find(pattern);
+    if (pos == std::string::npos) return fallback;
+    pos += pattern.size();
+    while (pos < json.size() && json[pos] == ' ') pos++;
+    if (json.compare(pos, 4, "true") == 0) return true;
+    if (json.compare(pos, 5, "false") == 0) return false;
+    return fallback;
+  }
+
+  static std::string extract_string(const std::string& json, const std::string& key) {
+    std::string pattern = "\"" + key + "\":\"";
+    size_t pos = json.find(pattern);
+    if (pos == std::string::npos) return "";
+    pos += pattern.size();
+    std::string out;
+    bool esc = false;
+    for (; pos < json.size(); ++pos) {
+      char ch = json[pos];
+      if (esc) {
+        out.push_back(ch == 'n' ? '\n' : ch == 't' ? '\t' : ch);
+        esc = false;
+        continue;
+      }
+      if (ch == '\\') {
+        esc = true;
+        continue;
+      }
+      if (ch == '"') break;
+      out.push_back(ch);
+    }
+    return out;
+  }
+
+  static void log_ggml_backends(const char* phase) {
+    size_t n = ggml_backend_reg_count();
+    for (size_t i = 0; i < n; i++) {
+      auto reg = ggml_backend_reg_get(i);
+      __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+          "GGML backend [%zu] %s: %s", i, phase, ggml_backend_reg_name(reg));
+    }
+    size_t nd = ggml_backend_dev_count();
+    for (size_t i = 0; i < nd; i++) {
+      auto* dev = ggml_backend_dev_get(i);
+      __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+          "GGML device [%zu] %s: %s (%s)", i, phase,
+          ggml_backend_dev_name(dev), ggml_backend_dev_description(dev));
+    }
+  }
+
+  static bool has_backend(const char* name) {
+    size_t n = ggml_backend_reg_count();
+    for (size_t i = 0; i < n; i++) {
+      auto reg = ggml_backend_reg_get(i);
+      if (std::strcmp(ggml_backend_reg_name(reg), name) == 0) return true;
+    }
+    return false;
+  }
+
+  static bool has_device(const char* name) {
+    return ggml_backend_dev_by_name(name) != nullptr;
+  }
+
+  static void load_snapdragon_accelerators(const std::string& native_lib_dir) {
+    if (native_lib_dir.empty()) return;
+    const std::string opencl = native_lib_dir + "/libggml-opencl.so";
+    const std::string hexagon = native_lib_dir + "/libggml-hexagon.so";
+
+    if (!has_backend("OpenCL")) {
+      ggml_backend_load(opencl.c_str());
+      if (!has_backend("OpenCL")) {
+        load_legacy_backend(opencl, "ggml_backend_opencl_reg");
+      }
+    }
+
+    if (!has_backend("HTP") && !has_device("HTP0")) {
+      ggml_backend_load(hexagon.c_str());
+      if (!has_backend("HTP") && !has_device("HTP0")) {
+        load_legacy_backend(hexagon, "ggml_backend_hexagon_reg");
+      }
+    }
+  }
+
+  static void load_legacy_backend(const std::string& path, const char* reg_symbol) {
+    void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+      __android_log_print(ANDROID_LOG_ERROR, "OmniInferJni",
+          "legacy backend dlopen failed: %s: %s", path.c_str(), dlerror());
+      return;
+    }
+    using reg_fn_t = ggml_backend_reg_t (*)();
+    auto* sym = dlsym(handle, reg_symbol);
+    if (!sym) {
+      __android_log_print(ANDROID_LOG_ERROR, "OmniInferJni",
+          "legacy backend symbol missing: %s in %s", reg_symbol, path.c_str());
+      dlclose(handle);
+      return;
+    }
+    auto reg_fn = reinterpret_cast<reg_fn_t>(sym);
+    ggml_backend_reg_t reg = reg_fn();
+    if (!reg) {
+      __android_log_print(ANDROID_LOG_ERROR, "OmniInferJni",
+          "legacy backend returned null: %s", reg_symbol);
+      dlclose(handle);
+      return;
+    }
+    ggml_backend_register(reg);
+    legacy_backend_handles().push_back(handle);
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "legacy backend registered: %s from %s", ggml_backend_reg_name(reg), path.c_str());
+  }
+
+  static std::vector<void*>& legacy_backend_handles() {
+    static std::vector<void*> handles;
+    return handles;
+  }
+
+  void attach_threadpool(const std::string& config_json,
+                         bool is_npu,
+                         int eff_threads) {
+    const bool wants_threadpool =
+        is_npu ||
+        config_json.find("\"poll\"") != std::string::npos ||
+        config_json.find("\"cpu_mask\"") != std::string::npos ||
+        config_json.find("\"cpu_strict\"") != std::string::npos;
+    if (!wants_threadpool) return;
+
+    struct ggml_threadpool_params tpp;
+    ggml_threadpool_params_init(&tpp, eff_threads);
+    tpp.poll = static_cast<uint32_t>(extract_int(config_json, "poll", 50));
+    std::string mask = extract_string(config_json, "cpu_mask");
+    if (mask.empty() && is_npu) mask = "0xfc";
+    if (!mask.empty()) {
+      parse_cpu_mask(mask, tpp.cpumask);
+    }
+    tpp.strict_cpu = extract_bool(config_json, "cpu_strict", is_npu);
+
+    struct ggml_threadpool_params tpp_batch = tpp;
+    if (config_json.find("\"poll_batch\"") != std::string::npos) {
+      tpp_batch.poll = static_cast<uint32_t>(extract_int(config_json, "poll_batch", tpp.poll));
+    }
+
+    auto* cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    if (!cpu_dev) {
+      __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+          "llama.cpp CPU backend unavailable; using implicit threadpool");
+      return;
+    }
+    auto* reg = ggml_backend_dev_backend_reg(cpu_dev);
+    auto* threadpool_new_fn =
+        (decltype(ggml_threadpool_new)*) ggml_backend_reg_get_proc_address(reg, "ggml_threadpool_new");
+    threadpool_free_fn_ =
+        (decltype(ggml_threadpool_free)*) ggml_backend_reg_get_proc_address(reg, "ggml_threadpool_free");
+    if (!threadpool_new_fn || !threadpool_free_fn_) {
+      __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+          "llama.cpp threadpool functions unavailable; using implicit threadpool");
+      return;
+    }
+
+    threadpool_ = threadpool_new_fn(&tpp);
+    if (!threadpool_) {
+      __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+          "llama.cpp threadpool create failed; using implicit threadpool");
+      return;
+    }
+    if (!ggml_threadpool_params_match(&tpp, &tpp_batch)) {
+      threadpool_batch_ = threadpool_new_fn(&tpp_batch);
+      if (!threadpool_batch_) {
+        __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+            "llama.cpp batch threadpool create failed; sharing main threadpool");
+      }
+    }
+    llama_attach_threadpool(ctx_, threadpool_, threadpool_batch_);
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "llama.cpp threadpool attached: threads=%d poll=%u poll_batch=%u strict=%s mask=%s",
+        eff_threads, tpp.poll, tpp_batch.poll, tpp.strict_cpu ? "true" : "false",
+        mask.empty() ? "<default>" : mask.c_str());
+  }
+
+  static void parse_cpu_mask(const std::string& mask, bool out[GGML_MAX_N_THREADS]) {
+    std::memset(out, 0, GGML_MAX_N_THREADS * sizeof(bool));
+    if (mask.empty()) return;
+    if (mask.rfind("0x", 0) == 0 || mask.rfind("0X", 0) == 0) {
+      unsigned long long bits = std::strtoull(mask.c_str(), nullptr, 16);
+      for (int i = 0; i < 64 && i < GGML_MAX_N_THREADS; i++) {
+        out[i] = ((bits >> i) & 1ULL) != 0;
+      }
+      return;
+    }
+    size_t pos = 0;
+    while (pos < mask.size()) {
+      while (pos < mask.size() && (mask[pos] == ',' || mask[pos] == ' ')) pos++;
+      char* end = nullptr;
+      long idx = std::strtol(mask.c_str() + pos, &end, 10);
+      if (end == mask.c_str() + pos) break;
+      if (idx >= 0 && idx < GGML_MAX_N_THREADS) out[idx] = true;
+      pos = static_cast<size_t>(end - mask.c_str());
+    }
   }
 
   // Parse messages JSON array into common_chat_msg vector.
@@ -764,8 +1101,8 @@ private:
   }
 
   int decode_batched(const std::vector<llama_token>& toks, llama_pos start, bool last_logit = false) {
-    for (int i = 0; i < (int)toks.size(); i += 512) {
-      int n = std::min((int)toks.size() - i, 512);
+    for (int i = 0; i < (int)toks.size(); i += n_batch_) {
+      int n = std::min((int)toks.size() - i, n_batch_);
       common_batch_clear(batch_);
       if (start + i + n >= n_ctx_ - 4) shift_context();
       for (int j = 0; j < n; j++) {
@@ -798,7 +1135,11 @@ private:
   llama_batch batch_ = {};
   llama_pos cur_pos_ = 0;
   int n_ctx_ = 4096;
+  int n_batch_ = 512;
   int n_threads_ = 4;
+  ggml_threadpool_t threadpool_ = nullptr;
+  ggml_threadpool_t threadpool_batch_ = nullptr;
+  void (*threadpool_free_fn_)(ggml_threadpool_t) = nullptr;
   mtmd_context* mtmd_ctx_ = nullptr;
   std::string media_marker_;
   InferenceMetrics last_metrics_;

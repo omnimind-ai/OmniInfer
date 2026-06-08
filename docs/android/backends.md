@@ -45,6 +45,48 @@ Notes:
 - Multimodal support is auto-detected when `mmproj*.gguf` is in the same directory.
 - The Android library statically links llama.cpp into `libomniinfer-jni.so`.
 
+### llama.cpp Hexagon HTP
+
+On supported Snapdragon devices, llama.cpp can use the Hexagon HTP backend for
+GGUF prompt processing:
+
+```kotlin
+OmniInferServer.loadModel(
+    modelPath = "/sdcard/models/Qwen3.5-2B-Q4_0.gguf",
+    backend = "llama.cpp",
+    nThreads = 6,
+    nCtx = 8192,
+    extraConfig = mapOf(
+        "accelerator" to "htp",
+        "llama_device" to "HTP0",
+        "n_gpu_layers" to "99",
+        "batch_size" to "1024",
+        "ubatch_size" to "1024",
+        "cpu_mask" to "0xfc",
+        "cpu_strict" to "true",
+    ),
+)
+```
+
+HTP settings:
+
+| Setting | Effect |
+|---|---|
+| `extraConfig["accelerator"] = "htp"` | Selects the Qualcomm Hexagon path without overloading the framework `backend` name |
+| `extraConfig["llama_device"] = "HTP0"` | Selects llama.cpp device `HTP0` |
+| `extraConfig["n_gpu_layers"] = "99"` | Offloads all supported layers to the selected llama.cpp device |
+| `extraConfig["batch_size"]`, `extraConfig["ubatch_size"]` | Defaults to `1024` for HTP |
+| `extraConfig["cpu_mask"]`, `extraConfig["cpu_strict"]` | Optional CPU thread-pool placement for scheduler/helper work |
+| `extraConfig["backend_type"] = "npu"` | Legacy alias; kept for compatibility, not recommended for new catalog entries |
+
+Use `OmniInferServer.listCatalogModels()` to read the bundled `android-default`
+catalog. Its `runtime.load_options` map is designed to be passed directly as
+`extraConfig`.
+
+For HTP performance, use repackable GGUF quantizations such as Q4_0, Q4_1,
+Q8_0, IQ4_NL, or MXFP4. K-quants such as Q4_K_M can run much slower on this
+backend and are not the default Android HTP catalog path.
+
 ## MNN
 
 Use MNN for MNN-packaged models.
@@ -261,11 +303,20 @@ Switch behavior:
 | Property | Default | When set to `false` |
 |---|---:|---|
 | `omniinfer.backend.llama_cpp` | `true` | Skips llama.cpp JNI build path; `llama.cpp` load requests return a disabled-backend error |
+| `omniinfer.backend.llama_cpp_htp` | Auto-enabled when a local HTP prebuilt dir exists | Skips packaging llama.cpp Snapdragon HTP runtime libraries |
 | `omniinfer.backend.mnn` | `true` | Skips MNN JNI build path; `mnn` load requests return a disabled-backend error |
 | `omniinfer.backend.executorch_qnn` | `true` | Skips QNN native build path and prebuilt runtime download; `executorch-qnn` load requests return a disabled-backend error |
 | `omniinfer.backend.litert_lm` | `true` | Skips LiteRT-LM source set and `litertlm-android` dependency; `litert`/`litert-lm` load requests return a disabled-backend error |
 
 For normal third-party integration, prefer these Gradle properties over direct CMake customization. The `:omniinfer-server` module maps the native backend switches to CMake internally.
+
+For llama.cpp HTP AAR publishing, provide a Snapdragon llama.cpp package lib
+directory when auto-detection is not available:
+
+```bash
+-Pomniinfer.backend.llama_cpp_htp=true \
+-Pomniinfer.llama_cpp.htp_prebuilt_dir=/path/to/llama.cpp/lib
+```
 
 Even a LiteRT-only host app still configures the `:omniinfer-server` external native build for `libomniinfer-jni.so`. Keep Android SDK NDK `28.2.13676358` available, and install SDK CMake/Ninja if AGP reports `[CXX1416] Could not find Ninja on PATH or in SDK CMake bin folders`.
 

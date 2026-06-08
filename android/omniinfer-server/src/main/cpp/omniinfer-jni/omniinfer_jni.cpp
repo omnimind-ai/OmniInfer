@@ -164,7 +164,8 @@ std::optional<std::string> ExtractJsonString(const std::string& json, const std:
   return std::nullopt;
 }
 
-// Extract a raw JSON value (array or object) for a given key.
+// Extract a raw JSON value for a given key. Supports objects, arrays, strings,
+// numbers, booleans, and null so request parameters can be forwarded unchanged.
 std::optional<std::string> ExtractJsonRaw(const std::string& json, const std::string& key) {
   const std::string token = "\"" + key + "\"";
   size_t key_pos = json.find(token);
@@ -174,19 +175,86 @@ std::optional<std::string> ExtractJsonRaw(const std::string& json, const std::st
   size_t pos = colon_pos + 1;
   while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
   if (pos >= json.size()) return std::nullopt;
-  char open = json[pos];
-  if (open != '[' && open != '{') return std::nullopt;
-  char close = (open == '[') ? ']' : '}';
-  int depth = 0;
-  bool in_str = false;
-  for (size_t i = pos; i < json.size(); i++) {
-    char c = json[i];
-    if (in_str) { if (c == '"' && json[i-1] != '\\') in_str = false; continue; }
-    if (c == '"') { in_str = true; continue; }
-    if (c == open) depth++;
-    else if (c == close) { depth--; if (depth == 0) return json.substr(pos, i - pos + 1); }
+
+  const char open = json[pos];
+  if (open == '"' || open == '[' || open == '{') {
+    int object_depth = 0;
+    int array_depth = 0;
+    bool in_str = false;
+    bool esc = false;
+    for (size_t i = pos; i < json.size(); i++) {
+      char c = json[i];
+      if (in_str) {
+        if (esc) { esc = false; continue; }
+        if (c == '\\') { esc = true; continue; }
+        if (c == '"') {
+          in_str = false;
+          if (open == '"' && object_depth == 0 && array_depth == 0) {
+            return json.substr(pos, i - pos + 1);
+          }
+        }
+        continue;
+      }
+      if (c == '"') { in_str = true; continue; }
+      if (c == '{') object_depth++;
+      else if (c == '}') object_depth--;
+      else if (c == '[') array_depth++;
+      else if (c == ']') array_depth--;
+      if ((open == '{' || open == '[') && object_depth == 0 && array_depth == 0) {
+        return json.substr(pos, i - pos + 1);
+      }
+    }
+    return std::nullopt;
   }
-  return std::nullopt;
+
+  if (json.compare(pos, 4, "true") == 0) return json.substr(pos, 4);
+  if (json.compare(pos, 5, "false") == 0) return json.substr(pos, 5);
+  if (json.compare(pos, 4, "null") == 0) return json.substr(pos, 4);
+
+  size_t end = pos;
+  while (end < json.size()) {
+    char c = json[end];
+    if (c == ',' || c == '}' || c == ']' || std::isspace(static_cast<unsigned char>(c))) break;
+    end++;
+  }
+  return end > pos ? std::optional<std::string>(json.substr(pos, end - pos)) : std::nullopt;
+}
+
+std::optional<std::string> ExtractJsonObjectOrArray(const std::string& json, const std::string& key) {
+  auto raw = ExtractJsonRaw(json, key);
+  if (!raw.has_value() || raw->empty()) return std::nullopt;
+  char open = (*raw)[0];
+  return (open == '[' || open == '{') ? raw : std::nullopt;
+}
+
+std::optional<std::string> ExtractJsonNumber(const std::string& json, const std::string& key) {
+  auto raw = ExtractJsonRaw(json, key);
+  if (!raw.has_value() || raw->empty()) return std::nullopt;
+  size_t pos = 0;
+  if ((*raw)[pos] == '-') ++pos;
+  bool saw_digit = false;
+  while (pos < raw->size() && std::isdigit(static_cast<unsigned char>((*raw)[pos]))) {
+    saw_digit = true;
+    ++pos;
+  }
+  if (pos < raw->size() && (*raw)[pos] == '.') {
+    ++pos;
+    while (pos < raw->size() && std::isdigit(static_cast<unsigned char>((*raw)[pos]))) {
+      saw_digit = true;
+      ++pos;
+    }
+  }
+  if (pos < raw->size() && ((*raw)[pos] == 'e' || (*raw)[pos] == 'E')) {
+    ++pos;
+    if (pos < raw->size() && ((*raw)[pos] == '+' || (*raw)[pos] == '-')) ++pos;
+    bool saw_exp_digit = false;
+    while (pos < raw->size() && std::isdigit(static_cast<unsigned char>((*raw)[pos]))) {
+      saw_exp_digit = true;
+      ++pos;
+    }
+    if (!saw_exp_digit) return std::nullopt;
+  }
+  return saw_digit && pos == raw->size() ? raw : std::nullopt;
 }
 
 std::optional<int> ExtractJsonInt(const std::string& json, const std::string& key) {
@@ -313,19 +381,21 @@ jstring NativeGenerate(JNIEnv* env, jobject, jlong handle, jstring system_prompt
 
   const bool thinking = ExtractJsonBool(req, "thinking_enabled").value_or(session->thinking_enabled);
   const int max_tokens = ExtractJsonInt(req, "max_tokens").value_or(0);
-  const auto tools_json = ExtractJsonRaw(req, "tools");
+  const auto tools_json = ExtractJsonObjectOrArray(req, "tools");
   const auto tool_choice = ExtractJsonString(req, "tool_choice");
-  const auto messages_json = ExtractJsonRaw(req, "messages");
+  const auto messages_json = ExtractJsonObjectOrArray(req, "messages");
 
   // Build sampling config JSON from per-request parameters.
   std::string sampling_json;
   {
-    const char* keys[] = {"temperature", "top_p", "top_k",
-                          "repetition_penalty", "frequency_penalty", "presence_penalty"};
+    const char* keys[] = {"temperature", "top_p", "top_k", "seed",
+                          "repetition_penalty", "repeat_penalty",
+                          "frequency_penalty", "presence_penalty",
+                          "min_p", "typical_p", "repeat_last_n"};
     std::ostringstream ss;
     bool first = true;
     for (auto* key : keys) {
-      auto val = ExtractJsonRaw(req, key);
+      auto val = ExtractJsonNumber(req, key);
       if (val.has_value()) {
         ss << (first ? "{" : ",") << "\"" << key << "\":" << *val;
         first = false;

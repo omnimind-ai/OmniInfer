@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "catalog_id": "android-default",
+  "updated": "2026-06-09",
+  "description": "Android model catalog for the OmniInfer AAR package with llama.cpp Qwen3.5 Q4_0 GGUF entries and LiteRT-LM GPU Gemma4 E2B. Qwen3.5 4B defaults to CPU because HTP generation is not reliable on the validated device.",
+  "defaults": {
+    "backend": {
+      "framework": "llama.cpp",
+      "format": "gguf"
+    },
+    "runtime": {
+      "accelerator": "htp",
+      "device": "HTP0",
+      "n_threads": 6,
+      "n_ctx": 8192,
+      "load_options": {
+        "accelerator": "htp",
+        "llama_device": "HTP0",
+        "n_gpu_layers": "99",
+        "batch_size": "1024",
+        "ubatch_size": "1024",
+        "cpu_mask": "0xfc",
+        "cpu_strict": "true"
+      }
+    },
+    "supported_quantizations": [
+      "Q4_0"
+    ]
+  },
+  "models": [
+    {
+      "id": "qwen35-08b-q4-0-gguf-llamacpp-htp",
+      "display_name": "Qwen3.5 0.8B Q4_0",
+      "family": "Qwen3.5",
+      "parameter_size": "0.8B",
+      "vendor": "Qwen",
+      "license": "Apache-2.0",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "chat",
+        "reasoning"
+      ],
+      "backend": {
+        "framework": "llama.cpp",
+        "format": "gguf",
+        "quantization": "Q4_0"
+      },
+      "runtime": {
+        "accelerator": "htp",
+        "device": "HTP0",
+        "n_threads": 6,
+        "n_ctx": 8192,
+        "load_options": {
+          "accelerator": "htp",
+          "llama_device": "HTP0",
+          "n_gpu_layers": "99",
+          "batch_size": "1024",
+          "ubatch_size": "1024",
+          "cpu_mask": "0xfc",
+          "cpu_strict": "true"
+        }
+      },
+      "sources": [
+        {
+          "provider": "ModelScope",
+          "url": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q4_0.gguf",
+          "file_name": "Qwen3.5-0.8B-Q4_0.gguf",
+          "sha256": "444406ddd926550c724ec18d5120a9d40ded44908a063b0e66e9a7e5464c652c",
+          "size_bytes": 507154688
+        },
+        {
+          "provider": "HuggingFace",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_0.gguf",
+          "file_name": "Qwen3.5-0.8B-Q4_0.gguf",
+          "sha256": "444406ddd926550c724ec18d5120a9d40ded44908a063b0e66e9a7e5464c652c",
+          "size_bytes": 507154688
+        }
+      ],
+      "validation": {
+        "status": "metadata_verified",
+        "notes": "URL, SHA256, and size recorded from HuggingFace model metadata. Device inference validation is pending."
+      }
+    },
+    {
+      "id": "qwen35-2b-q4-0-gguf-llamacpp-htp",
+      "display_name": "Qwen3.5 2B Q4_0",
+      "family": "Qwen3.5",
+      "parameter_size": "2B",
+      "vendor": "Qwen",
+      "license": "Apache-2.0",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "chat",
+        "reasoning"
+      ],
+      "backend": {
+        "framework": "llama.cpp",
+        "format": "gguf",
+        "quantization": "Q4_0"
+      },
+      "runtime": {
+        "accelerator": "htp",
+        "device": "HTP0",
+        "n_threads": 6,
+        "n_ctx": 8192,
+        "load_options": {
+          "accelerator": "htp",
+          "llama_device": "HTP0",
+          "n_gpu_layers": "99",
+          "batch_size": "1024",
+          "ubatch_size": "1024",
+          "cpu_mask": "0xfc",
+          "cpu_strict": "true"
+        }
+      },
+      "sources": [
+        {
+          "provider": "ModelScope",
+          "url": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q4_0.gguf",
+          "file_name": "Qwen3.5-2B-Q4_0.gguf",
+          "sha256": "cd70221bebaee0503e0f6717e174250cd7825aa88438b3aabec9ad55731d9bb1",
+          "size_bytes": 1214873856
+        },
+        {
+          "provider": "HuggingFace",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_0.gguf",
+          "file_name": "Qwen3.5-2B-Q4_0.gguf",
+          "sha256": "cd70221bebaee0503e0f6717e174250cd7825aa88438b3aabec9ad55731d9bb1",
+          "size_bytes": 1214873856
+        }
+      ],
+      "validation": {
+        "status": "validated_on_6014",
+        "device": "nubia P0110 / SM8750 / Adreno 830 / Hexagon v79",
+        "notes": "Qwen3.5-2B Q4_0 previously validated with llama-bench HTP0."
+      }
+    },
+    {
+      "id": "qwen35-4b-q4-0-gguf-llamacpp-cpu",
+      "display_name": "Qwen3.5 4B Q4_0",
+      "family": "Qwen3.5",
+      "parameter_size": "4B",
+      "vendor": "Qwen",
+      "license": "Apache-2.0",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "chat",
+        "reasoning"
+      ],
+      "backend": {
+        "framework": "llama.cpp",
+        "format": "gguf",
+        "quantization": "Q4_0"
+      },
+      "runtime": {
+        "accelerator": "cpu",
+        "device": "CPU",
+        "n_threads": 6,
+        "n_ctx": 8192,
+        "load_options": {
+          "accelerator": "cpu",
+          "llama_device": "cpu",
+          "batch_size": "512",
+          "ubatch_size": "512",
+          "cpu_mask": "0xfc",
+          "cpu_strict": "true"
+        }
+      },
+      "sources": [
+        {
+          "provider": "ModelScope",
+          "url": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q4_0.gguf",
+          "file_name": "Qwen3.5-4B-Q4_0.gguf",
+          "sha256": "298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb",
+          "size_bytes": 2583221408
+        },
+        {
+          "provider": "HuggingFace",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_0.gguf",
+          "file_name": "Qwen3.5-4B-Q4_0.gguf",
+          "sha256": "298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb",
+          "size_bytes": 2583221408
+        }
+      ],
+      "validation": {
+        "status": "validated_on_6014_cpu",
+        "device": "nubia P0110 / SM8750 / Adreno 830",
+        "notes": "llama.cpp CPU smoke returned correct QWEN_CPU_OK output on 6014. llama.cpp HTP loads but generated incorrect text in prior pp1024 streaming and non-streaming tests, so this catalog entry defaults to CPU."
+      }
+    },
+    {
+      "id": "gemma4-e2b-litertlm-gpu",
+      "display_name": "Gemma4 E2B LiteRT-LM GPU",
+      "family": "Gemma 4",
+      "parameter_size": "E2B",
+      "vendor": "Google",
+      "license": "Gemma Terms of Use",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "chat",
+        "reasoning"
+      ],
+      "backend": {
+        "framework": "litert",
+        "format": "litertlm",
+        "quantization": "int4"
+      },
+      "runtime": {
+        "accelerator": "gpu",
+        "device": "GPU",
+        "n_threads": 4,
+        "n_ctx": 8192,
+        "load_options": {
+          "backend_type": "gpu",
+          "litert_backend": "gpu"
+        }
+      },
+      "sources": [
+        {
+          "provider": "HuggingFace",
+          "url": "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+          "file_name": "gemma-4-E2B-it.litertlm",
+          "sha256": "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c",
+          "size_bytes": 2588147712
+        }
+      ],
+      "validation": {
+        "status": "metadata_verified",
+        "notes": "HF LFS metadata verified via /api/models/litert-community/gemma-4-E2B-it-litert-lm?blobs=true. Device inference validation is pending for this AAR."
+      }
+    }
+  ]
+}

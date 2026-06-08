@@ -1,11 +1,43 @@
+import org.gradle.jvm.tasks.Jar
+import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    id("maven-publish")
+    id("signing")
 }
 
 val ktorVersion: String = findProperty("omniinfer.ktor.version")?.toString() ?: "3.1.3"
+val omniInferMavenGroup: String =
+    findProperty("omniinfer.maven.group")?.toString() ?: "io.github.omnimind-ai"
+val omniInferMavenArtifact: String =
+    findProperty("omniinfer.maven.artifact")?.toString() ?: "omniinfer"
+val omniInferMavenVersion: String =
+    findProperty("omniinfer.maven.version")?.toString() ?: "0.1.0-SNAPSHOT"
+val omniInferMavenRepo: String =
+    findProperty("omniinfer.maven.repo")?.toString() ?: layout.buildDirectory.dir("repo").get().asFile.absolutePath
+val omniInferRepoDir: File = projectDir.parentFile.parentFile
+val omniInferMavenScmUrl: String =
+    findProperty("omniinfer.maven.scm.url")?.toString() ?: "https://github.com/omnimind-ai/OmniInfer"
+val omniInferMavenScmConnection: String =
+    findProperty("omniinfer.maven.scm.connection")?.toString()
+        ?: "scm:git:https://github.com/omnimind-ai/OmniInfer.git"
+val omniInferMavenScmDeveloperConnection: String =
+    findProperty("omniinfer.maven.scm.developerConnection")?.toString()
+        ?: "scm:git:ssh://git@github.com/omnimind-ai/OmniInfer.git"
+val omniInferMavenDeveloperId: String =
+    findProperty("omniinfer.maven.developer.id")?.toString() ?: "omnimind-ai"
+val omniInferMavenDeveloperName: String =
+    findProperty("omniinfer.maven.developer.name")?.toString() ?: "OmniMind AI"
+val omniInferMavenDeveloperUrl: String =
+    findProperty("omniinfer.maven.developer.url")?.toString() ?: "https://github.com/omnimind-ai"
+val hasInMemorySigningKey: Boolean =
+    !findProperty("signingInMemoryKey")?.toString().isNullOrBlank()
+
+group = omniInferMavenGroup
+version = omniInferMavenVersion
 
 fun boolProperty(name: String, default: Boolean = true): Boolean =
     findProperty(name)?.toString()?.toBooleanStrictOrNull() ?: default
@@ -14,6 +46,42 @@ val enableLlamaCpp: Boolean = boolProperty("omniinfer.backend.llama_cpp")
 val enableMnn: Boolean = boolProperty("omniinfer.backend.mnn")
 val enableExecutorchQnn: Boolean = boolProperty("omniinfer.backend.executorch_qnn")
 val enableLiteRtLm: Boolean = boolProperty("omniinfer.backend.litert_lm")
+val enableMnnThreadPool: Boolean = boolProperty("omniinfer.mnn.thread_pool")
+val llamaCppHtpPrebuiltDir: File =
+    findProperty("omniinfer.llama_cpp.htp_prebuilt_dir")?.toString()?.let(::File)
+        ?: File(omniInferRepoDir, "tmp/llama-cpp-submodule-snapdragon-minpkg-8a091c47/lib")
+val enableLlamaCppHtp: Boolean =
+    boolProperty("omniinfer.backend.llama_cpp_htp", enableLlamaCpp && llamaCppHtpPrebuiltDir.isDirectory)
+val llamaCppRuntimeJniDir = layout.buildDirectory.dir("generated/llamaCppRuntimeJniLibs")
+val llamaCppHtpRuntimeFiles = listOf(
+    "libggml-opencl.so",
+    "libggml-hexagon.so",
+    "libggml-htp-v68.so",
+    "libggml-htp-v69.so",
+    "libggml-htp-v73.so",
+    "libggml-htp-v75.so",
+    "libggml-htp-v79.so",
+    "libggml-htp-v81.so",
+)
+
+val syncLlamaCppHtpJniLibs by tasks.registering {
+    description = "Collect llama.cpp Snapdragon HTP runtime libraries for AAR packaging"
+    onlyIf { enableLlamaCppHtp }
+    outputs.dir(llamaCppRuntimeJniDir)
+    doLast {
+        val outputDir = llamaCppRuntimeJniDir.get().dir("arm64-v8a").asFile
+        outputDir.mkdirs()
+        llamaCppHtpRuntimeFiles.forEach { name ->
+            val prebuiltLib = File(llamaCppHtpPrebuiltDir, name).takeIf { it.isFile }
+            val source = prebuiltLib ?: throw GradleException(
+                "Missing llama.cpp HTP runtime library $name. " +
+                    "Pass -Pomniinfer.llama_cpp.htp_prebuilt_dir=/path/to/llama.cpp/lib " +
+                    "or disable -Pomniinfer.backend.llama_cpp_htp=false."
+            )
+            source.copyTo(File(outputDir, name), overwrite = true)
+        }
+    }
+}
 
 // --- ExecuTorch QNN: auto-download pre-built binaries ---
 if (enableExecutorchQnn) {
@@ -92,6 +160,9 @@ android {
                 arguments += "-DOMNIINFER_BACKEND_LLAMA_CPP=${if (enableLlamaCpp) "ON" else "OFF"}"
                 arguments += "-DOMNIINFER_BACKEND_MNN=${if (enableMnn) "ON" else "OFF"}"
                 arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=${if (enableExecutorchQnn) "ON" else "OFF"}"
+                if (enableMnn) {
+                    arguments += "-DMNN_USE_THREAD_POOL=${if (enableMnnThreadPool) "ON" else "OFF"}"
+                }
             }
         }
     }
@@ -101,6 +172,20 @@ android {
             if (enableLiteRtLm) {
                 java.srcDir("src/litertLm/java")
             }
+            val jniLibDirs = mutableListOf<File>()
+            if (enableLlamaCppHtp) {
+                jniLibDirs += llamaCppRuntimeJniDir.get().asFile
+            }
+            if (enableExecutorchQnn) {
+                jniLibDirs += file("src/main/jniLibs")
+            }
+            jniLibs.setSrcDirs(jniLibDirs)
+        }
+    }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
         }
     }
 
@@ -131,14 +216,110 @@ kotlin {
 }
 
 dependencies {
-    compileOnly("io.ktor:ktor-server-core:$ktorVersion")
-    compileOnly("io.ktor:ktor-server-cio:$ktorVersion")
-    compileOnly("io.ktor:ktor-server-content-negotiation:$ktorVersion")
-    compileOnly("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("io.ktor:ktor-server-core:$ktorVersion")
+    implementation("io.ktor:ktor-server-cio:$ktorVersion")
+    implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
     if (enableLiteRtLm) {
         implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.contains("JniLibFolders") }
+    .configureEach { dependsOn(syncLlamaCppHtpJniLibs) }
+
+val mavenCentralJavadocDir = layout.buildDirectory.dir("generated/mavenCentralJavadoc")
+
+val generateMavenCentralJavadoc by tasks.registering {
+    description = "Generate placeholder API documentation for Maven Central publication"
+    outputs.dir(mavenCentralJavadocDir)
+    doLast {
+        val outputFile = mavenCentralJavadocDir.get().file("README.md").asFile
+        outputFile.parentFile.mkdirs()
+        outputFile.writeText(
+            """
+            # OmniInfer Android
+
+            Android local inference server for llama.cpp CPU/HTP and LiteRT-LM GPU.
+            API entry point: com.omniinfer.server.OmniInferServer.
+            """.trimIndent() + "\n",
+        )
+    }
+}
+
+val mavenCentralJavadocJar by tasks.registering(Jar::class) {
+    description = "Package API documentation for Maven Central publication"
+    archiveClassifier.set("javadoc")
+    dependsOn(generateMavenCentralJavadoc)
+    from(mavenCentralJavadocDir)
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                groupId = omniInferMavenGroup
+                artifactId = omniInferMavenArtifact
+                version = omniInferMavenVersion
+                artifact(mavenCentralJavadocJar)
+                pom {
+                    name.set("OmniInfer Android")
+                    description.set("Android local inference server for llama.cpp CPU/HTP and LiteRT-LM GPU.")
+                    inceptionYear.set("2026")
+                    url.set(omniInferMavenScmUrl)
+                    licenses {
+                        license {
+                            name.set("The Apache License, Version 2.0")
+                            url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                            distribution.set("repo")
+                        }
+                    }
+                    developers {
+                        developer {
+                            id.set(omniInferMavenDeveloperId)
+                            name.set(omniInferMavenDeveloperName)
+                            url.set(omniInferMavenDeveloperUrl)
+                        }
+                    }
+                    scm {
+                        url.set(omniInferMavenScmUrl)
+                        connection.set(omniInferMavenScmConnection)
+                        developerConnection.set(omniInferMavenScmDeveloperConnection)
+                    }
+                }
+            }
+        }
+        repositories {
+            maven {
+                name = "omniInferLocal"
+                url = uri(omniInferMavenRepo)
+            }
+        }
+    }
+
+    if (hasInMemorySigningKey) {
+        signing {
+            useInMemoryPgpKeys(
+                findProperty("signingInMemoryKey")?.toString(),
+                findProperty("signingInMemoryKeyPassword")?.toString(),
+            )
+            sign(publishing.publications["release"])
+        }
+    }
+}
+
+tasks.register<Zip>("bundleMavenCentralPublication") {
+    description = "Create a Maven Central upload bundle from the local Maven repository"
+    group = "publishing"
+    dependsOn("publishReleasePublicationToOmniInferLocalRepository")
+    archiveFileName.set("${omniInferMavenArtifact}-${omniInferMavenVersion}-maven-central-bundle.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+    val publicationPath = "${omniInferMavenGroup.replace('.', '/')}/$omniInferMavenArtifact/$omniInferMavenVersion"
+    from(File(omniInferMavenRepo, publicationPath)) {
+        into(publicationPath)
     }
 }
