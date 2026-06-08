@@ -97,7 +97,7 @@ repositories {
 }
 
 dependencies {
-    implementation("ai.omnimind:omniinfer-android:0.1.0-SNAPSHOT")
+    implementation("io.github.omnimind-ai:omniinfer:0.1.0-SNAPSHOT")
 }
 ```
 
@@ -139,7 +139,7 @@ cd tmp/test_apps/OmniInferServerTest
 The bundle is written to:
 
 ```text
-android/omniinfer-server/build/distributions/omniinfer-android-0.1.0-maven-central-bundle.zip
+android/omniinfer-server/build/distributions/omniinfer-0.1.0-maven-central-bundle.zip
 ```
 
 To generate `.asc` signatures for Maven Central validation, provide signing
@@ -154,7 +154,7 @@ signingInMemoryKeyPassword=...
 POM metadata can be overridden without editing the build script:
 
 ```bash
--Pomniinfer.maven.group=ai.omnimind \
+-Pomniinfer.maven.group=io.github.omnimind-ai \
 -Pomniinfer.maven.developer.id=omnimind-ai \
 -Pomniinfer.maven.developer.name="OmniMind AI" \
 -Pomniinfer.maven.scm.url=https://github.com/omnimind-ai/OmniInfer

@@ -11,7 +11,9 @@ plugins {
 
 val ktorVersion: String = findProperty("omniinfer.ktor.version")?.toString() ?: "3.1.3"
 val omniInferMavenGroup: String =
-    findProperty("omniinfer.maven.group")?.toString() ?: "ai.omnimind"
+    findProperty("omniinfer.maven.group")?.toString() ?: "io.github.omnimind-ai"
+val omniInferMavenArtifact: String =
+    findProperty("omniinfer.maven.artifact")?.toString() ?: "omniinfer"
 val omniInferMavenVersion: String =
     findProperty("omniinfer.maven.version")?.toString() ?: "0.1.0-SNAPSHOT"
 val omniInferMavenRepo: String =
@@ -261,7 +263,7 @@ afterEvaluate {
             create<MavenPublication>("release") {
                 from(components["release"])
                 groupId = omniInferMavenGroup
-                artifactId = "omniinfer-android"
+                artifactId = omniInferMavenArtifact
                 version = omniInferMavenVersion
                 artifact(mavenCentralJavadocJar)
                 pom {
@@ -314,9 +316,9 @@ tasks.register<Zip>("bundleMavenCentralPublication") {
     description = "Create a Maven Central upload bundle from the local Maven repository"
     group = "publishing"
     dependsOn("publishReleasePublicationToOmniInferLocalRepository")
-    archiveFileName.set("omniinfer-android-${omniInferMavenVersion}-maven-central-bundle.zip")
+    archiveFileName.set("${omniInferMavenArtifact}-${omniInferMavenVersion}-maven-central-bundle.zip")
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
-    val publicationPath = "${omniInferMavenGroup.replace('.', '/')}/omniinfer-android/$omniInferMavenVersion"
+    val publicationPath = "${omniInferMavenGroup.replace('.', '/')}/$omniInferMavenArtifact/$omniInferMavenVersion"
     from(File(omniInferMavenRepo, publicationPath)) {
         into(publicationPath)
     }
