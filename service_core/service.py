@@ -113,6 +113,10 @@ def resolve_api_key(cli_value: str | None, config: dict[str, Any], *, generate_s
     raw = (cli_value if cli_value is not None else str(config.get("api_key", ""))).strip()
     if not raw:
         raw = os.environ.get("OMNIINFER_API_KEY", "").strip()
+    if raw.lower() == "auto":
+        if generate_session_key:
+            return ResolvedApiKey("oi_" + secrets.token_urlsafe(24), generated=True)
+        return ResolvedApiKey("")
     if raw:
         return ResolvedApiKey(raw, generated=False)
     if generate_session_key:

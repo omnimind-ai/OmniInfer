@@ -988,6 +988,14 @@ class ConfigValidationTests(unittest.TestCase):
         )
         self.assertEqual(args.host, "127.0.0.1")
 
+    def test_api_key_auto_generates_session_key(self) -> None:
+        from service_core.service import resolve_api_key
+
+        key = resolve_api_key("auto", {}, generate_session_key=True)
+
+        self.assertTrue(key.generated)
+        self.assertTrue(key.value.startswith("oi_"))
+
     def test_lan_cloudflare_mode_defaults_to_all_interfaces(self) -> None:
         args = parse_args(
             {"host": "127.0.0.1", "port": 9000, "default_backend": "", "default_thinking": "off", "startup_timeout": 60},
