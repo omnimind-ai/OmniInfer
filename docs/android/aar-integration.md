@@ -187,15 +187,28 @@ val ok = OmniInferServer.loadModel(
 )
 ```
 
+LiteRT-LM GPU:
+
+```kotlin
+val ok = OmniInferServer.loadModel(
+    modelPath = target.absolutePath,
+    backend = "litert",
+    port = 9099,
+    nThreads = 4,
+    nCtx = 8192,
+    extraConfig = mapOf(
+        "backend_type" to "gpu",
+        "litert_backend" to "gpu",
+    ),
+)
+```
+
 Other backend selectors:
 
 | Runtime | `backend` | `extraConfig` |
 |---|---|---|
 | llama.cpp CPU | `llama.cpp` | none |
 | llama.cpp HTP | `llama.cpp` | `accelerator=htp`, `backend_type=npu`, `llama_device=HTP0` |
-| MNN CPU | `mnn` | none |
-| MNN OpenCL | `mnn` | `backend_type=opencl`, `gpu_mode=68` |
-| LiteRT-LM CPU | `litert` | `backend_type=cpu` |
 | LiteRT-LM GPU | `litert` | `backend_type=gpu` |
 
 Always handle load failure:
