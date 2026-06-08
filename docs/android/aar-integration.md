@@ -1,19 +1,28 @@
 # Android AAR Integration
 
-This guide shows the minimal path for a third-party Android app to consume
-OmniInfer Android as an AAR.
+This guide is for Android apps that consume OmniInfer as a Maven AAR.
 
-The example app is available at:
+OmniInfer starts an on-device OpenAI-compatible HTTP server inside your app
+process. Your app provides a local model file, loads it through the SDK, then
+sends requests to `127.0.0.1`.
 
-```text
-tmp/test_apps/ThirdPartyAarDemo
-```
+## Requirements
 
-It intentionally does not include the OmniInfer source module.
+| Item | Value |
+|---|---|
+| minSdk | 26+ |
+| ABI | `arm64-v8a` |
+| compileSdk | 35 recommended |
+| Kotlin Gradle plugin | 2.3.0+ |
+| AndroidX | enabled |
 
-## 1. Add The Maven Repository
+OmniInfer is distributed with Maven metadata. Use the Maven dependency instead
+of copying a flat `.aar` into `libs/`; Maven lets Gradle resolve OmniInfer's
+runtime dependencies and consumer ProGuard rules correctly.
 
-Use Maven Central after the artifact is published:
+## Gradle Setup
+
+In `settings.gradle.kts`:
 
 ```kotlin
 dependencyResolutionManagement {
@@ -24,42 +33,6 @@ dependencyResolutionManagement {
     }
 }
 ```
-
-For local validation before Central sync, add the generated local Maven repo:
-
-```kotlin
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        google()
-        mavenCentral()
-        maven {
-            name = "omniInferLocal"
-            url = uri("/path/to/OmniInfer/android/omniinfer-server/build/repo")
-        }
-    }
-}
-```
-
-## 2. Add The Dependency
-
-In the host app module:
-
-```kotlin
-dependencies {
-    implementation("ai.omnimind:omniinfer-android:0.1.0-alpha01")
-
-    // Only needed if the app sends HTTP requests with OkHttp.
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-}
-```
-
-The Maven AAR brings OmniInfer's transitive runtime dependencies, including
-Ktor, kotlinx serialization, coroutines, and AndroidX Core. Prefer Maven
-consumption over a flat `libs/*.aar` file; flat AAR consumption does not carry
-POM dependencies.
-
-## 3. Configure AndroidX And Native Packaging
 
 In the root `gradle.properties`:
 
@@ -67,14 +40,24 @@ In the root `gradle.properties`:
 android.useAndroidX=true
 ```
 
-In the host app module:
+In the app module:
 
 ```kotlin
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
 android {
     compileSdk = 35
 
     defaultConfig {
         minSdk = 26
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     packaging {
@@ -82,13 +65,30 @@ android {
             useLegacyPackaging = true
         }
     }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+dependencies {
+    implementation("ai.omnimind:omniinfer-android:0.1.0-alpha01")
 }
 ```
 
-`useLegacyPackaging = true` extracts native libraries as regular files. This is
-required by accelerator runtimes that need `.so` paths on disk.
+`useLegacyPackaging = true` is required because several native runtimes need
+real `.so` files on disk.
 
-## 4. Add Permissions
+## Manifest
+
+Add these permissions:
 
 ```xml
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -97,54 +97,75 @@ required by accelerator runtimes that need `.so` paths on disk.
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 ```
 
-`POST_NOTIFICATIONS` is needed on Android 13+ if the host targets API 33+ and
-wants the foreground service notification to be visible.
+OmniInfer's AAR contributes its service declaration through manifest merge. The
+host app does not need to declare `OmniInferService` manually.
 
-OmniInfer's AAR manifest contributes the foreground service declaration and
-optional native library declarations. The host app does not need to declare
-`OmniInferService` manually when using the Maven AAR.
+OmniInfer serves HTTP on localhost. If your app targets Android 9+ and uses the
+HTTP endpoint directly, allow cleartext traffic for `127.0.0.1`.
 
-## 5. Initialize And Load A Model
+`res/xml/network_security_config.xml`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
+```
+
+`AndroidManifest.xml`:
+
+```xml
+<application
+    android:networkSecurityConfig="@xml/network_security_config"
+    ... >
+```
+
+## Model Files
+
+Model weights are not packaged in the AAR. Store downloaded models in a path
+your app can read, such as:
 
 ```kotlin
-import com.omniinfer.server.OmniInferServer
+val modelDir = File(context.filesDir, "models")
+```
 
+OmniInfer includes a model catalog with names, backend settings, download URLs,
+file size, and SHA256. Use it to drive your model picker and downloader:
+
+```kotlin
 OmniInferServer.init(applicationContext)
+
+val models = OmniInferServer.listCatalogModels()
+val selected = models.first { it.id == "qwen35-2b-q4-0-gguf-llamacpp-htp" }
+val source = selected.sources.first()
+val target = File(modelDir, source.fileName)
 ```
 
-Read the model catalog bundled in the AAR instead of hard-coding model names in
-the host app:
+Download `source.url` into `target`, verify `source.sha256`, then call
+`loadModel()`. Do not rely on `/data/local/tmp` in production apps; normal
+Android app UIDs often cannot list or read arbitrary files there.
+
+## Load A Model
+
+CPU llama.cpp:
 
 ```kotlin
-val catalogModels = OmniInferServer.listCatalogModels()
-val first = catalogModels.first()
-val loadConfig = first.loadConfig
-val source = first.sources.firstOrNull()
-```
-
-The catalog provides display names, backend framework, quantization, recommended
-runtime config, download URLs, size, and SHA256. The host app remains
-responsible for the local model file lifecycle. A typical app flow is:
-
-1. derive an app-local or device-local target path from `source.fileName`;
-2. check whether that exact file already exists;
-3. optionally search known model roots such as `/data/local/tmp` for the same
-   file name;
-4. create a symlink or copy only if Android permissions allow it;
-5. show `Not found` when no local file is available;
-6. download from `source.url` when the user taps a download button;
-7. verify `source.sha256` before calling `loadModel()`.
-
-On normal Android devices, third-party app UIDs may be unable to list or write
-directly under `/data/local/tmp`. Use app-specific storage for production apps
-unless your test environment intentionally exposes a shared model directory.
-
-Then load the local file:
-
-```kotlin
-
 val ok = OmniInferServer.loadModel(
-    modelPath = "/data/local/tmp/gguf/gemma-4-e2b-it-edited-q4_0.gguf",
+    modelPath = target.absolutePath,
+    backend = "llama.cpp",
+    port = 9099,
+    nThreads = 6,
+    nCtx = 8192,
+)
+```
+
+Snapdragon HTP llama.cpp:
+
+```kotlin
+val ok = OmniInferServer.loadModel(
+    modelPath = target.absolutePath,
     backend = "llama.cpp",
     port = 9099,
     nThreads = 6,
@@ -152,40 +173,44 @@ val ok = OmniInferServer.loadModel(
     extraConfig = mapOf(
         "accelerator" to "htp",
         "backend_type" to "npu",
+        "llama_device" to "HTP0",
+        "n_gpu_layers" to "99",
+        "batch_size" to "1024",
+        "ubatch_size" to "1024",
     ),
 )
+```
 
+Other backend selectors:
+
+| Runtime | `backend` | `extraConfig` |
+|---|---|---|
+| llama.cpp CPU | `llama.cpp` | none |
+| llama.cpp HTP | `llama.cpp` | `accelerator=htp`, `backend_type=npu`, `llama_device=HTP0` |
+| MNN CPU | `mnn` | none |
+| MNN OpenCL | `mnn` | `backend_type=opencl`, `gpu_mode=68` |
+| LiteRT-LM CPU | `litert` | `backend_type=cpu` |
+| LiteRT-LM GPU | `litert` | `backend_type=gpu` |
+
+Always handle load failure:
+
+```kotlin
 if (!ok) {
     val reason = OmniInferServer.getLastError()
 }
 ```
 
-Common backend values:
+## Send Requests
 
-| Backend | `backend` | Typical `extraConfig` |
-|---|---|---|
-| llama.cpp CPU | `llama.cpp` | empty |
-| llama.cpp Snapdragon HTP | `llama.cpp` | `accelerator=htp`, `backend_type=npu` |
-| MNN CPU | `mnn` | empty |
-| MNN OpenCL | `mnn` | `backend_type=opencl`, `gpu_mode=68` |
-| LiteRT-LM CPU | `litert` | `backend_type=cpu` |
-| LiteRT-LM GPU | `litert` | `backend_type=gpu` |
-
-Models are not packaged in the AAR. The host app should download model files at
-runtime or manage them in app-specific storage.
-
-## 6. Send An OpenAI-Compatible Request
-
-After `loadModel()` succeeds, OmniInfer starts a local HTTP server:
+After `loadModel()` succeeds, send OpenAI-compatible requests to:
 
 ```text
-http://127.0.0.1:9099
+http://127.0.0.1:9099/v1/chat/completions
 ```
 
-Minimal non-streaming request:
+Minimal non-streaming body:
 
-```kotlin
-val json = """
+```json
 {
   "model": "local-model",
   "messages": [
@@ -198,44 +223,27 @@ val json = """
   "max_tokens": 8,
   "reasoning_effort": "none"
 }
-""".trimIndent()
 ```
 
-POST it to:
+The response follows the OpenAI chat completions shape and includes OmniInfer
+usage metrics such as prompt tokens, completion tokens, prefill speed, decode
+speed, and time to first token.
 
-```text
-/v1/chat/completions
-```
-
-The response includes OpenAI-compatible `choices` plus OmniInfer `usage`
-metrics such as prompt tokens, completion tokens, prefill speed, decode speed,
-and time to first token.
-
-## 7. Stop Or Replace The Model
+## Stop Inference
 
 ```kotlin
 OmniInferServer.unloadModel()
 OmniInferServer.stop()
 ```
 
-Call `stop()` when the host app no longer needs local inference.
+Call `unloadModel()` before loading a different model. Call `stop()` when your
+app no longer needs the local server.
 
-## Validation Example
+## Common Integration Checks
 
-`ThirdPartyAarDemo` was built with only the AAR dependency and installed on
-device `6014`. Gemma4 E2B Q4_0 loaded with llama.cpp HTP:
-
-```text
-GGML device [1] after load_all: HTP0 (Hexagon)
-llama.cpp selected device=HTP0 n_gpu_layers=99 mmap=false
-llama.cpp context configured: ctx=8192 batch=1024 ubatch=1024 threads=6 backend_type=npu accelerator=htp device=HTP0
-```
-
-The local `/v1/chat/completions` endpoint returned:
-
-```text
-READY
-```
-
-with `prefill_tokens_per_second=79.8` and `decode_tokens_per_second=19.1` for
-the short smoke request.
+- Use Maven dependency resolution, not a flat AAR, so transitive dependencies are present.
+- Enable AndroidX with `android.useAndroidX=true`.
+- Restrict native packaging to `arm64-v8a` and keep `useLegacyPackaging=true`.
+- Store models in app-readable storage and verify SHA256 before loading.
+- Allow localhost cleartext HTTP if the app calls `127.0.0.1`.
+- For HTP, confirm logcat contains `HTP0 (Hexagon)` or `selected device=HTP0`.
