@@ -110,6 +110,38 @@ optional native library declarations. The host app does not need to declare
 import com.omniinfer.server.OmniInferServer
 
 OmniInferServer.init(applicationContext)
+```
+
+Read the model catalog bundled in the AAR instead of hard-coding model names in
+the host app:
+
+```kotlin
+val catalogModels = OmniInferServer.listCatalogModels()
+val first = catalogModels.first()
+val loadConfig = first.loadConfig
+val source = first.sources.firstOrNull()
+```
+
+The catalog provides display names, backend framework, quantization, recommended
+runtime config, download URLs, size, and SHA256. The host app remains
+responsible for the local model file lifecycle. A typical app flow is:
+
+1. derive an app-local or device-local target path from `source.fileName`;
+2. check whether that exact file already exists;
+3. optionally search known model roots such as `/data/local/tmp` for the same
+   file name;
+4. create a symlink or copy only if Android permissions allow it;
+5. show `Not found` when no local file is available;
+6. download from `source.url` when the user taps a download button;
+7. verify `source.sha256` before calling `loadModel()`.
+
+On normal Android devices, third-party app UIDs may be unable to list or write
+directly under `/data/local/tmp`. Use app-specific storage for production apps
+unless your test environment intentionally exposes a shared model directory.
+
+Then load the local file:
+
+```kotlin
 
 val ok = OmniInferServer.loadModel(
     modelPath = "/data/local/tmp/gguf/gemma-4-e2b-it-edited-q4_0.gguf",
