@@ -150,66 +150,81 @@ val target = File(modelDir, source.fileName)
 ```
 
 Download `source.url` into `target`, verify `source.sha256`, then call
-`loadModel()`. Do not rely on `/data/local/tmp` in production apps; normal
-Android app UIDs often cannot list or read arbitrary files there.
+`loadModel()`. `modelPath` is the absolute path to the model entry file:
+
+| Format | `modelPath` value |
+|---|---|
+| GGUF / llama.cpp | Path to the `.gguf` file |
+| LiteRT-LM | Path to the `.litertlm` file |
+| MNN | Path to the model directory's `config.json` |
+| ExecuTorch QNN | Path to the `.pte` file |
+
+Do not pass the containing directory for GGUF or LiteRT-LM models. Do not rely
+on `/data/local/tmp` in production apps; normal Android app UIDs often cannot
+list or read arbitrary files there.
 
 ## Load A Model
 
-CPU llama.cpp:
+The shortest load path is:
 
 ```kotlin
 val ok = OmniInferServer.loadModel(
     modelPath = target.absolutePath,
-    backend = "llama.cpp",
-    port = 9099,
-    nThreads = 6,
-    nCtx = 8192,
 )
 ```
 
-Snapdragon HTP llama.cpp:
+OmniInfer first matches `modelPath` against the bundled catalog file names. If
+it finds a match, it applies the catalog's backend, thread, context, and load
+defaults automatically. If there is no catalog match, it falls back by file
+extension: `.gguf` -> `llama.cpp/cpu`, `.litertlm` -> `litert/gpu`,
+`config.json` -> `mnn/cpu`, `.pte` -> `executorch-qnn`.
 
-```kotlin
-val ok = OmniInferServer.loadModel(
-    modelPath = target.absolutePath,
-    backend = "llama.cpp",
-    port = 9099,
-    nThreads = 6,
-    nCtx = 8192,
-    extraConfig = mapOf(
-        "accelerator" to "htp",
-        "backend_type" to "npu",
-        "llama_device" to "HTP0",
-        "n_gpu_layers" to "99",
-        "batch_size" to "1024",
-        "ubatch_size" to "1024",
-    ),
-)
-```
+For explicit selection, use these public backend names:
 
-LiteRT-LM GPU:
-
-```kotlin
-val ok = OmniInferServer.loadModel(
-    modelPath = target.absolutePath,
-    backend = "litert",
-    port = 9099,
-    nThreads = 4,
-    nCtx = 8192,
-    extraConfig = mapOf(
-        "backend_type" to "gpu",
-        "litert_backend" to "gpu",
-    ),
-)
-```
-
-Other backend selectors:
-
-| Runtime | `backend` | `extraConfig` |
+| Runtime | `backend` selector | Notes |
 |---|---|---|
-| llama.cpp CPU | `llama.cpp` | none |
-| llama.cpp HTP | `llama.cpp` | `accelerator=htp`, `backend_type=npu`, `llama_device=HTP0` |
-| LiteRT-LM GPU | `litert` | `backend_type=gpu` |
+| llama.cpp CPU | `OmniInferBackend.LLAMA_CPP_CPU` / `"llama.cpp/cpu"` | No accelerator options |
+| llama.cpp HTP | `OmniInferBackend.LLAMA_CPP_HTP` / `"llama.cpp/htp"` | Adds `HTP0`, offload, and HTP batch defaults |
+| LiteRT-LM GPU | `OmniInferBackend.LITERT_GPU` / `"litert/gpu"` | Adds LiteRT GPU backend defaults |
+
+Useful overrides stay small:
+
+```kotlin
+val ok = OmniInferServer.loadModel(
+    modelPath = target.absolutePath,
+    backend = OmniInferBackend.LLAMA_CPP_HTP,
+    port = 9099,
+    nThreads = 6,
+    nCtx = 8192,
+)
+```
+
+```kotlin
+val ok = OmniInferServer.loadModel(
+    modelPath = target.absolutePath,
+    backend = OmniInferBackend.LITERT_GPU,
+    port = 9099,
+    nCtx = 8192,
+)
+```
+
+Use `OmniInferLoadOptions` when you prefer grouping load settings:
+
+```kotlin
+val ok = OmniInferServer.loadModel(
+    modelPath = target.absolutePath,
+    options = OmniInferLoadOptions(
+        backend = OmniInferBackend.LLAMA_CPP_HTP,
+        port = 9099,
+        nThreads = 6,
+        nCtx = 8192,
+    ),
+)
+```
+
+Backend-specific `extraConfig` is still available for advanced overrides, but
+normal third-party apps should prefer catalog defaults or the backend selectors
+above.
 
 Always handle load failure:
 
