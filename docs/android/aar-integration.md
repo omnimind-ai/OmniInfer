@@ -55,7 +55,7 @@ For larger apps, keep the version in `gradle/libs.versions.toml`:
 
 ```toml
 [versions]
-omniinfer = "0.2.3"
+omniinfer = "0.2.4"
 
 [libraries]
 omniinfer = { module = "io.github.omnimind-ai:omniinfer", version.ref = "omniinfer" }
