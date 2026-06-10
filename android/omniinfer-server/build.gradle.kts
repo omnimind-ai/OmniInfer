@@ -1,6 +1,9 @@
 import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.zip.ZipFile
+import javax.xml.parsers.DocumentBuilderFactory
+import org.w3c.dom.Element
 
 plugins {
     id("com.android.library")
@@ -10,6 +13,7 @@ plugins {
 }
 
 val ktorVersion: String = findProperty("omniinfer.ktor.version")?.toString() ?: "3.1.3"
+val liteRtLmVersion: String = findProperty("omniinfer.litertlm.version")?.toString() ?: "0.11.0"
 val omniInferMavenGroup: String =
     findProperty("omniinfer.maven.group")?.toString() ?: "io.github.omnimind-ai"
 val omniInferMavenArtifact: String =
@@ -42,10 +46,25 @@ version = omniInferMavenVersion
 fun boolProperty(name: String, default: Boolean = true): Boolean =
     findProperty(name)?.toString()?.toBooleanStrictOrNull() ?: default
 
+fun isDynamicDependencyVersion(version: String): Boolean =
+    version.contains("+") ||
+        version.startsWith("latest.", ignoreCase = true) ||
+        version.contains("[") ||
+        version.contains("]") ||
+        version.contains("(") ||
+        version.contains(")")
+
 val enableLlamaCpp: Boolean = boolProperty("omniinfer.backend.llama_cpp")
 val enableMnn: Boolean = boolProperty("omniinfer.backend.mnn")
 val enableExecutorchQnn: Boolean = boolProperty("omniinfer.backend.executorch_qnn")
 val enableLiteRtLm: Boolean = boolProperty("omniinfer.backend.litert_lm")
+val requireLiteRtLmInPublication: Boolean = boolProperty("omniinfer.publication.require_litert_lm")
+if (enableLiteRtLm && isDynamicDependencyVersion(liteRtLmVersion)) {
+    throw GradleException(
+        "omniinfer.litertlm.version must be a pinned release version, got '$liteRtLmVersion'. " +
+            "Publish a new OmniInfer version when upgrading LiteRT-LM."
+    )
+}
 val enableMnnThreadPool: Boolean = boolProperty("omniinfer.mnn.thread_pool")
 val llamaCppHtpPrebuiltDir: File =
     findProperty("omniinfer.llama_cpp.htp_prebuilt_dir")?.toString()?.let(::File)
@@ -224,7 +243,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
     if (enableLiteRtLm) {
-        implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
+        implementation("com.google.ai.edge.litertlm:litertlm-android:$liteRtLmVersion")
     }
 }
 
@@ -322,4 +341,84 @@ tasks.register<Zip>("bundleMavenCentralPublication") {
     from(File(omniInferMavenRepo, publicationPath)) {
         into(publicationPath)
     }
+}
+
+val verifyAarDependencyMetadata by tasks.registering {
+    description = "Verify Maven metadata keeps runtime dependencies transitive and pinned"
+    group = "verification"
+    dependsOn("publishReleasePublicationToOmniInferLocalRepository")
+    doLast {
+        val publicationPath = "${omniInferMavenGroup.replace('.', '/')}/$omniInferMavenArtifact/$omniInferMavenVersion"
+        val publicationDir = File(omniInferMavenRepo, publicationPath)
+        val pomFile = File(publicationDir, "$omniInferMavenArtifact-$omniInferMavenVersion.pom")
+        val aarFile = File(publicationDir, "$omniInferMavenArtifact-$omniInferMavenVersion.aar")
+
+        if (!pomFile.isFile) {
+            throw GradleException("Missing generated POM: ${pomFile.absolutePath}")
+        }
+        if (!aarFile.isFile) {
+            throw GradleException("Missing generated AAR: ${aarFile.absolutePath}")
+        }
+
+        fun dependencyVersion(groupId: String, artifactId: String): String? {
+            val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(pomFile)
+            val dependencies = document.getElementsByTagName("dependency")
+            for (index in 0 until dependencies.length) {
+                val dependency = dependencies.item(index) as? Element ?: continue
+                fun childText(name: String): String? {
+                    val nodes = dependency.getElementsByTagName(name)
+                    return if (nodes.length > 0) nodes.item(0).textContent.trim() else null
+                }
+                if (childText("groupId") == groupId && childText("artifactId") == artifactId) {
+                    return childText("version")
+                }
+            }
+            return null
+        }
+
+        if (requireLiteRtLmInPublication && !enableLiteRtLm) {
+            throw GradleException(
+                "This publication is expected to include LiteRT-LM. " +
+                    "Set -Pomniinfer.backend.litert_lm=true, or explicitly pass " +
+                    "-Pomniinfer.publication.require_litert_lm=false for a custom trimmed artifact."
+            )
+        }
+
+        if (enableLiteRtLm || requireLiteRtLmInPublication) {
+            val publishedLiteRtVersion = dependencyVersion(
+                "com.google.ai.edge.litertlm",
+                "litertlm-android",
+            )
+            if (publishedLiteRtVersion == null) {
+                throw GradleException(
+                    "Generated POM does not declare com.google.ai.edge.litertlm:litertlm-android. " +
+                        "Third-party apps would have to add LiteRT-LM manually."
+                )
+            }
+            if (publishedLiteRtVersion != liteRtLmVersion) {
+                throw GradleException(
+                    "Generated POM declares LiteRT-LM $publishedLiteRtVersion, expected $liteRtLmVersion."
+                )
+            }
+            if (isDynamicDependencyVersion(publishedLiteRtVersion)) {
+                throw GradleException("Generated POM uses dynamic LiteRT-LM version: $publishedLiteRtVersion")
+            }
+        }
+
+        ZipFile(aarFile).use { zip ->
+            val x86Entries = zip.entries().asSequence()
+                .map { it.name }
+                .filter { it.startsWith("jni/x86_64/") }
+                .toList()
+            if (x86Entries.isNotEmpty()) {
+                throw GradleException(
+                    "OmniInfer AAR must not package x86_64 native libraries: ${x86Entries.joinToString()}"
+                )
+            }
+        }
+    }
+}
+
+tasks.named("bundleMavenCentralPublication") {
+    dependsOn(verifyAarDependencyMetadata)
 }

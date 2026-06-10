@@ -20,6 +20,11 @@ OmniInfer is distributed with Maven metadata. Use the Maven dependency instead
 of copying a flat `.aar` into `libs/`; Maven lets Gradle resolve OmniInfer's
 runtime dependencies and consumer ProGuard rules correctly.
 
+Do not add LiteRT-LM separately in the host app. OmniInfer pins the tested
+LiteRT-LM version in its published POM, and Gradle resolves it transitively when
+you consume the Maven coordinate. When OmniInfer upgrades LiteRT-LM, upgrade the
+OmniInfer version instead of using dynamic dependency versions.
+
 ## Gradle Setup
 
 In `settings.gradle.kts`:
@@ -58,7 +63,8 @@ omniinfer = { module = "io.github.omnimind-ai:omniinfer", version.ref = "omniinf
 
 Then use `implementation(libs.omniinfer)` in the app module. Pin an exact
 version for reproducible builds; avoid dynamic versions such as `+` in
-production.
+production. This is also how LiteRT-LM stays reproducible: the OmniInfer POM
+contains the tested LiteRT-LM version, not a floating "latest" dependency.
 
 In the app module:
 
@@ -105,6 +111,11 @@ dependencies {
 
 `useLegacyPackaging = true` is required because several native runtimes need
 real `.so` files on disk.
+
+`abiFilters += "arm64-v8a"` is strongly recommended for phone-only apps. Some
+transitive runtimes, including LiteRT-LM, publish desktop/emulator ABIs as well;
+without an ABI filter, a universal APK can include unused `x86_64` native
+libraries.
 
 ## Manifest
 
