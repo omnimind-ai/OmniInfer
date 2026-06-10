@@ -44,6 +44,7 @@ public:
     if (llama_device.empty() && wants_htp) llama_device = "HTP0";
     const bool wants_accelerator =
         !llama_device.empty() && llama_device != "cpu" && llama_device != "none";
+    configure_hexagon_opfilter(config_json, wants_htp);
 
     std::call_once(s_backend_init, [&]() {
       // Route ggml logs to Android logcat so backend selection is visible.
@@ -801,6 +802,25 @@ private:
 
   static bool has_device(const char* name) {
     return ggml_backend_dev_by_name(name) != nullptr;
+  }
+
+  static void configure_hexagon_opfilter(const std::string& config_json, bool wants_htp) {
+    if (!wants_htp) return;
+    std::string opfilter = extract_string(config_json, "hexagon_opfilter");
+    if (opfilter.empty()) opfilter = extract_string(config_json, "ggml_hexagon_opfilter");
+    if (opfilter.empty()) opfilter = extract_string(config_json, "GGML_HEXAGON_OPFILTER");
+    if (opfilter.empty()) return;
+
+    const char* current = getenv("GGML_HEXAGON_OPFILTER");
+    if (current && std::strcmp(current, opfilter.c_str()) != 0) {
+      __android_log_print(ANDROID_LOG_WARN, "OmniInferJni",
+          "overriding GGML_HEXAGON_OPFILTER from %s to %s before HTP backend init",
+          current, opfilter.c_str());
+    }
+    setenv("GGML_HEXAGON_OPFILTER", opfilter.c_str(), 1);
+    __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
+        "GGML_HEXAGON_OPFILTER=%s configured before HTP backend load",
+        opfilter.c_str());
   }
 
   static void load_snapdragon_accelerators(const std::string& native_lib_dir) {

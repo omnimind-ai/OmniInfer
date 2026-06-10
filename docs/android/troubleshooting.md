@@ -137,6 +137,16 @@ Fix: check the model quantization first. Q4_K_M and other K-quants are not the
 recommended Android HTP path. Use the bundled model catalog and start with Q4_0
 GGUF files before comparing against llama.cpp Snapdragon benchmark numbers.
 
+### Qwen3.5 4B Q4_0 loads on HTP but outputs incorrect text
+
+Qwen3.5 4B Q4_0 can load on the llama.cpp Hexagon/HTP backend but produce
+incorrect text when `SSM_CONV` is fully offloaded on tested Snapdragon devices.
+OmniInfer configures `GGML_HEXAGON_OPFILTER=SSM_CONV` before loading the HTP
+backend for `llama.cpp/htp`, which keeps HTP selected while letting `SSM_CONV`
+fall back to CPU. If a host process initializes the Hexagon backend before this
+environment variable is set, the filter may not take effect until the process is
+restarted.
+
 ## LiteRT-LM
 
 ### LiteRT-LM fails around 4k context
