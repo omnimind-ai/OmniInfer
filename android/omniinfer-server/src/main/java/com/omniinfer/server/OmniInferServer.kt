@@ -486,6 +486,7 @@ object OmniInferServer {
                 "n_gpu_layers" to "99",
                 "batch_size" to "1024",
                 "ubatch_size" to "1024",
+                "hexagon_opfilter" to "SSM_CONV",
             )
             OmniInferBackend.LITERT_GPU -> mapOf(
                 "backend_type" to "gpu",

@@ -140,7 +140,7 @@
       }
     },
     {
-      "id": "qwen35-4b-q4-0-gguf-llamacpp-cpu",
+      "id": "qwen35-4b-q4-0-gguf-llamacpp-htp",
       "display_name": "Qwen3.5 4B Q4_0",
       "family": "Qwen3.5",
       "parameter_size": "4B",
@@ -159,17 +159,20 @@
         "quantization": "Q4_0"
       },
       "runtime": {
-        "accelerator": "cpu",
-        "device": "CPU",
+        "accelerator": "htp",
+        "device": "HTP0",
         "n_threads": 6,
         "n_ctx": 8192,
         "load_options": {
-          "accelerator": "cpu",
-          "llama_device": "cpu",
-          "batch_size": "512",
-          "ubatch_size": "512",
+          "accelerator": "htp",
+          "backend_type": "npu",
+          "llama_device": "HTP0",
+          "n_gpu_layers": "99",
+          "batch_size": "1024",
+          "ubatch_size": "1024",
           "cpu_mask": "0xfc",
-          "cpu_strict": "true"
+          "cpu_strict": "true",
+          "hexagon_opfilter": "SSM_CONV"
         }
       },
       "sources": [
@@ -189,9 +192,9 @@
         }
       ],
       "validation": {
-        "status": "validated_on_6014_cpu",
-        "device": "nubia P0110 / SM8750 / Adreno 830",
-        "notes": "llama.cpp CPU smoke returned correct QWEN_CPU_OK output on 6014. llama.cpp HTP loads but generated incorrect text in prior pp1024 streaming and non-streaming tests, so this catalog entry defaults to CPU."
+        "status": "validated_on_6014_htp_with_opfilter",
+        "device": "nubia P0110 / SM8750 / Adreno 830 / Hexagon v79",
+        "notes": "llama.cpp HTP requires GGML_HEXAGON_OPFILTER=SSM_CONV for this model so SSM_CONV falls back to CPU while the rest of the graph can still use HTP. Without the filter, AAR pp1024 streaming and non-streaming tests produced incorrect text."
       }
     },
     {
