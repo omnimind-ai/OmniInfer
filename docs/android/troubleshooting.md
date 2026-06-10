@@ -33,6 +33,30 @@ implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 ```
 
+The same rule applies to LiteRT-LM: host apps should not declare
+`com.google.ai.edge.litertlm:litertlm-android` manually. Use the OmniInfer Maven
+coordinate so the tested LiteRT-LM version is resolved transitively.
+
+### Unused x86_64 LiteRT libraries in APK
+
+Symptom: the final APK contains `lib/x86_64/libLiteRt.so`,
+`lib/x86_64/libLiteRtClGlAccelerator.so`, or
+`lib/x86_64/liblitertlm_jni.so`.
+
+Fix: add an ABI filter in the host app if the app only targets arm64 phones.
+These libraries come from the LiteRT-LM transitive dependency, not from
+OmniInfer's own AAR native payload.
+
+```kotlin
+android {
+    defaultConfig {
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+}
+```
+
 ### CMake configure fails with missing Ninja
 
 Symptom:
