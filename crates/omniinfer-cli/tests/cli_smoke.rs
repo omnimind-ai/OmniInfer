@@ -39,28 +39,13 @@ fn strict_mode_reports_unported_commands_without_fallback() {
 
 #[test]
 fn backend_stop_posts_to_local_gateway() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test gateway");
-    let port = listener.local_addr().expect("local addr").port();
-    let (request_tx, request_rx) = mpsc::channel();
-    let handle = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept backend stop");
-        let request = read_http_request(&mut stream);
-        request_tx.send(request).expect("send request");
-        let body = br#"{"stopped":true}"#;
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        stream.write_all(response.as_bytes()).expect("write header");
-        stream.write_all(body).expect("write body");
-        stream.flush().expect("flush response");
-    });
+    let gateway = TestGateway::start(br#"{"stopped":true}"#);
 
     let root = temp_repo_root("backend-stop");
     fs::create_dir_all(root.join("config")).expect("create config dir");
     fs::write(
         root.join("config").join("omniinfer.json"),
-        format!(r#"{{"host":"127.0.0.1","port":{port}}}"#),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
     )
     .expect("write config");
 
@@ -72,10 +57,71 @@ fn backend_stop_posts_to_local_gateway() {
         .success()
         .stdout(predicate::str::contains("Current backend process stopped"));
 
-    let request = request_rx.recv().expect("receive request");
+    let request = gateway.request();
     assert!(request.starts_with("POST /omni/backend/stop HTTP/1.1"));
-    handle.join().expect("server thread");
     fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn shutdown_posts_to_local_gateway() {
+    let gateway = TestGateway::start(br#"{"ok":true}"#);
+
+    let root = temp_repo_root("shutdown");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .arg("shutdown")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OmniInfer service stopped"));
+
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/shutdown HTTP/1.1"));
+    fs::remove_dir_all(root).ok();
+}
+
+struct TestGateway {
+    port: u16,
+    request_rx: mpsc::Receiver<String>,
+    handle: thread::JoinHandle<()>,
+}
+
+impl TestGateway {
+    fn start(response_body: &'static [u8]) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test gateway");
+        let port = listener.local_addr().expect("local addr").port();
+        let (request_tx, request_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let request = read_http_request(&mut stream);
+            request_tx.send(request).expect("send request");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_body.len()
+            );
+            stream.write_all(response.as_bytes()).expect("write header");
+            stream.write_all(response_body).expect("write body");
+            stream.flush().expect("flush response");
+        });
+        Self {
+            port,
+            request_rx,
+            handle,
+        }
+    }
+
+    fn request(self) -> String {
+        let request = self.request_rx.recv().expect("receive request");
+        self.handle.join().expect("server thread");
+        request
+    }
 }
 
 fn temp_repo_root(test_name: &str) -> std::path::PathBuf {

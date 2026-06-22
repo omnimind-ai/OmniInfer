@@ -10,7 +10,8 @@ Current scope:
 - `omniinfer-core`: shared local paths, config compatibility, state parsing, and
   minimal local HTTP helpers.
 - `omniinfer-cli`: experimental `omniinfer-rs` binary with the target command
-  surface, read-only `status`, and shell completion generation.
+  surface, migrated low-risk commands, Python fallback, and shell completion
+  generation.
 
 The production entrypoint remains `./omniinfer` until the Rust implementation
 covers the required behavior and passes compatibility checks.
@@ -27,8 +28,8 @@ cargo run -p omniinfer-cli -- status
 cargo run -p omniinfer-cli -- completion bash
 ```
 
-This machine currently lacks the `rustfmt` component. Run `cargo fmt --all`
-when rustfmt is available.
+Run `cargo fmt --all -- --check` and `cargo test --workspace` before each
+Rust control-plane commit.
 
 ## Profiling
 

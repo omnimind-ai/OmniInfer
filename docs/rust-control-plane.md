@@ -25,6 +25,7 @@ Implemented directly in Rust:
 - `thinking set on|off`
 - `serve status --port <port>`
 - `serve stop --port <port>`
+- `shutdown`
 - `completion bash`
 - `chat --no-stream <prompt>` when no image is attached. Streaming and image
   requests still fallback.
@@ -37,7 +38,6 @@ Fallback to the Python implementation:
 - `model load`
 - `load`
 - default streaming `chat` and multimodal `chat --image`
-- `shutdown`
 - `serve` launch paths, including Cloudflare, LAN, detach, model load, and
   smoke-test orchestration
 - all other unported commands
