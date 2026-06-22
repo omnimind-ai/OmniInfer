@@ -243,7 +243,11 @@ def local_backend_ids() -> list[str]:
 
 def advisor_system() -> dict[str, Any]:
     manager = _local_runtime_manager()
-    return advisor_system_snapshot(manager.platform, manager.backends)
+    return advisor_system_snapshot(
+        manager.platform,
+        manager.backends,
+        installed_backend_ids=getattr(manager, "installed_backend_ids", None),
+    )
 
 
 def advisor_inspect(model: str, *, mmproj: str | None = None) -> dict[str, Any]:

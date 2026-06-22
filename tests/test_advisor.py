@@ -210,6 +210,28 @@ class AdvisorTests(unittest.TestCase):
         self.assertTrue(rows["llama.cpp-linux-cuda"]["hardware_compatible"])
         self.assertFalse(rows["missing-cuda"]["installed"])
 
+    def test_system_snapshot_accepts_precomputed_installed_backends(self) -> None:
+        backends = {
+            "llama.cpp-linux-cuda": make_backend("llama.cpp-linux-cuda", launcher_path="/missing"),
+            "missing-cuda": make_backend("missing-cuda", launcher_path="/missing"),
+        }
+        with (
+            patch.object(BackendSpec, "binary_exists", side_effect=AssertionError("binary probe should be reused")),
+            patch(
+                "service_core.advisor._query_cuda_devices",
+                return_value=[{"index": "0", "free_gib": 20.0, "utilization_pct": 0}],
+            ),
+        ):
+            payload = system_snapshot(
+                FakePlatform(),
+                backends,
+                installed_backend_ids=["llama.cpp-linux-cuda"],
+            )
+
+        rows = {item["id"]: item for item in payload["backends"]}
+        self.assertTrue(rows["llama.cpp-linux-cuda"]["installed"])
+        self.assertFalse(rows["missing-cuda"]["installed"])
+
 
 if __name__ == "__main__":
     unittest.main()

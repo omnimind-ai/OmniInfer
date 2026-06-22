@@ -60,11 +60,18 @@ QUANT_PATTERNS = (
 )
 
 
-def system_snapshot(platform_obj: HostPlatform, backends: dict[str, BackendSpec]) -> dict[str, Any]:
+def system_snapshot(
+    platform_obj: HostPlatform,
+    backends: dict[str, BackendSpec],
+    *,
+    installed_backend_ids: list[str] | set[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     cuda_devices = _query_cuda_devices()
     visible_filter = os.environ.get("OMNIINFER_CUDA_VISIBLE_DEVICES") or os.environ.get("CUDA_VISIBLE_DEVICES")
     visible_cuda_devices = _filter_visible_cuda_devices(cuda_devices, visible_filter)
-    installed_set = {backend.id for backend in backends.values() if backend.binary_exists}
+    installed_set = set(installed_backend_ids) if installed_backend_ids is not None else {
+        backend.id for backend in backends.values() if backend.binary_exists
+    }
     compatible_set = {
         backend.id
         for backend in backends.values()
