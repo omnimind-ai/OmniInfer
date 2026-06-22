@@ -795,7 +795,7 @@ fn stop_serve(port: u16) -> Result<()> {
 }
 
 fn can_serve_detach_locally(args: &ServeArgs) -> bool {
-    args.command.is_none() && args.detach && !args.cloudflare && !args.lan && !args.smoke_test
+    args.command.is_none() && args.detach && !args.cloudflare && !args.lan
 }
 
 fn serve_detached(args: &ServeArgs) -> Result<()> {
@@ -867,6 +867,17 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
         print_model_loaded(&response, &plan)?;
     }
     let state = get_serve_health_state(&config)?;
+    let mut smoke_text = None;
+    let mut smoke_failed = false;
+    if args.smoke_test {
+        match serve_smoke(config.port) {
+            Ok(text) => smoke_text = Some(text),
+            Err(error) => {
+                smoke_failed = true;
+                smoke_text = Some(format!("failed: {error}"));
+            }
+        }
+    }
     serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
         pid: Some(child.id()),
         port: Some(config.port),
@@ -881,7 +892,18 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
         backend_pid: json_u64(&state, "backend_pid").and_then(|value| u32::try_from(value).ok()),
         backend_port: json_u64(&state, "backend_port").and_then(|value| u16::try_from(value).ok()),
     })?;
-    print_serve_ready(config.port, &state, None, None, true, &log_path, None);
+    print_serve_ready(
+        config.port,
+        &state,
+        None,
+        None,
+        true,
+        &log_path,
+        smoke_text.as_deref(),
+    );
+    if smoke_failed {
+        anyhow::bail!("smoke test failed");
+    }
     Ok(())
 }
 
@@ -1019,6 +1041,43 @@ fn print_serve_ready(
     }
     println!("Log: {}", log_path.display());
     println!("Stop: ./omniinfer serve stop --port {port}");
+}
+
+fn serve_smoke(port: u16) -> Result<String> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("model".to_string(), serde_json::json!("omniinfer"));
+    payload.insert(
+        "messages".to_string(),
+        serde_json::json!([{ "role": "user", "content": "Hello" }]),
+    );
+    payload.insert("temperature".to_string(), serde_json::json!(0));
+    payload.insert("max_tokens".to_string(), serde_json::json!(16));
+    payload.insert("stream".to_string(), serde_json::json!(false));
+
+    let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+    let response = http_client::post_json(
+        &url,
+        &serde_json::Value::Object(payload),
+        Duration::from_secs(120),
+    )?;
+    if response.status >= 400 {
+        anyhow::bail!(
+            "POST /v1/chat/completions failed with status {}",
+            response.status
+        );
+    }
+    response
+        .body
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("Smoke test returned an empty response."))
 }
 
 fn print_chat(args: &ChatArgs) -> Result<()> {
