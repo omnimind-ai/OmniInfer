@@ -15,6 +15,9 @@ Current scope:
 The production entrypoint remains `./omniinfer` until the Rust implementation
 covers the required behavior and passes compatibility checks.
 
+See [`docs/rust-control-plane.md`](../docs/rust-control-plane.md) for the
+switching checklist, fallback controls, and profiling commands.
+
 ## Local Development
 
 ```bash
@@ -48,4 +51,3 @@ python3 scripts/profile_python_cli.py \
   --skip-import-trace \
   --output-dir tmp/test_results/20260622-rust-control-plane-rust-profile
 ```
-
