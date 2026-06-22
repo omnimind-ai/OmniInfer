@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::time::Duration;
 
-use omniinfer_core::{local_state, paths, version};
+use omniinfer_core::{config, http_client, local_state, paths, version};
 
 #[derive(Debug, Parser)]
 #[command(name = "omniinfer-rs")]
@@ -267,9 +268,11 @@ fn print_tui_placeholder() {
 }
 
 fn print_status() {
+    let config = config::load_app_config().unwrap_or_default();
     let state = local_state::load_state().unwrap_or_default();
     println!("OmniInfer Rust Status");
     println!("Repo root: {}", paths::repo_root().display());
+    println!("Local service: {}", service_status_line(&config));
     println!(
         "Selected backend: {}",
         state.selected_backend.as_deref().unwrap_or("not selected")
@@ -287,4 +290,30 @@ fn print_status() {
     } else {
         println!("Selected model: not selected");
     }
+}
+
+fn service_status_line(config: &config::AppConfig) -> String {
+    let url = format!("{}/omni/state", config.service_base_url());
+    match http_client::get_json(&url, Duration::from_millis(600)) {
+        Ok(response) if response.status == 200 => {
+            let backend_ready = response
+                .body
+                .get("backend_ready")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let model = response
+                .body
+                .get("model")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("not loaded");
+            format!("running (backend_ready={}, model={})", yes_no(backend_ready), model)
+        }
+        Ok(response) => format!("unhealthy (HTTP {})", response.status),
+        Err(_) => "not running".to_string(),
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }

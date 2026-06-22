@@ -94,6 +94,17 @@ def _sample_peak_rss_kib(pid: int, proc: subprocess.Popen[bytes]) -> int | None:
     return peak
 
 
+def _scenario_for_binary(scenario: Scenario, binary: str) -> Scenario:
+    command = [binary, *scenario.command[1:]]
+    return Scenario(
+        name=scenario.name,
+        command=command,
+        timeout_s=scenario.timeout_s,
+        description=scenario.description,
+        expected_returncodes=scenario.expected_returncodes,
+    )
+
+
 def _run_once(scenario: Scenario, *, env: dict[str, str]) -> dict[str, Any]:
     before = _resource_snapshot()
     started = time.perf_counter()
@@ -150,10 +161,14 @@ def _run_once(scenario: Scenario, *, env: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _python_import_command(command: list[str]) -> list[str]:
+def _python_import_command(command: list[str]) -> list[str] | None:
     script = command[0]
     if script == "./omniinfer":
         script = "omniinfer.py"
+    elif script.endswith("omniinfer.py"):
+        pass
+    else:
+        return None
     return [sys.executable, "-X", "importtime", script, *command[1:]]
 
 
@@ -189,9 +204,15 @@ def _parse_import_time(stderr_text: str) -> dict[str, Any]:
 
 
 def _run_import_trace(scenario: Scenario, *, env: dict[str, str]) -> dict[str, Any]:
+    command = _python_import_command(scenario.command)
+    if command is None:
+        return {
+            "skipped": True,
+            "reason": "import-time tracing only applies to Python entrypoints",
+        }
     trace_scenario = Scenario(
         name=f"{scenario.name}-import-trace",
-        command=_python_import_command(scenario.command),
+        command=command,
         timeout_s=scenario.timeout_s,
         description=f"import-time trace for {scenario.name}",
         expected_returncodes=scenario.expected_returncodes,
@@ -308,6 +329,7 @@ def _git_info() -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Profile current Python OmniInfer CLI startup and probe paths.")
     parser.add_argument("--runs", type=int, default=5, help="runs per scenario")
+    parser.add_argument("--binary", default="./omniinfer", help="entrypoint binary or script to profile")
     parser.add_argument("--output-dir", type=Path, default=None, help="directory for raw.json and summary.md")
     parser.add_argument("--scenario", action="append", choices=[s.name for s in SCENARIOS], help="scenario to run; repeatable")
     parser.add_argument(
@@ -338,10 +360,12 @@ def main(argv: list[str] | None = None) -> int:
         },
         "git": _git_info(),
         "runs_per_scenario": args.runs,
+        "binary": args.binary,
         "scenarios": [],
     }
 
     for scenario in selected:
+        scenario = _scenario_for_binary(scenario, args.binary)
         runs = []
         for _ in range(args.runs):
             runs.append(_run_once(scenario, env=env))
