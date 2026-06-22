@@ -15,3 +15,7 @@ clap.workspace = true
 clap_complete.workspace = true
 omniinfer-core = { path = "../omniinfer-core" }
 serde_json.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
