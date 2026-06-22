@@ -22,6 +22,13 @@ pub struct ModelLoadPlan {
     pub auto_selected: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModelLoadEvent {
+    Status(String),
+    Log(String),
+    Done(Value),
+}
+
 #[derive(Debug, Error)]
 pub enum ModelLoadError {
     #[error(
@@ -48,6 +55,12 @@ pub enum ModelLoadError {
     },
     #[error("{0}")]
     BackendArgs(#[from] crate::backend_args::BackendArgError),
+    #[error("Failed to load the model.")]
+    MissingResult,
+    #[error("model loading failed: {0}")]
+    LoadFailed(String),
+    #[error("model load response JSON parse failed: {0}")]
+    ResponseJson(#[from] serde_json::Error),
 }
 
 pub fn build_model_load_payload(
@@ -134,6 +147,61 @@ pub fn build_model_load_payload(
         backend: backend_id,
         auto_selected,
     })
+}
+
+pub fn parse_model_load_response(
+    content_type: Option<&str>,
+    body: &str,
+) -> Result<(Value, Vec<ModelLoadEvent>), ModelLoadError> {
+    if !content_type
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .contains("text/event-stream")
+    {
+        return Ok((serde_json::from_str(body.trim())?, Vec::new()));
+    }
+
+    let mut result = None;
+    let mut events = Vec::new();
+    for line in body.lines() {
+        let line = line.trim();
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data == "[DONE]" {
+            break;
+        }
+        if data.is_empty() {
+            continue;
+        }
+        let event: Value = serde_json::from_str(data)?;
+        match json_str(&event, "type").unwrap_or("") {
+            "done" => {
+                result = Some(event.clone());
+                events.push(ModelLoadEvent::Done(event));
+            }
+            "error" => {
+                let message = json_str(&event, "message")
+                    .unwrap_or("model loading failed")
+                    .to_string();
+                return Err(ModelLoadError::LoadFailed(message));
+            }
+            "log" => {
+                if let Some(message) = json_str(&event, "message") {
+                    events.push(ModelLoadEvent::Log(message.to_string()));
+                }
+            }
+            _ => {
+                if let Some(message) = json_str(&event, "message") {
+                    events.push(ModelLoadEvent::Status(message.to_string()));
+                }
+            }
+        }
+    }
+    result
+        .map(|result| (result, events))
+        .ok_or(ModelLoadError::MissingResult)
 }
 
 fn select_backend(
@@ -349,6 +417,52 @@ mod tests {
         .unwrap();
         assert_eq!(plan.payload["model"], "Qwen/Qwen3");
         std::fs::remove_dir_all(cwd).ok();
+    }
+
+    #[test]
+    fn parses_json_model_load_response() {
+        let (result, events) = parse_model_load_response(
+            Some("application/json; charset=utf-8"),
+            r#"{"selected_backend":"llama.cpp-linux-cuda"}"#,
+        )
+        .unwrap();
+        assert_eq!(result["selected_backend"], "llama.cpp-linux-cuda");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parses_sse_model_load_response() {
+        let body = concat!(
+            r#"data: {"type":"status","message":"Resolving model files..."}"#,
+            "\n\n",
+            r#"data: {"type":"log","message":"backend log"}"#,
+            "\n\n",
+            r#"data: {"type":"done","selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf"}"#,
+            "\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (result, events) =
+            parse_model_load_response(Some("text/event-stream; charset=utf-8"), body).unwrap();
+        assert_eq!(result["selected_backend"], "llama.cpp-linux-cuda");
+        assert_eq!(result["selected_model"], "/tmp/model.gguf");
+        assert_eq!(
+            events,
+            vec![
+                ModelLoadEvent::Status("Resolving model files...".to_string()),
+                ModelLoadEvent::Log("backend log".to_string()),
+                ModelLoadEvent::Done(result),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_sse_error_events() {
+        let error = parse_model_load_response(
+            Some("text/event-stream"),
+            r#"data: {"type":"error","message":"bad model"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "model loading failed: bad model");
     }
 
     fn temp_dir(name: &str) -> PathBuf {

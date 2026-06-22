@@ -100,6 +100,59 @@ fn model_load_posts_payload_and_persists_state() {
 }
 
 #[test]
+fn model_load_handles_sse_progress() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"object":"list","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
+        ),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::with_content_type(
+            concat!(
+                r#"data: {"type":"status","message":"Resolving model files..."}"#,
+                "\n\n",
+                r#"data: {"type":"log","message":"backend detail"}"#,
+                "\n\n",
+                r#"data: {"type":"done","selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_ctx_size":4096}"#,
+                "\n\n",
+                "data: [DONE]\n\n",
+            ),
+            "text/event-stream; charset=utf-8",
+        ),
+    ]);
+    let root = temp_repo_root("model-load-sse");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+    let model = root.join("model.gguf");
+    fs::write(&model, "").expect("write model");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["model", "load", "-m"])
+        .arg(&model)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Resolving model files..."))
+        .stdout(predicate::str::contains("Model loaded"))
+        .stdout(predicate::str::contains("ctx-size: 4096"))
+        .stdout(predicate::str::contains("backend detail").not());
+
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
+    assert!(request.contains("Accept: text/event-stream, application/json"));
+    gateway.join();
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn backend_stop_posts_to_local_gateway() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
@@ -288,7 +341,8 @@ impl TestGateway {
                 let request = read_http_request(&mut stream);
                 request_tx.send(request).expect("send request");
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response_body.content_type,
                     response_body.body.len()
                 );
                 stream.write_all(response.as_bytes()).expect("write header");
@@ -316,12 +370,18 @@ impl TestGateway {
 
 struct Response {
     body: String,
+    content_type: String,
 }
 
 impl Response {
     fn new(body: &str) -> Self {
+        Self::with_content_type(body, "application/json")
+    }
+
+    fn with_content_type(body: &str, content_type: &str) -> Self {
         Self {
             body: body.to_string(),
+            content_type: content_type.to_string(),
         }
     }
 }

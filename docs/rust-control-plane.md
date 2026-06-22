@@ -22,8 +22,8 @@ Implemented directly in Rust:
 - `backend select`
 - `backend stop`
 - `model list`
-- `model load` / `load` for JSON `/omni/model/select` responses. SSE progress
-  output is still pending, so production fallback remains the default.
+- `model load` / `load`, including `/omni/model/select` JSON responses, SSE
+  progress events, backend extra args, and selected backend/model state updates.
 - `thinking show`
 - `thinking set on|off`
 - `serve status --port <port>`
@@ -38,7 +38,6 @@ Fallback to the Python implementation:
 - no-argument TUI
 - `advisor *`
 - default streaming `chat` and multimodal `chat --image`
-- `model load` / `load` when Python-compatible SSE progress output is needed
 - `serve` launch paths, including Cloudflare, LAN, detach, model load, and
   smoke-test orchestration
 - all other unported commands
@@ -71,8 +70,7 @@ infer request defaults. It also includes pure payload construction for
 `/omni/model/select`, including selected-backend resolution, model/mmproj path
 validation, ctx-size precedence, launch args, and request defaults. The Rust
 path can POST JSON model-load responses and persist selected backend/model
-state. Python remains the production path until SSE progress handling has an
-equivalent Rust implementation.
+state. It also parses model-load SSE progress, done, and error events.
 
 ## Contract Snapshots
 

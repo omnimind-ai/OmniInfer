@@ -556,11 +556,7 @@ fn load_model(args: &ModelLoadArgs) -> Result<()> {
         println!("Auto-selected backend: {}", plan.backend);
     }
     println!("Loading model...");
-    let response = post_local_json(
-        "/omni/model/select",
-        &plan.payload,
-        Duration::from_secs(600),
-    )?;
+    let response = post_local_model_load(&plan.payload, args.verbose, Duration::from_secs(600))?;
     let selected_backend = json_str(&response, "selected_backend").unwrap_or(&plan.backend);
     local_state::save_selected_backend(selected_backend)?;
     let selected_model = json_str(&response, "selected_model")
@@ -911,6 +907,49 @@ fn post_local_json(
         anyhow::bail!("POST {endpoint} failed with status {}", response.status);
     }
     Ok(response.body)
+}
+
+fn post_local_model_load(
+    body: &serde_json::Value,
+    verbose: bool,
+    timeout: Duration,
+) -> Result<serde_json::Value> {
+    let config = config::load_app_config().unwrap_or_default();
+    ensure_local_gateway_running(&config)?;
+    let url = format!("{}/omni/model/select", config.service_base_url());
+    let response = http_client::post(&url, body, "text/event-stream, application/json", timeout)?;
+    if response.status >= 400 {
+        let message = parse_http_error_body(&response.body);
+        anyhow::bail!(
+            "POST /omni/model/select failed with status {}: {}",
+            response.status,
+            message
+        );
+    }
+    let (result, events) =
+        model_load::parse_model_load_response(response.content_type.as_deref(), &response.body)?;
+    for event in events {
+        match event {
+            model_load::ModelLoadEvent::Status(message) => println!("{message}"),
+            model_load::ModelLoadEvent::Log(message) if verbose => println!("  {message}"),
+            model_load::ModelLoadEvent::Log(_) | model_load::ModelLoadEvent::Done(_) => {}
+        }
+    }
+    Ok(result)
+}
+
+fn parse_http_error_body(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body.trim())
+        .ok()
+        .and_then(|payload| {
+            payload
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .or_else(|| json_str(&payload, "message").map(str::to_string))
+        })
+        .unwrap_or_else(|| body.trim().to_string())
 }
 
 fn ensure_local_gateway_running(config: &config::AppConfig) -> Result<()> {

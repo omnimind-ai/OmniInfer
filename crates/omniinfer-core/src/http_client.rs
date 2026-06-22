@@ -25,6 +25,13 @@ pub struct JsonResponse {
     pub body: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawResponse {
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub body: String,
+}
+
 pub fn get_json(url: &str, timeout: Duration) -> Result<JsonResponse, HttpError> {
     request_json("GET", url, None, timeout)
 }
@@ -33,12 +40,35 @@ pub fn post_json(url: &str, body: &Value, timeout: Duration) -> Result<JsonRespo
     request_json("POST", url, Some(body), timeout)
 }
 
+pub fn post(
+    url: &str,
+    body: &Value,
+    accept: &str,
+    timeout: Duration,
+) -> Result<RawResponse, HttpError> {
+    request("POST", url, Some(body), accept, timeout)
+}
+
 fn request_json(
     method: &str,
     url: &str,
     body: Option<&Value>,
     timeout: Duration,
 ) -> Result<JsonResponse, HttpError> {
+    let response = request(method, url, body, "application/json", timeout)?;
+    Ok(JsonResponse {
+        status: response.status,
+        body: serde_json::from_str(response.body.trim())?,
+    })
+}
+
+fn request(
+    method: &str,
+    url: &str,
+    body: Option<&Value>,
+    accept: &str,
+    timeout: Duration,
+) -> Result<RawResponse, HttpError> {
     let parsed = parse_http_url(url)?;
     let mut stream = TcpStream::connect((parsed.host.as_str(), parsed.port))?;
     stream.set_read_timeout(Some(timeout))?;
@@ -48,10 +78,11 @@ fn request_json(
         None => Vec::new(),
     };
     let request = format!(
-        "{method} {} HTTP/1.1\r\nHost: {}:{}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "{method} {} HTTP/1.1\r\nHost: {}:{}\r\nAccept: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         parsed.path,
         parsed.host,
         parsed.port,
+        accept,
         body_bytes.len()
     );
     stream.write_all(request.as_bytes())?;
@@ -66,9 +97,10 @@ fn request_json(
         .split_once("\r\n\r\n")
         .ok_or(HttpError::MalformedResponse)?;
     let status = parse_status(head)?;
-    Ok(JsonResponse {
+    Ok(RawResponse {
         status,
-        body: serde_json::from_str(body.trim())?,
+        content_type: header_value(head, "Content-Type"),
+        body: body.to_string(),
     })
 }
 
@@ -111,6 +143,15 @@ fn parse_status(head: &str) -> Result<u16, HttpError> {
     Ok(status)
 }
 
+fn header_value(head: &str, key: &str) -> Option<String> {
+    head.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case(key)
+            .then(|| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +162,14 @@ mod tests {
         assert_eq!(parsed.host, "127.0.0.1");
         assert_eq!(parsed.port, 9000);
         assert_eq!(parsed.path, "/omni/state");
+    }
+
+    #[test]
+    fn parses_header_values_case_insensitively() {
+        let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream; charset=utf-8\r\n";
+        assert_eq!(
+            header_value(head, "Content-Type").as_deref(),
+            Some("text/event-stream; charset=utf-8")
+        );
     }
 }
