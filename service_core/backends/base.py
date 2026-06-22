@@ -49,6 +49,46 @@ def _embedded_probe_python(runtime_dir: str) -> str:
     return sys.executable
 
 
+def _embedded_site_roots(runtime_dir: str) -> list[Path]:
+    runtime_path = Path(runtime_dir)
+    roots: list[Path] = []
+    for base in (runtime_path, runtime_path / "venv"):
+        candidates = [
+            base / "Lib" / "site-packages",
+            base / "lib" / "site-packages",
+        ]
+        candidates.extend(base.glob("lib/python*/site-packages"))
+        candidates.extend(base.glob("lib/python*/dist-packages"))
+        for candidate in candidates:
+            if candidate.is_dir() and candidate not in roots:
+                roots.append(candidate)
+    return roots
+
+
+def _module_path_exists(site_root: Path, module_name: str) -> bool:
+    parts = module_name.split(".")
+    module_path = site_root.joinpath(*parts)
+    if module_path.is_dir():
+        return True
+    if module_path.with_suffix(".py").is_file():
+        return True
+    parent = module_path.parent
+    if not parent.is_dir():
+        return False
+    name = module_path.name
+    return any(path.is_file() and path.suffix in {".so", ".pyd", ".dll", ".dylib"} for path in parent.glob(f"{name}.*"))
+
+
+def _embedded_modules_exist(runtime_dir: str, module_names: tuple[str, ...]) -> bool:
+    site_roots = _embedded_site_roots(runtime_dir)
+    if not site_roots:
+        return False
+    for module_name in module_names:
+        if not any(_module_path_exists(site_root, module_name) for site_root in site_roots):
+            return False
+    return True
+
+
 @dataclass(frozen=True)
 class BackendTemplate:
     id: str
@@ -96,6 +136,8 @@ class BackendSpec:
     def binary_exists(self) -> bool:
         if self.runtime_mode == "embedded":
             if not self.python_modules:
+                return True
+            if _embedded_modules_exist(self.runtime_dir, self.python_modules):
                 return True
             python = _embedded_probe_python(self.runtime_dir)
             code = (

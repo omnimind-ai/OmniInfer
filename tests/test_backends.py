@@ -221,30 +221,31 @@ class PlatformRegistrationTests(unittest.TestCase):
 
         self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "2")
 
-    def test_embedded_binary_probe_runs_with_suppressed_output(self) -> None:
-        backend = BackendSpec(
-            id="embedded-noisy",
-            label="Embedded Noisy",
-            family="test",
-            runtime_dir=".",
-            launcher_path=None,
-            models_dir=None,
-            catalog_url=None,
-            description="",
-            capabilities=[],
-            runtime_mode="embedded",
-            python_modules=("noisy_runtime",),
-        )
+    def test_embedded_binary_probe_uses_runtime_module_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            site_packages = Path(tmp) / "venv" / "lib" / "python3.13" / "site-packages"
+            (site_packages / "MNN" / "llm").mkdir(parents=True)
+            (site_packages / "MNN" / "cv").mkdir(parents=True)
+            backend = BackendSpec(
+                id="embedded-managed",
+                label="Embedded Managed",
+                family="test",
+                runtime_dir=tmp,
+                launcher_path=None,
+                models_dir=None,
+                catalog_url=None,
+                description="",
+                capabilities=[],
+                runtime_mode="embedded",
+                python_modules=("MNN", "MNN.llm", "MNN.cv"),
+            )
 
-        completed = subprocess.CompletedProcess(args=[], returncode=0)
-        with patch("service_core.backends.base.subprocess.run", return_value=completed) as run:
-            self.assertTrue(backend.binary_exists)
+            with patch("service_core.backends.base.subprocess.run") as run:
+                self.assertTrue(backend.binary_exists)
 
-        _args, kwargs = run.call_args
-        self.assertIs(kwargs["stdout"], subprocess.DEVNULL)
-        self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
+        run.assert_not_called()
 
-    def test_embedded_binary_probe_uses_runtime_python(self) -> None:
+    def test_embedded_binary_probe_fallback_runs_with_suppressed_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime_python = Path(tmp) / "bin" / "python3"
             runtime_python.parent.mkdir(parents=True)
@@ -269,6 +270,9 @@ class PlatformRegistrationTests(unittest.TestCase):
 
         args = run.call_args.args[0]
         self.assertEqual(args[0], str(runtime_python))
+        _args, kwargs = run.call_args
+        self.assertIs(kwargs["stdout"], subprocess.DEVNULL)
+        self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
 
     def test_vllm_backend_is_cuda_compatible(self) -> None:
         backend = next(t for t in LinuxPlatform().backend_templates if t.id == "vllm-linux-cuda")
