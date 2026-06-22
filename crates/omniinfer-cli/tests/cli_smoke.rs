@@ -253,6 +253,60 @@ fn backend_stop_starts_gateway_when_needed() {
 }
 
 #[test]
+fn gateway_autostart_can_use_separate_state_root() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"starting"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(r#"{"stopped":true}"#),
+    ]);
+    let source_root = temp_repo_root("source-root");
+    let state_root = temp_repo_root("state-root");
+    fs::create_dir_all(source_root.join(".local").join("logs")).expect("create source logs");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+    let launcher = fake_python_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["backend", "stop"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Current backend process stopped"));
+
+    let launched = wait_for_file(state_root.join("started_gateway.args"));
+    assert!(launched.contains(&source_root.join("omniinfer.py").display().to_string()));
+    assert!(
+        state_root
+            .join(".local")
+            .join("logs")
+            .join("gateway.log")
+            .is_file()
+    );
+    assert!(
+        !source_root
+            .join(".local")
+            .join("logs")
+            .join("gateway.log")
+            .exists()
+    );
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/backend/stop HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
 fn backend_select_persists_state_and_profile() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),

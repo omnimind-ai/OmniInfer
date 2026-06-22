@@ -64,7 +64,7 @@ impl AppConfig {
 
 pub fn load_app_config() -> Result<AppConfig, ConfigError> {
     let mut config = AppConfig::default();
-    let config_path = paths::repo_root().join("config").join("omniinfer.json");
+    let config_path = paths::config_dir().join("omniinfer.json");
     if config_path.is_file() {
         let raw = fs::read_to_string(&config_path).map_err(|source| ConfigError::Read {
             path: config_path.display().to_string(),

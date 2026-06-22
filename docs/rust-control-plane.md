@@ -49,11 +49,16 @@ The Rust entrypoint supports explicit fallback controls:
 ```bash
 OMNIINFER_FORCE_PYTHON=1 target/debug/omniinfer-rs status
 OMNIINFER_RUST_STRICT=1 target/debug/omniinfer-rs advisor system
+OMNIINFER_RUST_STATE_ROOT=/tmp/omniinfer-state target/debug/omniinfer-rs status
 ```
 
 - `OMNIINFER_FORCE_PYTHON=1` runs `omniinfer.py` for every command.
 - `OMNIINFER_RUST_STRICT=1` disables fallback and shows which command is still
   pending in Rust.
+- `OMNIINFER_RUST_STATE_ROOT=/path/to/root` keeps `.local/`, `config/`, logs,
+  run files, state, and backend profiles under a separate root while
+  `OMNIINFER_RUST_REPO_ROOT` continues to identify the source checkout. This is
+  useful for isolated integration tests against the real Python gateway.
 - `OMNIINFER_PYTHON=/path/to/python` selects the Python executable used by
   fallback.
 
