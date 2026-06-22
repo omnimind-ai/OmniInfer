@@ -18,20 +18,27 @@ Implemented directly in Rust:
 
 - `--help`
 - `status`
+- `backend list`
+- `model list`
 - `thinking show`
+- `thinking set on|off`
 - `serve status --port <port>`
+- `serve stop --port <port>`
 - `completion bash`
+- `chat --no-stream <prompt>` when no image is attached. Streaming and image
+  requests still fallback.
 
 Fallback to the Python implementation:
 
 - no-argument TUI
 - `advisor *`
-- `backend *`
-- `model *`
+- `backend select/stop`
+- `model load`
 - `load`
-- `chat`
+- default streaming `chat` and multimodal `chat --image`
 - `shutdown`
-- `serve` launch/stop paths
+- `serve` launch paths, including Cloudflare, LAN, detach, model load, and
+  smoke-test orchestration
 - all other unported commands
 
 ## Fallback Controls
@@ -114,4 +121,3 @@ Do not switch the default entrypoint until these conditions are satisfied:
 
 Only after that should `./omniinfer` default to Rust. Keep the Python fallback
 available for at least one release cycle.
-
