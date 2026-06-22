@@ -1,3 +1,4 @@
+pub mod backend_profiles;
 pub mod config;
 pub mod http_client;
 pub mod local_state;

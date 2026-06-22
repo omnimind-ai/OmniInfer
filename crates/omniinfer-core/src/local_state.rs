@@ -20,6 +20,18 @@ pub enum StateError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("failed to write state file {path}: {source}")]
+    Write {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to encode state file {path}: {source}")]
+    Encode {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -38,12 +50,36 @@ pub struct LocalState {
 }
 
 pub fn load_state() -> Result<LocalState, StateError> {
+    let value = load_state_value()?;
+    Ok(parse_state_value(&value))
+}
+
+pub fn save_selected_backend(backend: &str) -> Result<(), StateError> {
+    let backend = backend.trim();
+    if backend.is_empty() {
+        return Ok(());
+    }
+    let mut value = load_state_value().unwrap_or_else(|_| serde_json::json!({}));
+    if !value.is_object() {
+        value = serde_json::json!({});
+    }
+    let map = value
+        .as_object_mut()
+        .expect("state value was normalized to object");
+    map.insert(
+        "selected_backend".to_string(),
+        Value::String(backend.to_string()),
+    );
+    save_state_value(&value)
+}
+
+fn load_state_value() -> Result<Value, StateError> {
     let path = if paths::state_file().is_file() {
         paths::state_file()
     } else if paths::legacy_state_file().is_file() {
         paths::legacy_state_file()
     } else {
-        return Ok(LocalState::default());
+        return Ok(serde_json::json!({}));
     };
 
     let raw = fs::read_to_string(&path).map_err(|source| StateError::Read {
@@ -54,7 +90,36 @@ pub fn load_state() -> Result<LocalState, StateError> {
         path: path.display().to_string(),
         source,
     })?;
-    Ok(parse_state_value(&value))
+    Ok(value)
+}
+
+fn save_state_value(value: &Value) -> Result<(), StateError> {
+    let path = paths::state_file();
+    let legacy = paths::legacy_state_file();
+    fs::create_dir_all(paths::local_config_dir()).map_err(|source| StateError::Write {
+        path: paths::local_config_dir().display().to_string(),
+        source,
+    })?;
+    let tmp = path.with_extension("tmp");
+    let raw = serde_json::to_string_pretty(value).map_err(|source| StateError::Encode {
+        path: path.display().to_string(),
+        source,
+    })?;
+    fs::write(&tmp, format!("{raw}\n")).map_err(|source| StateError::Write {
+        path: tmp.display().to_string(),
+        source,
+    })?;
+    fs::rename(&tmp, &path).map_err(|source| StateError::Write {
+        path: path.display().to_string(),
+        source,
+    })?;
+    if legacy.is_file() {
+        fs::remove_file(&legacy).map_err(|source| StateError::Write {
+            path: legacy.display().to_string(),
+            source,
+        })?;
+    }
+    Ok(())
 }
 
 fn parse_state_value(value: &Value) -> LocalState {
@@ -132,5 +197,21 @@ mod tests {
         );
         assert_eq!(state.default_thinking, Some(false));
         assert!(state.tui_show_reasoning);
+    }
+
+    #[test]
+    fn save_selected_backend_preserves_unknown_fields() {
+        let value = serde_json::json!({
+            "selected_backend": "old",
+            "future": { "keep": true }
+        });
+        let mut value = value;
+        value.as_object_mut().unwrap().insert(
+            "selected_backend".to_string(),
+            Value::String("new".to_string()),
+        );
+        let state = parse_state_value(&value);
+        assert_eq!(state.selected_backend.as_deref(), Some("new"));
+        assert_eq!(value["future"]["keep"], true);
     }
 }

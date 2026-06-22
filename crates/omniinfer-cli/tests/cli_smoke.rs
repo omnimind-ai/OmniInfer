@@ -139,6 +139,78 @@ fn backend_stop_starts_gateway_when_needed() {
     fs::remove_dir_all(root).ok();
 }
 
+#[test]
+fn backend_select_persists_state_and_profile() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"object":"list","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","models_dir":"/tmp/models"}]}"#,
+        ),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"ok":true,"selected_backend":"llama.cpp-linux-cuda","models_dir":"/tmp/models"}"#,
+        ),
+    ]);
+    let root = temp_repo_root("backend-select");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+    fs::create_dir_all(root.join(".local").join("config")).expect("create local config dir");
+    fs::write(
+        root.join(".local").join("config").join("state.json"),
+        r#"{"future":{"keep":true}}"#,
+    )
+    .expect("write state");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["backend", "select", "llama.cpp-linux-cuda"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Selected backend: llama.cpp-linux-cuda",
+        ))
+        .stdout(predicate::str::contains("Models directory: /tmp/models"))
+        .stdout(predicate::str::contains("Backend config:"))
+        .stdout(predicate::str::contains("(created)"));
+
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/backend/select HTTP/1.1"));
+    assert!(request.contains(r#"{"backend":"llama.cpp-linux-cuda"}"#));
+    gateway.join();
+
+    let state_raw = fs::read_to_string(root.join(".local").join("config").join("state.json"))
+        .expect("state file");
+    let state: serde_json::Value = serde_json::from_str(&state_raw).expect("state json");
+    assert_eq!(state["selected_backend"], "llama.cpp-linux-cuda");
+    assert_eq!(state["future"]["keep"], true);
+
+    let profile_raw = fs::read_to_string(
+        root.join(".local")
+            .join("config")
+            .join("backend_profiles")
+            .join("llama.cpp-linux-cuda.json"),
+    )
+    .expect("profile file");
+    let profile: serde_json::Value = serde_json::from_str(&profile_raw).expect("profile json");
+    assert_eq!(profile["schema_version"], 2);
+    assert_eq!(profile["backend"], "llama.cpp-linux-cuda");
+    assert_eq!(profile["family"], "llama.cpp");
+    assert_eq!(profile["load"]["extra_args"], serde_json::json!([]));
+    assert_eq!(profile["infer"]["extra_args"], serde_json::json!([]));
+    fs::remove_dir_all(root).ok();
+}
+
 struct TestGateway {
     port: u16,
     request_rx: mpsc::Receiver<String>,

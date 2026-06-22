@@ -37,6 +37,14 @@ pub fn legacy_state_file() -> PathBuf {
     local_config_dir().join("cli_state.json")
 }
 
+pub fn backend_profile_dir() -> PathBuf {
+    local_config_dir().join("backend_profiles")
+}
+
+pub fn backend_profile_file(backend_id: &str) -> PathBuf {
+    backend_profile_dir().join(format!("{backend_id}.json"))
+}
+
 pub fn serve_pid_file(port: u16) -> PathBuf {
     local_run_dir().join(format!("serve-{port}.json"))
 }

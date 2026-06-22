@@ -7,7 +7,9 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use omniinfer_core::{config, http_client, local_state, paths, serve_state, version};
+use omniinfer_core::{
+    backend_profiles, config, http_client, local_state, paths, serve_state, version,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "omniinfer-rs")]
@@ -281,6 +283,9 @@ fn run_ported_command(command: &Command) -> Result<()> {
             command: BackendCommand::List { scope },
         } => print_backend_list(scope.clone()),
         Command::Backend {
+            command: BackendCommand::Select { backend },
+        } => select_backend(backend),
+        Command::Backend {
             command: BackendCommand::Stop,
         } => stop_backend(),
         Command::Model {
@@ -443,6 +448,47 @@ fn print_backend_list(scope: BackendScope) -> Result<()> {
         };
         println!("{backend:<width$}  {selected:<8}  {installed:<9}");
     }
+    Ok(())
+}
+
+fn select_backend(backend: &str) -> Result<()> {
+    let backends = get_local_json("/omni/backends?scope=all", Duration::from_secs(10))?;
+    let rows = backends
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("Unable to read backend list."))?;
+    let backend_payload = rows
+        .iter()
+        .find(|item| json_str(item, "id") == Some(backend))
+        .ok_or_else(|| {
+            let available = rows
+                .iter()
+                .filter_map(|item| json_str(item, "id"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::anyhow!("Unsupported backend: {backend}\nAvailable backends: {available}")
+        })?;
+
+    let payload = post_local_json(
+        "/omni/backend/select",
+        &serde_json::json!({ "backend": backend }),
+        Duration::from_secs(30),
+    )?;
+    local_state::save_selected_backend(backend)?;
+    let profile = backend_profiles::ensure_backend_profile_template(backend_payload)?;
+    println!("Selected backend: {backend}");
+    if let Some(models_dir) = json_str(&payload, "models_dir") {
+        println!("Models directory: {models_dir}");
+    }
+    println!(
+        "Backend config: {} ({})",
+        profile.path.display(),
+        if profile.created {
+            "created"
+        } else {
+            "already exists"
+        }
+    );
     Ok(())
 }
 
