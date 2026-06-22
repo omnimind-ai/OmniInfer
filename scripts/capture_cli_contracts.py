@@ -64,7 +64,7 @@ def _read_optional(path: Path) -> bytes | None:
         return None
 
 
-def _run_scenario(binary: str, scenario: ContractScenario) -> dict[str, Any]:
+def _run_scenario(binary: str, scenario: ContractScenario, *, extra_env: dict[str, str]) -> dict[str, Any]:
     before_state = _read_optional(STATE_PATH)
     command = [binary, *scenario.args]
     started = time.perf_counter()
@@ -75,7 +75,7 @@ def _run_scenario(binary: str, scenario: ContractScenario) -> dict[str, Any]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=scenario.timeout_s,
-            env={**os.environ, "NO_COLOR": "1"},
+            env={**os.environ, "NO_COLOR": "1", **extra_env},
             check=False,
         )
         timed_out = False
@@ -93,6 +93,7 @@ def _run_scenario(binary: str, scenario: ContractScenario) -> dict[str, Any]:
     return {
         "name": scenario.name,
         "command": command,
+        "env": extra_env,
         "expected_returncodes": list(scenario.expected_returncodes),
         "returncode": returncode,
         "timed_out": timed_out,
@@ -129,6 +130,7 @@ def _write_summary(path: Path, payload: dict[str, Any]) -> None:
         "",
         f"- Timestamp: `{payload['timestamp_utc']}`",
         f"- Binary: `{payload['binary']}`",
+        f"- Env: `{payload.get('env') or {}}`",
         f"- Git branch: `{payload['git'].get('branch', '-')}`",
         f"- Git commit: `{payload['git'].get('commit', '-')}`",
         "",
@@ -155,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--binary", default="./omniinfer", help="entrypoint binary or script")
     parser.add_argument("--output-dir", type=Path, default=None, help="snapshot output directory")
     parser.add_argument("--scenario", action="append", choices=[s.name for s in SCENARIOS])
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--rust-strict", action="store_true", help="set OMNIINFER_RUST_STRICT=1 for the snapshot")
+    mode.add_argument("--force-python", action="store_true", help="set OMNIINFER_FORCE_PYTHON=1 for the snapshot")
     args = parser.parse_args(argv)
 
     selected = SCENARIOS
@@ -165,11 +170,18 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = args.output_dir or DEFAULT_OUTPUT_ROOT / f"{_utc_stamp()}-cli-contracts"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    extra_env: dict[str, str] = {}
+    if args.rust_strict:
+        extra_env["OMNIINFER_RUST_STRICT"] = "1"
+    if args.force_python:
+        extra_env["OMNIINFER_FORCE_PYTHON"] = "1"
+
     payload = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "binary": args.binary,
+        "env": extra_env,
         "git": _git_info(),
-        "results": [_run_scenario(args.binary, scenario) for scenario in selected],
+        "results": [_run_scenario(args.binary, scenario, extra_env=extra_env) for scenario in selected],
     }
     raw_path = output_dir / "raw.json"
     summary_path = output_dir / "summary.md"

@@ -106,6 +106,26 @@ python3 scripts/capture_cli_contracts.py \
   --output-dir tmp/test_results/rust-control-plane-wrapper-contracts
 ```
 
+Capture only strict Rust paths, with fallback disabled:
+
+```bash
+python3 scripts/capture_cli_contracts.py \
+  --binary target/debug/omniinfer-rs \
+  --rust-strict \
+  --scenario status \
+  --scenario serve-status \
+  --output-dir tmp/test_results/rust-control-plane-strict-contracts
+```
+
+Capture forced Python fallback through the Rust wrapper:
+
+```bash
+python3 scripts/capture_cli_contracts.py \
+  --binary target/debug/omniinfer-rs \
+  --force-python \
+  --output-dir tmp/test_results/rust-control-plane-force-python-contracts
+```
+
 The contract snapshot records command, exit code, stdout/stderr hashes, preview
 text, and whether read-only scenarios modified `.local/config/state.json`.
 
