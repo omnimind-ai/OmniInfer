@@ -72,7 +72,7 @@ Examples:
 class CommandGroupParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         self.print_help(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\n")
+        self.exit(2, f"Error: {message}\n")
 
 
 HELP_TEXT = """\
@@ -1990,7 +1990,7 @@ def build_parser_bundle() -> dict[str, argparse.ArgumentParser]:
 
 def _group_error(parser: argparse.ArgumentParser, message: str) -> None:
     parser.print_help(sys.stderr)
-    parser.exit(2, f"{parser.prog}: error: {message}\n")
+    parser.exit(2, f"Error: {message}\n")
 
 
 def main(argv: list[str] | None = None) -> int:

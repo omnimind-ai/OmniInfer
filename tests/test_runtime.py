@@ -295,6 +295,8 @@ class CliParserTests(unittest.TestCase):
         output = stderr.getvalue()
         self.assertIn("usage: omniinfer advisor", output)
         self.assertIn("missing subcommand. Try one of: system, inspect, fit, plan, recommend", output)
+        self.assertIn("Error: missing subcommand", output)
+        self.assertNotIn("omniinfer advisor: error:", output)
         self.assertIn("omniinfer advisor fit /path/to/model.gguf --ctx-size 8192", output)
         self.assertNotIn("{backend,build,status", output)
 
@@ -308,6 +310,8 @@ class CliParserTests(unittest.TestCase):
         output = stderr.getvalue()
         self.assertIn("usage: omniinfer backend", output)
         self.assertIn("missing subcommand. Try one of: list, select, stop", output)
+        self.assertIn("Error: missing subcommand", output)
+        self.assertNotIn("omniinfer backend: error:", output)
         self.assertIn("omniinfer backend select llama.cpp-linux-cuda", output)
         self.assertNotIn("{backend,build,status", output)
 
@@ -322,6 +326,8 @@ class CliParserTests(unittest.TestCase):
         self.assertIn("usage: omniinfer advisor", output)
         self.assertIn("COMMAND", output)
         self.assertIn("invalid choice: 'nope'", output)
+        self.assertIn("Error: argument COMMAND", output)
+        self.assertNotIn("omniinfer advisor: error:", output)
         self.assertIn("omniinfer advisor plan /path/to/model.gguf --gpu-vram 24 --ram 64", output)
         self.assertNotIn("{backend,build,status", output)
 
