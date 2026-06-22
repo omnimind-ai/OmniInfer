@@ -30,14 +30,14 @@ Implemented directly in Rust:
 - `serve stop --port <port>`
 - `shutdown`
 - `completion bash`
-- `chat --no-stream <prompt>` when no image is attached. Streaming and image
-  requests still fallback.
+- `chat <prompt>` and `chat --no-stream <prompt>` when no image is attached.
+  Image requests still fallback.
 
 Fallback to the Python implementation:
 
 - no-argument TUI
 - `advisor *`
-- default streaming `chat` and multimodal `chat --image`
+- multimodal `chat --image`
 - `serve` launch paths, including Cloudflare, LAN, detach, model load, and
   smoke-test orchestration
 - all other unported commands

@@ -153,6 +153,60 @@ fn model_load_handles_sse_progress() {
 }
 
 #[test]
+fn chat_streams_text_and_usage() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(r#"{"model":"/tmp/model.gguf","request_defaults":{"temperature":0.1}}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::chunks(
+            &[
+                r#"data: {"choices":[{"delta":{"content":"Hel"}}]}"#,
+                "\n\n",
+                r#"data: {"choices":[{"delta":{"content":"lo"}}]}"#,
+                "\n\n",
+                r#"data: {"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3},"model":"omniinfer"}"#,
+                "\n\n",
+                "data: [DONE]\n\n",
+            ],
+            "text/event-stream; charset=utf-8",
+        ),
+    ]);
+    let root = temp_repo_root("chat-stream");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["chat", "Hello"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Response\nHello"))
+        .stdout(predicate::str::contains("Performance"))
+        .stdout(predicate::str::contains(
+            "Tokens: prompt=1, completion=2, total=3",
+        ));
+
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/state HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+    assert!(request.contains(r#""stream":true"#));
+    assert!(request.contains(r#""stream_options":{"include_usage":true}"#));
+    assert!(request.contains(r#""temperature":0.1"#));
+    gateway.join();
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn backend_stop_posts_to_local_gateway() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),

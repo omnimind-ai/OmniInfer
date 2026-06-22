@@ -8,7 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use omniinfer_core::{
-    backend_profiles, config, http_client, local_state, model_load, paths, serve_state, version,
+    backend_profiles, chat_stream, config, http_client, local_state, model_load, paths,
+    serve_state, version,
 };
 
 #[derive(Debug, Parser)]
@@ -306,7 +307,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
         Command::Thinking {
             command: ThinkingCommand::Set { mode },
         } => print_thinking_set(mode.clone()),
-        Command::Chat(args) if args.no_stream && args.image.is_none() => print_chat_no_stream(args),
+        Command::Chat(args) if args.image.is_none() => print_chat(args),
         Command::Shutdown => shutdown_service(),
         Command::Serve(ServeArgs {
             command: Some(ServeCommand::Status { port }),
@@ -724,7 +725,27 @@ fn stop_serve(port: u16) -> Result<()> {
     Ok(())
 }
 
-fn print_chat_no_stream(args: &ChatArgs) -> Result<()> {
+fn print_chat(args: &ChatArgs) -> Result<()> {
+    let mut payload = build_chat_payload(args)?;
+    if args.no_stream {
+        payload.insert("stream".to_string(), serde_json::json!(false));
+        let response = post_local_json(
+            "/v1/chat/completions",
+            &serde_json::Value::Object(payload),
+            Duration::from_secs(600),
+        )?;
+        print_chat_response(&response);
+        return Ok(());
+    }
+    payload.insert("stream".to_string(), serde_json::json!(true));
+    payload.insert(
+        "stream_options".to_string(),
+        serde_json::json!({ "include_usage": true }),
+    );
+    print_chat_stream(&serde_json::Value::Object(payload))
+}
+
+fn build_chat_payload(args: &ChatArgs) -> Result<serde_json::Map<String, serde_json::Value>> {
     if args.message.is_some() && args.prompt.is_some() {
         anyhow::bail!("Use either positional prompt or --message, not both.");
     }
@@ -776,13 +797,58 @@ fn print_chat_no_stream(args: &ChatArgs) -> Result<()> {
             serde_json::json!(matches!(think, ThinkingMode::On)),
         );
     }
+    Ok(payload)
+}
 
-    let response = post_local_json(
-        "/v1/chat/completions",
-        &serde_json::Value::Object(payload),
-        Duration::from_secs(600),
+fn print_chat_stream(payload: &serde_json::Value) -> Result<()> {
+    let config = config::load_app_config().unwrap_or_default();
+    ensure_local_gateway_running(&config)?;
+    let url = format!("{}/v1/chat/completions", config.service_base_url());
+    println!("Response");
+    let mut filter = chat_stream::StreamPrefixFilter::new();
+    let mut final_payload = None;
+    let response = http_client::post_streaming_lines(
+        &url,
+        payload,
+        "text/event-stream, application/json",
+        Duration::from_secs(3600),
+        |line| {
+            let chunks = chat_stream::parse_chat_stream_line(line).unwrap_or_default();
+            for chunk in chunks {
+                match chunk {
+                    chat_stream::ChatStreamChunk::Text(text) => {
+                        if let Some(text) = filter.push(&text)
+                            && !text.is_empty()
+                        {
+                            print!("{text}");
+                            let _ = std::io::Write::flush(&mut std::io::stdout());
+                        }
+                    }
+                    chat_stream::ChatStreamChunk::Reasoning(_) => {}
+                    chat_stream::ChatStreamChunk::Final(payload) => {
+                        final_payload = Some(payload);
+                    }
+                }
+            }
+        },
     )?;
-    print_chat_response(&response);
+    if response.status >= 400 {
+        let message = parse_http_error_body(&response.body);
+        anyhow::bail!(
+            "Streaming inference failed with status {}: {}",
+            response.status,
+            message
+        );
+    }
+    if let Some(text) = filter.finish()
+        && !text.is_empty()
+    {
+        print!("{text}");
+    }
+    println!();
+    if let Some(final_payload) = final_payload {
+        print_chat_performance(&final_payload);
+    }
     Ok(())
 }
 
