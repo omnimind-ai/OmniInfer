@@ -365,6 +365,12 @@ class CliParserTests(unittest.TestCase):
         self.assertNotIn("llama.cpp-linux-rocm", output)
         self.assertIn("Hidden backends: 1 unavailable or incompatible", output)
 
+    def test_advisor_inspect_empty_model_reports_cli_error(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            cli.print_advisor_inspect("")
+
+        self.assertEqual(str(raised.exception), "Error: model reference must not be empty")
+
     def test_requested_window_mode_defaults_hidden(self) -> None:
         self.assertEqual(cli._requested_window_mode([]), "hidden")
         self.assertEqual(cli._requested_window_mode(["--window-mode", "visible"]), "visible")

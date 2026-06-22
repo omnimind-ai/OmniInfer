@@ -393,7 +393,10 @@ def print_advisor_system(json_output: bool = False) -> int:
 
 
 def print_advisor_inspect(model: str, *, mmproj: str | None = None, json_output: bool = False) -> int:
-    payload = commands.advisor_inspect(model, mmproj=mmproj)
+    try:
+        payload = commands.advisor_inspect(model, mmproj=mmproj)
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
     if json_output:
         return _dump_json(payload)
     print("OmniInfer Advisor Inspect")
@@ -420,7 +423,10 @@ def print_advisor_fit(
     backend: str | None = None,
     json_output: bool = False,
 ) -> int:
-    payload = commands.advisor_fit(model, mmproj=mmproj, ctx_size=ctx_size, backend=backend)
+    try:
+        payload = commands.advisor_fit(model, mmproj=mmproj, ctx_size=ctx_size, backend=backend)
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
     if json_output:
         return _dump_json(payload)
     print("OmniInfer Advisor Fit")
@@ -466,14 +472,17 @@ def print_advisor_plan(
     cpu_cores: int | None = None,
     json_output: bool = False,
 ) -> int:
-    payload = commands.advisor_plan(
-        model,
-        mmproj=mmproj,
-        ctx_size=ctx_size,
-        gpu_vram_gib=gpu_vram_gib,
-        ram_gib=ram_gib,
-        cpu_cores=cpu_cores,
-    )
+    try:
+        payload = commands.advisor_plan(
+            model,
+            mmproj=mmproj,
+            ctx_size=ctx_size,
+            gpu_vram_gib=gpu_vram_gib,
+            ram_gib=ram_gib,
+            cpu_cores=cpu_cores,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
     if json_output:
         return _dump_json(payload)
     model_info = payload.get("model") if isinstance(payload.get("model"), dict) else {}
