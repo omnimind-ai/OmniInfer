@@ -336,6 +336,18 @@ def _dump_json(payload: Any) -> int:
     return 0
 
 
+def _print_table(rows: list[list[str]], *, indent: str = "") -> None:
+    if not rows:
+        return
+    widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+    for row_index, row in enumerate(rows):
+        line = "  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip()
+        print(f"{indent}{line}")
+        if row_index == 0:
+            rule = "  ".join("-" * width for width in widths).rstrip()
+            print(f"{indent}{rule}")
+
+
 def print_advisor_system(json_output: bool = False) -> int:
     payload = commands.advisor_system()
     if json_output:
@@ -360,13 +372,23 @@ def print_advisor_system(json_output: bool = False) -> int:
     else:
         print("CUDA devices: none detected")
     print(f"Recommended installed backend: {summary.get('recommended_installed_backend') or '-'}")
-    print("Backends:")
-    for backend in payload.get("backends", []):
-        if not isinstance(backend, dict):
-            continue
-        installed = "yes" if backend.get("installed") else "no"
-        compatible = "yes" if backend.get("hardware_compatible") else "no"
-        print(f"  {backend.get('id')}: installed={installed}, compatible={compatible}, family={backend.get('family')}")
+    usable_backends = [
+        backend
+        for backend in payload.get("backends", [])
+        if isinstance(backend, dict) and backend.get("installed") and backend.get("hardware_compatible")
+    ]
+    print("Usable backends:")
+    if usable_backends:
+        rows = [["Backend", "Family", "Capabilities"]]
+        for backend in usable_backends:
+            capabilities = ", ".join(str(item) for item in backend.get("capabilities", [])[:4])
+            rows.append([str(backend.get("id") or "-"), str(backend.get("family") or "-"), capabilities or "-"])
+        _print_table(rows, indent="  ")
+    else:
+        print("  none installed and compatible")
+    hidden_count = len([backend for backend in payload.get("backends", []) if isinstance(backend, dict)]) - len(usable_backends)
+    if hidden_count > 0:
+        print(f"Hidden backends: {hidden_count} unavailable or incompatible; use --json for the full probe.")
     return 0
 
 
@@ -2017,7 +2039,7 @@ def main(argv: list[str] | None = None) -> int:
             return select_backend(args.backend_name)
         if args.backend_command == "stop":
             return backend_stop()
-        _group_error(parser_bundle["backend"], "backend requires a subcommand: list / select / stop")
+        _group_error(parser_bundle["backend"], "missing subcommand. Try one of: list, select, stop")
 
     if args.command == "build":
         if unknown_args:
@@ -2060,7 +2082,7 @@ def main(argv: list[str] | None = None) -> int:
                 ctx_size=getattr(args, "ctx_size", None),
                 json_output=getattr(args, "json_output", False),
             )
-        _group_error(parser_bundle["advisor"], "advisor requires a subcommand: system / inspect / fit / plan / recommend")
+        _group_error(parser_bundle["advisor"], "missing subcommand. Try one of: system, inspect, fit, plan, recommend")
 
     if args.command == "status":
         if unknown_args:
@@ -2077,7 +2099,7 @@ def main(argv: list[str] | None = None) -> int:
             return print_model_list(system_name=args.system, best=not args.all_backends)
         if args.model_command == "load":
             return print_model_load(args)
-        _group_error(parser_bundle["model"], "model requires a subcommand: list / load")
+        _group_error(parser_bundle["model"], "missing subcommand. Try one of: list, load")
     if args.command == "load":
         return print_model_load(args)
     if args.command == "thinking":
@@ -2087,7 +2109,7 @@ def main(argv: list[str] | None = None) -> int:
             return print_thinking_show()
         if args.thinking_command == "set":
             return print_thinking_set(args.value)
-        _group_error(parser_bundle["thinking"], "thinking requires a subcommand: show / set")
+        _group_error(parser_bundle["thinking"], "missing subcommand. Try one of: show, set")
     if args.command == "chat":
         return chat(args)
     if args.command == "shutdown":

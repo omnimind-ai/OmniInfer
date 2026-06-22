@@ -294,7 +294,7 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         output = stderr.getvalue()
         self.assertIn("usage: omniinfer advisor", output)
-        self.assertIn("advisor requires a subcommand", output)
+        self.assertIn("missing subcommand. Try one of: system, inspect, fit, plan, recommend", output)
         self.assertIn("omniinfer advisor fit /path/to/model.gguf --ctx-size 8192", output)
         self.assertNotIn("{backend,build,status", output)
 
@@ -307,7 +307,7 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         output = stderr.getvalue()
         self.assertIn("usage: omniinfer backend", output)
-        self.assertIn("backend requires a subcommand", output)
+        self.assertIn("missing subcommand. Try one of: list, select, stop", output)
         self.assertIn("omniinfer backend select llama.cpp-linux-cuda", output)
         self.assertNotIn("{backend,build,status", output)
 
@@ -324,6 +324,40 @@ class CliParserTests(unittest.TestCase):
         self.assertIn("invalid choice: 'nope'", output)
         self.assertIn("omniinfer advisor plan /path/to/model.gguf --gpu-vram 24 --ram 64", output)
         self.assertNotIn("{backend,build,status", output)
+
+    def test_advisor_system_prints_usable_backend_table(self) -> None:
+        payload = {
+            "host": {"system": "linux", "machine": "x86_64", "cpu_cores": 80, "available_ram_gib": 95.81, "total_ram_gib": 125.33},
+            "cuda": {"devices": []},
+            "summary": {"recommended_installed_backend": "llama.cpp-linux-cuda"},
+            "backends": [
+                {
+                    "id": "llama.cpp-linux-cuda",
+                    "family": "llama.cpp",
+                    "installed": True,
+                    "hardware_compatible": True,
+                    "capabilities": ["chat", "gpu", "cuda", "linux"],
+                },
+                {
+                    "id": "llama.cpp-linux-rocm",
+                    "family": "llama.cpp",
+                    "installed": False,
+                    "hardware_compatible": False,
+                    "capabilities": ["chat", "gpu", "rocm"],
+                },
+            ],
+        }
+        stdout = io.StringIO()
+        with patch("service_core.cli.commands.advisor_system", return_value=payload), redirect_stdout(stdout):
+            self.assertEqual(cli.print_advisor_system(), 0)
+
+        output = stdout.getvalue()
+        self.assertIn("RAM: 95.81 GiB available / 125.33 GiB total", output)
+        self.assertIn("Usable backends:", output)
+        self.assertIn("Backend", output)
+        self.assertIn("llama.cpp-linux-cuda", output)
+        self.assertNotIn("llama.cpp-linux-rocm", output)
+        self.assertIn("Hidden backends: 1 unavailable or incompatible", output)
 
     def test_requested_window_mode_defaults_hidden(self) -> None:
         self.assertEqual(cli._requested_window_mode([]), "hidden")
