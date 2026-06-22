@@ -182,6 +182,61 @@ fn serve_detach_starts_gateway_and_writes_state() {
 }
 
 #[test]
+fn serve_foreground_waits_and_cleans_state() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"starting"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
+        ),
+    ]);
+    let port = gateway.port;
+    let source_root = temp_repo_root("serve-foreground-source");
+    let state_root = temp_repo_root("serve-foreground-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+    let launcher = fake_python_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["serve", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OmniInfer service is ready"))
+        .stdout(predicate::str::contains("Press Ctrl+C to stop."));
+
+    let launched = wait_for_file(state_root.join("started_gateway.args"));
+    assert!(launched.contains("serve --host 127.0.0.1"));
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
+    gateway.join();
+    assert!(
+        !state_root
+            .join(".local")
+            .join("run")
+            .join(format!("serve-{port}.json"))
+            .exists()
+    );
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
 fn serve_detach_loads_model_before_ready() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"starting"}"#),

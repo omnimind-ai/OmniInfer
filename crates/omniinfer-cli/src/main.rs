@@ -374,7 +374,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
             command: Some(ServeCommand::Stop { port }),
             ..
         }) => stop_serve(*port),
-        Command::Serve(args) if can_serve_detach_locally(args) => serve_detached(args),
+        Command::Serve(args) if can_serve_locally(args) => serve_orchestrated(args),
         other => fallback_to_python(other),
     }
 }
@@ -902,11 +902,11 @@ fn print_ps(json_output: bool) -> Result<()> {
     Ok(())
 }
 
-fn can_serve_detach_locally(args: &ServeArgs) -> bool {
-    args.command.is_none() && args.detach
+fn can_serve_locally(args: &ServeArgs) -> bool {
+    args.command.is_none()
 }
 
-fn serve_detached(args: &ServeArgs) -> Result<()> {
+fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     if args.no_smoke_test && args.smoke_test {
         anyhow::bail!("Use either --smoke-test or --no-smoke-test, not both.");
     }
@@ -1059,7 +1059,28 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
     if smoke_failed {
         anyhow::bail!("smoke test failed");
     }
+    if !args.detach {
+        println!("Press Ctrl+C to stop.");
+        let status = wait_for_foreground_service(child, cloudflared_child, config.port)?;
+        if !status.success() {
+            anyhow::bail!("OmniInfer service exited with status {status}");
+        }
+    }
     Ok(())
+}
+
+fn wait_for_foreground_service(
+    mut child: std::process::Child,
+    cloudflared_child: Option<std::process::Child>,
+    port: u16,
+) -> Result<std::process::ExitStatus> {
+    let status = child.wait()?;
+    if let Some(mut tunnel) = cloudflared_child {
+        let _ = tunnel.kill();
+        let _ = tunnel.wait();
+    }
+    let _ = serve_state::remove_serve_pid_info(port);
+    Ok(status)
 }
 
 fn validate_serve_remote_access_args(args: &ServeArgs) -> Result<()> {
