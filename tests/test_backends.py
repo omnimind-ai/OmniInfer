@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -219,6 +220,55 @@ class PlatformRegistrationTests(unittest.TestCase):
         env = LinuxPlatform().prepare_runtime_env({"OMNIINFER_CUDA_VISIBLE_DEVICES": "2"}, backend)
 
         self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "2")
+
+    def test_embedded_binary_probe_runs_with_suppressed_output(self) -> None:
+        backend = BackendSpec(
+            id="embedded-noisy",
+            label="Embedded Noisy",
+            family="test",
+            runtime_dir=".",
+            launcher_path=None,
+            models_dir=None,
+            catalog_url=None,
+            description="",
+            capabilities=[],
+            runtime_mode="embedded",
+            python_modules=("noisy_runtime",),
+        )
+
+        completed = subprocess.CompletedProcess(args=[], returncode=0)
+        with patch("service_core.backends.base.subprocess.run", return_value=completed) as run:
+            self.assertTrue(backend.binary_exists)
+
+        _args, kwargs = run.call_args
+        self.assertIs(kwargs["stdout"], subprocess.DEVNULL)
+        self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
+
+    def test_embedded_binary_probe_uses_runtime_python(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_python = Path(tmp) / "bin" / "python3"
+            runtime_python.parent.mkdir(parents=True)
+            runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
+            backend = BackendSpec(
+                id="embedded-runtime-python",
+                label="Embedded Runtime Python",
+                family="test",
+                runtime_dir=tmp,
+                launcher_path=None,
+                models_dir=None,
+                catalog_url=None,
+                description="",
+                capabilities=[],
+                runtime_mode="embedded",
+                python_modules=("runtime_module",),
+            )
+
+            completed = subprocess.CompletedProcess(args=[], returncode=0)
+            with patch("service_core.backends.base.subprocess.run", return_value=completed) as run:
+                self.assertTrue(backend.binary_exists)
+
+        args = run.call_args.args[0]
+        self.assertEqual(args[0], str(runtime_python))
 
     def test_vllm_backend_is_cuda_compatible(self) -> None:
         backend = next(t for t in LinuxPlatform().backend_templates if t.id == "vllm-linux-cuda")

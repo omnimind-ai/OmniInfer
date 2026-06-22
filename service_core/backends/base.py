@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import importlib
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,20 @@ BACKEND_PRIORITY: dict[str, int] = {
     "ik_llama.cpp-cpu": 1,
     "ik_llama.cpp-cuda": 0,
 }
+
+
+def _embedded_probe_python(runtime_dir: str) -> str:
+    runtime_path = Path(runtime_dir)
+    for relative in (
+        Path("bin") / "python3",
+        Path("bin") / "python",
+        Path("venv") / "bin" / "python3",
+        Path("venv") / "bin" / "python",
+    ):
+        candidate = runtime_path / relative
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
 
 
 @dataclass(frozen=True)
@@ -80,12 +95,21 @@ class BackendSpec:
     @property
     def binary_exists(self) -> bool:
         if self.runtime_mode == "embedded":
-            for module_name in self.python_modules:
-                try:
-                    importlib.import_module(module_name)
-                except ImportError:
-                    return False
-            return True
+            if not self.python_modules:
+                return True
+            python = _embedded_probe_python(self.runtime_dir)
+            code = (
+                "import importlib, sys\n"
+                "for module_name in sys.argv[1:]:\n"
+                "    importlib.import_module(module_name)\n"
+            )
+            result = subprocess.run(
+                [python, "-c", code, *self.python_modules],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return result.returncode == 0
         if not self.launcher_path:
             return False
         return Path(self.launcher_path).is_file()
