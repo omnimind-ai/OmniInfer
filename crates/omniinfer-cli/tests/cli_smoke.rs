@@ -40,6 +40,42 @@ fn strict_mode_reports_unported_commands_without_fallback() {
 }
 
 #[test]
+fn serve_launch_options_parse_before_fallback() {
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .args([
+            "serve",
+            "--cloudflare",
+            "--cloudflared-path",
+            "/opt/bin/cloudflared",
+            "--cloudflare-no-print-key",
+            "--backend",
+            "llama.cpp-linux-cuda",
+            "--model",
+            "/tmp/model.gguf",
+            "--ctx-size",
+            "8192",
+            "--api-key",
+            "auto",
+            "--detach",
+            "--smoke-test",
+            "--port",
+            "19000",
+            "--startup-timeout",
+            "20",
+            "--default-backend",
+            "llama.cpp-linux-cuda",
+            "--window-mode",
+            "hidden",
+            "--log-level",
+            "warning",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("implementation pending"));
+}
+
+#[test]
 fn model_load_posts_payload_and_persists_state() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),

@@ -227,9 +227,17 @@ struct ServeArgs {
     #[arg(long)]
     cloudflare: bool,
     #[arg(long)]
+    cloudflared_path: Option<String>,
+    #[arg(long)]
+    cloudflare_no_print_key: bool,
+    #[arg(long)]
     lan: bool,
     #[arg(long)]
     api_key: Option<String>,
+    #[arg(long)]
+    allow_insecure_lan: bool,
+    #[arg(long)]
+    allow_remote_management: bool,
     #[arg(long)]
     detach: bool,
     #[arg(long)]
@@ -240,6 +248,26 @@ struct ServeArgs {
     port: u16,
     #[arg(long)]
     host: Option<String>,
+    #[arg(long)]
+    backend_host: Option<String>,
+    #[arg(long)]
+    backend_port: Option<u16>,
+    #[arg(long)]
+    default_backend: Option<String>,
+    #[arg(long)]
+    default_thinking: Option<ThinkingMode>,
+    #[arg(long)]
+    force_backend: Option<String>,
+    #[arg(long)]
+    window_mode: Option<WindowMode>,
+    #[arg(long)]
+    startup_timeout: Option<u32>,
+    #[arg(long)]
+    log_level: Option<LogLevel>,
+    #[arg(long)]
+    verbose: bool,
+    #[arg(long)]
+    debug_body: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -259,6 +287,20 @@ enum ServeCommand {
 #[derive(Debug, Clone, ValueEnum)]
 enum CompletionShell {
     Bash,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum WindowMode {
+    Visible,
+    Hidden,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum LogLevel {
+    Debug,
+    Info,
+    Warning,
+    Error,
 }
 
 fn main() -> Result<()> {
