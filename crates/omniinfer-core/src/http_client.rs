@@ -26,15 +26,38 @@ pub struct JsonResponse {
 }
 
 pub fn get_json(url: &str, timeout: Duration) -> Result<JsonResponse, HttpError> {
+    request_json("GET", url, None, timeout)
+}
+
+pub fn post_json(url: &str, body: &Value, timeout: Duration) -> Result<JsonResponse, HttpError> {
+    request_json("POST", url, Some(body), timeout)
+}
+
+fn request_json(
+    method: &str,
+    url: &str,
+    body: Option<&Value>,
+    timeout: Duration,
+) -> Result<JsonResponse, HttpError> {
     let parsed = parse_http_url(url)?;
     let mut stream = TcpStream::connect((parsed.host.as_str(), parsed.port))?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
+    let body_bytes = match body {
+        Some(body) => serde_json::to_vec(body)?,
+        None => Vec::new(),
+    };
     let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
-        parsed.path, parsed.host, parsed.port
+        "{method} {} HTTP/1.1\r\nHost: {}:{}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        parsed.path,
+        parsed.host,
+        parsed.port,
+        body_bytes.len()
     );
     stream.write_all(request.as_bytes())?;
+    if !body_bytes.is_empty() {
+        stream.write_all(&body_bytes)?;
+    }
 
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw)?;

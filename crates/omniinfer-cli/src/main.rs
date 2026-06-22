@@ -257,20 +257,49 @@ fn main() -> Result<()> {
         return exec_python(env::args().skip(1));
     }
     let cli = Cli::parse();
-    match cli.command {
+    match cli.command.as_ref() {
         None => print_tui_placeholder(),
         Some(Command::Status) => print_status(),
-        Some(Command::Completion { shell }) => print_completion(shell),
-        Some(Command::Thinking {
-            command: ThinkingCommand::Show,
-        }) => print_thinking_show(),
-        Some(Command::Serve(ServeArgs {
-            command: Some(ServeCommand::Status { port }),
-            ..
-        })) => print_serve_status(port),
-        Some(command) => fallback_to_python(&command)?,
+        Some(Command::Completion { shell }) => print_completion(shell.clone()),
+        Some(command) => {
+            if let Err(error) = run_ported_command(command) {
+                if should_strict_rust() {
+                    return Err(error);
+                }
+                return exec_python(env::args().skip(1));
+            }
+        }
     }
     Ok(())
+}
+
+fn run_ported_command(command: &Command) -> Result<()> {
+    match command {
+        Command::Backend {
+            command: BackendCommand::List { scope },
+        } => print_backend_list(scope.clone()),
+        Command::Model {
+            command: ModelCommand::List { all, best },
+        } => print_model_list(*all, *best),
+        Command::Thinking {
+            command: ThinkingCommand::Show,
+        } => {
+            print_thinking_show();
+            Ok(())
+        }
+        Command::Thinking {
+            command: ThinkingCommand::Set { mode },
+        } => print_thinking_set(mode.clone()),
+        Command::Shutdown => shutdown_service(),
+        Command::Serve(ServeArgs {
+            command: Some(ServeCommand::Status { port }),
+            ..
+        }) => {
+            print_serve_status(*port);
+            Ok(())
+        }
+        other => fallback_to_python(other),
+    }
 }
 
 fn print_tui_placeholder() {
@@ -356,6 +385,147 @@ fn print_completion(shell: CompletionShell) {
     }
 }
 
+fn print_backend_list(scope: BackendScope) -> Result<()> {
+    let scope_text = match scope {
+        BackendScope::Installed => "installed",
+        BackendScope::Compatible => "compatible",
+        BackendScope::All => "all",
+    };
+    let payload = get_local_json(
+        &format!("/omni/backends?scope={scope_text}"),
+        Duration::from_secs(10),
+    )?;
+    let rows = payload
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if rows.is_empty() {
+        anyhow::bail!("No backends are available on this system.");
+    }
+
+    let title = match scope {
+        BackendScope::Compatible => "Compatible backends",
+        BackendScope::Installed => "Installed backends",
+        BackendScope::All => "Available backends",
+    };
+    println!("{title}");
+    let width = rows
+        .iter()
+        .filter_map(|item| json_str(item, "id"))
+        .map(str::len)
+        .chain(std::iter::once("Backend".len()))
+        .max()
+        .unwrap_or("Backend".len());
+    println!("{:<width$}  Selected  Installed", "Backend");
+    println!("{:<width$}  --------  ---------", "-".repeat(width));
+    for item in rows {
+        let backend = json_str(&item, "id").unwrap_or("");
+        let selected = if json_bool(&item, "selected").unwrap_or(false) {
+            "yes"
+        } else {
+            ""
+        };
+        let installed = if json_bool(&item, "binary_exists").unwrap_or(false) {
+            "yes"
+        } else {
+            ""
+        };
+        println!("{backend:<width$}  {selected:<8}  {installed:<9}");
+    }
+    Ok(())
+}
+
+fn print_model_list(all: bool, best: bool) -> Result<()> {
+    let best = best || !all;
+    let system = current_system_name();
+    let endpoint = if best {
+        "/omni/supported-models/best"
+    } else {
+        "/omni/supported-models"
+    };
+    let payload = get_local_json(
+        &format!("{endpoint}?system={system}"),
+        Duration::from_secs(60),
+    )?;
+    println!("Supported models ({system})");
+    if best {
+        print_best_model_catalog(&payload);
+    } else {
+        print_full_model_catalog(&payload);
+    }
+    Ok(())
+}
+
+fn print_best_model_catalog(payload: &serde_json::Value) {
+    let Some(families) = payload.as_object() else {
+        println!("No models are available to display.");
+        return;
+    };
+    if families.is_empty() {
+        println!("No models are available to display.");
+        return;
+    }
+    for (family, models) in families {
+        println!("\n[{family}]");
+        let Some(models) = models.as_object() else {
+            continue;
+        };
+        for (model_name, model_info) in models {
+            println!("  {model_name}");
+            print_quantization_rows(model_info, true);
+        }
+    }
+}
+
+fn print_full_model_catalog(payload: &serde_json::Value) {
+    let Some(backends) = payload.as_object() else {
+        return;
+    };
+    for (backend, backend_payload) in backends {
+        println!("\n[{backend}]");
+        let Some(families) = backend_payload.as_object() else {
+            continue;
+        };
+        for (family, models) in families {
+            println!("  {family}");
+            let Some(models) = models.as_object() else {
+                continue;
+            };
+            for (model_name, model_info) in models {
+                println!("    {model_name}");
+                print_quantization_rows(model_info, false);
+            }
+        }
+    }
+}
+
+fn print_quantization_rows(model_info: &serde_json::Value, include_backend: bool) {
+    let quantizations = model_info
+        .get("quantization")
+        .and_then(serde_json::Value::as_object);
+    let Some(quantizations) = quantizations else {
+        return;
+    };
+    for (quant_name, quant_info) in quantizations {
+        let suitable = if json_bool(quant_info, "suitable").unwrap_or(false) {
+            "yes"
+        } else {
+            "no"
+        };
+        let memory = quant_info
+            .get("required_memory_gib")
+            .map(|value| format!("{value} GiB"))
+            .unwrap_or_else(|| "-".to_string());
+        if include_backend {
+            let backend = json_str(quant_info, "backend").unwrap_or("-");
+            println!("    - {quant_name}: backend={backend}, suitable={suitable}, memory={memory}");
+        } else {
+            println!("      - {quant_name}: suitable={suitable}, memory={memory}");
+        }
+    }
+}
+
 fn print_thinking_show() {
     let config = config::load_app_config().unwrap_or_default();
     println!(
@@ -365,6 +535,41 @@ fn print_thinking_show() {
             _ => "off",
         }
     );
+}
+
+fn print_thinking_set(mode: ThinkingMode) -> Result<()> {
+    let enabled = matches!(mode, ThinkingMode::On);
+    let payload = post_local_json(
+        "/omni/thinking/select",
+        &serde_json::json!({ "enabled": enabled }),
+        Duration::from_secs(10),
+    )?;
+    println!(
+        "Default thinking set to: {}",
+        if json_bool(&payload, "default_enabled").unwrap_or(false) {
+            "on"
+        } else {
+            "off"
+        }
+    );
+    Ok(())
+}
+
+fn shutdown_service() -> Result<()> {
+    match post_local_json(
+        "/omni/shutdown",
+        &serde_json::json!({}),
+        Duration::from_secs(10),
+    ) {
+        Ok(_) => {
+            println!("OmniInfer service stopped");
+            Ok(())
+        }
+        Err(_) => {
+            println!("OmniInfer service is not running");
+            Ok(())
+        }
+    }
 }
 
 fn print_serve_status(port: u16) {
@@ -427,6 +632,38 @@ fn json_bool(value: &serde_json::Value, key: &str) -> Option<bool> {
 
 fn json_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
     value.get(key).and_then(serde_json::Value::as_u64)
+}
+
+fn get_local_json(endpoint: &str, timeout: Duration) -> Result<serde_json::Value> {
+    let config = config::load_app_config().unwrap_or_default();
+    let url = format!("{}{}", config.service_base_url(), endpoint);
+    let response = http_client::get_json(&url, timeout)?;
+    if response.status >= 400 {
+        anyhow::bail!("GET {endpoint} failed with status {}", response.status);
+    }
+    Ok(response.body)
+}
+
+fn post_local_json(
+    endpoint: &str,
+    body: &serde_json::Value,
+    timeout: Duration,
+) -> Result<serde_json::Value> {
+    let config = config::load_app_config().unwrap_or_default();
+    let url = format!("{}{}", config.service_base_url(), endpoint);
+    let response = http_client::post_json(&url, body, timeout)?;
+    if response.status >= 400 {
+        anyhow::bail!("POST {endpoint} failed with status {}", response.status);
+    }
+    Ok(response.body)
+}
+
+fn current_system_name() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "mac",
+        "windows" => "windows",
+        _ => "linux",
+    }
 }
 
 fn fallback_to_python(command: &Command) -> Result<()> {
