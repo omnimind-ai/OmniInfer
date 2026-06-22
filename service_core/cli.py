@@ -32,6 +32,43 @@ SYSTEM_CHOICES = ("linux", "mac", "windows")
 PUBLIC_SMOKE_PROMPT = "Reply exactly: omniinfer-public-ok"
 
 
+BACKEND_HELP = """\
+Manage inference runtimes.
+
+Examples:
+  omniinfer backend list
+  omniinfer backend select llama.cpp-linux-cuda
+"""
+
+
+MODEL_HELP = """\
+Discover and load models.
+
+Examples:
+  omniinfer model list
+  omniinfer model load -m /path/to/model.gguf --ctx-size 8192
+"""
+
+
+ADVISOR_HELP = """\
+Inspect hardware, estimate model fit, and plan deployments.
+
+Examples:
+  omniinfer advisor system
+  omniinfer advisor fit /path/to/model.gguf --ctx-size 8192
+  omniinfer advisor plan /path/to/model.gguf --gpu-vram 24 --ram 64
+"""
+
+
+THINKING_HELP = """\
+Manage the default thinking mode used by chat requests.
+
+Examples:
+  omniinfer thinking show
+  omniinfer thinking set off
+"""
+
+
 HELP_TEXT = """\
 OmniInfer CLI
 
@@ -1793,6 +1830,10 @@ def handle_hidden_completion(argv: list[str]) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    return build_parser_bundle()["parser"]
+
+
+def build_parser_bundle() -> dict[str, argparse.ArgumentParser]:
     parser = argparse.ArgumentParser(
         prog="omniinfer",
         description="OmniInfer local CLI",
@@ -1802,7 +1843,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=None, help="Gateway port (overrides config file)")
     sub = parser.add_subparsers(dest="command")
 
-    backend = sub.add_parser("backend", help="Backend commands")
+    backend = sub.add_parser(
+        "backend",
+        help="Backend commands",
+        description="OmniInfer backend commands",
+        epilog=BACKEND_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     backend_sub = backend.add_subparsers(dest="backend_command")
     backend_list = backend_sub.add_parser("list", help="List backends available on this system")
     backend_list.add_argument("--scope", choices=("installed", "compatible", "all"), default="compatible", help="Filter backends by scope (default: compatible)")
@@ -1823,7 +1870,13 @@ def build_parser() -> argparse.ArgumentParser:
     ps = sub.add_parser("ps", help="List all running OmniInfer services")
     ps.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
-    model = sub.add_parser("model", help="Model commands")
+    model = sub.add_parser(
+        "model",
+        help="Model commands",
+        description="OmniInfer model commands",
+        epilog=MODEL_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     model_sub = model.add_subparsers(dest="model_command")
     model_list = model_sub.add_parser("list", help="List supported models")
     model_list.add_argument("--system", choices=SYSTEM_CHOICES, default=detect_system_name(), help="Target system, defaults to the current system")
@@ -1834,7 +1887,13 @@ def build_parser() -> argparse.ArgumentParser:
     load_alias = sub.add_parser("load", help="Load a model")
     add_model_load_arguments(load_alias)
 
-    advisor = sub.add_parser("advisor", help="Hardware and model advisor commands")
+    advisor = sub.add_parser(
+        "advisor",
+        help="Hardware and model advisor commands",
+        description="OmniInfer advisor commands",
+        epilog=ADVISOR_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     advisor_sub = advisor.add_subparsers(dest="advisor_command")
     advisor_system = advisor_sub.add_parser("system", help="Inspect local hardware and OmniInfer runtimes")
     advisor_system.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
@@ -1862,7 +1921,13 @@ def build_parser() -> argparse.ArgumentParser:
     advisor_recommend.add_argument("--ctx-size", type=int, help="Context length used for estimation")
     advisor_recommend.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
-    thinking = sub.add_parser("thinking", help="Default thinking controls")
+    thinking = sub.add_parser(
+        "thinking",
+        help="Default thinking controls",
+        description="OmniInfer thinking commands",
+        epilog=THINKING_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     thinking_sub = thinking.add_subparsers(dest="thinking_command")
     thinking_sub.add_parser("show", help="Show the default thinking state")
     thinking_set = thinking_sub.add_parser("set", help="Set the default thinking state")
@@ -1886,7 +1951,18 @@ def build_parser() -> argparse.ArgumentParser:
     completion = sub.add_parser("completion", help="Print shell completion")
     completion.add_argument("shell", choices=("bash",), help="Currently supported shell: bash")
 
-    return parser
+    return {
+        "parser": parser,
+        "backend": backend,
+        "model": model,
+        "advisor": advisor,
+        "thinking": thinking,
+    }
+
+
+def _group_error(parser: argparse.ArgumentParser, message: str) -> None:
+    parser.print_help(sys.stderr)
+    parser.exit(2, f"{parser.prog}: error: {message}\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1896,7 +1972,8 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "__complete":
         return handle_hidden_completion(argv[1:])
 
-    parser = build_parser()
+    parser_bundle = build_parser_bundle()
+    parser = parser_bundle["parser"]
     if argv and argv[0] in {"serve", "server"}:
         args, unknown_args = parser.parse_known_args(argv[:1])
         _cli_port_override = args.port
@@ -1927,14 +2004,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "backend":
         if unknown_args:
-            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+            _group_error(parser_bundle["backend"], f"unrecognized arguments: {' '.join(unknown_args)}")
         if args.backend_command == "list":
             return print_backend_list(scope=args.scope, json_output=getattr(args, "json_output", False))
         if args.backend_command == "select":
             return select_backend(args.backend_name)
         if args.backend_command == "stop":
             return backend_stop()
-        parser.error("backend requires a subcommand: list / select / stop")
+        _group_error(parser_bundle["backend"], "backend requires a subcommand: list / select / stop")
 
     if args.command == "build":
         if unknown_args:
@@ -1947,7 +2024,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "advisor":
         if unknown_args:
-            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+            _group_error(parser_bundle["advisor"], f"unrecognized arguments: {' '.join(unknown_args)}")
         if args.advisor_command == "system":
             return print_advisor_system(json_output=getattr(args, "json_output", False))
         if args.advisor_command == "inspect":
@@ -1977,7 +2054,7 @@ def main(argv: list[str] | None = None) -> int:
                 ctx_size=getattr(args, "ctx_size", None),
                 json_output=getattr(args, "json_output", False),
             )
-        parser.error("advisor requires a subcommand: system / inspect / fit / plan / recommend")
+        _group_error(parser_bundle["advisor"], "advisor requires a subcommand: system / inspect / fit / plan / recommend")
 
     if args.command == "status":
         if unknown_args:
@@ -1990,21 +2067,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "model":
         if args.model_command == "list":
             if unknown_args:
-                parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+                _group_error(parser_bundle["model"], f"unrecognized arguments: {' '.join(unknown_args)}")
             return print_model_list(system_name=args.system, best=not args.all_backends)
         if args.model_command == "load":
             return print_model_load(args)
-        parser.error("model requires a subcommand: list / load")
+        _group_error(parser_bundle["model"], "model requires a subcommand: list / load")
     if args.command == "load":
         return print_model_load(args)
     if args.command == "thinking":
         if unknown_args:
-            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+            _group_error(parser_bundle["thinking"], f"unrecognized arguments: {' '.join(unknown_args)}")
         if args.thinking_command == "show":
             return print_thinking_show()
         if args.thinking_command == "set":
             return print_thinking_set(args.value)
-        parser.error("thinking requires a subcommand: show / set")
+        _group_error(parser_bundle["thinking"], "thinking requires a subcommand: show / set")
     if args.command == "chat":
         return chat(args)
     if args.command == "shutdown":

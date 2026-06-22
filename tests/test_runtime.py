@@ -11,7 +11,7 @@ import json
 import os
 import threading
 import time
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -263,6 +263,32 @@ class CliParserTests(unittest.TestCase):
     def test_top_level_select_is_not_a_command(self) -> None:
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["select", "llama.cpp-linux"])
+
+    def test_advisor_without_subcommand_prints_advisor_help(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["advisor"])
+
+        self.assertEqual(raised.exception.code, 2)
+        output = stderr.getvalue()
+        self.assertIn("usage: omniinfer advisor", output)
+        self.assertIn("advisor requires a subcommand", output)
+        self.assertIn("omniinfer advisor fit /path/to/model.gguf --ctx-size 8192", output)
+        self.assertNotIn("{backend,build,status", output)
+
+    def test_backend_without_subcommand_prints_backend_help(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["backend"])
+
+        self.assertEqual(raised.exception.code, 2)
+        output = stderr.getvalue()
+        self.assertIn("usage: omniinfer backend", output)
+        self.assertIn("backend requires a subcommand", output)
+        self.assertIn("omniinfer backend select llama.cpp-linux-cuda", output)
+        self.assertNotIn("{backend,build,status", output)
 
     def test_requested_window_mode_defaults_hidden(self) -> None:
         self.assertEqual(cli._requested_window_mode([]), "hidden")
