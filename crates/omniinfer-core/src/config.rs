@@ -28,6 +28,7 @@ pub enum ConfigError {
 pub struct AppConfig {
     pub host: String,
     pub port: u16,
+    pub api_key: String,
     pub default_backend: String,
     pub default_thinking: String,
     pub window_mode: String,
@@ -40,6 +41,7 @@ impl Default for AppConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 9000,
+            api_key: String::new(),
             default_backend: String::new(),
             default_thinking: "off".to_string(),
             window_mode: "hidden".to_string(),
@@ -97,6 +99,9 @@ fn apply_config_value(config: &mut AppConfig, value: &Value) -> Result<(), Confi
     if let Some(port) = map.get("port").and_then(Value::as_u64) {
         config.port = u16::try_from(port)
             .map_err(|_| ConfigError::Invalid(format!("port {port} is outside 1-65535")))?;
+    }
+    if let Some(Value::String(api_key)) = map.get("api_key") {
+        config.api_key = api_key.clone();
     }
     if let Some(Value::String(default_backend)) = map.get("default_backend") {
         config.default_backend = default_backend.clone();

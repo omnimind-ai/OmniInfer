@@ -3,9 +3,14 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
+use rand::Rng;
+use rand::distr::Alphanumeric;
 use std::env;
 use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -779,12 +784,16 @@ fn stop_backend() -> Result<()> {
 fn stop_serve(port: u16) -> Result<()> {
     let mut config = config::load_app_config().unwrap_or_default();
     config.port = port;
+    let info = serve_state::load_serve_pid_info(port).ok().flatten();
     let url = format!("{}/omni/shutdown", config.service_base_url());
     let stopped =
         match http_client::post_json(&url, &serde_json::json!({}), Duration::from_secs(10)) {
             Ok(response) => response.status < 400,
             Err(_) => false,
         };
+    if let Some(pid) = info.and_then(|info| info.cloudflared_pid) {
+        stop_process(pid);
+    }
     let _ = serve_state::remove_serve_pid_info(port);
     if stopped {
         println!("OmniInfer service stopped on port {port}");
@@ -794,14 +803,28 @@ fn stop_serve(port: u16) -> Result<()> {
     Ok(())
 }
 
+fn stop_process(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = ProcessCommand::new("kill").arg(pid.to_string()).status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = ProcessCommand::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status();
+    }
+}
+
 fn can_serve_detach_locally(args: &ServeArgs) -> bool {
-    args.command.is_none() && args.detach && !args.cloudflare && !args.lan
+    args.command.is_none() && args.detach && !args.lan
 }
 
 fn serve_detached(args: &ServeArgs) -> Result<()> {
     if args.no_smoke_test && args.smoke_test {
         anyhow::bail!("Use either --smoke-test or --no-smoke-test, not both.");
     }
+    validate_serve_remote_access_args(args)?;
     let mut config = config::load_app_config().unwrap_or_default();
     config.port = args.port;
     if let Some(host) = args
@@ -836,41 +859,71 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
         config.startup_timeout = f64::from(timeout);
     }
 
+    if args.cloudflare && args.host.is_none() {
+        config.host = "127.0.0.1".to_string();
+    }
+
+    let api_key = resolve_serve_api_key(args)?;
     let log_path = paths::local_logs_dir().join(format!("serve-{}.log", config.port));
-    let child = start_serve_child(&config, args, &log_path)?;
+    let child = start_serve_child(&config, args, &log_path, api_key.as_deref())?;
     println!("Starting OmniInfer service on port {}...", config.port);
     println!("Log: {}", log_path.display());
     wait_for_gateway_ready(&config)?;
-    if let Some(backend) = args
-        .backend
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        select_backend(backend)?;
+    let mut cloudflared_child = None;
+    let mut public_url = None;
+    if args.cloudflare {
+        let cloudflared = resolve_cloudflared(args.cloudflared_path.as_deref())?;
+        let local_url = format!("http://127.0.0.1:{}", config.port);
+        let (child, url) = start_cloudflare_quick_tunnel(&cloudflared, &local_url, &log_path)?;
+        cloudflared_child = Some(child);
+        public_url = Some(url);
     }
-    if let Some(model) = args
-        .model
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        let request = model_load::ModelLoadRequest {
-            model: model.to_string(),
-            mmproj: args.mmproj.clone(),
-            ctx_size: args.ctx_size,
-            config: None,
-            backend_extra_args: Vec::new(),
-        };
-        let (response, plan) = load_model_with_request(&request, false)?;
-        if plan.auto_selected {
-            println!("Auto-selected backend: {}", plan.backend);
+    let configure_result = (|| -> Result<()> {
+        if let Some(backend) = args
+            .backend
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            select_backend(backend)?;
         }
-        print_model_loaded(&response, &plan)?;
+        if let Some(model) = args
+            .model
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            let request = model_load::ModelLoadRequest {
+                model: model.to_string(),
+                mmproj: args.mmproj.clone(),
+                ctx_size: args.ctx_size,
+                config: None,
+                backend_extra_args: Vec::new(),
+            };
+            let (response, plan) = load_model_with_request(&request, false)?;
+            if plan.auto_selected {
+                println!("Auto-selected backend: {}", plan.backend);
+            }
+            print_model_loaded(&response, &plan)?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = configure_result {
+        if let Some(mut child) = cloudflared_child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = http_client::post_json(
+            &format!("{}/omni/shutdown", config.service_base_url()),
+            &serde_json::json!({}),
+            Duration::from_secs(10),
+        );
+        return Err(error);
     }
     let state = get_serve_health_state(&config)?;
     let mut smoke_text = None;
     let mut smoke_failed = false;
     if args.smoke_test {
-        match serve_smoke(config.port) {
+        let local_base_url = format!("http://127.0.0.1:{}", config.port);
+        match serve_smoke(&local_base_url) {
             Ok(text) => smoke_text = Some(text),
             Err(error) => {
                 smoke_failed = true;
@@ -880,10 +933,13 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
     }
     serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
         pid: Some(child.id()),
+        cloudflared_pid: cloudflared_child.as_ref().map(std::process::Child::id),
         port: Some(config.port),
         log: Some(log_path.display().to_string()),
-        public_url: None,
-        openai_base_url: None,
+        public_url: public_url.clone(),
+        openai_base_url: public_url
+            .as_ref()
+            .map(|url| format!("{}/v1", url.trim_end_matches('/'))),
         backend: json_str(&state, "backend").map(str::to_string),
         model: json_str(&state, "model").map(str::to_string),
         mmproj: json_str(&state, "mmproj").map(str::to_string),
@@ -895,9 +951,9 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
     print_serve_ready(
         config.port,
         &state,
-        None,
-        None,
-        true,
+        public_url.as_deref(),
+        api_key.as_deref(),
+        !args.cloudflare_no_print_key,
         &log_path,
         smoke_text.as_deref(),
     );
@@ -907,10 +963,216 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
     Ok(())
 }
 
+fn validate_serve_remote_access_args(args: &ServeArgs) -> Result<()> {
+    if args.cloudflare && !is_loopback_host(args.host.as_deref().unwrap_or("127.0.0.1")) {
+        anyhow::bail!(
+            "--cloudflare keeps OmniInfer on 127.0.0.1; do not combine it with a non-loopback --host."
+        );
+    }
+    if args.cloudflare && args.allow_insecure_lan {
+        anyhow::bail!(
+            "--cloudflare requires an API key and cannot be combined with --allow-insecure-lan."
+        );
+    }
+    if args.cloudflare && args.allow_remote_management {
+        anyhow::bail!(
+            "--cloudflare keeps /omni/* management endpoints local-only; do not use --allow-remote-management."
+        );
+    }
+    Ok(())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host.trim(), "" | "127.0.0.1" | "localhost" | "::1")
+}
+
+fn resolve_serve_api_key(args: &ServeArgs) -> Result<Option<String>> {
+    if args.cloudflare {
+        let config = config::load_app_config().unwrap_or_default();
+        let configured = if let Some(value) = args
+            .api_key
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            Some(value.to_string())
+        } else if !config.api_key.trim().is_empty() {
+            Some(config.api_key)
+        } else if let Ok(value) = env::var("OMNIINFER_API_KEY") {
+            Some(value.trim().to_string()).filter(|value| !value.is_empty())
+        } else {
+            None
+        };
+
+        if let Some(value) = configured {
+            return if value.trim().eq_ignore_ascii_case("auto") {
+                Ok(Some(generate_session_api_key()?))
+            } else {
+                Ok(Some(value))
+            };
+        }
+        return Ok(Some(generate_session_api_key()?));
+    }
+    Ok(args
+        .api_key
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string))
+}
+
+fn generate_session_api_key() -> Result<String> {
+    let token: String = rand::rng()
+        .sample_iter(Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
+    Ok(format!("oi_{token}"))
+}
+
+fn resolve_cloudflared(explicit_path: Option<&str>) -> Result<PathBuf> {
+    if let Some(path) = explicit_path.filter(|value| !value.trim().is_empty()) {
+        let path = PathBuf::from(path);
+        if !path.is_file() {
+            anyhow::bail!("cloudflared was not found at {}", path.display());
+        }
+        return Ok(path);
+    }
+
+    let managed = managed_cloudflared_path();
+    if managed.is_file() {
+        return Ok(managed);
+    }
+
+    let output = ProcessCommand::new(python_executable())
+        .arg("-c")
+        .arg("from service_core.remote_access import find_cloudflared; print(find_cloudflared())")
+        .current_dir(paths::repo_root())
+        .env("PYTHONPATH", paths::repo_root())
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("failed to resolve cloudflared: {stderr}");
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        anyhow::bail!("cloudflared resolver returned an empty path");
+    }
+    Ok(PathBuf::from(path))
+}
+
+fn managed_cloudflared_path() -> PathBuf {
+    let exe = if cfg!(windows) {
+        "cloudflared.exe"
+    } else {
+        "cloudflared"
+    };
+    paths::local_dir()
+        .join("tools")
+        .join("cloudflared")
+        .join(exe)
+}
+
+fn start_cloudflare_quick_tunnel(
+    cloudflared: &Path,
+    local_url: &str,
+    log_path: &Path,
+) -> Result<(std::process::Child, String)> {
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
+    let mut child = ProcessCommand::new(cloudflared)
+        .args(["tunnel", "--url", local_url])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture cloudflared stdout"))?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture cloudflared stderr"))?;
+    let (line_tx, line_rx) = mpsc::channel();
+    spawn_cloudflared_reader(stdout_pipe, stdout, line_tx.clone());
+    spawn_cloudflared_reader(stderr_pipe, stderr, line_tx);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut tail = Vec::new();
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait()? {
+            anyhow::bail!(
+                "cloudflared exited before creating a Quick Tunnel with status {status}.{}",
+                format_log_tail(&tail)
+            );
+        }
+        match line_rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                if tail.len() == 10 {
+                    tail.remove(0);
+                }
+                tail.push(line.clone());
+                if let Some(url) = parse_trycloudflare_url(&line) {
+                    return Ok((child, url));
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    anyhow::bail!(
+        "Timed out waiting for Cloudflare Quick Tunnel URL.{}",
+        format_log_tail(&tail)
+    )
+}
+
+fn spawn_cloudflared_reader<R: std::io::Read + Send + 'static>(
+    stream: R,
+    mut log: std::fs::File,
+    line_tx: mpsc::Sender<String>,
+) {
+    thread::spawn(move || {
+        let reader = BufReader::new(stream);
+        for line in reader.lines().map_while(Result::ok) {
+            use std::io::Write;
+            let _ = writeln!(log, "{line}");
+            let _ = log.flush();
+            let _ = line_tx.send(line);
+        }
+    });
+}
+
+fn parse_trycloudflare_url(line: &str) -> Option<String> {
+    line.split(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | '(' | ')' | '[' | ']'))
+        .find(|part| part.starts_with("https://") && part.contains(".trycloudflare.com"))
+        .map(|part| {
+            part.trim_end_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '/')
+                .trim_end_matches('/')
+                .to_string()
+        })
+}
+
+fn format_log_tail(lines: &[String]) -> String {
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\ncloudflared log tail:\n{}", lines.join("\n"))
+    }
+}
+
 fn start_serve_child(
     config: &config::AppConfig,
     args: &ServeArgs,
     log_path: &std::path::Path,
+    resolved_api_key: Option<&str>,
 ) -> Result<std::process::Child> {
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -944,11 +1206,7 @@ fn start_serve_child(
             .arg("--default-backend")
             .arg(&config.default_backend);
     }
-    if let Some(api_key) = args
-        .api_key
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
+    if let Some(api_key) = resolved_api_key.filter(|value| !value.trim().is_empty()) {
         command.arg("--api-key").arg(api_key);
         command.env("OMNIINFER_API_KEY", api_key);
     }
@@ -1041,9 +1299,22 @@ fn print_serve_ready(
     }
     println!("Log: {}", log_path.display());
     println!("Stop: ./omniinfer serve stop --port {port}");
+    if let Some(public_url) = public_url {
+        println!("Curl:");
+        let auth = if let Some(api_key) = api_key.filter(|_| print_api_key) {
+            format!(" -H 'Authorization: Bearer {api_key}'")
+        } else {
+            String::new()
+        };
+        println!(
+            "  curl -sS{} -H 'Content-Type: application/json' {}/v1/chat/completions -d '{{\"model\":\"omniinfer\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}],\"stream\":false}}'",
+            auth,
+            public_url.trim_end_matches('/')
+        );
+    }
 }
 
-fn serve_smoke(port: u16) -> Result<String> {
+fn serve_smoke(base_url: &str) -> Result<String> {
     let mut payload = serde_json::Map::new();
     payload.insert("model".to_string(), serde_json::json!("omniinfer"));
     payload.insert(
@@ -1054,7 +1325,7 @@ fn serve_smoke(port: u16) -> Result<String> {
     payload.insert("max_tokens".to_string(), serde_json::json!(16));
     payload.insert("stream".to_string(), serde_json::json!(false));
 
-    let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+    let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
     let response = http_client::post_json(
         &url,
         &serde_json::Value::Object(payload),

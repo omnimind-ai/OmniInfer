@@ -42,6 +42,7 @@ pub enum ServeStateError {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ServePidInfo {
     pub pid: Option<u32>,
+    pub cloudflared_pid: Option<u32>,
     pub port: Option<u16>,
     pub log: Option<String>,
     pub public_url: Option<String>,
@@ -106,6 +107,7 @@ mod tests {
     fn serializes_python_compatible_pid_info() {
         let info = ServePidInfo {
             pid: Some(123),
+            cloudflared_pid: Some(124),
             port: Some(9000),
             log: Some("/tmp/serve.log".to_string()),
             public_url: Some("https://example.trycloudflare.com".to_string()),
@@ -120,6 +122,7 @@ mod tests {
         };
         let value = serde_json::to_value(&info).unwrap();
         assert_eq!(value["pid"], 123);
+        assert_eq!(value["cloudflared_pid"], 124);
         assert_eq!(value["port"], 9000);
         assert_eq!(value["public_url"], "https://example.trycloudflare.com");
         assert_eq!(

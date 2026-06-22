@@ -45,10 +45,7 @@ fn serve_launch_options_parse_before_fallback() {
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .args([
             "serve",
-            "--cloudflare",
-            "--cloudflared-path",
-            "/opt/bin/cloudflared",
-            "--cloudflare-no-print-key",
+            "--lan",
             "--backend",
             "llama.cpp-linux-cuda",
             "--model",
@@ -271,6 +268,81 @@ fn serve_detach_runs_smoke_test() {
     assert_eq!(body["stream"], false);
     assert_eq!(body["messages"][0]["content"], "Hello");
     gateway.join();
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
+fn serve_detach_starts_cloudflare_tunnel() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"starting"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
+        ),
+    ]);
+    let port = gateway.port;
+    let source_root = temp_repo_root("serve-cloudflare-source");
+    let state_root = temp_repo_root("serve-cloudflare-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+    let launcher = fake_python_launcher(&state_root);
+    let cloudflared = fake_cloudflared_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["serve", "--detach", "--cloudflare", "--cloudflared-path"])
+        .arg(&cloudflared)
+        .args(["--api-key", "test-key", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "OpenAI Base URL: https://example-test.trycloudflare.com/v1",
+        ))
+        .stdout(predicate::str::contains("API Key: test-key"))
+        .stdout(predicate::str::contains("Curl:"));
+
+    let launched = wait_for_file(state_root.join("started_gateway.args"));
+    assert!(launched.contains("serve --host 127.0.0.1"));
+    assert!(launched.contains("--api-key test-key"));
+    let tunnel_args = wait_for_file(state_root.join("cloudflared.args"));
+    assert!(tunnel_args.contains(&format!("tunnel --url http://127.0.0.1:{port}")));
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
+    gateway.join();
+
+    let state_raw = fs::read_to_string(
+        state_root
+            .join(".local")
+            .join("run")
+            .join(format!("serve-{port}.json")),
+    )
+    .expect("serve state");
+    let state: serde_json::Value = serde_json::from_str(&state_raw).expect("serve state json");
+    assert_eq!(
+        state["public_url"],
+        "https://example-test.trycloudflare.com"
+    );
+    assert_eq!(
+        state["openai_base_url"],
+        "https://example-test.trycloudflare.com/v1"
+    );
+    assert!(state["cloudflared_pid"].as_u64().unwrap() > 0);
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
@@ -862,6 +934,52 @@ fn fake_python_launcher_windows(root: &std::path::Path) -> std::path::PathBuf {
         format!("@echo off\r\necho %* > \"{}\"\r\n", output.display()),
     )
     .expect("write fake launcher");
+    launcher
+}
+
+fn fake_cloudflared_launcher(root: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        fake_cloudflared_launcher_unix(root)
+    }
+    #[cfg(windows)]
+    {
+        fake_cloudflared_launcher_windows(root)
+    }
+}
+
+#[cfg(unix)]
+fn fake_cloudflared_launcher_unix(root: &std::path::Path) -> std::path::PathBuf {
+    let launcher = root.join("fake-cloudflared.sh");
+    let output = root.join("cloudflared.args");
+    fs::write(
+        &launcher,
+        format!(
+            "#!/usr/bin/env bash\nprintf '%s ' \"$@\" > '{}'\necho 'Your quick Tunnel has been created! Visit it at https://example-test.trycloudflare.com'\nsleep 30\n",
+            output.display()
+        ),
+    )
+    .expect("write fake cloudflared");
+    let mut permissions = fs::metadata(&launcher)
+        .expect("cloudflared metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&launcher, permissions).expect("chmod cloudflared");
+    launcher
+}
+
+#[cfg(windows)]
+fn fake_cloudflared_launcher_windows(root: &std::path::Path) -> std::path::PathBuf {
+    let launcher = root.join("fake-cloudflared.cmd");
+    let output = root.join("cloudflared.args");
+    fs::write(
+        &launcher,
+        format!(
+            "@echo off\r\necho %* > \"{}\"\r\necho Your quick Tunnel has been created! Visit it at https://example-test.trycloudflare.com\r\nping -n 30 127.0.0.1 > nul\r\n",
+            output.display()
+        ),
+    )
+    .expect("write fake cloudflared");
     launcher
 }
 
