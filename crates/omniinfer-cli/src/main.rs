@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
+use std::env;
+use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
 use omniinfer_core::{config, http_client, local_state, paths, version};
@@ -251,22 +253,30 @@ enum CompletionShell {
 }
 
 fn main() -> Result<()> {
+    if should_force_python() {
+        return exec_python(env::args().skip(1));
+    }
     let cli = Cli::parse();
     match cli.command {
         None => print_tui_placeholder(),
         Some(Command::Status) => print_status(),
         Some(Command::Completion { shell }) => print_completion(shell),
-        Some(command) => {
-            println!("omniinfer-rs command parsed: {command:?}");
-            println!("implementation pending; use ./omniinfer for production behavior");
-        }
+        Some(command) => fallback_to_python(&command)?,
     }
     Ok(())
 }
 
 fn print_tui_placeholder() {
-    println!("OmniInfer Rust TUI is not implemented yet.");
-    println!("Use ./omniinfer for the current Python TUI.");
+    if should_force_python() {
+        let _ = exec_python(env::args().skip(1));
+        return;
+    }
+    if should_strict_rust() {
+        println!("OmniInfer Rust TUI is not implemented yet.");
+        println!("Unset OMNIINFER_RUST_STRICT or use ./omniinfer for the current Python TUI.");
+        return;
+    }
+    let _ = exec_python(env::args().skip(1));
 }
 
 fn print_status() {
@@ -337,4 +347,48 @@ fn print_completion(shell: CompletionShell) {
             &mut std::io::stdout(),
         ),
     }
+}
+
+fn fallback_to_python(command: &Command) -> Result<()> {
+    if should_strict_rust() {
+        println!("omniinfer-rs command parsed: {command:?}");
+        println!("implementation pending; unset OMNIINFER_RUST_STRICT to fallback to Python");
+        return Ok(());
+    }
+    exec_python(env::args().skip(1))
+}
+
+fn should_force_python() -> bool {
+    env_flag("OMNIINFER_FORCE_PYTHON")
+}
+
+fn should_strict_rust() -> bool {
+    env_flag("OMNIINFER_RUST_STRICT")
+}
+
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn exec_python<I>(args: I) -> Result<()>
+where
+    I: IntoIterator,
+    I::Item: AsRef<std::ffi::OsStr>,
+{
+    let python = env::var_os("OMNIINFER_PYTHON")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "python3".into());
+    let script = paths::repo_root().join("omniinfer.py");
+    let status = ProcessCommand::new(python)
+        .arg(script)
+        .args(args)
+        .status()?;
+    std::process::exit(status.code().unwrap_or(1));
 }
