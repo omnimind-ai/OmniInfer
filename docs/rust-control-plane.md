@@ -28,6 +28,8 @@ Implemented directly in Rust:
 - `thinking set on|off`
 - `serve status --port <port>`
 - `serve stop --port <port>`
+- local `serve --detach` without model loading, Cloudflare, LAN, or smoke-test
+  orchestration
 - `shutdown`
 - `completion bash`
 - `chat <prompt>`, `chat --no-stream <prompt>`, and local `chat --image <path>`
@@ -37,8 +39,8 @@ Fallback to the Python implementation:
 
 - no-argument TUI
 - `advisor *`
-- `serve` launch paths, including Cloudflare, LAN, detach, model load, and
-  smoke-test orchestration
+- `serve` launch paths that need Cloudflare, LAN, model load, or smoke-test
+  orchestration
 - all other unported commands
 
 ## Fallback Controls
