@@ -118,7 +118,10 @@ mod tests {
         });
 
         let state = parse_state_value(&value);
-        assert_eq!(state.selected_backend.as_deref(), Some("llama.cpp-linux-cuda"));
+        assert_eq!(
+            state.selected_backend.as_deref(),
+            Some("llama.cpp-linux-cuda")
+        );
         assert_eq!(
             state.selected_model,
             Some(SelectedModel {

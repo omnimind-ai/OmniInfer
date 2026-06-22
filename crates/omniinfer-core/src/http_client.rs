@@ -39,7 +39,9 @@ pub fn get_json(url: &str, timeout: Duration) -> Result<JsonResponse, HttpError>
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw)?;
     let text = String::from_utf8(raw)?;
-    let (head, body) = text.split_once("\r\n\r\n").ok_or(HttpError::MalformedResponse)?;
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or(HttpError::MalformedResponse)?;
     let status = parse_status(head)?;
     Ok(JsonResponse {
         status,

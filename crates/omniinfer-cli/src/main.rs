@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::time::Duration;
 
 use omniinfer_core::{config, http_client, local_state, paths, version};
@@ -281,7 +281,10 @@ fn print_status() {
     );
     if let Some(model) = state.selected_model {
         println!("Selected model: {}", model.model);
-        println!("Selected mmproj: {}", model.mmproj.as_deref().unwrap_or("not selected"));
+        println!(
+            "Selected mmproj: {}",
+            model.mmproj.as_deref().unwrap_or("not selected")
+        );
         println!(
             "Selected ctx-size: {}",
             model
@@ -309,7 +312,11 @@ fn service_status_line(config: &config::AppConfig) -> String {
                 .and_then(serde_json::Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("not loaded");
-            format!("running (backend_ready={}, model={})", yes_no(backend_ready), model)
+            format!(
+                "running (backend_ready={}, model={})",
+                yes_no(backend_ready),
+                model
+            )
         }
         Ok(response) => format!("unhealthy (HTTP {})", response.status),
         Err(_) => "not running".to_string(),
@@ -323,6 +330,11 @@ fn yes_no(value: bool) -> &'static str {
 fn print_completion(shell: CompletionShell) {
     let mut command = Cli::command();
     match shell {
-        CompletionShell::Bash => generate(Shell::Bash, &mut command, "omniinfer-rs", &mut std::io::stdout()),
+        CompletionShell::Bash => generate(
+            Shell::Bash,
+            &mut command,
+            "omniinfer-rs",
+            &mut std::io::stdout(),
+        ),
     }
 }

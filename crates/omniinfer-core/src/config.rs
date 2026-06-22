@@ -124,7 +124,9 @@ fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
         return Err(ConfigError::Invalid("host must be non-empty".to_string()));
     }
     if config.startup_timeout <= 0.0 {
-        return Err(ConfigError::Invalid("startup_timeout must be positive".to_string()));
+        return Err(ConfigError::Invalid(
+            "startup_timeout must be positive".to_string(),
+        ));
     }
     Ok(())
 }
