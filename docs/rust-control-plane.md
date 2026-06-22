@@ -18,6 +18,7 @@ Implemented directly in Rust:
 
 - `--help`
 - `status`
+- `ps`, including detached serve pid files and `--json`
 - `backend list`
 - `backend select`
 - `backend stop`
