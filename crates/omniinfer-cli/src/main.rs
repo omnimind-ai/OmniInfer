@@ -2,8 +2,10 @@ use anyhow::Result;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
 use std::env;
-use std::process::Command as ProcessCommand;
-use std::time::Duration;
+use std::fs::OpenOptions;
+use std::process::{Command as ProcessCommand, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use omniinfer_core::{config, http_client, local_state, paths, serve_state, version};
 
@@ -564,16 +566,14 @@ fn print_thinking_set(mode: ThinkingMode) -> Result<()> {
 }
 
 fn shutdown_service() -> Result<()> {
-    match post_local_json(
-        "/omni/shutdown",
-        &serde_json::json!({}),
-        Duration::from_secs(10),
-    ) {
-        Ok(_) => {
+    let config = config::load_app_config().unwrap_or_default();
+    let url = format!("{}/omni/shutdown", config.service_base_url());
+    match http_client::post_json(&url, &serde_json::json!({}), Duration::from_secs(10)) {
+        Ok(response) if response.status < 400 => {
             println!("OmniInfer service stopped");
             Ok(())
         }
-        Err(_) => {
+        _ => {
             println!("OmniInfer service is not running");
             Ok(())
         }
@@ -770,6 +770,7 @@ fn json_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
 
 fn get_local_json(endpoint: &str, timeout: Duration) -> Result<serde_json::Value> {
     let config = config::load_app_config().unwrap_or_default();
+    ensure_local_gateway_running(&config)?;
     let url = format!("{}{}", config.service_base_url(), endpoint);
     let response = http_client::get_json(&url, timeout)?;
     if response.status >= 400 {
@@ -784,12 +785,93 @@ fn post_local_json(
     timeout: Duration,
 ) -> Result<serde_json::Value> {
     let config = config::load_app_config().unwrap_or_default();
+    ensure_local_gateway_running(&config)?;
     let url = format!("{}{}", config.service_base_url(), endpoint);
     let response = http_client::post_json(&url, body, timeout)?;
     if response.status >= 400 {
         anyhow::bail!("POST {endpoint} failed with status {}", response.status);
     }
     Ok(response.body)
+}
+
+fn ensure_local_gateway_running(config: &config::AppConfig) -> Result<()> {
+    if is_gateway_running(config) {
+        return Ok(());
+    }
+    start_gateway_background(config)?;
+    wait_for_gateway_ready(config)
+}
+
+fn is_gateway_running(config: &config::AppConfig) -> bool {
+    let url = format!("{}/health", config.service_base_url());
+    match http_client::get_json(&url, Duration::from_secs(2)) {
+        Ok(response) if response.status == 200 => {
+            response
+                .body
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                == Some("ok")
+        }
+        _ => false,
+    }
+}
+
+fn start_gateway_background(config: &config::AppConfig) -> Result<()> {
+    let log_dir = paths::local_logs_dir();
+    std::fs::create_dir_all(&log_dir)?;
+    let log_path = log_dir.join("gateway.log");
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let stderr = stdout.try_clone()?;
+    let mut command = ProcessCommand::new(python_executable());
+    command
+        .arg(paths::repo_root().join("omniinfer.py"))
+        .arg("serve")
+        .arg("--host")
+        .arg(&config.host)
+        .arg("--port")
+        .arg(config.port.to_string())
+        .arg("--startup-timeout")
+        .arg(format!("{:.0}", config.startup_timeout))
+        .arg("--window-mode")
+        .arg(&config.window_mode)
+        .arg("--default-thinking")
+        .arg(&config.default_thinking)
+        .current_dir(paths::repo_root())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    if !config.default_backend.trim().is_empty() {
+        command
+            .arg("--default-backend")
+            .arg(&config.default_backend);
+    }
+    command.spawn()?;
+    Ok(())
+}
+
+fn wait_for_gateway_ready(config: &config::AppConfig) -> Result<()> {
+    let timeout = Duration::from_secs(config.startup_timeout.max(10.0).round() as u64);
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if is_gateway_running(config) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    let log_path = paths::local_logs_dir().join("gateway.log");
+    let tail = std::fs::read_to_string(&log_path)
+        .map(|text| tail_chars(&text, 4000))
+        .unwrap_or_default();
+    anyhow::bail!("failed to start local OmniInfer service in time\n{tail}");
+}
+
+fn tail_chars(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars().rev().take(max_chars).collect::<Vec<_>>();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 fn current_system_name() -> &'static str {
@@ -833,13 +915,16 @@ where
     I: IntoIterator,
     I::Item: AsRef<std::ffi::OsStr>,
 {
-    let python = env::var_os("OMNIINFER_PYTHON")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "python3".into());
     let script = paths::repo_root().join("omniinfer.py");
-    let status = ProcessCommand::new(python)
+    let status = ProcessCommand::new(python_executable())
         .arg(script)
         .args(args)
         .status()?;
     std::process::exit(status.code().unwrap_or(1));
+}
+
+fn python_executable() -> std::ffi::OsString {
+    env::var_os("OMNIINFER_PYTHON")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "python3".into())
 }

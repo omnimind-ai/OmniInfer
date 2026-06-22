@@ -3,9 +3,11 @@ use predicates::prelude::*;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn help_lists_core_commands() {
@@ -39,7 +41,10 @@ fn strict_mode_reports_unported_commands_without_fallback() {
 
 #[test]
 fn backend_stop_posts_to_local_gateway() {
-    let gateway = TestGateway::start(br#"{"stopped":true}"#);
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(r#"{"stopped":true}"#),
+    ]);
 
     let root = temp_repo_root("backend-stop");
     fs::create_dir_all(root.join("config")).expect("create config dir");
@@ -58,13 +63,16 @@ fn backend_stop_posts_to_local_gateway() {
         .stdout(predicate::str::contains("Current backend process stopped"));
 
     let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
     assert!(request.starts_with("POST /omni/backend/stop HTTP/1.1"));
+    gateway.join();
     fs::remove_dir_all(root).ok();
 }
 
 #[test]
 fn shutdown_posts_to_local_gateway() {
-    let gateway = TestGateway::start(br#"{"ok":true}"#);
+    let gateway = TestGateway::start(vec![Response::new(r#"{"ok":true}"#)]);
 
     let root = temp_repo_root("shutdown");
     fs::create_dir_all(root.join("config")).expect("create config dir");
@@ -84,6 +92,50 @@ fn shutdown_posts_to_local_gateway() {
 
     let request = gateway.request();
     assert!(request.starts_with("POST /omni/shutdown HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn backend_stop_starts_gateway_when_needed() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"starting"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(r#"{"stopped":true}"#),
+    ]);
+    let root = temp_repo_root("backend-stop-autostart");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
+            gateway.port
+        ),
+    )
+    .expect("write config");
+    let launcher = fake_python_launcher(&root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["backend", "stop"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Current backend process stopped"));
+
+    let launched = wait_for_file(root.join("started_gateway.args"));
+    assert!(launched.contains("omniinfer.py"));
+    assert!(launched.contains("serve --host 127.0.0.1"));
+    assert!(launched.contains(&format!("--port {}", gateway.port)));
+    assert!(launched.contains("--startup-timeout 10"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/backend/stop HTTP/1.1"));
+    gateway.join();
     fs::remove_dir_all(root).ok();
 }
 
@@ -94,21 +146,25 @@ struct TestGateway {
 }
 
 impl TestGateway {
-    fn start(response_body: &'static [u8]) -> Self {
+    fn start(responses: Vec<Response>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test gateway");
         let port = listener.local_addr().expect("local addr").port();
         let (request_tx, request_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept request");
-            let request = read_http_request(&mut stream);
-            request_tx.send(request).expect("send request");
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                response_body.len()
-            );
-            stream.write_all(response.as_bytes()).expect("write header");
-            stream.write_all(response_body).expect("write body");
-            stream.flush().expect("flush response");
+            for response_body in responses {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let request = read_http_request(&mut stream);
+                request_tx.send(request).expect("send request");
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response_body.body.len()
+                );
+                stream.write_all(response.as_bytes()).expect("write header");
+                stream
+                    .write_all(response_body.body.as_bytes())
+                    .expect("write body");
+                stream.flush().expect("flush response");
+            }
         });
         Self {
             port,
@@ -117,10 +173,24 @@ impl TestGateway {
         }
     }
 
-    fn request(self) -> String {
-        let request = self.request_rx.recv().expect("receive request");
+    fn request(&self) -> String {
+        self.request_rx.recv().expect("receive request")
+    }
+
+    fn join(self) {
         self.handle.join().expect("server thread");
-        request
+    }
+}
+
+struct Response {
+    body: String,
+}
+
+impl Response {
+    fn new(body: &str) -> Self {
+        Self {
+            body: body.to_string(),
+        }
     }
 }
 
@@ -130,6 +200,49 @@ fn temp_repo_root(test_name: &str) -> std::path::PathBuf {
         .expect("system time")
         .as_nanos();
     std::env::temp_dir().join(format!("omniinfer-rs-{test_name}-{nanos}"))
+}
+
+fn fake_python_launcher(root: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        fake_python_launcher_unix(root)
+    }
+    #[cfg(windows)]
+    {
+        fake_python_launcher_windows(root)
+    }
+}
+
+#[cfg(unix)]
+fn fake_python_launcher_unix(root: &std::path::Path) -> std::path::PathBuf {
+    let launcher = root.join("fake-python.sh");
+    let output = root.join("started_gateway.args");
+    fs::write(
+        &launcher,
+        format!(
+            "#!/usr/bin/env bash\nprintf '%s ' \"$@\" > '{}'\n",
+            output.display()
+        ),
+    )
+    .expect("write fake launcher");
+    let mut permissions = fs::metadata(&launcher)
+        .expect("launcher metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&launcher, permissions).expect("chmod launcher");
+    launcher
+}
+
+#[cfg(windows)]
+fn fake_python_launcher_windows(root: &std::path::Path) -> std::path::PathBuf {
+    let launcher = root.join("fake-python.cmd");
+    let output = root.join("started_gateway.args");
+    fs::write(
+        &launcher,
+        format!("@echo off\r\necho %* > \"{}\"\r\n", output.display()),
+    )
+    .expect("write fake launcher");
+    launcher
 }
 
 fn read_http_request(stream: &mut impl Read) -> String {
@@ -164,4 +277,15 @@ fn read_http_request(stream: &mut impl Read) -> String {
 
 fn find_header_end(raw: &[u8]) -> Option<usize> {
     raw.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn wait_for_file(path: std::path::PathBuf) -> String {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if let Ok(text) = fs::read_to_string(&path) {
+            return text;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("timed out waiting for {}", path.display());
 }

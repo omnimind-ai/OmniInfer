@@ -57,6 +57,12 @@ OMNIINFER_RUST_STRICT=1 target/debug/omniinfer-rs advisor system
 - `OMNIINFER_PYTHON=/path/to/python` selects the Python executable used by
   fallback.
 
+Migrated Rust commands that need the local gateway automatically start
+`python omniinfer.py serve` with `config/omniinfer.json` host, port,
+startup-timeout, window-mode, default-thinking, and default-backend settings if
+the gateway is not already healthy. `status` and `shutdown` intentionally do
+not auto-start the gateway.
+
 ## Contract Snapshots
 
 Capture current Python contracts:
