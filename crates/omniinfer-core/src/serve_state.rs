@@ -52,3 +52,11 @@ pub fn load_serve_pid_info(port: u16) -> Result<Option<ServePidInfo>, ServeState
     })?;
     Ok(Some(info))
 }
+
+pub fn remove_serve_pid_info(port: u16) -> Result<(), std::io::Error> {
+    let path = paths::serve_pid_file(port);
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}

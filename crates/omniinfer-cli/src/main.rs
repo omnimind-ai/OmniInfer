@@ -299,6 +299,10 @@ fn run_ported_command(command: &Command) -> Result<()> {
             print_serve_status(*port);
             Ok(())
         }
+        Command::Serve(ServeArgs {
+            command: Some(ServeCommand::Stop { port }),
+            ..
+        }) => stop_serve(*port),
         other => fallback_to_python(other),
     }
 }
@@ -571,6 +575,24 @@ fn shutdown_service() -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn stop_serve(port: u16) -> Result<()> {
+    let mut config = config::load_app_config().unwrap_or_default();
+    config.port = port;
+    let url = format!("{}/omni/shutdown", config.service_base_url());
+    let stopped =
+        match http_client::post_json(&url, &serde_json::json!({}), Duration::from_secs(10)) {
+            Ok(response) => response.status < 400,
+            Err(_) => false,
+        };
+    let _ = serve_state::remove_serve_pid_info(port);
+    if stopped {
+        println!("OmniInfer service stopped on port {port}");
+    } else {
+        println!("OmniInfer service is not running on port {port}");
+    }
+    Ok(())
 }
 
 fn print_chat_no_stream(args: &ChatArgs) -> Result<()> {
