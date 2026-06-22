@@ -1,4 +1,6 @@
 use anyhow::Result;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
 use std::env;
@@ -307,7 +309,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
         Command::Thinking {
             command: ThinkingCommand::Set { mode },
         } => print_thinking_set(mode.clone()),
-        Command::Chat(args) if args.image.is_none() => print_chat(args),
+        Command::Chat(args) => print_chat(args),
         Command::Shutdown => shutdown_service(),
         Command::Serve(ServeArgs {
             command: Some(ServeCommand::Status { port }),
@@ -767,10 +769,7 @@ fn build_chat_payload(args: &ChatArgs) -> Result<serde_json::Map<String, serde_j
         .and_then(serde_json::Value::as_object)
         .cloned()
         .unwrap_or_default();
-    payload.insert(
-        "messages".to_string(),
-        serde_json::json!([{ "role": "user", "content": message }]),
-    );
+    payload.insert("messages".to_string(), build_chat_messages(message, args)?);
     payload.insert(
         "temperature".to_string(),
         serde_json::json!(args.temperature.unwrap_or_else(|| {
@@ -798,6 +797,45 @@ fn build_chat_payload(args: &ChatArgs) -> Result<serde_json::Map<String, serde_j
         );
     }
     Ok(payload)
+}
+
+fn build_chat_messages(message: &str, args: &ChatArgs) -> Result<serde_json::Value> {
+    let Some(image) = args
+        .image
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(serde_json::json!([{ "role": "user", "content": message }]));
+    };
+    let image_path = std::path::PathBuf::from(image);
+    if !image_path.is_file() {
+        anyhow::bail!("image file does not exist: {}", image_path.display());
+    }
+    let bytes = std::fs::read(&image_path)?;
+    let image_b64 = BASE64_STANDARD.encode(bytes);
+    let mime = image_mime_type(&image_path);
+    Ok(serde_json::json!([
+        {
+            "role": "user",
+            "content": [
+                { "type": "text", "text": message },
+                { "type": "image_url", "image_url": { "url": format!("data:{mime};base64,{image_b64}") } }
+            ]
+        }
+    ]))
+}
+
+fn image_mime_type(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    }
 }
 
 fn print_chat_stream(payload: &serde_json::Value) -> Result<()> {

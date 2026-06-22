@@ -207,6 +207,58 @@ fn chat_streams_text_and_usage() {
 }
 
 #[test]
+fn chat_includes_image_data_url() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(r#"{"model":"/tmp/model.gguf"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"choices":[{"message":{"content":"looks good"}}],"usage":{"total_tokens":4},"model":"omniinfer"}"#,
+        ),
+    ]);
+    let root = temp_repo_root("chat-image");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+    let image = root.join("image.png");
+    fs::write(&image, b"fake-png-bytes").expect("write image");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["chat", "Describe it", "--image"])
+        .arg(&image)
+        .arg("--no-stream")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Response"))
+        .stdout(predicate::str::contains("looks good"));
+
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/state HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+    let body = request_body_json(&request);
+    assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+    assert_eq!(body["messages"][0]["content"][0]["text"], "Describe it");
+    assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
+    assert_eq!(
+        body["messages"][0]["content"][1]["image_url"]["url"],
+        "data:image/png;base64,ZmFrZS1wbmctYnl0ZXM="
+    );
+    assert_eq!(body["stream"], false);
+    gateway.join();
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn backend_stop_posts_to_local_gateway() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
@@ -609,6 +661,14 @@ fn read_http_request(stream: &mut impl Read) -> String {
 
 fn find_header_end(raw: &[u8]) -> Option<usize> {
     raw.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn request_body_json(request: &str) -> serde_json::Value {
+    let body = request
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .expect("request body separator");
+    serde_json::from_str(body).expect("request body json")
 }
 
 fn wait_for_file(path: std::path::PathBuf) -> String {
