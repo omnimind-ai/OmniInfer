@@ -107,6 +107,8 @@ class AdvisorTests(unittest.TestCase):
         self.assertIn("omniinfer backend select llama.cpp-linux-cuda", payload["next_command"])
         self.assertIn("--ctx-size 8192 -ngl 999", payload["next_command"])
         self.assertNotIn("--ctx-size 8192 8192", payload["next_command"])
+        alternatives = {item["backend"]: item for item in payload["alternatives"]}
+        self.assertIn("official llama.cpp is preferred", alternatives["ik_llama.cpp-linux-cuda"]["why_not"][0])
 
     def test_hf_reference_is_compatible_with_vllm_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +141,42 @@ class AdvisorTests(unittest.TestCase):
         llama = [item for item in payload["all_backends"] if item["backend"] == "llama.cpp-linux-cuda"][0]
         self.assertFalse(llama["compatible"])
         self.assertTrue(llama["why_not"])
+
+    def test_fit_explains_cpu_alternative_priority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / "Qwen3.5-2B-Q4_K_M.gguf"
+            model.write_bytes(b"x" * 1024 * 1024)
+            cuda_launcher = root / "llama-server-cuda"
+            cuda_launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            cpu_launcher = root / "llama-server-cpu"
+            cpu_launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            backends = {
+                "llama.cpp-linux-cuda": make_backend(
+                    "llama.cpp-linux-cuda",
+                    launcher_path=str(cuda_launcher),
+                    default_args=["-ngl", "999"],
+                ),
+                "llama.cpp-linux": make_backend(
+                    "llama.cpp-linux",
+                    capabilities=["chat", "cpu"],
+                    launcher_path=str(cpu_launcher),
+                ),
+            }
+
+            with patch(
+                "service_core.advisor._query_cuda_devices",
+                return_value=[{"index": "0", "free_gib": 20.0, "utilization_pct": 0}],
+            ):
+                payload = fit_model(
+                    str(model),
+                    platform_obj=FakePlatform(),
+                    backends=backends,
+                    ctx_size=8192,
+                )
+
+        alternatives = {item["backend"]: item for item in payload["alternatives"]}
+        self.assertIn("higher product priority", alternatives["llama.cpp-linux"]["why_not"][0])
 
     def test_plan_model_reports_paths_and_upgrade_deltas(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

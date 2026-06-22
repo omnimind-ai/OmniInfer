@@ -702,18 +702,44 @@ def _with_why_not(candidate: dict[str, Any], recommended: dict[str, Any] | None,
     result = dict(candidate)
     why_not = list(result.get("why_not") or [])
     if recommended is not None and not why_not:
-        if result.get("fit") != recommended.get("fit"):
-            why_not.append(f"recommended backend has better fit ({recommended.get('fit')})")
-        elif result.get("installed") != recommended.get("installed"):
-            why_not.append("recommended backend is installed")
-        elif int(result.get("priority", 999)) > int(recommended.get("priority", 999)):
-            why_not.append("recommended backend has higher product priority")
-        else:
-            why_not.append("ranked below the recommended backend by tie-breakers")
+        why_not.extend(_rank_difference_reasons(result, recommended))
     if not why_not and model_info.get("format"):
         why_not.append(f"compatible with {model_info.get('format')}, but not the top-ranked option")
     result["why_not"] = why_not
     return result
+
+
+def _rank_difference_reasons(candidate: dict[str, Any], recommended: dict[str, Any]) -> list[str]:
+    if candidate.get("fit") != recommended.get("fit"):
+        return [f"recommended backend has better fit ({recommended.get('fit')} vs {candidate.get('fit')})"]
+    if candidate.get("installed") != recommended.get("installed"):
+        return ["recommended backend is already installed"]
+
+    candidate_priority = int(candidate.get("priority", 999))
+    recommended_priority = int(recommended.get("priority", 999))
+    if candidate_priority > recommended_priority:
+        return [
+            "fit is tied; recommended backend has higher product priority "
+            f"({recommended_priority} vs {candidate_priority})"
+        ]
+
+    candidate_is_ik = str(candidate.get("backend") or "").startswith("ik_llama.cpp")
+    recommended_is_ik = str(recommended.get("backend") or "").startswith("ik_llama.cpp")
+    if candidate_is_ik and not recommended_is_ik:
+        return ["fit and priority are tied; official llama.cpp is preferred over the ik variant"]
+
+    candidate_memory = _float_or_none(candidate.get("memory_available_gib"))
+    recommended_memory = _float_or_none(recommended.get("memory_available_gib"))
+    if candidate_memory is not None and recommended_memory is not None and candidate_memory < recommended_memory:
+        return [
+            "fit is tied; recommended backend has more available memory "
+            f"({recommended_memory} GiB vs {candidate_memory} GiB)"
+        ]
+
+    if candidate.get("hardware_compatible") != recommended.get("hardware_compatible"):
+        return ["recommended backend has a passing hardware probe"]
+
+    return ["ranked below the recommended backend by deterministic tie-breakers"]
 
 
 def _recommended_backend_id(backends: list[BackendSpec]) -> str | None:
