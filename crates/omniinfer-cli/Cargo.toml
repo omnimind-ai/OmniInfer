@@ -12,5 +12,6 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 omniinfer-core = { path = "../omniinfer-core" }
 serde_json.workspace = true

@@ -253,7 +253,7 @@ def _summarize_runs(runs: list[dict[str, Any]], expected_returncodes: tuple[int,
 
 def _write_summary(path: Path, payload: dict[str, Any]) -> None:
     lines = [
-        "# Python CLI Profiling Baseline",
+        "# CLI Profiling Baseline",
         "",
         f"- Timestamp: `{payload['timestamp_utc']}`",
         f"- Host: `{payload['host']['hostname']}` / `{payload['host']['platform']}`",

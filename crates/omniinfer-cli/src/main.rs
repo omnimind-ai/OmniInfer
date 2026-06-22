@@ -1,5 +1,6 @@
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, Shell};
 use std::time::Duration;
 
 use omniinfer_core::{config, http_client, local_state, paths, version};
@@ -254,6 +255,7 @@ fn main() -> Result<()> {
     match cli.command {
         None => print_tui_placeholder(),
         Some(Command::Status) => print_status(),
+        Some(Command::Completion { shell }) => print_completion(shell),
         Some(command) => {
             println!("omniinfer-rs command parsed: {command:?}");
             println!("implementation pending; use ./omniinfer for production behavior");
@@ -316,4 +318,11 @@ fn service_status_line(config: &config::AppConfig) -> String {
 
 fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
+}
+
+fn print_completion(shell: CompletionShell) {
+    let mut command = Cli::command();
+    match shell {
+        CompletionShell::Bash => generate(Shell::Bash, &mut command, "omniinfer-rs", &mut std::io::stdout()),
+    }
 }
