@@ -45,6 +45,13 @@ SCENARIOS = [
     Scenario("serve-status", ["./omniinfer", "serve", "status", "--port", "9000"], description="detached serve status"),
     Scenario("backend-list", ["./omniinfer", "backend", "list"], description="backend list"),
     Scenario("model-list", ["./omniinfer", "model", "list"], timeout_s=60.0, description="supported model list"),
+    Scenario(
+        "chat-no-stream-no-model",
+        ["./omniinfer", "chat", "--no-stream", "hello"],
+        expected_returncodes=(1,),
+        timeout_s=60.0,
+        description="non-stream chat without a loaded model",
+    ),
     Scenario("advisor-system", ["./omniinfer", "advisor", "system"], timeout_s=60.0, description="hardware and backend probe"),
     Scenario(
         "advisor-system-json",

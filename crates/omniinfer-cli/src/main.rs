@@ -290,6 +290,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
         Command::Thinking {
             command: ThinkingCommand::Set { mode },
         } => print_thinking_set(mode.clone()),
+        Command::Chat(args) if args.no_stream && args.image.is_none() => print_chat_no_stream(args),
         Command::Shutdown => shutdown_service(),
         Command::Serve(ServeArgs {
             command: Some(ServeCommand::Status { port }),
@@ -569,6 +570,104 @@ fn shutdown_service() -> Result<()> {
             println!("OmniInfer service is not running");
             Ok(())
         }
+    }
+}
+
+fn print_chat_no_stream(args: &ChatArgs) -> Result<()> {
+    if args.message.is_some() && args.prompt.is_some() {
+        anyhow::bail!("Use either positional prompt or --message, not both.");
+    }
+    let message = args
+        .message
+        .as_deref()
+        .or(args.prompt.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("Please provide a message, for example: omniinfer chat \"Hello\".")
+        })?;
+    let state = get_local_json("/omni/state", Duration::from_secs(10))?;
+    if json_str(&state, "model").is_none() {
+        anyhow::bail!("No model is currently loaded.\nRun `omniinfer load -m <model>` first.");
+    }
+
+    let mut payload = state
+        .get("request_defaults")
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    payload.insert(
+        "messages".to_string(),
+        serde_json::json!([{ "role": "user", "content": message }]),
+    );
+    payload.insert(
+        "temperature".to_string(),
+        serde_json::json!(args.temperature.unwrap_or_else(|| {
+            payload
+                .get("temperature")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.2) as f32
+        })),
+    );
+    payload.insert(
+        "max_tokens".to_string(),
+        serde_json::json!(args.max_tokens.unwrap_or_else(|| {
+            payload
+                .get("max_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or(2048)
+        })),
+    );
+    payload.insert("stream".to_string(), serde_json::json!(false));
+    if let Some(think) = &args.think {
+        payload.insert(
+            "think".to_string(),
+            serde_json::json!(matches!(think, ThinkingMode::On)),
+        );
+    }
+
+    let response = post_local_json(
+        "/v1/chat/completions",
+        &serde_json::Value::Object(payload),
+        Duration::from_secs(600),
+    )?;
+    print_chat_response(&response);
+    Ok(())
+}
+
+fn print_chat_response(response: &serde_json::Value) {
+    let text = response
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"));
+    println!("Response");
+    match text {
+        Some(serde_json::Value::String(content)) => println!("{content}"),
+        Some(other) => println!("{other}"),
+        None => println!("{response}"),
+    }
+    if response.get("usage").is_some() || response.get("timings").is_some() {
+        println!();
+        print_chat_performance(response);
+    }
+}
+
+fn print_chat_performance(response: &serde_json::Value) {
+    println!("Performance");
+    println!("  Model: {}", json_str(response, "model").unwrap_or("-"));
+    if let Some(usage) = response.get("usage") {
+        let prompt = json_u64(usage, "prompt_tokens")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let completion = json_u64(usage, "completion_tokens")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let total = json_u64(usage, "total_tokens")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!("  Tokens: prompt={prompt}, completion={completion}, total={total}");
     }
 }
 

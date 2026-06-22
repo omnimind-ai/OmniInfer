@@ -40,6 +40,12 @@ SCENARIOS = [
     ContractScenario("serve-status", ["serve", "status", "--port", "9000"], timeout_s=60.0),
     ContractScenario("backend-list", ["backend", "list"], timeout_s=60.0),
     ContractScenario("model-list", ["model", "list"], timeout_s=60.0),
+    ContractScenario(
+        "chat-no-stream-no-model",
+        ["chat", "--no-stream", "hello"],
+        expected_returncodes=(1,),
+        timeout_s=60.0,
+    ),
 ]
 
 
