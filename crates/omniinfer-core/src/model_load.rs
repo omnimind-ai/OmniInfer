@@ -66,11 +66,13 @@ pub enum ModelLoadError {
 pub fn build_model_load_payload(
     request: &ModelLoadRequest,
     backends: &[Value],
+    recommended_backend: Option<&str>,
     selected_backend: Option<&str>,
     profile: Option<&BackendProfile>,
     cwd: &Path,
 ) -> Result<ModelLoadPlan, ModelLoadError> {
-    let (mut backend_id, auto_selected) = select_backend(backends, selected_backend)?;
+    let (mut backend_id, auto_selected) =
+        select_backend(backends, recommended_backend, selected_backend)?;
     let mut backend = find_backend(backends, &backend_id)
         .ok_or_else(|| ModelLoadError::SelectedBackendMissing(backend_id.clone()))?;
 
@@ -206,10 +208,15 @@ pub fn parse_model_load_response(
 
 fn select_backend(
     backends: &[Value],
+    recommended_backend: Option<&str>,
     selected_backend: Option<&str>,
 ) -> Result<(String, bool), ModelLoadError> {
     if let Some(selected_backend) = selected_backend.filter(|value| !value.trim().is_empty()) {
         return Ok((selected_backend.to_string(), false));
+    }
+    if let Some(recommended_backend) = recommended_backend.filter(|value| !value.trim().is_empty())
+    {
+        return Ok((recommended_backend.to_string(), true));
     }
     let recommended = backends
         .iter()
@@ -320,6 +327,7 @@ mod tests {
         let plan = build_model_load_payload(
             &request,
             &[backend("llama.cpp-linux-cuda", "llama.cpp", true)],
+            None,
             Some("llama.cpp-linux-cuda"),
             Some(&profile),
             &cwd,
@@ -364,6 +372,7 @@ mod tests {
         let plan = build_model_load_payload(
             &request,
             &[backend("llama.cpp-linux-cuda", "llama.cpp", true)],
+            None,
             Some("llama.cpp-linux-cuda"),
             Some(&profile),
             &cwd,
@@ -391,6 +400,34 @@ mod tests {
             ],
             None,
             None,
+            None,
+            &cwd,
+        )
+        .unwrap();
+        assert!(plan.auto_selected);
+        assert_eq!(plan.backend, "llama.cpp-linux-cuda");
+        std::fs::remove_dir_all(cwd).ok();
+    }
+
+    #[test]
+    fn auto_selects_recommended_backend_when_available() {
+        let cwd = temp_dir("recommended");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let model = cwd.join("model.gguf");
+        std::fs::write(&model, "").unwrap();
+        let request = ModelLoadRequest {
+            model: model.display().to_string(),
+            ..ModelLoadRequest::default()
+        };
+        let plan = build_model_load_payload(
+            &request,
+            &[
+                backend("llama.cpp-linux", "llama.cpp", true),
+                backend("llama.cpp-linux-cuda", "llama.cpp", true),
+            ],
+            Some("llama.cpp-linux-cuda"),
+            None,
+            None,
             &cwd,
         )
         .unwrap();
@@ -410,6 +447,7 @@ mod tests {
         let plan = build_model_load_payload(
             &request,
             &[backend("vllm-linux-cuda", "vllm", true)],
+            None,
             Some("vllm-linux-cuda"),
             None,
             &cwd,

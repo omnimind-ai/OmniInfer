@@ -548,6 +548,7 @@ fn load_model(args: &ModelLoadArgs) -> Result<()> {
     let plan = model_load::build_model_load_payload(
         &request,
         rows,
+        json_str(&backends, "recommended"),
         state.selected_backend.as_deref(),
         profile.as_ref(),
         &std::env::current_dir()?,

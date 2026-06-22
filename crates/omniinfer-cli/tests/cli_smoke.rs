@@ -44,7 +44,7 @@ fn model_load_posts_payload_and_persists_state() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
         Response::new(
-            r#"{"object":"list","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
+            r#"{"object":"list","recommended":"llama.cpp-linux-cuda","data":[{"id":"llama.cpp-linux","family":"llama.cpp","binary_exists":true},{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
         ),
         Response::new(r#"{"status":"ok"}"#),
         Response::new(
@@ -104,7 +104,7 @@ fn model_load_handles_sse_progress() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
         Response::new(
-            r#"{"object":"list","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
+            r#"{"object":"list","recommended":"llama.cpp-linux-cuda","data":[{"id":"llama.cpp-linux","family":"llama.cpp","binary_exists":true},{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
         ),
         Response::new(r#"{"status":"ok"}"#),
         Response::chunks(
