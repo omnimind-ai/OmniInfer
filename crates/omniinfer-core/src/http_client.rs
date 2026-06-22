@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
@@ -49,6 +49,19 @@ pub fn post(
     request("POST", url, Some(body), accept, timeout)
 }
 
+pub fn post_streaming_lines<F>(
+    url: &str,
+    body: &Value,
+    accept: &str,
+    timeout: Duration,
+    on_line: F,
+) -> Result<RawResponse, HttpError>
+where
+    F: FnMut(&str),
+{
+    request_streaming_lines("POST", url, Some(body), accept, timeout, on_line)
+}
+
 fn request_json(
     method: &str,
     url: &str,
@@ -69,6 +82,20 @@ fn request(
     accept: &str,
     timeout: Duration,
 ) -> Result<RawResponse, HttpError> {
+    request_streaming_lines(method, url, body, accept, timeout, |_| {})
+}
+
+fn request_streaming_lines<F>(
+    method: &str,
+    url: &str,
+    body: Option<&Value>,
+    accept: &str,
+    timeout: Duration,
+    mut on_line: F,
+) -> Result<RawResponse, HttpError>
+where
+    F: FnMut(&str),
+{
     let parsed = parse_http_url(url)?;
     let mut stream = TcpStream::connect((parsed.host.as_str(), parsed.port))?;
     stream.set_read_timeout(Some(timeout))?;
@@ -90,18 +117,64 @@ fn request(
         stream.write_all(&body_bytes)?;
     }
 
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw)?;
-    let text = String::from_utf8(raw)?;
-    let (head, body) = text
-        .split_once("\r\n\r\n")
-        .ok_or(HttpError::MalformedResponse)?;
-    let status = parse_status(head)?;
+    let mut reader = BufReader::new(stream);
+    let head = read_response_head(&mut reader)?;
+    let status = parse_status(&head)?;
+    let content_type = header_value(&head, "Content-Type");
+    let body = read_response_body(reader, content_type.as_deref(), &mut on_line)?;
     Ok(RawResponse {
         status,
-        content_type: header_value(head, "Content-Type"),
-        body: body.to_string(),
+        content_type,
+        body,
     })
+}
+
+fn read_response_head(reader: &mut impl BufRead) -> Result<String, HttpError> {
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            break;
+        }
+        head.push_str(&line);
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
+    }
+    if head.trim().is_empty() {
+        return Err(HttpError::MalformedResponse);
+    }
+    Ok(head)
+}
+
+fn read_response_body<F>(
+    mut reader: BufReader<TcpStream>,
+    content_type: Option<&str>,
+    on_line: &mut F,
+) -> Result<String, HttpError>
+where
+    F: FnMut(&str),
+{
+    let mut body = String::new();
+    if content_type
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .contains("text/event-stream")
+    {
+        loop {
+            let mut line = String::new();
+            let bytes = reader.read_line(&mut line)?;
+            if bytes == 0 {
+                break;
+            }
+            on_line(line.trim_end_matches(['\r', '\n']));
+            body.push_str(&line);
+        }
+    } else {
+        reader.read_to_string(&mut body)?;
+    }
+    Ok(body)
 }
 
 struct ParsedUrl {

@@ -917,7 +917,13 @@ fn post_local_model_load(
     let config = config::load_app_config().unwrap_or_default();
     ensure_local_gateway_running(&config)?;
     let url = format!("{}/omni/model/select", config.service_base_url());
-    let response = http_client::post(&url, body, "text/event-stream, application/json", timeout)?;
+    let response = http_client::post_streaming_lines(
+        &url,
+        body,
+        "text/event-stream, application/json",
+        timeout,
+        |line| print_model_load_progress_line(line, verbose),
+    )?;
     if response.status >= 400 {
         let message = parse_http_error_body(&response.body);
         anyhow::bail!(
@@ -926,16 +932,30 @@ fn post_local_model_load(
             message
         );
     }
-    let (result, events) =
+    let (result, _events) =
         model_load::parse_model_load_response(response.content_type.as_deref(), &response.body)?;
-    for event in events {
-        match event {
-            model_load::ModelLoadEvent::Status(message) => println!("{message}"),
-            model_load::ModelLoadEvent::Log(message) if verbose => println!("  {message}"),
-            model_load::ModelLoadEvent::Log(_) | model_load::ModelLoadEvent::Done(_) => {}
-        }
-    }
     Ok(result)
+}
+
+fn print_model_load_progress_line(line: &str, verbose: bool) {
+    let Some(data) = line.trim().strip_prefix("data:") else {
+        return;
+    };
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return;
+    }
+    let Ok(event) = serde_json::from_str::<serde_json::Value>(data) else {
+        return;
+    };
+    let event_type = json_str(&event, "type").unwrap_or("");
+    let message = json_str(&event, "message").unwrap_or("");
+    match event_type {
+        "log" if verbose && !message.is_empty() => println!("  {message}"),
+        "done" | "error" | "log" => {}
+        _ if !message.is_empty() => println!("{message}"),
+        _ => {}
+    }
 }
 
 fn parse_http_error_body(body: &str) -> String {

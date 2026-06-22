@@ -107,8 +107,8 @@ fn model_load_handles_sse_progress() {
             r#"{"object":"list","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
         ),
         Response::new(r#"{"status":"ok"}"#),
-        Response::with_content_type(
-            concat!(
+        Response::chunks(
+            &[
                 r#"data: {"type":"status","message":"Resolving model files..."}"#,
                 "\n\n",
                 r#"data: {"type":"log","message":"backend detail"}"#,
@@ -116,7 +116,7 @@ fn model_load_handles_sse_progress() {
                 r#"data: {"type":"done","selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_ctx_size":4096}"#,
                 "\n\n",
                 "data: [DONE]\n\n",
-            ),
+            ],
             "text/event-stream; charset=utf-8",
         ),
     ]);
@@ -343,12 +343,10 @@ impl TestGateway {
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     response_body.content_type,
-                    response_body.body.len()
+                    response_body.content_len()
                 );
                 stream.write_all(response.as_bytes()).expect("write header");
-                stream
-                    .write_all(response_body.body.as_bytes())
-                    .expect("write body");
+                response_body.write_body(&mut stream);
                 stream.flush().expect("flush response");
             }
         });
@@ -369,8 +367,13 @@ impl TestGateway {
 }
 
 struct Response {
-    body: String,
+    body: ResponseBody,
     content_type: String,
+}
+
+enum ResponseBody {
+    Text(String),
+    Chunks(Vec<String>),
 }
 
 impl Response {
@@ -380,8 +383,37 @@ impl Response {
 
     fn with_content_type(body: &str, content_type: &str) -> Self {
         Self {
-            body: body.to_string(),
+            body: ResponseBody::Text(body.to_string()),
             content_type: content_type.to_string(),
+        }
+    }
+
+    fn chunks(chunks: &[&str], content_type: &str) -> Self {
+        Self {
+            body: ResponseBody::Chunks(chunks.iter().map(|chunk| (*chunk).to_string()).collect()),
+            content_type: content_type.to_string(),
+        }
+    }
+
+    fn content_len(&self) -> usize {
+        match &self.body {
+            ResponseBody::Text(body) => body.len(),
+            ResponseBody::Chunks(chunks) => chunks.iter().map(String::len).sum(),
+        }
+    }
+
+    fn write_body(&self, stream: &mut impl Write) {
+        match &self.body {
+            ResponseBody::Text(body) => {
+                stream.write_all(body.as_bytes()).expect("write body");
+            }
+            ResponseBody::Chunks(chunks) => {
+                for chunk in chunks {
+                    stream.write_all(chunk.as_bytes()).expect("write chunk");
+                    stream.flush().expect("flush chunk");
+                    thread::sleep(Duration::from_millis(15));
+                }
+            }
         }
     }
 }

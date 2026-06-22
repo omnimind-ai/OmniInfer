@@ -70,7 +70,8 @@ infer request defaults. It also includes pure payload construction for
 `/omni/model/select`, including selected-backend resolution, model/mmproj path
 validation, ctx-size precedence, launch args, and request defaults. The Rust
 path can POST JSON model-load responses and persist selected backend/model
-state. It also parses model-load SSE progress, done, and error events.
+state. It also parses model-load SSE progress, done, and error events while
+printing progress as event lines arrive.
 
 ## Contract Snapshots
 
