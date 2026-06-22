@@ -56,6 +56,12 @@ class AdvisorTests(unittest.TestCase):
         self.assertEqual(payload["params_b"], 2.0)
         self.assertIn("chat", payload["capabilities"])
         self.assertEqual(payload["estimate"]["estimate_source"], "file_size_heuristic")
+        breakdown = payload["estimate"]["breakdown"]
+        self.assertIn("weights_gib", breakdown)
+        self.assertIn("kv_cache_gib", breakdown)
+        self.assertIn("activation_gib", breakdown)
+        self.assertIn("framework_overhead_gib", breakdown)
+        self.assertIn("allocator_slack_gib", breakdown)
 
     def test_fit_prefers_official_installed_cuda_and_builds_valid_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -91,6 +97,9 @@ class AdvisorTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload["recommended"]["backend"], "llama.cpp-linux-cuda")
+        self.assertEqual(payload["recommended"]["memory_kind"], "gpu")
+        self.assertIn("memory_breakdown", payload["recommended"])
+        self.assertGreater(payload["recommended"]["memory_breakdown"]["kv_cache_gib"], 0)
         self.assertIn("omniinfer backend select llama.cpp-linux-cuda", payload["next_command"])
         self.assertIn("--ctx-size 8192 -ngl 999", payload["next_command"])
         self.assertNotIn("--ctx-size 8192 8192", payload["next_command"])

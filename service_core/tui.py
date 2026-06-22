@@ -678,6 +678,10 @@ def _print_advisor_preflight_summary(payload: dict[str, Any]) -> None:
     _print_section("Advisor", "Load preflight")
     _print_kv("Recommended", f"{backend} ({fit})")
     _print_kv("Memory", f"{required} required / {available} available")
+    breakdown = recommended.get("memory_breakdown") if isinstance(recommended.get("memory_breakdown"), dict) else {}
+    breakdown_text = _format_memory_breakdown(breakdown)
+    if breakdown_text:
+        _print_kv("Breakdown", breakdown_text)
     _print_kv("Estimate", str(estimate.get("confidence") or "unknown"))
     for warning in warnings[:2]:
         _print_notice(f"Advisor: {warning}", kind="warning")
@@ -696,6 +700,10 @@ def _print_advisor_fit_details(payload: dict[str, Any]) -> None:
     _print_kv("Recommended backend", str(recommended.get("backend") or "-"))
     _print_kv("Fit", str(recommended.get("fit") or "-"))
     _print_kv("Memory", f"{_format_gib(recommended.get('memory_required_gib'))} required / {_format_gib(recommended.get('memory_available_gib'))} available")
+    breakdown = recommended.get("memory_breakdown") if isinstance(recommended.get("memory_breakdown"), dict) else {}
+    breakdown_text = _format_memory_breakdown(breakdown)
+    if breakdown_text:
+        _print_kv("Breakdown", breakdown_text)
     _print_kv("Estimate source", str(estimate.get("estimate_source") or "-"))
     _print_kv("Confidence", str(estimate.get("confidence") or "-"))
     if payload.get("next_command"):
@@ -716,6 +724,21 @@ def _print_advisor_fit_details(payload: dict[str, Any]) -> None:
     for warning in warnings[:5]:
         _print_notice(f"Advisor: {warning}", kind="warning")
     print()
+
+
+def _format_memory_breakdown(breakdown: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for label, key in (
+        ("weights", "weights_gib"),
+        ("mmproj", "mmproj_gib"),
+        ("kv", "kv_cache_gib"),
+        ("act", "activation_gib"),
+        ("runtime", "runtime_overhead_gib"),
+    ):
+        value = breakdown.get(key)
+        if value is not None:
+            parts.append(f"{label} {_format_gib(value)}")
+    return " · ".join(parts)
 
 
 def _format_gib(value: Any) -> str:

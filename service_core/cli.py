@@ -340,6 +340,7 @@ def print_advisor_inspect(model: str, *, mmproj: str | None = None, json_output:
     print(f"Capabilities: {', '.join(payload.get('capabilities') or []) or '-'}")
     estimate = payload.get("estimate") if isinstance(payload.get("estimate"), dict) else {}
     print(f"Estimated memory: {estimate.get('estimated_gpu_memory_gib') or '-'} GiB ({estimate.get('confidence') or 'unknown'} confidence)")
+    _print_memory_breakdown(estimate.get("breakdown") if isinstance(estimate.get("breakdown"), dict) else estimate)
     for warning in payload.get("warnings", []):
         print(f"Warning: {warning}")
     return 0
@@ -366,6 +367,7 @@ def print_advisor_fit(
         print(f"Fit: {recommended.get('fit')}")
         print(f"Installed: {'yes' if recommended.get('installed') else 'no'}")
         print(f"Memory: {recommended.get('memory_required_gib')} GiB required / {recommended.get('memory_available_gib') or '-'} GiB available")
+        _print_memory_breakdown(recommended.get("memory_breakdown") if isinstance(recommended.get("memory_breakdown"), dict) else {})
     else:
         print("Recommended backend: -")
     if payload.get("next_command"):
@@ -378,6 +380,22 @@ def print_advisor_fit(
     for warning in payload.get("warnings", []):
         print(f"Warning: {warning}")
     return 0
+
+
+def _print_memory_breakdown(breakdown: dict[str, Any]) -> None:
+    if not breakdown:
+        return
+    fields = [
+        ("weights", breakdown.get("weights_gib")),
+        ("mmproj", breakdown.get("mmproj_gib")),
+        ("kv", breakdown.get("kv_cache_gib")),
+        ("activation", breakdown.get("activation_gib")),
+        ("framework", breakdown.get("framework_overhead_gib")),
+        ("slack", breakdown.get("allocator_slack_gib")),
+    ]
+    rendered = [f"{name}={value} GiB" for name, value in fields if value is not None]
+    if rendered:
+        print("Memory breakdown: " + ", ".join(rendered))
 
 
 def print_advisor_recommend(

@@ -20,6 +20,7 @@ from service_core.platforms.common import (
 DEFAULT_CONTEXT_SIZE = 8192
 GPU_MEMORY_MARGIN_GIB = 0.5
 CPU_MEMORY_MARGIN_GIB = 1.0
+BYTES_PER_GIB = float(1024 ** 3)
 QUANT_PATTERNS = (
     "UD-Q8_K_XL",
     "UD-Q8_K_L",
@@ -252,7 +253,9 @@ def _backend_fit_payload(
     compatible, reasons = _backend_model_compatible(backend, model_info)
     hardware_ok = platform_obj.is_hardware_compatible(backend)
     available_gib = _available_memory_for_backend(backend)
-    required_gib = estimate["estimated_gpu_memory_gib"] if _is_gpu_backend(backend) else estimate["estimated_ram_gib"]
+    memory_kind = "gpu" if _is_gpu_backend(backend) else "ram"
+    required_gib = estimate["estimated_gpu_memory_gib"] if memory_kind == "gpu" else estimate["estimated_ram_gib"]
+    breakdown = _memory_breakdown_for_backend(estimate, memory_kind)
     margin_gib = GPU_MEMORY_MARGIN_GIB if _is_gpu_backend(backend) else CPU_MEMORY_MARGIN_GIB
     fit_level = _fit_level(required_gib, available_gib, margin_gib)
     launch_args: list[str] = []
@@ -280,6 +283,8 @@ def _backend_fit_payload(
         "memory_required_gib": required_gib,
         "memory_available_gib": available_gib,
         "memory_margin_gib": margin_gib,
+        "memory_kind": memory_kind,
+        "memory_breakdown": breakdown,
         "launch_args": launch_args,
         "priority": BACKEND_PRIORITY.get(backend.id, 999),
         "notes": notes,
@@ -414,6 +419,7 @@ def _memory_estimate(
             "estimated_gpu_memory_gib": None,
             "estimated_ram_gib": None,
             "estimated_kv_cache_gib": None,
+            "breakdown": _unknown_memory_breakdown(ctx_size),
             "estimate_source": "unknown",
             "confidence": "low",
             "notes": ["local model size is unknown; fit cannot be estimated safely"],
@@ -421,23 +427,71 @@ def _memory_estimate(
     base = float(size_gib) + float(mmproj_size_gib or 0.0)
     ctx_factor = max(ctx_size, 1) / DEFAULT_CONTEXT_SIZE
     param_factor = params_b if params_b is not None else max(base * 2.0, 1.0)
+    weights = round(float(size_gib), 2)
+    mmproj_weights = round(float(mmproj_size_gib or 0.0), 2)
     kv_cache = round(max(0.25, param_factor * 0.03 * ctx_factor), 2)
-    overhead = round(max(0.5, base * 0.12), 2)
-    required = round(base + kv_cache + overhead, 2)
+    activation = round(max(0.12, param_factor * 0.01 * min(ctx_factor, 4.0)), 2)
+    framework_overhead = round(max(0.35, base * 0.08), 2)
+    allocator_slack = round(max(0.15, base * 0.04), 2)
+    runtime_overhead = round(framework_overhead + allocator_slack, 2)
+    required = round(weights + mmproj_weights + kv_cache + activation + runtime_overhead, 2)
     confidence = "medium" if params_b is not None else "low"
+    breakdown = {
+        "weights_gib": weights,
+        "mmproj_gib": mmproj_weights,
+        "kv_cache_gib": kv_cache,
+        "activation_gib": activation,
+        "framework_overhead_gib": framework_overhead,
+        "allocator_slack_gib": allocator_slack,
+        "runtime_overhead_gib": runtime_overhead,
+        "total_gib": required,
+        "context_size": ctx_size,
+        "assumptions": [
+            "weights are approximated from local artifact file size",
+            "KV cache is estimated from inferred parameter count and requested context",
+            "activation and framework overhead include conservative runtime buffers and allocator slack",
+        ],
+    }
     return {
         "estimated_gpu_memory_gib": required,
         "estimated_ram_gib": required,
         "estimated_kv_cache_gib": kv_cache,
-        "weight_and_projector_gib": round(base, 2),
-        "overhead_gib": overhead,
+        "weight_and_projector_gib": round(weights + mmproj_weights, 2),
+        "activation_gib": activation,
+        "framework_overhead_gib": framework_overhead,
+        "allocator_slack_gib": allocator_slack,
+        "overhead_gib": runtime_overhead,
+        "breakdown": breakdown,
         "context_size": ctx_size,
         "estimate_source": "file_size_heuristic",
         "confidence": confidence,
         "notes": [
-            "Estimate uses local file size plus conservative overhead; backend logs or benchmark results are authoritative.",
+            "Estimate uses local file size plus KV cache, activation, framework overhead, and allocator slack; backend logs or benchmark results are authoritative.",
         ],
     }
+
+
+def _unknown_memory_breakdown(ctx_size: int) -> dict[str, Any]:
+    return {
+        "weights_gib": None,
+        "mmproj_gib": None,
+        "kv_cache_gib": None,
+        "activation_gib": None,
+        "framework_overhead_gib": None,
+        "allocator_slack_gib": None,
+        "runtime_overhead_gib": None,
+        "total_gib": None,
+        "context_size": ctx_size,
+        "assumptions": ["local model size is unknown"],
+    }
+
+
+def _memory_breakdown_for_backend(estimate: dict[str, Any], memory_kind: str) -> dict[str, Any]:
+    source = estimate.get("breakdown") if isinstance(estimate.get("breakdown"), dict) else {}
+    result = dict(source)
+    result["memory_kind"] = memory_kind
+    result["total_gib"] = estimate.get("estimated_gpu_memory_gib") if memory_kind == "gpu" else estimate.get("estimated_ram_gib")
+    return result
 
 
 def _available_memory_for_backend(backend: BackendSpec) -> float | None:
