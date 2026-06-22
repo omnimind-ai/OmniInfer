@@ -69,6 +69,12 @@ Examples:
 """
 
 
+class CommandGroupParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self.print_help(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\n")
+
+
 HELP_TEXT = """\
 OmniInfer CLI
 
@@ -1841,7 +1847,7 @@ def build_parser_bundle() -> dict[str, argparse.ArgumentParser]:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--port", type=int, default=None, help="Gateway port (overrides config file)")
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", parser_class=CommandGroupParser)
 
     backend = sub.add_parser(
         "backend",
@@ -1850,7 +1856,7 @@ def build_parser_bundle() -> dict[str, argparse.ArgumentParser]:
         epilog=BACKEND_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    backend_sub = backend.add_subparsers(dest="backend_command")
+    backend_sub = backend.add_subparsers(dest="backend_command", metavar="COMMAND", parser_class=CommandGroupParser)
     backend_list = backend_sub.add_parser("list", help="List backends available on this system")
     backend_list.add_argument("--scope", choices=("installed", "compatible", "all"), default="compatible", help="Filter backends by scope (default: compatible)")
     backend_list.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON (for scripting)")
@@ -1877,7 +1883,7 @@ def build_parser_bundle() -> dict[str, argparse.ArgumentParser]:
         epilog=MODEL_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    model_sub = model.add_subparsers(dest="model_command")
+    model_sub = model.add_subparsers(dest="model_command", metavar="COMMAND", parser_class=CommandGroupParser)
     model_list = model_sub.add_parser("list", help="List supported models")
     model_list.add_argument("--system", choices=SYSTEM_CHOICES, default=detect_system_name(), help="Target system, defaults to the current system")
     model_list.add_argument("--all-backends", action="store_true", help="Show the raw backend-grouped view")
@@ -1894,7 +1900,7 @@ def build_parser_bundle() -> dict[str, argparse.ArgumentParser]:
         epilog=ADVISOR_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    advisor_sub = advisor.add_subparsers(dest="advisor_command")
+    advisor_sub = advisor.add_subparsers(dest="advisor_command", metavar="COMMAND", parser_class=CommandGroupParser)
     advisor_system = advisor_sub.add_parser("system", help="Inspect local hardware and OmniInfer runtimes")
     advisor_system.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
     advisor_inspect = advisor_sub.add_parser("inspect", help="Inspect a model reference or local model artifact")
@@ -1928,7 +1934,7 @@ def build_parser_bundle() -> dict[str, argparse.ArgumentParser]:
         epilog=THINKING_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    thinking_sub = thinking.add_subparsers(dest="thinking_command")
+    thinking_sub = thinking.add_subparsers(dest="thinking_command", metavar="COMMAND", parser_class=CommandGroupParser)
     thinking_sub.add_parser("show", help="Show the default thinking state")
     thinking_set = thinking_sub.add_parser("set", help="Set the default thinking state")
     thinking_set.add_argument("value", choices=("on", "off"), help="on or off")

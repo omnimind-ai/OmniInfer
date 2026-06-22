@@ -290,6 +290,20 @@ class CliParserTests(unittest.TestCase):
         self.assertIn("omniinfer backend select llama.cpp-linux-cuda", output)
         self.assertNotIn("{backend,build,status", output)
 
+    def test_invalid_advisor_subcommand_prints_advisor_help(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["advisor", "nope"])
+
+        self.assertEqual(raised.exception.code, 2)
+        output = stderr.getvalue()
+        self.assertIn("usage: omniinfer advisor", output)
+        self.assertIn("COMMAND", output)
+        self.assertIn("invalid choice: 'nope'", output)
+        self.assertIn("omniinfer advisor plan /path/to/model.gguf --gpu-vram 24 --ram 64", output)
+        self.assertNotIn("{backend,build,status", output)
+
     def test_requested_window_mode_defaults_hidden(self) -> None:
         self.assertEqual(cli._requested_window_mode([]), "hidden")
         self.assertEqual(cli._requested_window_mode(["--window-mode", "visible"]), "visible")
