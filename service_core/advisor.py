@@ -234,6 +234,50 @@ def recommend_models(
     }
 
 
+def plan_model(
+    model: str,
+    *,
+    platform_obj: HostPlatform,
+    backends: dict[str, BackendSpec],
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+    gpu_vram_gib: float | None = None,
+    ram_gib: float | None = None,
+    cpu_cores: int | None = None,
+) -> dict[str, Any]:
+    context = ctx_size or DEFAULT_CONTEXT_SIZE
+    model_info = inspect_model(model, mmproj=mmproj)
+    estimate = _memory_estimate(
+        model_info.get("size_gib"),
+        model_info.get("mmproj_size_gib"),
+        model_info.get("params_b"),
+        context,
+    )
+    model_info["estimate"] = estimate
+    system = system_snapshot(platform_obj, backends)
+    current = _current_hardware(system)
+    simulated = _apply_hardware_overrides(current, gpu_vram_gib=gpu_vram_gib, ram_gib=ram_gib, cpu_cores=cpu_cores)
+    paths = [
+        _plan_run_path("gpu", estimate, simulated),
+        _plan_run_path("cpu_offload", estimate, simulated),
+        _plan_run_path("cpu_only", estimate, simulated),
+    ]
+    recommended = _recommended_plan_path(paths)
+    return {
+        "object": "advisor.plan",
+        "model": model_info,
+        "context_size": context,
+        "current_hardware": current,
+        "planning_hardware": simulated,
+        "run_paths": paths,
+        "recommended_path": recommended,
+        "upgrade_deltas": _upgrade_deltas(paths, simulated),
+        "estimate_notice": "Hardware planning uses local advisor heuristics; backend logs and benchmark runs remain authoritative.",
+        "next_commands": _plan_next_commands(model_info, context, recommended),
+        "warnings": list(model_info.get("warnings", [])),
+    }
+
+
 def _backend_payload(backend: BackendSpec, platform_obj: HostPlatform, *, installed: set[str]) -> dict[str, Any]:
     return {
         "id": backend.id,
@@ -251,6 +295,177 @@ def _backend_payload(backend: BackendSpec, platform_obj: HostPlatform, *, instal
         "models_dir": backend.models_dir,
         "priority": BACKEND_PRIORITY.get(backend.id, 999),
     }
+
+
+def _current_hardware(system_payload: dict[str, Any]) -> dict[str, Any]:
+    host = system_payload.get("host") if isinstance(system_payload.get("host"), dict) else {}
+    cuda = system_payload.get("cuda") if isinstance(system_payload.get("cuda"), dict) else {}
+    devices = cuda.get("visible_devices") or cuda.get("devices") or []
+    best = cuda.get("best_free_device") if isinstance(cuda.get("best_free_device"), dict) else None
+    return {
+        "available_ram_gib": host.get("available_ram_gib"),
+        "total_ram_gib": host.get("total_ram_gib"),
+        "cpu_cores": host.get("cpu_cores"),
+        "gpu_vram_free_gib": best.get("free_gib") if best else None,
+        "gpu_vram_total_gib": best.get("total_gib") if best else None,
+        "gpu_name": best.get("name") if best else None,
+        "gpu_count": len(devices) if isinstance(devices, list) else 0,
+    }
+
+
+def _apply_hardware_overrides(
+    current: dict[str, Any],
+    *,
+    gpu_vram_gib: float | None,
+    ram_gib: float | None,
+    cpu_cores: int | None,
+) -> dict[str, Any]:
+    result = dict(current)
+    if gpu_vram_gib is not None:
+        result["gpu_vram_free_gib"] = float(gpu_vram_gib)
+        result["gpu_vram_total_gib"] = float(gpu_vram_gib)
+        result["simulated_gpu_vram_gib"] = float(gpu_vram_gib)
+    if ram_gib is not None:
+        result["available_ram_gib"] = float(ram_gib)
+        result["total_ram_gib"] = float(ram_gib)
+        result["simulated_ram_gib"] = float(ram_gib)
+    if cpu_cores is not None:
+        result["cpu_cores"] = int(cpu_cores)
+        result["simulated_cpu_cores"] = int(cpu_cores)
+    return result
+
+
+def _plan_run_path(path: str, estimate: dict[str, Any], hardware: dict[str, Any]) -> dict[str, Any]:
+    required = float(estimate.get("estimated_gpu_memory_gib") or estimate.get("estimated_ram_gib") or 0.0)
+    cpu_cores = int(hardware.get("cpu_cores") or os.cpu_count() or 1)
+    if path == "gpu":
+        available = _float_or_none(hardware.get("gpu_vram_free_gib"))
+        minimum = {
+            "vram_gib": round(required, 2),
+            "ram_gib": round(max(4.0, required * 0.25), 2),
+            "cpu_cores": max(2, min(cpu_cores, 4)),
+        }
+        recommended = {
+            "vram_gib": round(required * 1.2 + GPU_MEMORY_MARGIN_GIB, 2),
+            "ram_gib": round(max(8.0, required * 0.35), 2),
+            "cpu_cores": max(4, min(cpu_cores, 8)),
+        }
+        fit = _fit_level(required, available, GPU_MEMORY_MARGIN_GIB)
+        feasible = available is not None and fit in {"good", "marginal"}
+        notes = ["fastest path when the selected backend can fully or mostly use GPU memory"]
+    elif path == "cpu_offload":
+        available = _float_or_none(hardware.get("available_ram_gib"))
+        minimum = {
+            "vram_gib": 2.0,
+            "ram_gib": round(required, 2),
+            "cpu_cores": max(4, min(cpu_cores, 8)),
+        }
+        recommended = {
+            "vram_gib": 4.0,
+            "ram_gib": round(required * 1.25 + CPU_MEMORY_MARGIN_GIB, 2),
+            "cpu_cores": max(8, min(cpu_cores, 16)),
+        }
+        fit = _fit_level(required, available, CPU_MEMORY_MARGIN_GIB)
+        feasible = available is not None and fit in {"good", "marginal"}
+        notes = ["uses system RAM as the primary pool and GPU for partial acceleration when backend supports it"]
+    else:
+        available = _float_or_none(hardware.get("available_ram_gib"))
+        minimum = {
+            "vram_gib": None,
+            "ram_gib": round(required, 2),
+            "cpu_cores": max(4, min(cpu_cores, 8)),
+        }
+        recommended = {
+            "vram_gib": None,
+            "ram_gib": round(required * 1.35 + CPU_MEMORY_MARGIN_GIB, 2),
+            "cpu_cores": max(8, min(cpu_cores, 32)),
+        }
+        fit = _fit_level(required, available, CPU_MEMORY_MARGIN_GIB)
+        feasible = available is not None and fit in {"good", "marginal"}
+        notes = ["lowest GPU requirement, usually slowest for chat generation"]
+    return {
+        "path": path,
+        "feasible_now": feasible,
+        "fit": fit,
+        "memory_required_gib": round(required, 2) if required else None,
+        "memory_available_gib": available,
+        "minimum": minimum,
+        "recommended": recommended,
+        "estimated_relative_speed": _relative_speed(path, cpu_cores),
+        "notes": notes,
+    }
+
+
+def _recommended_plan_path(paths: list[dict[str, Any]]) -> dict[str, Any] | None:
+    rank_path = {"gpu": 0, "cpu_offload": 1, "cpu_only": 2}
+    rank_fit = {"good": 0, "marginal": 1, "too_tight": 2, "unknown": 3}
+    feasible = [path for path in paths if path.get("feasible_now")]
+    candidates = feasible or paths
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: (rank_fit.get(str(item.get("fit")), 3), rank_path.get(str(item.get("path")), 9)))
+
+
+def _upgrade_deltas(paths: list[dict[str, Any]], hardware: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for path in paths:
+        recommended = path.get("recommended") if isinstance(path.get("recommended"), dict) else {}
+        if path.get("path") == "gpu":
+            current = _float_or_none(hardware.get("gpu_vram_free_gib")) or 0.0
+            target = _float_or_none(recommended.get("vram_gib"))
+            if target is not None and current < target:
+                result.append(
+                    {
+                        "path": "gpu",
+                        "resource": "vram",
+                        "add_gib": round(target - current, 2),
+                        "target_gib": target,
+                        "description": f"add about {round(target - current, 2)} GiB free VRAM for the recommended GPU path",
+                    }
+                )
+        current_ram = _float_or_none(hardware.get("available_ram_gib")) or 0.0
+        target_ram = _float_or_none(recommended.get("ram_gib"))
+        if target_ram is not None and current_ram < target_ram:
+            result.append(
+                {
+                    "path": path.get("path"),
+                    "resource": "ram",
+                    "add_gib": round(target_ram - current_ram, 2),
+                    "target_gib": target_ram,
+                    "description": f"add about {round(target_ram - current_ram, 2)} GiB available RAM for {path.get('path')}",
+                }
+            )
+    return result
+
+
+def _plan_next_commands(model_info: dict[str, Any], ctx_size: int, recommended: dict[str, Any] | None) -> list[str]:
+    if recommended is None:
+        return []
+    model = _shell_quote(str(model_info.get("model") or ""))
+    if not model:
+        return []
+    if recommended.get("path") == "gpu":
+        return [f"omniinfer advisor fit {model} --ctx-size {ctx_size}", f"omniinfer load -m {model} --ctx-size {ctx_size}"]
+    if recommended.get("path") == "cpu_offload":
+        return [f"omniinfer advisor fit {model} --ctx-size {ctx_size}", f"omniinfer load -m {model} --ctx-size {ctx_size}"]
+    return [f"omniinfer backend select llama.cpp-linux && omniinfer load -m {model} --ctx-size {ctx_size}"]
+
+
+def _relative_speed(path: str, cpu_cores: int) -> str:
+    if path == "gpu":
+        return "fast"
+    if path == "cpu_offload":
+        return "medium"
+    return "slow" if cpu_cores < 16 else "medium-slow"
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _backend_fit_payload(

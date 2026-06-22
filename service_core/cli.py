@@ -39,6 +39,7 @@ Common commands:
   omniinfer
   omniinfer advisor system
   omniinfer advisor fit /path/to/model.gguf
+  omniinfer advisor plan /path/to/model.gguf
   omniinfer backend list
   omniinfer backend select <backend>
   omniinfer status
@@ -62,7 +63,7 @@ Design notes:
 Command map:
   backend list              -> show available backends
   backend select <backend>  -> choose a backend
-  advisor system/fit        -> inspect hardware and model fit before loading
+  advisor system/fit/plan   -> inspect hardware, model fit, and hardware requirements
   status                    -> show service status, selected backend, and loaded model
   load                      -> load a model
   model list                -> show models supported on the current system
@@ -385,6 +386,78 @@ def print_advisor_fit(
             why_not = candidate.get("why_not") if isinstance(candidate.get("why_not"), list) else []
             if why_not:
                 print(f"    why_not={why_not[0]}")
+    for warning in payload.get("warnings", []):
+        print(f"Warning: {warning}")
+    return 0
+
+
+def print_advisor_plan(
+    model: str,
+    *,
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+    gpu_vram_gib: float | None = None,
+    ram_gib: float | None = None,
+    cpu_cores: int | None = None,
+    json_output: bool = False,
+) -> int:
+    payload = commands.advisor_plan(
+        model,
+        mmproj=mmproj,
+        ctx_size=ctx_size,
+        gpu_vram_gib=gpu_vram_gib,
+        ram_gib=ram_gib,
+        cpu_cores=cpu_cores,
+    )
+    if json_output:
+        return _dump_json(payload)
+    model_info = payload.get("model") if isinstance(payload.get("model"), dict) else {}
+    planning = payload.get("planning_hardware") if isinstance(payload.get("planning_hardware"), dict) else {}
+    print("OmniInfer Advisor Plan")
+    print(f"Model: {model_info.get('model')}")
+    print(f"Context size: {payload.get('context_size')}")
+    print(
+        "Planning hardware: "
+        f"free_vram={planning.get('gpu_vram_free_gib') or '-'} GiB, "
+        f"available_ram={planning.get('available_ram_gib') or '-'} GiB, "
+        f"cpu_cores={planning.get('cpu_cores') or '-'}"
+    )
+    estimate = model_info.get("estimate") if isinstance(model_info.get("estimate"), dict) else {}
+    _print_memory_breakdown(estimate.get("breakdown") if isinstance(estimate.get("breakdown"), dict) else {})
+    recommended = payload.get("recommended_path") if isinstance(payload.get("recommended_path"), dict) else None
+    if recommended:
+        print(f"Recommended path: {recommended.get('path')} ({recommended.get('fit')})")
+    print("Run paths:")
+    for path in payload.get("run_paths", []):
+        if not isinstance(path, dict):
+            continue
+        minimum = path.get("minimum") if isinstance(path.get("minimum"), dict) else {}
+        rec = path.get("recommended") if isinstance(path.get("recommended"), dict) else {}
+        print(
+            "  "
+            f"{path.get('path')}: feasible={'yes' if path.get('feasible_now') else 'no'}, "
+            f"fit={path.get('fit')}, speed={path.get('estimated_relative_speed')}"
+        )
+        print(
+            "    "
+            f"minimum: vram={minimum.get('vram_gib') if minimum.get('vram_gib') is not None else '-'} GiB, "
+            f"ram={minimum.get('ram_gib')} GiB, cpu={minimum.get('cpu_cores')}"
+        )
+        print(
+            "    "
+            f"recommended: vram={rec.get('vram_gib') if rec.get('vram_gib') is not None else '-'} GiB, "
+            f"ram={rec.get('ram_gib')} GiB, cpu={rec.get('cpu_cores')}"
+        )
+    upgrades = payload.get("upgrade_deltas") if isinstance(payload.get("upgrade_deltas"), list) else []
+    if upgrades:
+        print("Upgrade deltas:")
+        for item in upgrades[:5]:
+            print(f"  {item.get('description')}")
+    commands_list = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    if commands_list:
+        print("Next commands:")
+        for command in commands_list:
+            print(f"  {command}")
     for warning in payload.get("warnings", []):
         print(f"Warning: {warning}")
     return 0
@@ -1672,7 +1745,7 @@ def handle_hidden_completion(argv: list[str]) -> int:
     if commands.is_backend_build_supported():
         top_level.insert(1, "build")
     backend_sub = ["list", "select", "stop"]
-    advisor_sub = ["system", "inspect", "fit", "recommend"]
+    advisor_sub = ["system", "inspect", "fit", "plan", "recommend"]
     model_sub = ["list", "load"]
     thinking_sub = ["show", "set"]
     serve_sub = ["status", "stop"]
@@ -1775,6 +1848,14 @@ def build_parser() -> argparse.ArgumentParser:
     advisor_fit.add_argument("--ctx-size", type=int, help="Context length used for estimation")
     advisor_fit.add_argument("--backend", help="Restrict analysis to a single backend")
     advisor_fit.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    advisor_plan = advisor_sub.add_parser("plan", help="Estimate hardware requirements for a model")
+    advisor_plan.add_argument("model", help="Model path, model directory, or backend reference")
+    advisor_plan.add_argument("-mm", "--mmproj", help="Optional mmproj path")
+    advisor_plan.add_argument("--ctx-size", type=int, help="Context length used for estimation")
+    advisor_plan.add_argument("--gpu-vram", type=float, dest="gpu_vram_gib", help="Simulate available GPU VRAM in GiB")
+    advisor_plan.add_argument("--ram", type=float, dest="ram_gib", help="Simulate available system RAM in GiB")
+    advisor_plan.add_argument("--cpu-cores", type=int, help="Simulate CPU core count")
+    advisor_plan.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
     advisor_recommend = advisor_sub.add_parser("recommend", help="Recommend from locally managed model files")
     advisor_recommend.add_argument("--task", help="Optional task filter: chat, coding, vision, embedding")
     advisor_recommend.add_argument("-n", "--limit", type=int, default=5, help="Maximum recommendations to show")
@@ -1879,6 +1960,16 @@ def main(argv: list[str] | None = None) -> int:
                 backend=getattr(args, "backend", None),
                 json_output=getattr(args, "json_output", False),
             )
+        if args.advisor_command == "plan":
+            return print_advisor_plan(
+                args.model,
+                mmproj=getattr(args, "mmproj", None),
+                ctx_size=getattr(args, "ctx_size", None),
+                gpu_vram_gib=getattr(args, "gpu_vram_gib", None),
+                ram_gib=getattr(args, "ram_gib", None),
+                cpu_cores=getattr(args, "cpu_cores", None),
+                json_output=getattr(args, "json_output", False),
+            )
         if args.advisor_command == "recommend":
             return print_advisor_recommend(
                 task=getattr(args, "task", None),
@@ -1886,7 +1977,7 @@ def main(argv: list[str] | None = None) -> int:
                 ctx_size=getattr(args, "ctx_size", None),
                 json_output=getattr(args, "json_output", False),
             )
-        parser.error("advisor requires a subcommand: system / inspect / fit / recommend")
+        parser.error("advisor requires a subcommand: system / inspect / fit / plan / recommend")
 
     if args.command == "status":
         if unknown_args:

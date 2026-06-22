@@ -160,6 +160,16 @@ Estimate fit and get a recommended backend:
 ./omniinfer advisor fit Qwen/Qwen2.5-7B-Instruct --backend vllm-linux-cuda --json
 ```
 
+Plan hardware requirements for a model:
+
+```sh
+./omniinfer advisor plan /path/to/model.gguf --ctx-size 8192
+./omniinfer advisor plan /path/to/model.gguf --gpu-vram 24 --ram 64 --cpu-cores 16
+./omniinfer advisor plan /path/to/model.gguf --json
+```
+
+The plan command reports GPU, CPU-offload, and CPU-only paths with minimum/recommended VRAM, RAM, CPU cores, current feasibility, and upgrade deltas.
+
 Recommend from OmniInfer-managed local model directories:
 
 ```sh
