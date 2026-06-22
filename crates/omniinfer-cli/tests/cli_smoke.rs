@@ -40,6 +40,24 @@ fn strict_mode_reports_unported_commands_without_fallback() {
 }
 
 #[test]
+fn model_load_accepts_backend_extra_args_for_fallback() {
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .args([
+            "model",
+            "load",
+            "-m",
+            "/tmp/model.gguf",
+            "--",
+            "-ngl",
+            "999",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("implementation pending"));
+}
+
+#[test]
 fn backend_stop_posts_to_local_gateway() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),

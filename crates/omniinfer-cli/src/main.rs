@@ -116,6 +116,8 @@ struct ModelLoadArgs {
     config: Option<String>,
     #[arg(long)]
     verbose: bool,
+    #[arg(last = true, allow_hyphen_values = true)]
+    backend_extra_args: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]
