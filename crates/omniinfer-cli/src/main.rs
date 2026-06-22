@@ -8,6 +8,7 @@ use rand::distr::Alphanumeric;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader};
+use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc;
@@ -902,7 +903,7 @@ fn print_ps(json_output: bool) -> Result<()> {
 }
 
 fn can_serve_detach_locally(args: &ServeArgs) -> bool {
-    args.command.is_none() && args.detach && !args.lan
+    args.command.is_none() && args.detach
 }
 
 fn serve_detached(args: &ServeArgs) -> Result<()> {
@@ -944,11 +945,23 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
         config.startup_timeout = f64::from(timeout);
     }
 
-    if args.cloudflare && args.host.is_none() {
+    if args.lan && args.host.is_none() {
+        config.host = "0.0.0.0".to_string();
+    } else if args.cloudflare && args.host.is_none() {
         config.host = "127.0.0.1".to_string();
     }
 
-    let api_key = resolve_serve_api_key(args)?;
+    let remote_bind = !args.cloudflare && !is_loopback_host(&config.host);
+    let generate_session_key = args.cloudflare || (remote_bind && !args.allow_insecure_lan);
+    let api_key = resolve_serve_api_key(args, generate_session_key)?;
+    if remote_bind && api_key.is_none() && !args.allow_insecure_lan {
+        anyhow::bail!(
+            "Refusing to expose OmniInfer on a non-loopback host without an API key. Use --lan to generate a session key, --api-key/OMNIINFER_API_KEY to set one, or --allow-insecure-lan for trusted test networks."
+        );
+    }
+    if args.allow_remote_management && api_key.is_none() {
+        anyhow::bail!("--allow-remote-management requires --api-key or OMNIINFER_API_KEY");
+    }
     let log_path = paths::local_logs_dir().join(format!("serve-{}.log", config.port));
     let child = start_serve_child(&config, args, &log_path, api_key.as_deref())?;
     println!("Starting OmniInfer service on port {}...", config.port);
@@ -1037,6 +1050,7 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
         config.port,
         &state,
         public_url.as_deref(),
+        &lan_base_urls(&config, args.lan),
         api_key.as_deref(),
         !args.cloudflare_no_print_key,
         &log_path,
@@ -1071,8 +1085,8 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(host.trim(), "" | "127.0.0.1" | "localhost" | "::1")
 }
 
-fn resolve_serve_api_key(args: &ServeArgs) -> Result<Option<String>> {
-    if args.cloudflare {
+fn resolve_serve_api_key(args: &ServeArgs, generate_session_key: bool) -> Result<Option<String>> {
+    if generate_session_key {
         let config = config::load_app_config().unwrap_or_default();
         let configured = if let Some(value) = args
             .api_key
@@ -1102,6 +1116,35 @@ fn resolve_serve_api_key(args: &ServeArgs) -> Result<Option<String>> {
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string))
+}
+
+fn lan_base_urls(config: &config::AppConfig, lan_enabled: bool) -> Vec<String> {
+    if !lan_enabled {
+        return Vec::new();
+    }
+    let host = config.host.trim();
+    if !host.is_empty() && !matches!(host, "0.0.0.0" | "::") {
+        return vec![format!(
+            "http://{}:{}/v1",
+            host.trim_matches(['[', ']']),
+            config.port
+        )];
+    }
+    detect_primary_lan_ipv4()
+        .into_iter()
+        .map(|ip| format!("http://{ip}:{}/v1", config.port))
+        .collect()
+}
+
+fn detect_primary_lan_ipv4() -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let addr = socket.local_addr().ok()?;
+    let ip = addr.ip();
+    if ip.is_loopback() || !ip.is_ipv4() {
+        return None;
+    }
+    Some(ip.to_string())
 }
 
 fn generate_session_api_key() -> Result<String> {
@@ -1351,6 +1394,7 @@ fn print_serve_ready(
     port: u16,
     state: &serde_json::Value,
     public_url: Option<&str>,
+    lan_base_urls: &[String],
     api_key: Option<&str>,
     print_api_key: bool,
     log_path: &std::path::Path,
@@ -1361,6 +1405,9 @@ fn print_serve_ready(
     if let Some(public_url) = public_url {
         println!("OpenAI Base URL: {}/v1", public_url.trim_end_matches('/'));
         println!("Health URL: {}/health", public_url.trim_end_matches('/'));
+    }
+    for lan_base_url in lan_base_urls {
+        println!("LAN Base URL: {lan_base_url}");
     }
     println!("Local Base URL: http://127.0.0.1:{port}/v1");
     if let Some(api_key) = api_key.filter(|_| print_api_key) {
@@ -1384,7 +1431,10 @@ fn print_serve_ready(
     }
     println!("Log: {}", log_path.display());
     println!("Stop: ./omniinfer serve stop --port {port}");
-    if let Some(public_url) = public_url {
+    let remote_base_url = public_url
+        .map(|url| format!("{}/v1", url.trim_end_matches('/')))
+        .or_else(|| lan_base_urls.first().cloned());
+    if let Some(remote_base_url) = remote_base_url {
         println!("Curl:");
         let auth = if let Some(api_key) = api_key.filter(|_| print_api_key) {
             format!(" -H 'Authorization: Bearer {api_key}'")
@@ -1392,9 +1442,8 @@ fn print_serve_ready(
             String::new()
         };
         println!(
-            "  curl -sS{} -H 'Content-Type: application/json' {}/v1/chat/completions -d '{{\"model\":\"omniinfer\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}],\"stream\":false}}'",
-            auth,
-            public_url.trim_end_matches('/')
+            "  curl -sS{} -H 'Content-Type: application/json' {}/chat/completions -d '{{\"model\":\"omniinfer\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}],\"stream\":false}}'",
+            auth, remote_base_url
         );
     }
 }

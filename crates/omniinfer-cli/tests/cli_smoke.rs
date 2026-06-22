@@ -40,36 +40,78 @@ fn strict_mode_reports_unported_commands_without_fallback() {
 }
 
 #[test]
-fn serve_launch_options_parse_before_fallback() {
+fn serve_detach_starts_lan_gateway_with_api_key() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"starting"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
+        ),
+    ]);
+    let port = gateway.port;
+    let source_root = temp_repo_root("serve-lan-source");
+    let state_root = temp_repo_root("serve-lan-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+    let launcher = fake_python_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args([
+            "serve",
+            "--detach",
+            "--lan",
+            "--api-key",
+            "lan-key",
+            "--port",
+        ])
+        .arg(port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Local Base URL:"))
+        .stdout(predicate::str::contains("API Key: lan-key"))
+        .stdout(predicate::str::contains("Curl:"));
+
+    let launched = wait_for_file(state_root.join("started_gateway.args"));
+    assert!(launched.contains("serve --host 0.0.0.0"));
+    assert!(launched.contains("--api-key lan-key"));
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
+fn serve_detach_rejects_remote_management_without_key() {
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .args([
             "serve",
-            "--lan",
-            "--backend",
-            "llama.cpp-linux-cuda",
-            "--model",
-            "/tmp/model.gguf",
-            "--ctx-size",
-            "8192",
-            "--api-key",
-            "auto",
             "--detach",
-            "--smoke-test",
-            "--port",
-            "19000",
-            "--startup-timeout",
-            "20",
-            "--default-backend",
-            "llama.cpp-linux-cuda",
-            "--window-mode",
-            "hidden",
-            "--log-level",
-            "warning",
+            "--lan",
+            "--allow-insecure-lan",
+            "--allow-remote-management",
         ])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("implementation pending"));
+        .failure()
+        .stderr(predicate::str::contains(
+            "--allow-remote-management requires --api-key or OMNIINFER_API_KEY",
+        ));
 }
 
 #[test]
