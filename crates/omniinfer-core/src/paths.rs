@@ -20,10 +20,18 @@ pub fn local_logs_dir() -> PathBuf {
     local_dir().join("logs")
 }
 
+pub fn local_run_dir() -> PathBuf {
+    local_dir().join("run")
+}
+
 pub fn state_file() -> PathBuf {
     local_config_dir().join("state.json")
 }
 
 pub fn legacy_state_file() -> PathBuf {
     local_config_dir().join("cli_state.json")
+}
+
+pub fn serve_pid_file(port: u16) -> PathBuf {
+    local_run_dir().join(format!("serve-{port}.json"))
 }

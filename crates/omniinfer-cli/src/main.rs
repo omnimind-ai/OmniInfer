@@ -5,7 +5,7 @@ use std::env;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
-use omniinfer_core::{config, http_client, local_state, paths, version};
+use omniinfer_core::{config, http_client, local_state, paths, serve_state, version};
 
 #[derive(Debug, Parser)]
 #[command(name = "omniinfer-rs")]
@@ -261,6 +261,13 @@ fn main() -> Result<()> {
         None => print_tui_placeholder(),
         Some(Command::Status) => print_status(),
         Some(Command::Completion { shell }) => print_completion(shell),
+        Some(Command::Thinking {
+            command: ThinkingCommand::Show,
+        }) => print_thinking_show(),
+        Some(Command::Serve(ServeArgs {
+            command: Some(ServeCommand::Status { port }),
+            ..
+        })) => print_serve_status(port),
         Some(command) => fallback_to_python(&command)?,
     }
     Ok(())
@@ -347,6 +354,79 @@ fn print_completion(shell: CompletionShell) {
             &mut std::io::stdout(),
         ),
     }
+}
+
+fn print_thinking_show() {
+    let config = config::load_app_config().unwrap_or_default();
+    println!(
+        "Default thinking: {}",
+        match config.default_thinking.trim().to_ascii_lowercase().as_str() {
+            "on" | "true" | "1" | "yes" | "enabled" => "on",
+            _ => "off",
+        }
+    );
+}
+
+fn print_serve_status(port: u16) {
+    let mut config = config::load_app_config().unwrap_or_default();
+    config.port = port;
+    println!("OmniInfer Serve Status");
+    println!("Port: {port}");
+    match serve_state::load_serve_pid_info(port) {
+        Ok(Some(info)) => {
+            if let Some(pid) = info.pid {
+                println!("PID: {pid}");
+            }
+            if let Some(public_url) = info
+                .public_url
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                println!("OpenAI Base URL: {}/v1", public_url.trim_end_matches('/'));
+            }
+            if let Some(log) = info.log.as_deref().filter(|value| !value.trim().is_empty()) {
+                println!("Log: {log}");
+            }
+        }
+        Ok(None) => {}
+        Err(error) => println!("Serve metadata: unavailable ({error})"),
+    }
+
+    let url = format!("{}/health?deep=true", config.service_base_url());
+    match http_client::get_json(&url, Duration::from_secs(2)) {
+        Ok(response) if response.status == 200 => {
+            let state = response.body.get("omni").unwrap_or(&response.body);
+            println!("Backend: {}", json_str(state, "backend").unwrap_or("-"));
+            println!(
+                "Backend ready: {}",
+                yes_no(json_bool(state, "backend_ready").unwrap_or(false))
+            );
+            println!("Model: {}", json_str(state, "model").unwrap_or("-"));
+            println!(
+                "ctx-size: {}",
+                json_u64(state, "ctx_size")
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            );
+        }
+        Ok(response) => println!("Service: unhealthy (HTTP {})", response.status),
+        Err(error) => println!("OmniInfer service is not running on port {port}: {error}"),
+    }
+}
+
+fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn json_bool(value: &serde_json::Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(serde_json::Value::as_bool)
+}
+
+fn json_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(serde_json::Value::as_u64)
 }
 
 fn fallback_to_python(command: &Command) -> Result<()> {

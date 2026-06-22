@@ -41,6 +41,8 @@ SCENARIOS = [
     ),
     Scenario("serve-help", ["./omniinfer", "serve", "--help"], description="serve scoped help"),
     Scenario("status", ["./omniinfer", "status"], description="local gateway status"),
+    Scenario("thinking-show", ["./omniinfer", "thinking", "show"], description="default thinking state"),
+    Scenario("serve-status", ["./omniinfer", "serve", "status", "--port", "9000"], description="detached serve status"),
     Scenario("advisor-system", ["./omniinfer", "advisor", "system"], timeout_s=60.0, description="hardware and backend probe"),
     Scenario(
         "advisor-system-json",

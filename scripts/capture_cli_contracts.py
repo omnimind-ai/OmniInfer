@@ -35,6 +35,8 @@ SCENARIOS = [
     ContractScenario("serve-help", ["serve", "--help"]),
     ContractScenario("completion-bash", ["completion", "bash"]),
     ContractScenario("status", ["status"], timeout_s=60.0),
+    ContractScenario("thinking-show", ["thinking", "show"], timeout_s=60.0),
+    ContractScenario("serve-status", ["serve", "status", "--port", "9000"], timeout_s=60.0),
 ]
 
 
