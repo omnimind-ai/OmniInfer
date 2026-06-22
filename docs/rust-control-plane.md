@@ -19,6 +19,7 @@ Implemented directly in Rust:
 - `--help`
 - `status`
 - `backend list`
+- `backend stop`
 - `model list`
 - `thinking show`
 - `thinking set on|off`
@@ -32,7 +33,7 @@ Fallback to the Python implementation:
 
 - no-argument TUI
 - `advisor *`
-- `backend select/stop`
+- `backend select`
 - `model load`
 - `load`
 - default streaming `chat` and multimodal `chat --image`

@@ -1,6 +1,11 @@
 use std::path::{Path, PathBuf};
 
+const ROOT_OVERRIDE_ENV: &str = "OMNIINFER_RUST_REPO_ROOT";
+
 pub fn repo_root() -> PathBuf {
+    if let Some(root) = std::env::var_os(ROOT_OVERRIDE_ENV).filter(|value| !value.is_empty()) {
+        return PathBuf::from(root);
+    }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)

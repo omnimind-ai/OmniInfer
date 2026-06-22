@@ -278,6 +278,9 @@ fn run_ported_command(command: &Command) -> Result<()> {
         Command::Backend {
             command: BackendCommand::List { scope },
         } => print_backend_list(scope.clone()),
+        Command::Backend {
+            command: BackendCommand::Stop,
+        } => stop_backend(),
         Command::Model {
             command: ModelCommand::List { all, best },
         } => print_model_list(*all, *best),
@@ -575,6 +578,16 @@ fn shutdown_service() -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn stop_backend() -> Result<()> {
+    post_local_json(
+        "/omni/backend/stop",
+        &serde_json::json!({}),
+        Duration::from_secs(30),
+    )?;
+    println!("Current backend process stopped");
+    Ok(())
 }
 
 fn stop_serve(port: u16) -> Result<()> {
