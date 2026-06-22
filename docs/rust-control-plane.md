@@ -63,6 +63,13 @@ startup-timeout, window-mode, default-thinking, and default-backend settings if
 the gateway is not already healthy. `status` and `shutdown` intentionally do
 not auto-start the gateway.
 
+Rust core now includes pre-switch helpers for model loading: backend-native load
+extra-arg parsing for llama.cpp/turboquant/vLLM/MLX/generic families, and
+backend profile loading for `load.extra_args`, legacy `load.launcher_args`, and
+infer request defaults. The user-facing `model load` command still falls back
+to Python until payload construction, SSE progress handling, and state updates
+are migrated together.
+
 ## Contract Snapshots
 
 Capture current Python contracts:
