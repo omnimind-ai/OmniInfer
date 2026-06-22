@@ -19,7 +19,7 @@ from service_core import cli, commands, tui
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
-from service_core.platforms.common import display_path_reference
+from service_core.platforms.common import display_path_reference, get_available_memory_bytes, get_total_memory_bytes
 from service_core.platforms.registry import default_backend_for_current_host
 from service_core.backends.base import BackendSpec
 from service_core.cli import build_parser
@@ -115,6 +115,27 @@ class RuntimeRootResolutionTests(unittest.TestCase):
                 app_root=self.app_root,
             )
             self.assertEqual(resolved.name, expected_name, f"{platform_cls.__name__} folder")
+
+
+class PlatformMemoryTests(unittest.TestCase):
+    def test_linux_memory_uses_memavailable_not_free_pages(self) -> None:
+        meminfo = "\n".join(
+            [
+                "MemTotal:       131421924 kB",
+                "MemFree:        14952332 kB",
+                "MemAvailable:   107321928 kB",
+            ]
+        )
+
+        with (
+            patch("service_core.platforms.common.platform.system", return_value="Linux"),
+            patch("service_core.platforms.common.Path.read_text", return_value=meminfo),
+            patch("service_core.platforms.common.os.sysconf") as sysconf,
+        ):
+            self.assertEqual(get_available_memory_bytes(), 107321928 * 1024)
+            self.assertEqual(get_total_memory_bytes(), 131421924 * 1024)
+
+        sysconf.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

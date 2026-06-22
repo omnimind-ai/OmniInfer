@@ -12,6 +12,7 @@ from service_core.platforms import HostPlatform, discover_llama_cpp_model_artifa
 from service_core.platforms.common import (
     bytes_to_gib,
     get_available_memory_bytes,
+    get_total_memory_bytes,
     get_available_rocm_memory_bytes,
     hidden_subprocess_kwargs,
 )
@@ -983,14 +984,10 @@ def _available_ram_gib() -> float | None:
 
 
 def _total_ram_gib() -> float | None:
-    try:
-        if os.name == "nt":
-            return None
-        page_size = os.sysconf("SC_PAGE_SIZE")
-        pages = os.sysconf("SC_PHYS_PAGES")
-        return round((page_size * pages) / float(1024 ** 3), 2)
-    except (AttributeError, OSError, ValueError):
+    total = get_total_memory_bytes()
+    if total is None:
         return None
+    return bytes_to_gib(total)
 
 
 def _candidate_model_dirs(backends: dict[str, BackendSpec]) -> list[Path]:
