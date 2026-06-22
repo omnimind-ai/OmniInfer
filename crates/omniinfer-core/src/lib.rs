@@ -3,6 +3,7 @@ pub mod backend_profiles;
 pub mod config;
 pub mod http_client;
 pub mod local_state;
+pub mod model_load;
 pub mod paths;
 pub mod serve_state;
 pub mod version;
