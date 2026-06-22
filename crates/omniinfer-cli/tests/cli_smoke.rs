@@ -40,21 +40,63 @@ fn strict_mode_reports_unported_commands_without_fallback() {
 }
 
 #[test]
-fn model_load_accepts_backend_extra_args_for_fallback() {
+fn model_load_posts_payload_and_persists_state() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"object":"list","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
+        ),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_mmproj":null,"selected_ctx_size":8192}"#,
+        ),
+    ]);
+    let root = temp_repo_root("model-load");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+    let model = root.join("model.gguf");
+    fs::write(&model, "").expect("write model");
+
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .args([
-            "model",
-            "load",
-            "-m",
-            "/tmp/model.gguf",
-            "--",
-            "-ngl",
-            "999",
-        ])
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["model", "load", "-m"])
+        .arg(&model)
+        .args(["--ctx-size", "8192", "--", "-ngl", "999"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("implementation pending"));
+        .stdout(predicate::str::contains(
+            "Auto-selected backend: llama.cpp-linux-cuda",
+        ))
+        .stdout(predicate::str::contains("Model loaded"))
+        .stdout(predicate::str::contains("ctx-size: 8192"));
+
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
+    assert!(request.contains(&format!(r#""model":"{}""#, model.display())));
+    assert!(request.contains(r#""backend":"llama.cpp-linux-cuda""#));
+    assert!(request.contains(r#""ctx_size":8192"#));
+    assert!(request.contains(r#""launch_args":["-ngl","999"]"#));
+    gateway.join();
+
+    let state_raw = fs::read_to_string(root.join(".local").join("config").join("state.json"))
+        .expect("state file");
+    let state: serde_json::Value = serde_json::from_str(&state_raw).expect("state json");
+    assert_eq!(state["selected_backend"], "llama.cpp-linux-cuda");
+    assert_eq!(state["selected_model"], "/tmp/model.gguf");
+    assert_eq!(state["selected_ctx_size"], 8192);
+    assert!(state.get("selected_mmproj").is_none());
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]

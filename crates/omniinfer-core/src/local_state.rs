@@ -73,6 +73,51 @@ pub fn save_selected_backend(backend: &str) -> Result<(), StateError> {
     save_state_value(&value)
 }
 
+pub fn save_selected_model(
+    model: &str,
+    mmproj: Option<&str>,
+    ctx_size: Option<u32>,
+) -> Result<(), StateError> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Ok(());
+    }
+    let mut value = load_state_value().unwrap_or_else(|_| serde_json::json!({}));
+    if !value.is_object() {
+        value = serde_json::json!({});
+    }
+    let map = value
+        .as_object_mut()
+        .expect("state value was normalized to object");
+    map.insert(
+        "selected_model".to_string(),
+        Value::String(model.to_string()),
+    );
+    match mmproj.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(mmproj) => {
+            map.insert(
+                "selected_mmproj".to_string(),
+                Value::String(mmproj.to_string()),
+            );
+        }
+        None => {
+            map.remove("selected_mmproj");
+        }
+    }
+    match ctx_size.filter(|value| *value > 0) {
+        Some(ctx_size) => {
+            map.insert(
+                "selected_ctx_size".to_string(),
+                Value::Number(u64::from(ctx_size).into()),
+            );
+        }
+        None => {
+            map.remove("selected_ctx_size");
+        }
+    }
+    save_state_value(&value)
+}
+
 fn load_state_value() -> Result<Value, StateError> {
     let path = if paths::state_file().is_file() {
         paths::state_file()
@@ -212,6 +257,26 @@ mod tests {
         );
         let state = parse_state_value(&value);
         assert_eq!(state.selected_backend.as_deref(), Some("new"));
+        assert_eq!(value["future"]["keep"], true);
+    }
+
+    #[test]
+    fn selected_model_state_shape_matches_python() {
+        let value = serde_json::json!({
+            "selected_model": "/models/model.gguf",
+            "selected_mmproj": "/models/mmproj.gguf",
+            "selected_ctx_size": 8192,
+            "future": { "keep": true }
+        });
+        let state = parse_state_value(&value);
+        assert_eq!(
+            state.selected_model,
+            Some(SelectedModel {
+                model: "/models/model.gguf".to_string(),
+                mmproj: Some("/models/mmproj.gguf".to_string()),
+                ctx_size: Some(8192),
+            })
+        );
         assert_eq!(value["future"]["keep"], true);
     }
 }

@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use omniinfer_core::{
-    backend_profiles, config, http_client, local_state, paths, serve_state, version,
+    backend_profiles, config, http_client, local_state, model_load, paths, serve_state, version,
 };
 
 #[derive(Debug, Parser)]
@@ -293,6 +293,10 @@ fn run_ported_command(command: &Command) -> Result<()> {
         Command::Model {
             command: ModelCommand::List { all, best },
         } => print_model_list(*all, *best),
+        Command::Model {
+            command: ModelCommand::Load(args),
+        }
+        | Command::Load(args) => load_model(args),
         Command::Thinking {
             command: ThinkingCommand::Show,
         } => {
@@ -512,6 +516,73 @@ fn print_model_list(all: bool, best: bool) -> Result<()> {
     } else {
         print_full_model_catalog(&payload);
     }
+    Ok(())
+}
+
+fn load_model(args: &ModelLoadArgs) -> Result<()> {
+    let backends = get_local_json("/omni/backends?scope=all", Duration::from_secs(10))?;
+    let rows = backends
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("Unable to read backend list."))?;
+    let state = local_state::load_state().unwrap_or_default();
+    let profile = match &args.config {
+        Some(path) => Some(backend_profiles::load_backend_profile(
+            std::path::PathBuf::from(path),
+        )?),
+        None => state
+            .selected_backend
+            .as_deref()
+            .map(paths::backend_profile_file)
+            .filter(|path| path.is_file())
+            .map(backend_profiles::load_backend_profile)
+            .transpose()?,
+    };
+    let request = model_load::ModelLoadRequest {
+        model: args.model.clone(),
+        mmproj: args.mmproj.clone(),
+        ctx_size: args.ctx_size,
+        config: args.config.clone(),
+        backend_extra_args: args.backend_extra_args.clone(),
+    };
+    let plan = model_load::build_model_load_payload(
+        &request,
+        rows,
+        state.selected_backend.as_deref(),
+        profile.as_ref(),
+        &std::env::current_dir()?,
+    )?;
+    if plan.auto_selected {
+        println!("Auto-selected backend: {}", plan.backend);
+    }
+    println!("Loading model...");
+    let response = post_local_json(
+        "/omni/model/select",
+        &plan.payload,
+        Duration::from_secs(600),
+    )?;
+    let selected_backend = json_str(&response, "selected_backend").unwrap_or(&plan.backend);
+    local_state::save_selected_backend(selected_backend)?;
+    let selected_model = json_str(&response, "selected_model")
+        .or_else(|| json_str(&plan.payload, "model"))
+        .ok_or_else(|| anyhow::anyhow!("Model load response did not include a selected model."))?;
+    let selected_mmproj =
+        json_str(&response, "selected_mmproj").or_else(|| json_str(&plan.payload, "mmproj"));
+    let selected_ctx_size = json_u64(&response, "selected_ctx_size")
+        .or_else(|| json_u64(&plan.payload, "ctx_size"))
+        .and_then(|value| u32::try_from(value).ok());
+    local_state::save_selected_model(selected_model, selected_mmproj, selected_ctx_size)?;
+
+    println!("Model loaded");
+    println!("Backend: {selected_backend}");
+    println!("Model: {selected_model}");
+    println!("mmproj: {}", selected_mmproj.unwrap_or("-"));
+    println!(
+        "ctx-size: {}",
+        selected_ctx_size
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
     Ok(())
 }
 
