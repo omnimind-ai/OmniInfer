@@ -365,9 +365,14 @@ def print_advisor_fit(
     if recommended:
         print(f"Recommended backend: {recommended.get('backend')}")
         print(f"Fit: {recommended.get('fit')}")
+        print(f"Confidence: {recommended.get('recommendation_confidence') or '-'}")
+        evidence = recommended.get("evidence") if isinstance(recommended.get("evidence"), dict) else {}
+        print(f"Evidence: {evidence.get('level') or '-'}")
         print(f"Installed: {'yes' if recommended.get('installed') else 'no'}")
         print(f"Memory: {recommended.get('memory_required_gib')} GiB required / {recommended.get('memory_available_gib') or '-'} GiB available")
         _print_memory_breakdown(recommended.get("memory_breakdown") if isinstance(recommended.get("memory_breakdown"), dict) else {})
+        for reason in recommended.get("why_recommended", [])[:5]:
+            print(f"Why: {reason}")
     else:
         print("Recommended backend: -")
     if payload.get("next_command"):
@@ -377,6 +382,9 @@ def print_advisor_fit(
         print("Alternatives:")
         for candidate in alternatives[:5]:
             print(f"  {candidate.get('backend')}: fit={candidate.get('fit')}, installed={'yes' if candidate.get('installed') else 'no'}")
+            why_not = candidate.get("why_not") if isinstance(candidate.get("why_not"), list) else []
+            if why_not:
+                print(f"    why_not={why_not[0]}")
     for warning in payload.get("warnings", []):
         print(f"Warning: {warning}")
     return 0
@@ -419,7 +427,15 @@ def print_advisor_recommend(
         model_info = row.get("model") if isinstance(row.get("model"), dict) else {}
         recommended = row.get("recommended") if isinstance(row.get("recommended"), dict) else {}
         print(f"{index}. {model_info.get('model')}")
-        print(f"   backend={recommended.get('backend')} fit={recommended.get('fit')} score={row.get('score')}")
+        evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+        print(
+            f"   backend={recommended.get('backend')} fit={recommended.get('fit')} "
+            f"score={row.get('score')} confidence={row.get('recommendation_confidence') or '-'} "
+            f"evidence={evidence.get('level') or '-'}"
+        )
+        why = row.get("why_recommended") if isinstance(row.get("why_recommended"), list) else []
+        if why:
+            print(f"   why={why[0]}")
         if row.get("next_command"):
             print(f"   command={row.get('next_command')}")
     return 0

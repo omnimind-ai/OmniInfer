@@ -100,6 +100,9 @@ class AdvisorTests(unittest.TestCase):
         self.assertEqual(payload["recommended"]["memory_kind"], "gpu")
         self.assertIn("memory_breakdown", payload["recommended"])
         self.assertGreater(payload["recommended"]["memory_breakdown"]["kv_cache_gib"], 0)
+        self.assertEqual(payload["recommended"]["evidence"]["level"], "direct")
+        self.assertEqual(payload["recommended"]["recommendation_confidence"], "high")
+        self.assertIn("why_recommended", payload["recommended"])
         self.assertIn("omniinfer backend select llama.cpp-linux-cuda", payload["next_command"])
         self.assertIn("--ctx-size 8192 -ngl 999", payload["next_command"])
         self.assertNotIn("--ctx-size 8192 8192", payload["next_command"])
@@ -131,8 +134,10 @@ class AdvisorTests(unittest.TestCase):
 
         self.assertEqual(payload["model"]["format"], "hf-reference")
         self.assertEqual(payload["recommended"]["backend"], "vllm-linux-cuda")
+        self.assertIn(payload["recommended"]["evidence"]["level"], {"self_reported", "none"})
         llama = [item for item in payload["all_backends"] if item["backend"] == "llama.cpp-linux-cuda"][0]
         self.assertFalse(llama["compatible"])
+        self.assertTrue(llama["why_not"])
 
 
 if __name__ == "__main__":

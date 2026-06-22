@@ -155,6 +155,8 @@ def fit_model(
     ]
     compatible = [candidate for candidate in candidates if candidate["compatible"]]
     recommended = _recommended_candidate(compatible)
+    if recommended is not None:
+        recommended["why_recommended"] = _why_recommended(recommended, model_info)
     command = _next_load_command(model_info, recommended, context)
     warnings = list(model_info.get("warnings", []))
     if recommended and not recommended.get("installed"):
@@ -166,7 +168,11 @@ def fit_model(
         "model": model_info,
         "context_size": context,
         "recommended": recommended,
-        "alternatives": [candidate for candidate in compatible if recommended is None or candidate["backend"] != recommended["backend"]],
+        "alternatives": [
+            _with_why_not(candidate, recommended, model_info)
+            for candidate in compatible
+            if recommended is None or candidate["backend"] != recommended["backend"]
+        ],
         "all_backends": candidates,
         "next_command": command,
         "warnings": warnings,
@@ -204,11 +210,15 @@ def recommend_models(
             if task and not _task_matches_model(task, fit["model"]):
                 continue
             score = _recommendation_score(recommended, fit["model"])
+            evidence = recommended.get("evidence") if isinstance(recommended.get("evidence"), dict) else {}
             candidates.append(
                 {
                     "score": score,
                     "model": fit["model"],
                     "recommended": recommended,
+                    "evidence": evidence,
+                    "recommendation_confidence": recommended.get("recommendation_confidence"),
+                    "why_recommended": recommended.get("why_recommended", []),
                     "next_command": fit.get("next_command"),
                     "warnings": fit.get("warnings", []),
                 }
@@ -272,6 +282,7 @@ def _backend_fit_payload(
         notes.append("backend hardware probe did not pass")
     if estimate["confidence"] == "low":
         notes.append("memory estimate is based on file size only")
+    evidence = _candidate_evidence(backend, model_info, estimate, compatible, hardware_ok)
     return {
         "backend": backend.id,
         "label": backend.label,
@@ -287,7 +298,10 @@ def _backend_fit_payload(
         "memory_breakdown": breakdown,
         "launch_args": launch_args,
         "priority": BACKEND_PRIORITY.get(backend.id, 999),
+        "evidence": evidence,
+        "recommendation_confidence": evidence["confidence"],
         "notes": notes,
+        "why_not": _why_not_candidate(backend, compatible, hardware_ok, fit_level, notes),
     }
 
 
@@ -326,6 +340,133 @@ def _recommended_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] |
         return (fit_rank, installed_rank, priority, family_variant, -available, 0 if candidate.get("hardware_compatible") else 1, str(candidate["backend"]))
 
     return min(candidates, key=rank)
+
+
+def _candidate_evidence(
+    backend: BackendSpec,
+    model_info: dict[str, Any],
+    estimate: dict[str, Any],
+    compatible: bool,
+    hardware_ok: bool,
+) -> dict[str, Any]:
+    model_path = model_info.get("model_path")
+    exists = bool(model_info.get("exists"))
+    fmt = str(model_info.get("format") or "")
+    confidence = str(estimate.get("confidence") or "low")
+    sources: list[str] = []
+    if model_path and exists:
+        sources.append("local_model_file")
+    if backend.binary_exists:
+        sources.append("installed_backend")
+    if hardware_ok:
+        sources.append("hardware_probe")
+    if estimate.get("estimate_source"):
+        sources.append(str(estimate["estimate_source"]))
+
+    if not compatible or not hardware_ok:
+        level = "none"
+        confidence_label = "low"
+    elif model_path and exists and backend.binary_exists and hardware_ok and confidence in {"medium", "high"}:
+        level = "direct"
+        confidence_label = "high"
+    elif fmt == "hf-reference" and backend.family == "vllm":
+        level = "self_reported"
+        confidence_label = "medium" if backend.binary_exists and hardware_ok else "low"
+    elif fmt in {"gguf", "directory"} and compatible:
+        level = "variant"
+        confidence_label = "medium" if hardware_ok else "low"
+    else:
+        level = "none"
+        confidence_label = "low"
+
+    return {
+        "level": level,
+        "confidence": confidence_label,
+        "sources": sorted(set(sources)),
+        "notes": _evidence_notes(level, model_info, backend, estimate),
+    }
+
+
+def _evidence_notes(level: str, model_info: dict[str, Any], backend: BackendSpec, estimate: dict[str, Any]) -> list[str]:
+    if level == "direct":
+        return [
+            "local model artifact exists",
+            f"{backend.id} runtime is installed and hardware-compatible",
+            f"memory estimate confidence is {estimate.get('confidence') or 'unknown'}",
+        ]
+    if level == "variant":
+        return [
+            "model format is compatible with backend family",
+            "estimate is inferred from local artifact metadata rather than a measured run",
+        ]
+    if level == "self_reported":
+        return [
+            "model is a remote or external reference accepted by the backend",
+            "local artifact size is unavailable unless the backend downloads or resolves it",
+        ]
+    return ["insufficient compatible local evidence"]
+
+
+def _why_recommended(candidate: dict[str, Any], model_info: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    fit = str(candidate.get("fit") or "unknown")
+    backend = str(candidate.get("backend") or "backend")
+    reasons.append(f"{backend} has the best ranked fit among compatible backends ({fit})")
+    if candidate.get("installed"):
+        reasons.append("runtime is already installed")
+    if candidate.get("hardware_compatible"):
+        reasons.append("hardware probe passed")
+    evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+    level = evidence.get("level")
+    if level:
+        reasons.append(f"recommendation evidence level is {level}")
+    memory_required = candidate.get("memory_required_gib")
+    memory_available = candidate.get("memory_available_gib")
+    if memory_required is not None and memory_available is not None:
+        reasons.append(f"estimated memory {memory_required} GiB fits available {memory_available} GiB")
+    capabilities = ", ".join(model_info.get("capabilities") or [])
+    if capabilities:
+        reasons.append(f"model capabilities: {capabilities}")
+    return reasons
+
+
+def _why_not_candidate(
+    backend: BackendSpec,
+    compatible: bool,
+    hardware_ok: bool,
+    fit_level: str,
+    notes: list[str],
+) -> list[str]:
+    reasons: list[str] = []
+    if not compatible:
+        reasons.extend(notes or ["model format is not compatible with this backend"])
+    if not backend.binary_exists:
+        reasons.append("runtime is not installed")
+    if not hardware_ok:
+        reasons.append("hardware probe did not pass")
+    if fit_level == "too_tight":
+        reasons.append("estimated memory requirement exceeds available memory")
+    if fit_level == "marginal":
+        reasons.append("estimated memory fits but has little headroom")
+    return reasons
+
+
+def _with_why_not(candidate: dict[str, Any], recommended: dict[str, Any] | None, model_info: dict[str, Any]) -> dict[str, Any]:
+    result = dict(candidate)
+    why_not = list(result.get("why_not") or [])
+    if recommended is not None and not why_not:
+        if result.get("fit") != recommended.get("fit"):
+            why_not.append(f"recommended backend has better fit ({recommended.get('fit')})")
+        elif result.get("installed") != recommended.get("installed"):
+            why_not.append("recommended backend is installed")
+        elif int(result.get("priority", 999)) > int(recommended.get("priority", 999)):
+            why_not.append("recommended backend has higher product priority")
+        else:
+            why_not.append("ranked below the recommended backend by tie-breakers")
+    if not why_not and model_info.get("format"):
+        why_not.append(f"compatible with {model_info.get('format')}, but not the top-ranked option")
+    result["why_not"] = why_not
+    return result
 
 
 def _recommended_backend_id(backends: list[BackendSpec]) -> str | None:
