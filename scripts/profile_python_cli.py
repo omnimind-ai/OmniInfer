@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import resource
+import signal
+import socket
+import statistics
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "tmp" / "test_results"
+
+
+@dataclass(frozen=True)
+class Scenario:
+    name: str
+    command: list[str]
+    timeout_s: float = 30.0
+    description: str = ""
+    expected_returncodes: tuple[int, ...] = (0,)
+
+
+SCENARIOS = [
+    Scenario("help", ["./omniinfer", "--help"], description="top-level help"),
+    Scenario(
+        "advisor-help",
+        ["./omniinfer", "advisor"],
+        description="advisor scoped help for missing subcommand",
+        expected_returncodes=(2,),
+    ),
+    Scenario("serve-help", ["./omniinfer", "serve", "--help"], description="serve scoped help"),
+    Scenario("status", ["./omniinfer", "status"], description="local gateway status"),
+    Scenario("advisor-system", ["./omniinfer", "advisor", "system"], timeout_s=60.0, description="hardware and backend probe"),
+    Scenario(
+        "advisor-system-json",
+        ["./omniinfer", "advisor", "system", "--json"],
+        timeout_s=60.0,
+        description="hardware and backend probe with JSON output",
+    ),
+]
+
+IMPORT_TRACE_SCENARIOS = {
+    "help",
+    "advisor-help",
+    "advisor-system",
+}
+
+
+def _utc_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+def _resource_snapshot() -> dict[str, Any]:
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return {
+        "children_user_cpu_s": usage.ru_utime,
+        "children_system_cpu_s": usage.ru_stime,
+        "children_max_rss_kib": usage.ru_maxrss,
+        "children_minor_faults": usage.ru_minflt,
+        "children_major_faults": usage.ru_majflt,
+        "children_voluntary_context_switches": usage.ru_nvcsw,
+        "children_involuntary_context_switches": usage.ru_nivcsw,
+    }
+
+
+def _sample_peak_rss_kib(pid: int, proc: subprocess.Popen[bytes]) -> int | None:
+    peak: int | None = None
+    status_path = Path("/proc") / str(pid) / "status"
+    while proc.poll() is None:
+        try:
+            raw = status_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            time.sleep(0.01)
+            continue
+        for line in raw.splitlines():
+            if line.startswith("VmHWM:") or line.startswith("VmRSS:"):
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].isdigit():
+                    value = int(parts[1])
+                    peak = value if peak is None else max(peak, value)
+                break
+        time.sleep(0.01)
+    return peak
+
+
+def _run_once(scenario: Scenario, *, env: dict[str, str]) -> dict[str, Any]:
+    before = _resource_snapshot()
+    started = time.perf_counter()
+    proc = subprocess.Popen(
+        scenario.command,
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        env=env,
+    )
+    sampled_peak = _sample_peak_rss_kib(proc.pid, proc)
+    try:
+        stdout, stderr = proc.communicate(timeout=scenario.timeout_s)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            stdout, stderr = proc.communicate(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            stdout, stderr = proc.communicate()
+    ended = time.perf_counter()
+    after = _resource_snapshot()
+
+    stdout_text = stdout.decode("utf-8", errors="replace")
+    stderr_text = stderr.decode("utf-8", errors="replace")
+    return {
+        "command": scenario.command,
+        "expected_returncodes": scenario.expected_returncodes,
+        "returncode": proc.returncode,
+        "timed_out": timed_out,
+        "wall_s": ended - started,
+        "user_cpu_s": after["children_user_cpu_s"] - before["children_user_cpu_s"],
+        "system_cpu_s": after["children_system_cpu_s"] - before["children_system_cpu_s"],
+        "max_rss_kib": max(after["children_max_rss_kib"], sampled_peak or 0),
+        "sampled_peak_rss_kib": sampled_peak,
+        "minor_faults": after["children_minor_faults"] - before["children_minor_faults"],
+        "major_faults": after["children_major_faults"] - before["children_major_faults"],
+        "voluntary_context_switches": after["children_voluntary_context_switches"] - before["children_voluntary_context_switches"],
+        "involuntary_context_switches": after["children_involuntary_context_switches"] - before["children_involuntary_context_switches"],
+        "stdout_bytes": len(stdout),
+        "stderr_bytes": len(stderr),
+        "stdout_preview": stdout_text[:2000],
+        "stderr_preview": stderr_text[:2000],
+        "_stderr_full": stderr_text,
+    }
+
+
+def _python_import_command(command: list[str]) -> list[str]:
+    script = command[0]
+    if script == "./omniinfer":
+        script = "omniinfer.py"
+    return [sys.executable, "-X", "importtime", script, *command[1:]]
+
+
+def _parse_import_time(stderr_text: str) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for line in stderr_text.splitlines():
+        if not line.startswith("import time:"):
+            continue
+        parts = line.removeprefix("import time:").split("|", maxsplit=2)
+        if len(parts) != 3:
+            continue
+        try:
+            self_us = int(parts[0].strip())
+            cumulative_us = int(parts[1].strip())
+        except ValueError:
+            continue
+        module = parts[2].strip()
+        if module in {"self [us]", "cumulative [us] | imported package"}:
+            continue
+        rows.append(
+            {
+                "module": module,
+                "self_us": self_us,
+                "cumulative_us": cumulative_us,
+            }
+        )
+    rows.sort(key=lambda row: int(row["cumulative_us"]), reverse=True)
+    return {
+        "module_count": len(rows),
+        "top_cumulative": rows[:20],
+        "top_self": sorted(rows, key=lambda row: int(row["self_us"]), reverse=True)[:20],
+    }
+
+
+def _run_import_trace(scenario: Scenario, *, env: dict[str, str]) -> dict[str, Any]:
+    trace_scenario = Scenario(
+        name=f"{scenario.name}-import-trace",
+        command=_python_import_command(scenario.command),
+        timeout_s=scenario.timeout_s,
+        description=f"import-time trace for {scenario.name}",
+        expected_returncodes=scenario.expected_returncodes,
+    )
+    run = _run_once(trace_scenario, env=env)
+    run["import_time"] = _parse_import_time(str(run.get("_stderr_full", "")))
+    run.pop("_stderr_full", None)
+    return run
+
+
+def _summarize(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {}
+    ordered = sorted(values)
+    return {
+        "min": min(values),
+        "median": statistics.median(values),
+        "mean": statistics.fmean(values),
+        "max": max(values),
+        "p90": ordered[min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.90)))],
+    }
+
+
+def _summarize_runs(runs: list[dict[str, Any]], expected_returncodes: tuple[int, ...]) -> dict[str, Any]:
+    success = [r for r in runs if r["returncode"] in expected_returncodes and not r["timed_out"]]
+    return {
+        "runs": len(runs),
+        "successful_runs": len(success),
+        "expected_returncodes": list(expected_returncodes),
+        "returncodes": [r["returncode"] for r in runs],
+        "wall_s": _summarize([float(r["wall_s"]) for r in success]),
+        "cpu_s": _summarize([float(r["user_cpu_s"]) + float(r["system_cpu_s"]) for r in success]),
+        "max_rss_mib": _summarize([float(r["max_rss_kib"]) / 1024.0 for r in success]),
+        "stdout_bytes": _summarize([float(r["stdout_bytes"]) for r in success]),
+        "stderr_bytes": _summarize([float(r["stderr_bytes"]) for r in success]),
+    }
+
+
+def _write_summary(path: Path, payload: dict[str, Any]) -> None:
+    lines = [
+        "# Python CLI Profiling Baseline",
+        "",
+        f"- Timestamp: `{payload['timestamp_utc']}`",
+        f"- Host: `{payload['host']['hostname']}` / `{payload['host']['platform']}`",
+        f"- Python: `{payload['host']['python']}`",
+        f"- Git branch: `{payload['git'].get('branch', '-')}`",
+        f"- Git commit: `{payload['git'].get('commit', '-')}`",
+        f"- Runs per scenario: `{payload['runs_per_scenario']}`",
+        "",
+        "| Scenario | Success | Wall median | Wall p90 | CPU median | Peak RSS median |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for scenario in payload["scenarios"]:
+        summary = scenario["summary"]
+        wall = summary.get("wall_s", {})
+        cpu = summary.get("cpu_s", {})
+        rss = summary.get("max_rss_mib", {})
+        lines.append(
+            "| {name} | {ok}/{runs} | {wall:.3f}s | {p90:.3f}s | {cpu:.3f}s | {rss:.1f} MiB |".format(
+                name=scenario["name"],
+                ok=summary["successful_runs"],
+                runs=summary["runs"],
+                wall=wall.get("median", 0.0),
+                p90=wall.get("p90", 0.0),
+                cpu=cpu.get("median", 0.0),
+                rss=rss.get("median", 0.0),
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Import-Time Traces",
+            "",
+            "| Scenario | Modules | Slowest cumulative imports |",
+            "|---|---:|---|",
+        ]
+    )
+    for scenario in payload["scenarios"]:
+        trace = scenario.get("import_trace")
+        if not trace:
+            continue
+        import_time = trace.get("import_time", {})
+        top = import_time.get("top_cumulative", [])[:5]
+        top_text = ", ".join(f"{row['module']}={row['cumulative_us'] / 1000:.1f}ms" for row in top)
+        lines.append(f"| {scenario['name']} | {import_time.get('module_count', 0)} | {top_text} |")
+    lines.extend(
+        [
+            "",
+            "## Notes",
+            "",
+            "- `max_rss_mib` uses `resource.RUSAGE_CHILDREN.ru_maxrss` plus a `/proc/<pid>/status` sampler for the direct child.",
+            "- Results are intended for before/after comparison with the Rust control-plane prototype, not as absolute benchmark claims.",
+            "- Raw per-run data is stored in `raw.json` next to this file.",
+            "",
+        ]
+    )
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _git_info() -> dict[str, str]:
+    def run(args: list[str]) -> str:
+        try:
+            return subprocess.check_output(args, cwd=REPO_ROOT, text=True, stderr=subprocess.DEVNULL).strip()
+        except (OSError, subprocess.CalledProcessError):
+            return ""
+
+    return {
+        "branch": run(["git", "branch", "--show-current"]),
+        "commit": run(["git", "rev-parse", "--short=12", "HEAD"]),
+        "status": run(["git", "status", "--short"]),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Profile current Python OmniInfer CLI startup and probe paths.")
+    parser.add_argument("--runs", type=int, default=5, help="runs per scenario")
+    parser.add_argument("--output-dir", type=Path, default=None, help="directory for raw.json and summary.md")
+    parser.add_argument("--scenario", action="append", choices=[s.name for s in SCENARIOS], help="scenario to run; repeatable")
+    parser.add_argument(
+        "--skip-import-trace",
+        action="store_true",
+        help="skip representative Python -X importtime traces",
+    )
+    args = parser.parse_args(argv)
+
+    selected = SCENARIOS
+    if args.scenario:
+        wanted = set(args.scenario)
+        selected = [s for s in SCENARIOS if s.name in wanted]
+    if args.runs <= 0:
+        parser.error("--runs must be positive")
+
+    output_dir = args.output_dir or DEFAULT_OUTPUT_ROOT / f"{_utc_stamp()}-python-cli-profile"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.setdefault("NO_COLOR", "1")
+    payload: dict[str, Any] = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "host": {
+            "hostname": socket.gethostname(),
+            "platform": platform.platform(),
+            "python": sys.version.replace("\n", " "),
+        },
+        "git": _git_info(),
+        "runs_per_scenario": args.runs,
+        "scenarios": [],
+    }
+
+    for scenario in selected:
+        runs = []
+        for _ in range(args.runs):
+            runs.append(_run_once(scenario, env=env))
+        item: dict[str, Any] = {
+            "name": scenario.name,
+            "description": scenario.description,
+            "command": scenario.command,
+            "summary": _summarize_runs(runs, scenario.expected_returncodes),
+            "runs": runs,
+        }
+        if not args.skip_import_trace and scenario.name in IMPORT_TRACE_SCENARIOS:
+            item["import_trace"] = _run_import_trace(scenario, env=env)
+        payload["scenarios"].append(item)
+
+    raw_path = output_dir / "raw.json"
+    summary_path = output_dir / "summary.md"
+    raw_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    _write_summary(summary_path, payload)
+
+    print(f"Wrote {summary_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
