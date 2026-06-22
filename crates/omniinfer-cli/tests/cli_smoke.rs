@@ -143,6 +143,73 @@ fn serve_detach_starts_gateway_and_writes_state() {
 }
 
 #[test]
+fn serve_detach_loads_model_before_ready() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"starting"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"object":"list","recommended":"llama.cpp-linux-cuda","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
+        ),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_ctx_size":1024}"#,
+        ),
+        Response::new(
+            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":true,"model":"/tmp/model.gguf","ctx_size":1024}}"#,
+        ),
+    ]);
+    let port = gateway.port;
+    let source_root = temp_repo_root("serve-detach-load-source");
+    let state_root = temp_repo_root("serve-detach-load-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+    let model = state_root.join("model.gguf");
+    fs::write(&model, "").expect("write model");
+    let launcher = fake_python_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["serve", "--detach", "--port"])
+        .arg(port.to_string())
+        .arg("--model")
+        .arg(&model)
+        .args(["--ctx-size", "1024"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Model loaded"))
+        .stdout(predicate::str::contains("Backend ready: yes"))
+        .stdout(predicate::str::contains("ctx-size: 1024"));
+
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
+    let _ = gateway.request();
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
+    assert!(request.contains(r#""ctx_size":1024"#));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
 fn model_load_posts_payload_and_persists_state() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),

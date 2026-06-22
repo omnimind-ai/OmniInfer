@@ -566,13 +566,32 @@ fn print_model_list(all: bool, best: bool) -> Result<()> {
 }
 
 fn load_model(args: &ModelLoadArgs) -> Result<()> {
+    let request = model_load::ModelLoadRequest {
+        model: args.model.clone(),
+        mmproj: args.mmproj.clone(),
+        ctx_size: args.ctx_size,
+        config: args.config.clone(),
+        backend_extra_args: args.backend_extra_args.clone(),
+    };
+    let (response, plan) = load_model_with_request(&request, args.verbose)?;
+    if plan.auto_selected {
+        println!("Auto-selected backend: {}", plan.backend);
+    }
+    print_model_loaded(&response, &plan)?;
+    Ok(())
+}
+
+fn load_model_with_request(
+    request: &model_load::ModelLoadRequest,
+    verbose: bool,
+) -> Result<(serde_json::Value, model_load::ModelLoadPlan)> {
     let backends = get_local_json("/omni/backends?scope=all", Duration::from_secs(10))?;
     let rows = backends
         .get("data")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("Unable to read backend list."))?;
     let state = local_state::load_state().unwrap_or_default();
-    let profile = match &args.config {
+    let profile = match &request.config {
         Some(path) => Some(backend_profiles::load_backend_profile(
             std::path::PathBuf::from(path),
         )?),
@@ -584,26 +603,16 @@ fn load_model(args: &ModelLoadArgs) -> Result<()> {
             .map(backend_profiles::load_backend_profile)
             .transpose()?,
     };
-    let request = model_load::ModelLoadRequest {
-        model: args.model.clone(),
-        mmproj: args.mmproj.clone(),
-        ctx_size: args.ctx_size,
-        config: args.config.clone(),
-        backend_extra_args: args.backend_extra_args.clone(),
-    };
     let plan = model_load::build_model_load_payload(
-        &request,
+        request,
         rows,
         json_str(&backends, "recommended"),
         state.selected_backend.as_deref(),
         profile.as_ref(),
         &std::env::current_dir()?,
     )?;
-    if plan.auto_selected {
-        println!("Auto-selected backend: {}", plan.backend);
-    }
     println!("Loading model...");
-    let response = post_local_model_load(&plan.payload, args.verbose, Duration::from_secs(600))?;
+    let response = post_local_model_load(&plan.payload, verbose, Duration::from_secs(600))?;
     let selected_backend = json_str(&response, "selected_backend").unwrap_or(&plan.backend);
     local_state::save_selected_backend(selected_backend)?;
     let selected_model = json_str(&response, "selected_model")
@@ -615,7 +624,22 @@ fn load_model(args: &ModelLoadArgs) -> Result<()> {
         .or_else(|| json_u64(&plan.payload, "ctx_size"))
         .and_then(|value| u32::try_from(value).ok());
     local_state::save_selected_model(selected_model, selected_mmproj, selected_ctx_size)?;
+    Ok((response, plan))
+}
 
+fn print_model_loaded(
+    response: &serde_json::Value,
+    plan: &model_load::ModelLoadPlan,
+) -> Result<()> {
+    let selected_backend = json_str(response, "selected_backend").unwrap_or(&plan.backend);
+    let selected_model = json_str(response, "selected_model")
+        .or_else(|| json_str(&plan.payload, "model"))
+        .ok_or_else(|| anyhow::anyhow!("Model load response did not include a selected model."))?;
+    let selected_mmproj =
+        json_str(response, "selected_mmproj").or_else(|| json_str(&plan.payload, "mmproj"));
+    let selected_ctx_size = json_u64(response, "selected_ctx_size")
+        .or_else(|| json_u64(&plan.payload, "ctx_size"))
+        .and_then(|value| u32::try_from(value).ok());
     println!("Model loaded");
     println!("Backend: {selected_backend}");
     println!("Model: {selected_model}");
@@ -771,15 +795,7 @@ fn stop_serve(port: u16) -> Result<()> {
 }
 
 fn can_serve_detach_locally(args: &ServeArgs) -> bool {
-    args.command.is_none()
-        && args.detach
-        && !args.cloudflare
-        && !args.lan
-        && args.model.is_none()
-        && args.mmproj.is_none()
-        && args.ctx_size.is_none()
-        && args.backend.is_none()
-        && !args.smoke_test
+    args.command.is_none() && args.detach && !args.cloudflare && !args.lan && !args.smoke_test
 }
 
 fn serve_detached(args: &ServeArgs) -> Result<()> {
@@ -825,6 +841,31 @@ fn serve_detached(args: &ServeArgs) -> Result<()> {
     println!("Starting OmniInfer service on port {}...", config.port);
     println!("Log: {}", log_path.display());
     wait_for_gateway_ready(&config)?;
+    if let Some(backend) = args
+        .backend
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        select_backend(backend)?;
+    }
+    if let Some(model) = args
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let request = model_load::ModelLoadRequest {
+            model: model.to_string(),
+            mmproj: args.mmproj.clone(),
+            ctx_size: args.ctx_size,
+            config: None,
+            backend_extra_args: Vec::new(),
+        };
+        let (response, plan) = load_model_with_request(&request, false)?;
+        if plan.auto_selected {
+            println!("Auto-selected backend: {}", plan.backend);
+        }
+        print_model_loaded(&response, &plan)?;
+    }
     let state = get_serve_health_state(&config)?;
     serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
         pid: Some(child.id()),
