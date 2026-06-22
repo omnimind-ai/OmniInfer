@@ -8,6 +8,7 @@ Thumbs.db
 build/
 dist/
 out/
+target/
 *.log
 
 # Python

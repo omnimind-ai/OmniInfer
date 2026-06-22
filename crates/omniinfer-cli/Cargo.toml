@@ -1,0 +1,16 @@
+[package]
+name = "omniinfer-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "omniinfer-rs"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+omniinfer-core = { path = "../omniinfer-core" }
+serde_json.workspace = true
