@@ -31,6 +31,11 @@ Implemented directly in Rust:
 - `serve stop --port <port>`
 - local `serve --detach`, including optional backend selection, model loading,
   local smoke tests, serve pid files, and ready/curl output.
+- foreground `serve`, using the same orchestration path as detached serve and
+  waiting on the service process after the ready block.
+- `serve --lan` in foreground or detached mode, including safe default
+  `0.0.0.0` binding, generated/configured API keys unless explicitly insecure,
+  LAN URL/curl output, and remote-management key validation.
 - `serve --cloudflare --detach`, including loopback gateway binding, managed or
   explicit `cloudflared` resolution, Quick Tunnel URL parsing, generated or
   configured API keys, serve pid files with tunnel pid, stop cleanup, and
@@ -46,8 +51,6 @@ Fallback to the Python implementation:
 
 - no-argument TUI
 - `advisor *`
-- LAN `serve` launch paths
-- foreground `serve` launch paths
 - all other unported commands
 
 ## Fallback Controls
