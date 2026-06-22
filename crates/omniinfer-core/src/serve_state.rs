@@ -99,6 +99,42 @@ pub fn remove_serve_pid_info(port: u16) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+pub fn list_serve_pid_infos() -> Result<Vec<ServePidInfo>, ServeStateError> {
+    let dir = paths::local_run_dir();
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(ServeStateError::Read {
+                path: dir.display().to_string(),
+                source,
+            });
+        }
+    };
+    let mut infos = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("serve-") || !name.ends_with(".json") {
+            continue;
+        }
+        let raw = fs::read_to_string(&path).map_err(|source| ServeStateError::Read {
+            path: path.display().to_string(),
+            source,
+        })?;
+        let info: ServePidInfo =
+            serde_json::from_str(&raw).map_err(|source| ServeStateError::Parse {
+                path: path.display().to_string(),
+                source,
+            })?;
+        infos.push(info);
+    }
+    infos.sort_by_key(|info| info.port.unwrap_or(0));
+    Ok(infos)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

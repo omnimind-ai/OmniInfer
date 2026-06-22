@@ -348,6 +348,61 @@ fn serve_detach_starts_cloudflare_tunnel() {
 }
 
 #[test]
+fn ps_lists_detached_services_from_pid_files() {
+    let gateway = TestGateway::start(vec![Response::new(
+        r#"{"backend":"llama.cpp-linux-cuda","backend_ready":true,"model":"/tmp/model.gguf","ctx_size":512}"#,
+    )]);
+    let state_root = temp_repo_root("ps-state");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::create_dir_all(state_root.join(".local").join("run")).expect("create run dir");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+    fs::write(
+        state_root
+            .join(".local")
+            .join("run")
+            .join(format!("serve-{}.json", gateway.port)),
+        format!(
+            r#"{{
+  "pid": 123,
+  "cloudflared_pid": 456,
+  "port": {},
+  "log": "/tmp/serve.log",
+  "public_url": "https://example-test.trycloudflare.com",
+  "openai_base_url": "https://example-test.trycloudflare.com/v1",
+  "backend": "unknown",
+  "backend_ready": false
+}}"#,
+            gateway.port
+        ),
+    )
+    .expect("write serve state");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .arg("ps")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Running OmniInfer Services:"))
+        .stdout(predicate::str::contains(format!("Port {}:", gateway.port)))
+        .stdout(predicate::str::contains(
+            "OpenAI Base URL: https://example-test.trycloudflare.com/v1",
+        ))
+        .stdout(predicate::str::contains("Backend: llama.cpp-linux-cuda"))
+        .stdout(predicate::str::contains("Backend Ready: yes"))
+        .stdout(predicate::str::contains("Context Size: 512"));
+
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/state HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
 fn model_load_posts_payload_and_persists_state() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),

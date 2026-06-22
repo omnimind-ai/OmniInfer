@@ -51,7 +51,10 @@ enum Command {
     /// Show current status.
     Status,
     /// List running OmniInfer services.
-    Ps,
+    Ps {
+        #[arg(long)]
+        json: bool,
+    },
     /// Discover and load models.
     Model {
         #[command(subcommand)]
@@ -340,6 +343,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
         Command::Backend {
             command: BackendCommand::Stop,
         } => stop_backend(),
+        Command::Ps { json } => print_ps(*json),
         Command::Model {
             command: ModelCommand::List { all, best },
         } => print_model_list(*all, *best),
@@ -814,6 +818,87 @@ fn stop_process(pid: u32) {
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .status();
     }
+}
+
+fn print_ps(json_output: bool) -> Result<()> {
+    let mut services = Vec::new();
+    for info in serve_state::list_serve_pid_infos()? {
+        let port = info.port.unwrap_or(9000);
+        let mut config = config::load_app_config().unwrap_or_default();
+        config.port = port;
+        let state = http_client::get_json(
+            &format!("{}/omni/state", config.service_base_url()),
+            Duration::from_secs(2),
+        )
+        .ok()
+        .filter(|response| response.status == 200)
+        .map(|response| response.body);
+        let service = serde_json::json!({
+            "port": port,
+            "pid": info.pid,
+            "cloudflared_pid": info.cloudflared_pid,
+            "status": "running",
+            "backend": state.as_ref().and_then(|state| json_str(state, "backend")).or(info.backend.as_deref()).unwrap_or("unknown"),
+            "backend_ready": state.as_ref().and_then(|state| json_bool(state, "backend_ready")).or(info.backend_ready).unwrap_or(false),
+            "model": state.as_ref().and_then(|state| json_str(state, "model")).or(info.model.as_deref()).unwrap_or("not loaded"),
+            "mmproj": state.as_ref().and_then(|state| json_str(state, "mmproj")).or(info.mmproj.as_deref()),
+            "ctx_size": state.as_ref().and_then(|state| json_u64(state, "ctx_size")).or(info.ctx_size.map(u64::from)),
+            "public_url": info.public_url,
+            "openai_base_url": info.openai_base_url,
+            "log": info.log,
+        });
+        services.push(service);
+    }
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&services)?);
+        return Ok(());
+    }
+    if services.is_empty() {
+        println!("No running OmniInfer services found.");
+        return Ok(());
+    }
+    println!("Running OmniInfer Services:");
+    println!();
+    for service in services {
+        let port = json_u64(&service, "port")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!("  Port {port}:");
+        println!(
+            "    Status: {}",
+            json_str(&service, "status").unwrap_or("running")
+        );
+        if let Some(pid) = json_u64(&service, "pid") {
+            println!("    PID: {pid}");
+        }
+        if let Some(url) = json_str(&service, "openai_base_url") {
+            println!("    OpenAI Base URL: {url}");
+        }
+        println!(
+            "    Backend: {}",
+            json_str(&service, "backend").unwrap_or("unknown")
+        );
+        println!(
+            "    Backend Ready: {}",
+            yes_no(json_bool(&service, "backend_ready").unwrap_or(false))
+        );
+        println!(
+            "    Model: {}",
+            json_str(&service, "model").unwrap_or("not loaded")
+        );
+        if let Some(mmproj) = json_str(&service, "mmproj") {
+            println!("    MMProj: {mmproj}");
+        }
+        if let Some(ctx_size) = json_u64(&service, "ctx_size") {
+            println!("    Context Size: {ctx_size}");
+        }
+        if let Some(log) = json_str(&service, "log") {
+            println!("    Log: {log}");
+        }
+        println!();
+    }
+    Ok(())
 }
 
 fn can_serve_detach_locally(args: &ServeArgs) -> bool {
