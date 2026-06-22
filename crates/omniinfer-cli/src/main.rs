@@ -364,6 +364,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
             command: Some(ServeCommand::Stop { port }),
             ..
         }) => stop_serve(*port),
+        Command::Serve(args) if can_serve_detach_locally(args) => serve_detached(args),
         other => fallback_to_python(other),
     }
 }
@@ -767,6 +768,216 @@ fn stop_serve(port: u16) -> Result<()> {
         println!("OmniInfer service is not running on port {port}");
     }
     Ok(())
+}
+
+fn can_serve_detach_locally(args: &ServeArgs) -> bool {
+    args.command.is_none()
+        && args.detach
+        && !args.cloudflare
+        && !args.lan
+        && args.model.is_none()
+        && args.mmproj.is_none()
+        && args.ctx_size.is_none()
+        && args.backend.is_none()
+        && !args.smoke_test
+}
+
+fn serve_detached(args: &ServeArgs) -> Result<()> {
+    if args.no_smoke_test && args.smoke_test {
+        anyhow::bail!("Use either --smoke-test or --no-smoke-test, not both.");
+    }
+    let mut config = config::load_app_config().unwrap_or_default();
+    config.port = args.port;
+    if let Some(host) = args
+        .host
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        config.host = host.to_string();
+    }
+    if let Some(default_backend) = args
+        .default_backend
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        config.default_backend = default_backend.to_string();
+    }
+    if let Some(default_thinking) = &args.default_thinking {
+        config.default_thinking = match default_thinking {
+            ThinkingMode::On => "on",
+            ThinkingMode::Off => "off",
+        }
+        .to_string();
+    }
+    if let Some(window_mode) = &args.window_mode {
+        config.window_mode = match window_mode {
+            WindowMode::Visible => "visible",
+            WindowMode::Hidden => "hidden",
+        }
+        .to_string();
+    }
+    if let Some(timeout) = args.startup_timeout {
+        config.startup_timeout = f64::from(timeout);
+    }
+
+    let log_path = paths::local_logs_dir().join(format!("serve-{}.log", config.port));
+    let child = start_serve_child(&config, args, &log_path)?;
+    println!("Starting OmniInfer service on port {}...", config.port);
+    println!("Log: {}", log_path.display());
+    wait_for_gateway_ready(&config)?;
+    let state = get_serve_health_state(&config)?;
+    serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
+        pid: Some(child.id()),
+        port: Some(config.port),
+        log: Some(log_path.display().to_string()),
+        public_url: None,
+        openai_base_url: None,
+        backend: json_str(&state, "backend").map(str::to_string),
+        model: json_str(&state, "model").map(str::to_string),
+        mmproj: json_str(&state, "mmproj").map(str::to_string),
+        ctx_size: json_u64(&state, "ctx_size").and_then(|value| u32::try_from(value).ok()),
+        backend_ready: json_bool(&state, "backend_ready"),
+        backend_pid: json_u64(&state, "backend_pid").and_then(|value| u32::try_from(value).ok()),
+        backend_port: json_u64(&state, "backend_port").and_then(|value| u16::try_from(value).ok()),
+    })?;
+    print_serve_ready(config.port, &state, None, None, true, &log_path, None);
+    Ok(())
+}
+
+fn start_serve_child(
+    config: &config::AppConfig,
+    args: &ServeArgs,
+    log_path: &std::path::Path,
+) -> Result<std::process::Child> {
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
+    let stderr = stdout.try_clone()?;
+    let mut command = ProcessCommand::new(python_executable());
+    command
+        .arg(paths::repo_root().join("omniinfer.py"))
+        .arg("serve")
+        .arg("--host")
+        .arg(&config.host)
+        .arg("--port")
+        .arg(config.port.to_string())
+        .arg("--startup-timeout")
+        .arg(format!("{:.0}", config.startup_timeout))
+        .arg("--window-mode")
+        .arg(&config.window_mode)
+        .arg("--default-thinking")
+        .arg(&config.default_thinking)
+        .current_dir(paths::repo_root())
+        .env("OMNIINFER_SERVE_DIRECT", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    if !config.default_backend.trim().is_empty() {
+        command
+            .arg("--default-backend")
+            .arg(&config.default_backend);
+    }
+    if let Some(api_key) = args
+        .api_key
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        command.arg("--api-key").arg(api_key);
+        command.env("OMNIINFER_API_KEY", api_key);
+    }
+    if args.allow_insecure_lan {
+        command.arg("--allow-insecure-lan");
+    }
+    if args.allow_remote_management {
+        command.arg("--allow-remote-management");
+    }
+    if let Some(backend_host) = args
+        .backend_host
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        command.arg("--backend-host").arg(backend_host);
+    }
+    if let Some(backend_port) = args.backend_port {
+        command.arg("--backend-port").arg(backend_port.to_string());
+    }
+    if let Some(force_backend) = args
+        .force_backend
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        command.arg("--force-backend").arg(force_backend);
+    }
+    if let Some(log_level) = &args.log_level {
+        command.arg("--log-level").arg(match log_level {
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Info => "INFO",
+            LogLevel::Warning => "WARNING",
+            LogLevel::Error => "ERROR",
+        });
+    }
+    if args.verbose {
+        command.arg("--verbose");
+    }
+    if args.debug_body {
+        command.arg("--debug-body");
+    }
+    Ok(command.spawn()?)
+}
+
+fn get_serve_health_state(config: &config::AppConfig) -> Result<serde_json::Value> {
+    let url = format!("{}/health?deep=true", config.service_base_url());
+    let response = http_client::get_json(&url, Duration::from_secs(10))?;
+    if response.status >= 400 {
+        anyhow::bail!(
+            "GET /health?deep=true failed with status {}",
+            response.status
+        );
+    }
+    Ok(response.body.get("omni").cloned().unwrap_or(response.body))
+}
+
+fn print_serve_ready(
+    port: u16,
+    state: &serde_json::Value,
+    public_url: Option<&str>,
+    api_key: Option<&str>,
+    print_api_key: bool,
+    log_path: &std::path::Path,
+    smoke_text: Option<&str>,
+) {
+    println!();
+    println!("OmniInfer service is ready");
+    if let Some(public_url) = public_url {
+        println!("OpenAI Base URL: {}/v1", public_url.trim_end_matches('/'));
+        println!("Health URL: {}/health", public_url.trim_end_matches('/'));
+    }
+    println!("Local Base URL: http://127.0.0.1:{port}/v1");
+    if let Some(api_key) = api_key.filter(|_| print_api_key) {
+        println!("API Key: {api_key}");
+    }
+    println!("Backend: {}", json_str(state, "backend").unwrap_or("-"));
+    println!(
+        "Backend ready: {}",
+        yes_no(json_bool(state, "backend_ready").unwrap_or(false))
+    );
+    println!("Model: {}", json_str(state, "model").unwrap_or("-"));
+    println!("mmproj: {}", json_str(state, "mmproj").unwrap_or("-"));
+    println!(
+        "ctx-size: {}",
+        json_u64(state, "ctx_size")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    if let Some(smoke_text) = smoke_text {
+        println!("Smoke: {smoke_text}");
+    }
+    println!("Log: {}", log_path.display());
+    println!("Stop: ./omniinfer serve stop --port {port}");
 }
 
 fn print_chat(args: &ChatArgs) -> Result<()> {

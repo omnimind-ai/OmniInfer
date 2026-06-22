@@ -76,6 +76,73 @@ fn serve_launch_options_parse_before_fallback() {
 }
 
 #[test]
+fn serve_detach_starts_gateway_and_writes_state() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"starting"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
+        ),
+    ]);
+    let port = gateway.port;
+    let source_root = temp_repo_root("serve-detach-source");
+    let state_root = temp_repo_root("serve-detach-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"llama.cpp-linux-cuda"}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+    let launcher = fake_python_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["serve", "--detach", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OmniInfer service is ready"))
+        .stdout(predicate::str::contains(format!(
+            "Local Base URL: http://127.0.0.1:{}/v1",
+            port
+        )));
+
+    let launched = wait_for_file(state_root.join("started_gateway.args"));
+    assert!(launched.contains("serve --host 127.0.0.1"));
+    assert!(launched.contains("--default-backend llama.cpp-linux-cuda"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
+    gateway.join();
+
+    let state_raw = fs::read_to_string(
+        state_root
+            .join(".local")
+            .join("run")
+            .join(format!("serve-{port}.json")),
+    )
+    .expect("serve state");
+    let state: serde_json::Value = serde_json::from_str(&state_raw).expect("serve state json");
+    assert_eq!(state["port"], port);
+    assert_eq!(state["backend"], "llama.cpp-linux-cuda");
+    assert_eq!(state["backend_ready"], false);
+    assert!(state["log"].as_str().unwrap().contains("serve-"));
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
 fn model_load_posts_payload_and_persists_state() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
