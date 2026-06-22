@@ -28,8 +28,14 @@ Implemented directly in Rust:
 - `thinking set on|off`
 - `serve status --port <port>`
 - `serve stop --port <port>`
-- local `serve --detach` without model loading, Cloudflare, LAN, or smoke-test
-  orchestration
+- local `serve --detach`, including optional backend selection, model loading,
+  local smoke tests, serve pid files, and ready/curl output.
+- `serve --cloudflare --detach`, including loopback gateway binding, managed or
+  explicit `cloudflared` resolution, Quick Tunnel URL parsing, generated or
+  configured API keys, serve pid files with tunnel pid, stop cleanup, and
+  ready/curl output. Rust smoke-test for this path currently validates the local
+  OpenAI endpoint; HTTPS smoke through the public URL remains delegated to the
+  Python path until the Rust HTTP client grows TLS support.
 - `shutdown`
 - `completion bash`
 - `chat <prompt>`, `chat --no-stream <prompt>`, and local `chat --image <path>`
@@ -39,8 +45,8 @@ Fallback to the Python implementation:
 
 - no-argument TUI
 - `advisor *`
-- `serve` launch paths that need Cloudflare, LAN, model load, or smoke-test
-  orchestration
+- LAN `serve` launch paths
+- foreground `serve` launch paths
 - all other unported commands
 
 ## Fallback Controls
