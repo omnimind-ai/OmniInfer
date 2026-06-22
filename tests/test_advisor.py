@@ -8,12 +8,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from service_core.advisor import fit_model, inspect_model, plan_model
+from service_core.advisor import fit_model, inspect_model, plan_model, system_snapshot
 from service_core.backends.base import BackendSpec
 
 
 class FakePlatform:
     system_name = "linux"
+    gpu_backend_ids = frozenset({"llama.cpp-linux-cuda"})
 
     def is_hardware_compatible(self, backend: BackendSpec) -> bool:
         return True
@@ -176,6 +177,38 @@ class AdvisorTests(unittest.TestCase):
         self.assertFalse(paths["gpu"]["feasible_now"])
         self.assertTrue(payload["upgrade_deltas"])
         self.assertTrue(payload["next_commands"])
+
+    def test_system_snapshot_reuses_backend_probe_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            launcher = Path(tmp) / "llama-server"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            backends = {
+                "llama.cpp-linux-cuda": make_backend("llama.cpp-linux-cuda", launcher_path=str(launcher)),
+                "missing-cuda": make_backend("missing-cuda", launcher_path=str(Path(tmp) / "missing")),
+            }
+            calls = 0
+            original = BackendSpec.binary_exists.fget
+
+            def counted_binary_exists(backend: BackendSpec) -> bool:
+                nonlocal calls
+                calls += 1
+                return original(backend)
+
+            with (
+                patch.object(BackendSpec, "binary_exists", property(counted_binary_exists)),
+                patch(
+                    "service_core.advisor._query_cuda_devices",
+                    return_value=[{"index": "0", "free_gib": 20.0, "utilization_pct": 0}],
+                ),
+            ):
+                payload = system_snapshot(FakePlatform(), backends)
+
+        self.assertEqual(calls, len(backends))
+        self.assertEqual(payload["summary"]["recommended_installed_backend"], "llama.cpp-linux-cuda")
+        rows = {item["id"]: item for item in payload["backends"]}
+        self.assertTrue(rows["llama.cpp-linux-cuda"]["installed"])
+        self.assertTrue(rows["llama.cpp-linux-cuda"]["hardware_compatible"])
+        self.assertFalse(rows["missing-cuda"]["installed"])
 
 
 if __name__ == "__main__":

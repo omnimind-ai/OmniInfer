@@ -64,12 +64,12 @@ def system_snapshot(platform_obj: HostPlatform, backends: dict[str, BackendSpec]
     cuda_devices = _query_cuda_devices()
     visible_filter = os.environ.get("OMNIINFER_CUDA_VISIBLE_DEVICES") or os.environ.get("CUDA_VISIBLE_DEVICES")
     visible_cuda_devices = _filter_visible_cuda_devices(cuda_devices, visible_filter)
-    installed = [backend.id for backend in backends.values() if backend.binary_exists]
-    compatible = [
+    installed_set = {backend.id for backend in backends.values() if backend.binary_exists}
+    compatible_set = {
         backend.id
         for backend in backends.values()
-        if platform_obj.is_hardware_compatible(backend)
-    ]
+        if _system_hardware_compatible(backend, platform_obj, installed_set=installed_set, cuda_devices=cuda_devices)
+    }
     return {
         "object": "advisor.system",
         "host": {
@@ -88,14 +88,14 @@ def system_snapshot(platform_obj: HostPlatform, backends: dict[str, BackendSpec]
             "best_free_device": _best_cuda_device(visible_cuda_devices or cuda_devices),
         },
         "backends": [
-            _backend_payload(backend, platform_obj, installed=set(installed))
+            _backend_payload(backend, installed=installed_set, compatible=compatible_set)
             for backend in sorted(backends.values(), key=lambda item: BACKEND_PRIORITY.get(item.id, 999))
         ],
         "summary": {
-            "installed_backends": installed,
-            "compatible_backends": compatible,
+            "installed_backends": sorted(installed_set),
+            "compatible_backends": sorted(compatible_set),
             "recommended_installed_backend": _recommended_backend_id(
-                [backend for backend in backends.values() if backend.binary_exists and backend.id in compatible]
+                [backend for backend in backends.values() if backend.id in installed_set and backend.id in compatible_set]
             ),
         },
     }
@@ -279,13 +279,13 @@ def plan_model(
     }
 
 
-def _backend_payload(backend: BackendSpec, platform_obj: HostPlatform, *, installed: set[str]) -> dict[str, Any]:
+def _backend_payload(backend: BackendSpec, *, installed: set[str], compatible: set[str]) -> dict[str, Any]:
     return {
         "id": backend.id,
         "label": backend.label,
         "family": backend.family,
         "installed": backend.id in installed,
-        "hardware_compatible": platform_obj.is_hardware_compatible(backend),
+        "hardware_compatible": backend.id in compatible,
         "runtime_mode": backend.runtime_mode,
         "model_artifact": backend.model_artifact,
         "supports_mmproj": backend.supports_mmproj,
@@ -296,6 +296,30 @@ def _backend_payload(backend: BackendSpec, platform_obj: HostPlatform, *, instal
         "models_dir": backend.models_dir,
         "priority": BACKEND_PRIORITY.get(backend.id, 999),
     }
+
+
+def _system_hardware_compatible(
+    backend: BackendSpec,
+    platform_obj: HostPlatform,
+    *,
+    installed_set: set[str],
+    cuda_devices: list[dict[str, Any]],
+) -> bool:
+    caps = set(backend.capabilities)
+    machine = platform.machine().lower()
+    if "arm64" in caps and machine not in {"arm64", "aarch64"}:
+        return False
+    if "s390x" in caps and machine != "s390x":
+        return False
+    if "openvino" in caps or "eagle3" in caps:
+        return backend.id in installed_set
+    if backend.id not in platform_obj.gpu_backend_ids:
+        return True
+    if "cuda" in caps:
+        return bool(cuda_devices)
+    if "metal" in caps:
+        return True
+    return platform_obj.is_hardware_compatible(backend)
 
 
 def _current_hardware(system_payload: dict[str, Any]) -> dict[str, Any]:
