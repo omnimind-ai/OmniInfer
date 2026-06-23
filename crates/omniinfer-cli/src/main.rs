@@ -8,6 +8,7 @@ use rand::distr::Alphanumeric;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader};
+use std::net::TcpListener;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -16,9 +17,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use omniinfer_core::{
-    backend_profiles, chat_stream, config, http_client, local_state, model_load, paths,
-    serve_state, version,
+    backend_profiles, chat_stream, config, gateway_auth, http_client, local_state, model_load,
+    paths, serve_state, version,
 };
+
+mod gateway;
 
 #[derive(Debug, Parser)]
 #[command(name = "omniinfer-rs")]
@@ -81,6 +84,8 @@ enum Command {
     Serve(ServeArgs),
     /// Print shell completion.
     Completion { shell: CompletionShell },
+    #[command(hide = true)]
+    Gateway(GatewayArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -279,6 +284,26 @@ struct ServeArgs {
     debug_body: bool,
 }
 
+#[derive(Debug, Args)]
+struct GatewayArgs {
+    #[arg(long)]
+    host: String,
+    #[arg(long)]
+    port: u16,
+    #[arg(long)]
+    upstream_host: String,
+    #[arg(long)]
+    upstream_port: u16,
+    #[arg(long)]
+    api_key: Option<String>,
+    #[arg(long)]
+    allow_insecure_lan: bool,
+    #[arg(long)]
+    allow_remote_management: bool,
+    #[arg(long)]
+    trust_proxy_headers: bool,
+}
+
 #[derive(Debug, Subcommand)]
 enum ServeCommand {
     /// Show service status for a port.
@@ -321,6 +346,7 @@ fn main() -> Result<()> {
         None => print_tui_placeholder(),
         Some(Command::Status) => print_status(),
         Some(Command::Completion { shell }) => print_completion(shell.clone()),
+        Some(Command::Gateway(args)) => run_gateway_command(args)?,
         Some(command) => {
             if let Err(error) = run_ported_command(command) {
                 if should_strict_rust() {
@@ -375,8 +401,24 @@ fn run_ported_command(command: &Command) -> Result<()> {
             ..
         }) => stop_serve(*port),
         Command::Serve(args) if can_serve_locally(args) => serve_orchestrated(args),
+        Command::Gateway(args) => run_gateway_command(args),
         other => fallback_to_python(other),
     }
+}
+
+fn run_gateway_command(args: &GatewayArgs) -> Result<()> {
+    gateway::run_gateway_blocking(gateway::GatewayConfig {
+        listen_host: args.host.clone(),
+        listen_port: args.port,
+        upstream_host: args.upstream_host.clone(),
+        upstream_port: args.upstream_port,
+        access_policy: gateway_auth::GatewayAccessPolicy {
+            api_key: args.api_key.clone().unwrap_or_default(),
+            allow_insecure_lan: args.allow_insecure_lan,
+            allow_remote_management: args.allow_remote_management,
+            trust_proxy_headers: args.trust_proxy_headers,
+        },
+    })
 }
 
 fn print_tui_placeholder() {
@@ -514,7 +556,13 @@ fn print_backend_list(scope: BackendScope) -> Result<()> {
 }
 
 fn select_backend(backend: &str) -> Result<()> {
-    let backends = get_local_json("/omni/backends?scope=all", Duration::from_secs(10))?;
+    let config = config::load_app_config().unwrap_or_default();
+    select_backend_for_config(backend, &config)
+}
+
+fn select_backend_for_config(backend: &str, config: &config::AppConfig) -> Result<()> {
+    let backends =
+        get_local_json_for_config("/omni/backends?scope=all", Duration::from_secs(10), config)?;
     let rows = backends
         .get("data")
         .and_then(serde_json::Value::as_array)
@@ -531,10 +579,11 @@ fn select_backend(backend: &str) -> Result<()> {
             anyhow::anyhow!("Unsupported backend: {backend}\nAvailable backends: {available}")
         })?;
 
-    let payload = post_local_json(
+    let payload = post_local_json_for_config(
         "/omni/backend/select",
         &serde_json::json!({ "backend": backend }),
         Duration::from_secs(30),
+        config,
     )?;
     local_state::save_selected_backend(backend)?;
     let profile = backend_profiles::ensure_backend_profile_template(backend_payload)?;
@@ -973,11 +1022,33 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     if args.allow_remote_management && api_key.is_none() {
         anyhow::bail!("--allow-remote-management requires --api-key or OMNIINFER_API_KEY");
     }
-    let log_path = paths::local_logs_dir().join(format!("serve-{}.log", config.port));
-    let child = start_serve_child(&config, args, &log_path, api_key.as_deref())?;
+    let use_rust_gateway = env::var("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY")
+        .map(|value| value.trim() != "1")
+        .unwrap_or(true);
+    let public_config = config.clone();
+    let mut upstream_config = config.clone();
+    if use_rust_gateway {
+        upstream_config.host = "127.0.0.1".to_string();
+        upstream_config.port = choose_upstream_port(&public_config)?;
+    }
+    let log_path = paths::local_logs_dir().join(format!("serve-{}.log", public_config.port));
+    let child = start_serve_child(&upstream_config, args, &log_path, api_key.as_deref())?;
     println!("Starting OmniInfer service on port {}...", config.port);
     println!("Log: {}", log_path.display());
-    wait_for_gateway_ready(&config)?;
+    wait_for_gateway_ready(&upstream_config)?;
+    let rust_gateway = if use_rust_gateway {
+        let child = start_rust_gateway_child(
+            &public_config,
+            &upstream_config,
+            args,
+            &log_path,
+            api_key.as_deref(),
+        )?;
+        wait_for_gateway_ready(&public_config)?;
+        Some(child)
+    } else {
+        None
+    };
     let mut cloudflared_child = None;
     let mut public_url = None;
     if args.cloudflare {
@@ -993,7 +1064,7 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
-            select_backend(backend)?;
+            select_backend_for_config(backend, &public_config)?;
         }
         if let Some(model) = args
             .model
@@ -1007,7 +1078,8 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
                 config: None,
                 backend_extra_args: Vec::new(),
             };
-            let (response, plan) = load_model_with_request_for_config(&request, false, &config)?;
+            let (response, plan) =
+                load_model_with_request_for_config(&request, false, &public_config)?;
             if plan.auto_selected {
                 println!("Auto-selected backend: {}", plan.backend);
             }
@@ -1022,19 +1094,22 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
                 let _ = child.kill();
                 let _ = child.wait();
             }
+            if let Some(rust_gateway) = &rust_gateway {
+                stop_process(rust_gateway.id());
+            }
             let _ = http_client::post_json(
-                &format!("{}/omni/shutdown", config.service_base_url()),
+                &format!("{}/omni/shutdown", upstream_config.service_base_url()),
                 &serde_json::json!({}),
                 Duration::from_secs(10),
             );
             return Err(error);
         }
     }
-    let state = get_serve_health_state(&config)?;
+    let state = get_serve_health_state(&public_config)?;
     let mut smoke_text = None;
     let mut smoke_failed = false;
     if args.smoke_test {
-        let local_base_url = format!("http://127.0.0.1:{}", config.port);
+        let local_base_url = format!("http://127.0.0.1:{}", public_config.port);
         match serve_smoke(&local_base_url, api_key.as_deref()) {
             Ok(local_text) => {
                 if let Some(public_url) = public_url.as_deref() {
@@ -1060,9 +1135,14 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         }
     }
     serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
-        pid: Some(child.id()),
+        pid: Some(
+            rust_gateway
+                .as_ref()
+                .map(std::process::Child::id)
+                .unwrap_or_else(|| child.id()),
+        ),
         cloudflared_pid: cloudflared_child.as_ref().map(std::process::Child::id),
-        port: Some(config.port),
+        port: Some(public_config.port),
         log: Some(log_path.display().to_string()),
         public_url: public_url.clone(),
         openai_base_url: public_url
@@ -1077,10 +1157,10 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         backend_port: json_u64(&state, "backend_port").and_then(|value| u16::try_from(value).ok()),
     })?;
     print_serve_ready(
-        config.port,
+        public_config.port,
         &state,
         public_url.as_deref(),
-        &lan_base_urls(&config, args.lan),
+        &lan_base_urls(&public_config, args.lan),
         api_key.as_deref(),
         !args.cloudflare_no_print_key,
         &log_path,
@@ -1091,7 +1171,12 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     }
     if !args.detach {
         println!("Press Ctrl+C to stop.");
-        let status = wait_for_foreground_service(child, cloudflared_child, config.port)?;
+        let status = wait_for_foreground_service(
+            rust_gateway,
+            child,
+            cloudflared_child,
+            public_config.port,
+        )?;
         if !status.success() {
             anyhow::bail!("OmniInfer service exited with status {status}");
         }
@@ -1100,17 +1185,38 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
 }
 
 fn wait_for_foreground_service(
-    mut child: std::process::Child,
+    rust_gateway: Option<std::process::Child>,
+    mut upstream_child: std::process::Child,
     cloudflared_child: Option<std::process::Child>,
     port: u16,
 ) -> Result<std::process::ExitStatus> {
-    let status = child.wait()?;
+    let status = if let Some(mut rust_gateway) = rust_gateway {
+        let status = rust_gateway.wait()?;
+        let _ = upstream_child.kill();
+        let _ = upstream_child.wait();
+        status
+    } else {
+        upstream_child.wait()?
+    };
     if let Some(mut tunnel) = cloudflared_child {
         let _ = tunnel.kill();
         let _ = tunnel.wait();
     }
     let _ = serve_state::remove_serve_pid_info(port);
     Ok(status)
+}
+
+fn choose_upstream_port(public_config: &config::AppConfig) -> Result<u16> {
+    if public_config.port != 0 {
+        for _ in 0..20 {
+            let listener = TcpListener::bind("127.0.0.1:0")?;
+            let port = listener.local_addr()?.port();
+            if port != public_config.port {
+                return Ok(port);
+            }
+        }
+    }
+    Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
 fn validate_serve_remote_access_args(args: &ServeArgs) -> Result<()> {
@@ -1428,6 +1534,48 @@ fn start_serve_child(
     }
     if args.debug_body {
         command.arg("--debug-body");
+    }
+    Ok(command.spawn()?)
+}
+
+fn start_rust_gateway_child(
+    public_config: &config::AppConfig,
+    upstream_config: &config::AppConfig,
+    args: &ServeArgs,
+    log_path: &std::path::Path,
+    api_key: Option<&str>,
+) -> Result<std::process::Child> {
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
+    let stderr = stdout.try_clone()?;
+    let mut command = ProcessCommand::new(std::env::current_exe()?);
+    command
+        .arg("gateway")
+        .arg("--host")
+        .arg(&public_config.host)
+        .arg("--port")
+        .arg(public_config.port.to_string())
+        .arg("--upstream-host")
+        .arg(upstream_config.service_host())
+        .arg("--upstream-port")
+        .arg(upstream_config.port.to_string())
+        .current_dir(paths::repo_root())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
+        command.arg("--api-key").arg(api_key);
+    }
+    if args.allow_insecure_lan {
+        command.arg("--allow-insecure-lan");
+    }
+    if args.allow_remote_management {
+        command.arg("--allow-remote-management");
+    }
+    if args.cloudflare {
+        command.arg("--trust-proxy-headers");
     }
     Ok(command.spawn()?)
 }
@@ -1852,7 +2000,16 @@ fn post_local_json(
     timeout: Duration,
 ) -> Result<serde_json::Value> {
     let config = config::load_app_config().unwrap_or_default();
-    ensure_local_gateway_running(&config)?;
+    post_local_json_for_config(endpoint, body, timeout, &config)
+}
+
+fn post_local_json_for_config(
+    endpoint: &str,
+    body: &serde_json::Value,
+    timeout: Duration,
+    config: &config::AppConfig,
+) -> Result<serde_json::Value> {
+    ensure_local_gateway_running(config)?;
     let url = format!("{}{}", config.service_base_url(), endpoint);
     let response = http_client::post_json(&url, body, timeout)?;
     if response.status >= 400 {

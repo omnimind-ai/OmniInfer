@@ -66,6 +66,7 @@ fn serve_detach_starts_lan_gateway_with_api_key() {
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .env("OMNIINFER_PYTHON", &launcher)
@@ -141,6 +142,7 @@ fn serve_detach_starts_gateway_and_writes_state() {
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .env("OMNIINFER_PYTHON", &launcher)
@@ -208,6 +210,7 @@ fn serve_foreground_waits_and_cleans_state() {
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .env("OMNIINFER_PYTHON", &launcher)
@@ -273,6 +276,7 @@ fn serve_detach_loads_model_before_ready() {
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .env("OMNIINFER_PYTHON", &launcher)
@@ -341,6 +345,7 @@ fn serve_detach_runs_smoke_test() {
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .env("OMNIINFER_PYTHON", &launcher)
@@ -397,6 +402,7 @@ fn serve_detach_starts_cloudflare_tunnel() {
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .env("OMNIINFER_PYTHON", &launcher)
