@@ -10,9 +10,9 @@ use omniinfer_core::{
 use serde_json::Value;
 
 use crate::{
-    ServeArgs, advisor, get_local_json_for_config, json_bool, json_str, json_u64,
+    BackendScope, ServeArgs, advisor, get_local_json_for_config, json_bool, json_str, json_u64,
     load_model_with_request_for_config, post_local_json_for_config, print_chat_performance,
-    select_backend_for_config, serve_orchestrated, shutdown_service,
+    rust_backend_payload, select_backend_for_config, serve_orchestrated, shutdown_service,
 };
 
 #[derive(Debug, Clone)]
@@ -272,8 +272,8 @@ fn load_model_interactive(
 }
 
 fn advisor_preflight_flow(config: &config::AppConfig, model: &str) -> Result<bool> {
-    let backends =
-        get_local_json_for_config("/omni/backends?scope=all", Duration::from_secs(10), config)?;
+    let _ = config;
+    let backends = rust_backend_payload(BackendScope::All);
     let payload = advisor::fit_payload(model, None, None, None, backends)?;
     let recommended = payload.get("recommended").filter(|value| value.is_object());
     let Some(recommended) = recommended else {
@@ -689,8 +689,8 @@ fn print_help() {
 }
 
 fn discover_local_models(config: &config::AppConfig) -> Result<Vec<LocalModel>> {
-    let payload =
-        get_local_json_for_config("/omni/backends?scope=all", Duration::from_secs(10), config)?;
+    let _ = config;
+    let payload = rust_backend_payload(BackendScope::All);
     let mut roots = Vec::new();
     for backend in payload
         .get("data")
@@ -863,14 +863,11 @@ fn advisor_recommendation_map(
     config: &config::AppConfig,
     models: &[LocalModel],
 ) -> BTreeMap<String, Value> {
+    let _ = config;
     if models.is_empty() {
         return BTreeMap::new();
     }
-    let Ok(backends) =
-        get_local_json_for_config("/omni/backends?scope=all", Duration::from_secs(10), config)
-    else {
-        return BTreeMap::new();
-    };
+    let backends = rust_backend_payload(BackendScope::All);
     let payload = advisor::recommend_payload(None, models.len().max(20) as u32, None, backends);
     let mut result = BTreeMap::new();
     for row in payload

@@ -1,5 +1,6 @@
 pub mod backend_args;
 pub mod backend_profiles;
+pub mod backend_registry;
 pub mod chat_stream;
 pub mod config;
 pub mod gateway_auth;

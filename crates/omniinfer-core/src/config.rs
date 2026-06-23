@@ -66,16 +66,7 @@ impl AppConfig {
 
 pub fn load_app_config() -> Result<AppConfig, ConfigError> {
     let mut config = AppConfig::default();
-    let config_path = paths::config_dir().join("omniinfer.json");
-    if config_path.is_file() {
-        let raw = fs::read_to_string(&config_path).map_err(|source| ConfigError::Read {
-            path: config_path.display().to_string(),
-            source,
-        })?;
-        let value: Value = serde_json::from_str(&raw).map_err(|source| ConfigError::Parse {
-            path: config_path.display().to_string(),
-            source,
-        })?;
+    if let Some(value) = load_raw_config()? {
         apply_config_value(&mut config, &value)?;
     }
 
@@ -87,6 +78,22 @@ pub fn load_app_config() -> Result<AppConfig, ConfigError> {
     }
     validate_config(&config)?;
     Ok(config)
+}
+
+pub fn load_raw_config() -> Result<Option<Value>, ConfigError> {
+    let config_path = paths::config_dir().join("omniinfer.json");
+    if !config_path.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&config_path).map_err(|source| ConfigError::Read {
+        path: config_path.display().to_string(),
+        source,
+    })?;
+    let value: Value = serde_json::from_str(&raw).map_err(|source| ConfigError::Parse {
+        path: config_path.display().to_string(),
+        source,
+    })?;
+    Ok(Some(value))
 }
 
 fn apply_config_value(config: &mut AppConfig, value: &Value) -> Result<(), ConfigError> {

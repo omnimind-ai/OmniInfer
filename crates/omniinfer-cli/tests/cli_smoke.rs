@@ -52,22 +52,15 @@ fn strict_mode_reports_unported_commands_without_fallback() {
 
 #[test]
 fn advisor_system_json_uses_rust_path() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(test_backends_payload()),
-    ]);
-    let port = gateway.port;
     let source_root = temp_repo_root("advisor-system-source");
     let state_root = temp_repo_root("advisor-system-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
     fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    install_fake_backend(&state_root, "llama.cpp-linux-cuda");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
-        format!(
-            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
-            port
-        ),
+        r#"{"host":"127.0.0.1","port":1,"startup_timeout":10}"#,
     )
     .expect("write config");
 
@@ -93,33 +86,21 @@ fn advisor_system_json_uses_rust_path() {
         payload["summary"]["recommended_installed_backend"],
         "llama.cpp-linux-cuda"
     );
-    let health = gateway.request();
-    assert!(health.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
-    gateway.join();
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
 
 #[test]
 fn advisor_system_text_prints_usable_backends() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(test_backends_payload()),
-    ]);
-    let port = gateway.port;
     let source_root = temp_repo_root("advisor-system-text-source");
     let state_root = temp_repo_root("advisor-system-text-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
     fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    install_fake_backend(&state_root, "llama.cpp-linux-cuda");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
-        format!(
-            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
-            port
-        ),
+        r#"{"host":"127.0.0.1","port":1,"startup_timeout":10}"#,
     )
     .expect("write config");
 
@@ -134,11 +115,6 @@ fn advisor_system_text_prints_usable_backends() {
         .stdout(predicate::str::contains("Usable backends:"))
         .stdout(predicate::str::contains("llama.cpp-linux-cuda"))
         .stdout(predicate::str::contains("Hidden backends:"));
-    let health = gateway.request();
-    assert!(health.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
-    gateway.join();
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
@@ -174,17 +150,10 @@ fn advisor_inspect_json_estimates_local_model() {
 
 #[test]
 fn advisor_fit_json_ranks_installed_cuda_backend() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(test_backends_payload()),
-    ]);
     let root = temp_repo_root("advisor-fit");
     fs::create_dir_all(root.join("config")).expect("create config dir");
-    fs::write(
-        root.join("config").join("omniinfer.json"),
-        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
-    )
-    .expect("write config");
+    install_fake_backend(&root, "llama.cpp-linux-cuda");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
     let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
     fs::write(&model, vec![0_u8; 1024]).expect("write model");
 
@@ -218,27 +187,15 @@ fn advisor_fit_json_ranks_installed_cuda_backend() {
             .contains("omniinfer backend select llama.cpp-linux-cuda")
     );
 
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
-    gateway.join();
     fs::remove_dir_all(root).ok();
 }
 
 #[test]
 fn advisor_plan_text_shows_simulated_hardware() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(test_backends_payload()),
-    ]);
     let root = temp_repo_root("advisor-plan");
     fs::create_dir_all(root.join("config")).expect("create config dir");
-    fs::write(
-        root.join("config").join("omniinfer.json"),
-        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
-    )
-    .expect("write config");
+    install_fake_backend(&root, "llama.cpp-linux-cuda");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
     let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
     fs::write(&model, vec![0_u8; 1024]).expect("write model");
 
@@ -265,11 +222,6 @@ fn advisor_plan_text_shows_simulated_hardware() {
         ))
         .stdout(predicate::str::contains("Run paths:"));
 
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
-    gateway.join();
     fs::remove_dir_all(root).ok();
 }
 
@@ -279,16 +231,15 @@ fn advisor_recommend_json_scans_managed_models() {
     let models_dir = root.join("models");
     fs::create_dir_all(root.join("config")).expect("create config dir");
     fs::create_dir_all(&models_dir).expect("create models dir");
+    install_fake_backend(&root, "llama.cpp-linux-cuda");
     let model = models_dir.join("Qwen3.5-Coder-4B-Q4_K_M.gguf");
     fs::write(&model, vec![0_u8; 1024]).expect("write model");
-    let payload = test_backends_payload_with_models_dir(&models_dir);
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(&payload),
-    ]);
     fs::write(
         root.join("config").join("omniinfer.json"),
-        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+        format!(
+            r#"{{"port":1,"backends":{{"llama.cpp-linux-cuda":{{"models_dir":"{}"}}}}}}"#,
+            models_dir.display()
+        ),
     )
     .expect("write config");
 
@@ -320,11 +271,6 @@ fn advisor_recommend_json_scans_managed_models() {
     );
     assert_eq!(payload["recommendations"][0]["evidence"]["level"], "direct");
 
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
-    gateway.join();
     fs::remove_dir_all(root).ok();
 }
 
@@ -535,10 +481,6 @@ fn serve_detach_loads_model_before_ready() {
         Response::new(r#"{"status":"ok"}"#),
         Response::new(r#"{"status":"ok"}"#),
         Response::new(
-            r#"{"object":"list","recommended":"llama.cpp-linux-cuda","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
-        ),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
             r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_ctx_size":1024}"#,
         ),
         Response::new(
@@ -559,6 +501,7 @@ fn serve_detach_loads_model_before_ready() {
         ),
     )
     .expect("write config");
+    install_fake_backend(&state_root, "llama.cpp-linux-cuda");
     let model = state_root.join("model.gguf");
     fs::write(&model, "").expect("write model");
     let launcher = fake_python_launcher(&state_root);
@@ -584,9 +527,6 @@ fn serve_detach_loads_model_before_ready() {
     let _ = gateway.request();
     let _ = gateway.request();
     let request = gateway.request();
-    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
-    let _ = gateway.request();
-    let request = gateway.request();
     assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
     assert!(request.contains(r#""ctx_size":1024"#));
     let request = gateway.request();
@@ -601,10 +541,6 @@ fn serve_detach_runs_smoke_test() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"starting"}"#),
         Response::new(r#"{"status":"ok"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"object":"list","recommended":"llama.cpp-linux-cuda","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
-        ),
         Response::new(r#"{"status":"ok"}"#),
         Response::new(
             r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_ctx_size":1024}"#,
@@ -628,6 +564,7 @@ fn serve_detach_runs_smoke_test() {
         ),
     )
     .expect("write config");
+    install_fake_backend(&state_root, "llama.cpp-linux-cuda");
     let model = state_root.join("model.gguf");
     fs::write(&model, "").expect("write model");
     let launcher = fake_python_launcher(&state_root);
@@ -646,8 +583,6 @@ fn serve_detach_runs_smoke_test() {
         .success()
         .stdout(predicate::str::contains("Smoke: hello smoke"));
 
-    let _ = gateway.request();
-    let _ = gateway.request();
     let _ = gateway.request();
     let _ = gateway.request();
     let _ = gateway.request();
@@ -863,10 +798,6 @@ fn model_load_posts_payload_and_persists_state() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
         Response::new(
-            r#"{"object":"list","recommended":"llama.cpp-linux-cuda","data":[{"id":"llama.cpp-linux","family":"llama.cpp","binary_exists":true},{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
-        ),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
             r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_mmproj":null,"selected_ctx_size":8192}"#,
         ),
     ]);
@@ -877,6 +808,8 @@ fn model_load_posts_payload_and_persists_state() {
         format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
     )
     .expect("write config");
+    install_fake_backend(&root, "llama.cpp-linux");
+    install_fake_backend(&root, "llama.cpp-linux-cuda");
     let model = root.join("model.gguf");
     fs::write(&model, "").expect("write model");
 
@@ -894,10 +827,6 @@ fn model_load_posts_payload_and_persists_state() {
         .stdout(predicate::str::contains("Model loaded"))
         .stdout(predicate::str::contains("ctx-size: 8192"));
 
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
     let request = gateway.request();
     assert!(request.starts_with("GET /health HTTP/1.1"));
     let request = gateway.request();
@@ -922,10 +851,6 @@ fn model_load_posts_payload_and_persists_state() {
 fn model_load_handles_sse_progress() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"object":"list","recommended":"llama.cpp-linux-cuda","data":[{"id":"llama.cpp-linux","family":"llama.cpp","binary_exists":true},{"id":"llama.cpp-linux-cuda","family":"llama.cpp","binary_exists":true}]}"#,
-        ),
-        Response::new(r#"{"status":"ok"}"#),
         Response::chunks(
             &[
                 r#"data: {"type":"status","message":"Resolving model files..."}"#,
@@ -946,6 +871,8 @@ fn model_load_handles_sse_progress() {
         format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
     )
     .expect("write config");
+    install_fake_backend(&root, "llama.cpp-linux");
+    install_fake_backend(&root, "llama.cpp-linux-cuda");
     let model = root.join("model.gguf");
     fs::write(&model, "").expect("write model");
 
@@ -961,8 +888,6 @@ fn model_load_handles_sse_progress() {
         .stdout(predicate::str::contains("ctx-size: 4096"))
         .stdout(predicate::str::contains("backend detail").not());
 
-    let _ = gateway.request();
-    let _ = gateway.request();
     let _ = gateway.request();
     let request = gateway.request();
     assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
@@ -1236,10 +1161,6 @@ fn backend_select_persists_state_and_profile() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
         Response::new(
-            r#"{"object":"list","data":[{"id":"llama.cpp-linux-cuda","family":"llama.cpp","models_dir":"/tmp/models"}]}"#,
-        ),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
             r#"{"ok":true,"selected_backend":"llama.cpp-linux-cuda","models_dir":"/tmp/models"}"#,
         ),
     ]);
@@ -1247,9 +1168,13 @@ fn backend_select_persists_state_and_profile() {
     fs::create_dir_all(root.join("config")).expect("create config dir");
     fs::write(
         root.join("config").join("omniinfer.json"),
-        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"backends":{{"llama.cpp-linux-cuda":{{"models_dir":"/tmp/models"}}}}}}"#,
+            gateway.port
+        ),
     )
     .expect("write config");
+    install_fake_backend(&root, "llama.cpp-linux-cuda");
     fs::create_dir_all(root.join(".local").join("config")).expect("create local config dir");
     fs::write(
         root.join(".local").join("config").join("state.json"),
@@ -1270,10 +1195,6 @@ fn backend_select_persists_state_and_profile() {
         .stdout(predicate::str::contains("Backend config:"))
         .stdout(predicate::str::contains("(created)"));
 
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
     let request = gateway.request();
     assert!(request.starts_with("GET /health HTTP/1.1"));
     let request = gateway.request();
@@ -1416,78 +1337,29 @@ fn fake_python_launcher(root: &std::path::Path) -> std::path::PathBuf {
     }
 }
 
-fn test_backends_payload() -> &'static str {
-    r#"{
-      "object": "list",
-      "recommended": "llama.cpp-linux-cuda",
-      "data": [
-        {
-          "id": "llama.cpp-linux-cuda",
-          "label": "llama.cpp Linux CUDA",
-          "family": "llama.cpp",
-          "selected": true,
-          "binary_exists": true,
-          "capabilities": ["chat", "vision", "stream", "gpu", "cuda", "linux"],
-          "compatibility": "installed",
-          "priority": 0
-        },
-        {
-          "id": "llama.cpp-linux-vulkan",
-          "label": "llama.cpp Linux Vulkan",
-          "family": "llama.cpp",
-          "selected": false,
-          "binary_exists": false,
-          "capabilities": ["chat", "vision", "stream", "gpu", "vulkan", "linux"],
-          "compatibility": "compatible",
-          "priority": 0
-        },
-        {
-          "id": "mnn-linux",
-          "label": "MNN Linux",
-          "family": "mnn",
-          "selected": false,
-          "binary_exists": true,
-          "capabilities": ["chat", "vision", "stream", "cpu", "linux", "mnn"],
-          "compatibility": "installed",
-          "priority": 99
-        }
-      ]
-    }"#
-}
-
-fn test_backends_payload_with_models_dir(models_dir: &std::path::Path) -> String {
-    format!(
-        r#"{{
-      "object": "list",
-      "recommended": "llama.cpp-linux-cuda",
-      "data": [
-        {{
-          "id": "llama.cpp-linux-cuda",
-          "label": "llama.cpp Linux CUDA",
-          "family": "llama.cpp",
-          "selected": true,
-          "binary_exists": true,
-          "models_dir": "{}",
-          "capabilities": ["chat", "vision", "stream", "gpu", "cuda", "linux"],
-          "compatibility": "installed",
-          "priority": 0
-        }},
-        {{
-          "id": "llama.cpp-linux",
-          "label": "llama.cpp Linux CPU",
-          "family": "llama.cpp",
-          "selected": false,
-          "binary_exists": true,
-          "models_dir": "{}",
-          "capabilities": ["chat", "stream", "cpu", "linux"],
-          "compatibility": "installed",
-          "priority": 1
-        }}
-      ]
-    }}"#,
-        models_dir.display(),
-        models_dir.display()
-    )
+fn install_fake_backend(root: &std::path::Path, backend_id: &str) {
+    let binary_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+    let launcher = root
+        .join(".local")
+        .join("runtime")
+        .join("linux")
+        .join(backend_id)
+        .join("bin")
+        .join(binary_name);
+    fs::create_dir_all(launcher.parent().unwrap()).expect("create fake backend dir");
+    fs::write(&launcher, "#!/usr/bin/env bash\nexit 0\n").expect("write fake backend");
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&launcher)
+            .expect("fake backend metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&launcher, permissions).expect("chmod fake backend");
+    }
 }
 
 #[cfg(unix)]

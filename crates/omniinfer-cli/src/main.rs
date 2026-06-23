@@ -17,8 +17,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use omniinfer_core::{
-    backend_profiles, chat_stream, config, gateway_auth, http_client, local_state, model_load,
-    paths, serve_state, version,
+    backend_profiles, backend_registry, chat_stream, config, gateway_auth, http_client,
+    local_state, model_load, paths, serve_state, version,
 };
 
 mod advisor;
@@ -553,15 +553,7 @@ fn print_completion(shell: CompletionShell) {
 }
 
 fn print_backend_list(scope: BackendScope) -> Result<()> {
-    let scope_text = match scope {
-        BackendScope::Installed => "installed",
-        BackendScope::Compatible => "compatible",
-        BackendScope::All => "all",
-    };
-    let payload = get_local_json(
-        &format!("/omni/backends?scope={scope_text}"),
-        Duration::from_secs(10),
-    )?;
+    let payload = rust_backend_payload(scope.clone());
     let rows = payload
         .get("data")
         .and_then(serde_json::Value::as_array)
@@ -604,11 +596,7 @@ fn print_backend_list(scope: BackendScope) -> Result<()> {
 }
 
 fn print_advisor_system(json_output: bool) -> Result<()> {
-    let backends = get_local_json_for_config(
-        "/omni/backends?scope=all",
-        Duration::from_secs(10),
-        &config::load_app_config().unwrap_or_default(),
-    )?;
+    let backends = rust_backend_payload(BackendScope::All);
     let payload = advisor::system_payload(backends);
     advisor::print_system(&payload, json_output)
 }
@@ -625,11 +613,7 @@ fn print_advisor_fit(
     backend: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
-    let backends = get_local_json_for_config(
-        "/omni/backends?scope=all",
-        Duration::from_secs(10),
-        &config::load_app_config().unwrap_or_default(),
-    )?;
+    let backends = rust_backend_payload(BackendScope::All);
     let payload = advisor::fit_payload(model, mmproj, ctx_size, backend, backends)?;
     advisor::print_fit(&payload, json_output)
 }
@@ -644,11 +628,7 @@ fn print_advisor_plan(
     cpu_cores: Option<u32>,
     json_output: bool,
 ) -> Result<()> {
-    let backends = get_local_json_for_config(
-        "/omni/backends?scope=all",
-        Duration::from_secs(10),
-        &config::load_app_config().unwrap_or_default(),
-    )?;
+    let backends = rust_backend_payload(BackendScope::All);
     let payload = advisor::plan_payload(
         model,
         mmproj,
@@ -667,13 +647,17 @@ fn print_advisor_recommend(
     ctx_size: Option<u32>,
     json_output: bool,
 ) -> Result<()> {
-    let backends = get_local_json_for_config(
-        "/omni/backends?scope=all",
-        Duration::from_secs(10),
-        &config::load_app_config().unwrap_or_default(),
-    )?;
+    let backends = rust_backend_payload(BackendScope::All);
     let payload = advisor::recommend_payload(task, limit, ctx_size, backends);
     advisor::print_recommend(&payload, json_output)
+}
+
+pub(crate) fn rust_backend_payload(scope: BackendScope) -> serde_json::Value {
+    backend_registry::BackendRegistry::load_current().api_payload(match scope {
+        BackendScope::Installed => backend_registry::BackendScope::Installed,
+        BackendScope::Compatible => backend_registry::BackendScope::Compatible,
+        BackendScope::All => backend_registry::BackendScope::All,
+    })
 }
 
 fn select_backend(backend: &str) -> Result<()> {
@@ -682,8 +666,7 @@ fn select_backend(backend: &str) -> Result<()> {
 }
 
 pub(crate) fn select_backend_for_config(backend: &str, config: &config::AppConfig) -> Result<()> {
-    let backends =
-        get_local_json_for_config("/omni/backends?scope=all", Duration::from_secs(10), config)?;
+    let backends = rust_backend_payload(BackendScope::All);
     let rows = backends
         .get("data")
         .and_then(serde_json::Value::as_array)
@@ -700,7 +683,7 @@ pub(crate) fn select_backend_for_config(backend: &str, config: &config::AppConfi
             anyhow::anyhow!("Unsupported backend: {backend}\nAvailable backends: {available}")
         })?;
 
-    let payload = post_local_json_for_config(
+    let _payload = post_local_json_for_config(
         "/omni/backend/select",
         &serde_json::json!({ "backend": backend }),
         Duration::from_secs(30),
@@ -709,7 +692,7 @@ pub(crate) fn select_backend_for_config(backend: &str, config: &config::AppConfi
     local_state::save_selected_backend(backend)?;
     let profile = backend_profiles::ensure_backend_profile_template(backend_payload)?;
     println!("Selected backend: {backend}");
-    if let Some(models_dir) = json_str(&payload, "models_dir") {
+    if let Some(models_dir) = json_str(backend_payload, "models_dir") {
         println!("Models directory: {models_dir}");
     }
     println!(
@@ -774,8 +757,7 @@ pub(crate) fn load_model_with_request_for_config(
     verbose: bool,
     config: &config::AppConfig,
 ) -> Result<(serde_json::Value, model_load::ModelLoadPlan)> {
-    let backends =
-        get_local_json_for_config("/omni/backends?scope=all", Duration::from_secs(10), config)?;
+    let backends = rust_backend_payload(BackendScope::All);
     let rows = backends
         .get("data")
         .and_then(serde_json::Value::as_array)
