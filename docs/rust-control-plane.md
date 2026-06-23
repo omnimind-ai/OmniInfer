@@ -68,6 +68,16 @@ Implemented directly in Rust:
   `/omni/model/select`, `/health`, `/omni/state`, `/omni/backends`,
   `/v1/models`, and direct `/v1/chat/completions` forwarding to the loaded
   backend after Rust request normalization.
+- Embedded backend compatibility in the Rust gateway: embedded
+  `/omni/model/select` requests are delegated to the Python upstream while the
+  Rust external-server runtime is stopped, preserving MNN/MLX embedded driver
+  behavior without making Rust own those in-process runtimes.
+- Rust-native compatibility endpoints for loaded external-server backends:
+  Anthropic `/v1/messages` request/response conversion, basic Anthropic SSE
+  conversion from OpenAI chat streams, `/tokenize`, `/detokenize`,
+  `/omni/tokenize`, `/omni/detokenize`, and `/omni/cache/clear` via llama.cpp
+  slot erase. When no Rust external runtime is loaded, these endpoints still
+  fall back to the Python upstream for embedded and legacy compatibility.
 - Bundled model catalog handling for `model list`,
   `/omni/supported-models`, and `/omni/supported-models/best`, including
   installed-backend filtering, best-backend merge, and local RAM/VRAM fit
@@ -247,8 +257,8 @@ Each contract/profile run uses an isolated state root and writes artifacts under
 the selected output directory.
 
 Latest local validation artifact:
-`tmp/test_results/20260623-validation-after-runtime-native/summary.md`. That
-run passed formatting, workspace tests, Python contracts, strict Rust
+`tmp/test_results/20260623-validation-after-anthropic-token-cache/summary.md`.
+That run passed formatting, workspace tests, Python contracts, strict Rust
 contracts, forced-Python contracts, Python/Rust profiles, and `git diff
 --check`.
 
@@ -257,6 +267,12 @@ Latest Rust-native gateway smoke artifact:
 loaded Qwen3.5 4B through the Rust gateway's native `/omni/model/select`,
 reported `backend_ready=true`, exposed one model through `/v1/models`, and
 returned `rust-native-ok` through direct OpenAI chat forwarding.
+
+Latest compatibility endpoint smoke artifact:
+`tmp/test_results/20260623-real-smoke-anthropic-token-cache-gpu4/summary.md`.
+It loaded Qwen3.5 4B through Rust serve on an isolated state root and verified
+Anthropic `/v1/messages`, `/tokenize`, `/detokenize`, and `/omni/cache/clear`
+against a real llama.cpp CUDA backend.
 
 Latest VLM/mmproj smoke artifact:
 `tmp/test_results/20260623-vlm-mmproj-after-rust-native-full/summary.md`. It
