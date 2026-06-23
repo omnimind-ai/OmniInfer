@@ -1,5 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use axum::body::Body;
@@ -16,9 +18,14 @@ use http_body_util::{BodyExt, Full};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use omniinfer_core::backend_registry;
+use omniinfer_core::backend_registry::{BackendRegistry, BackendScope};
 use omniinfer_core::gateway_auth::{GatewayAccessPolicy, RequestAuthContext, authorize_request};
+use omniinfer_core::local_state;
 use omniinfer_core::request_normalization::normalize_chat_request;
-use serde_json::json;
+use omniinfer_core::runtime_plan::{ExternalRuntimeRequest, build_external_runtime_plan};
+use omniinfer_core::runtime_process::{RuntimeProcess, RuntimeProcessOptions};
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
@@ -34,9 +41,11 @@ pub struct GatewayConfig {
 #[derive(Clone)]
 struct GatewayState {
     upstream_base: String,
+    backend_host: String,
     access_policy: GatewayAccessPolicy,
     client: Client<HttpConnector, Full<HyperBytes>>,
     shutdown: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
+    runtime: Arc<tokio::sync::Mutex<RustRuntimeManager>>,
 }
 
 pub fn run_gateway_blocking(config: GatewayConfig) -> Result<()> {
@@ -50,9 +59,11 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let state = GatewayState {
         upstream_base: format!("http://{}:{}", config.upstream_host, config.upstream_port),
+        backend_host: "127.0.0.1".to_string(),
         access_policy: config.access_policy,
         client: Client::builder(TokioExecutor::new()).build_http(),
         shutdown: Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx))),
+        runtime: Arc::new(tokio::sync::Mutex::new(RustRuntimeManager::default())),
     };
     let app = axum::Router::new()
         .fallback(proxy_request)
@@ -103,6 +114,21 @@ async fn proxy_request_inner(
     }
 
     let should_shutdown = request.method() == Method::POST && path == "/omni/shutdown";
+    if should_handle_rust_endpoint(&state, request.method(), &path).await {
+        let Some(response) = try_handle_rust_endpoint(&state, &path, request).await? else {
+            return Ok(json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": {"message": "Rust endpoint handler declined a selected request"}}),
+            ));
+        };
+        if should_shutdown && response.status().is_success() {
+            if let Some(sender) = state.shutdown.lock().await.take() {
+                let _ = sender.send(());
+            }
+        }
+        return Ok(response);
+    }
+
     let upstream = upstream_uri(&state.upstream_base, request.uri())?;
     let (parts, body) = request.into_parts();
     let mut body = body.collect().await?.to_bytes();
@@ -148,10 +174,488 @@ async fn proxy_request_inner(
     Ok(response)
 }
 
+async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path: &str) -> bool {
+    match (method, path) {
+        (&Method::GET, "/health" | "/omni/state" | "/omni/backends") => true,
+        (&Method::POST, "/omni/backend/select" | "/omni/backend/stop" | "/omni/model/select") => {
+            true
+        }
+        (&Method::POST, "/v1/chat/completions") => {
+            state.runtime.lock().await.current_proxy_base().is_some()
+        }
+        _ => false,
+    }
+}
+
+async fn try_handle_rust_endpoint(
+    state: &GatewayState,
+    path: &str,
+    request: Request<Body>,
+) -> Result<Option<Response<Body>>> {
+    match (request.method(), path) {
+        (&Method::GET, "/health") => {
+            let deep = request
+                .uri()
+                .query()
+                .map(|query| query.contains("deep=true") || query.contains("deep=1"))
+                .unwrap_or(false);
+            let snapshot = state.runtime.lock().await.snapshot();
+            let mut payload = json!({
+                "status": "ok",
+                "omni": snapshot,
+            });
+            if deep {
+                payload["backend_health"] = backend_health(&snapshot);
+            }
+            Ok(Some(json_response(StatusCode::OK, payload)))
+        }
+        (&Method::GET, "/omni/state") => {
+            let mut payload = state.runtime.lock().await.snapshot();
+            payload["available_backends"] =
+                BackendRegistry::load_current().api_payload(BackendScope::All)["data"].clone();
+            Ok(Some(json_response(StatusCode::OK, payload)))
+        }
+        (&Method::GET, "/omni/backends") => {
+            let scope = request
+                .uri()
+                .query()
+                .and_then(|query| {
+                    query.split('&').find_map(|part| {
+                        let (key, value) = part.split_once('=')?;
+                        (key == "scope").then_some(value)
+                    })
+                })
+                .unwrap_or("installed");
+            let scope = match scope {
+                "installed" => BackendScope::Installed,
+                "compatible" => BackendScope::Compatible,
+                "all" => BackendScope::All,
+                other => {
+                    return Ok(Some(json_response(
+                        StatusCode::BAD_REQUEST,
+                        json!({"error": {"message": format!("invalid scope: {other}. Must be one of: installed, compatible, all")}}),
+                    )));
+                }
+            };
+            Ok(Some(json_response(
+                StatusCode::OK,
+                BackendRegistry::load_current().api_payload(scope),
+            )))
+        }
+        (&Method::POST, "/omni/backend/select") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let payload: Value = serde_json::from_slice(&body)?;
+            let Some(backend_id) = payload
+                .get("backend")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            else {
+                return Ok(Some(json_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({"error": {"message": "field 'backend' is required"}}),
+                )));
+            };
+            let result = state.runtime.lock().await.select_backend(backend_id);
+            Ok(Some(json_response(StatusCode::OK, result?)))
+        }
+        (&Method::POST, "/omni/backend/stop") => {
+            let result = tokio::task::spawn_blocking({
+                let runtime = Arc::clone(&state.runtime);
+                move || {
+                    let handle = tokio::runtime::Handle::current();
+                    handle.block_on(async move { runtime.lock().await.stop_runtime() })
+                }
+            })
+            .await??;
+            Ok(Some(json_response(StatusCode::OK, result)))
+        }
+        (&Method::POST, "/omni/model/select") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let payload: Value = serde_json::from_slice(&body)?;
+            let backend_host = state.backend_host.clone();
+            let runtime = Arc::clone(&state.runtime);
+            let result = tokio::task::spawn_blocking(move || {
+                let handle = tokio::runtime::Handle::current();
+                handle.block_on(async move {
+                    runtime
+                        .lock()
+                        .await
+                        .load_model(payload, backend_host, Duration::from_secs(120))
+                })
+            })
+            .await??;
+            Ok(Some(json_response(StatusCode::OK, result)))
+        }
+        (&Method::POST, "/v1/chat/completions") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let normalized = normalize_chat_body(body, false)?;
+            let target = state.runtime.lock().await.current_proxy_base();
+            let Some(target) = target else {
+                return Ok(None);
+            };
+            let response = proxy_body_to_runtime(
+                &state.client,
+                &format!("{target}/v1/chat/completions"),
+                normalized,
+            )
+            .await?;
+            Ok(Some(response))
+        }
+        _ => Ok(None),
+    }
+}
+
+async fn proxy_body_to_runtime(
+    client: &Client<HttpConnector, Full<HyperBytes>>,
+    uri: &str,
+    body: HyperBytes,
+) -> Result<Response<Body>> {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Full::new(body))?;
+    let response = client.request(request).await?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let streaming = content_type.contains("text/event-stream");
+    let mut builder = Response::builder().status(status);
+    for (name, value) in response.headers().iter() {
+        if should_forward_response_header(name) {
+            builder = builder.header(name, value);
+        }
+    }
+    let mut response = if streaming {
+        builder.body(Body::new(response.into_body()))?
+    } else {
+        let body = response.into_body().collect().await?.to_bytes();
+        builder = builder.header(CONTENT_LENGTH, body.len().to_string());
+        builder.body(Body::from(body))?
+    };
+    add_cors_headers(response.headers_mut());
+    Ok(response)
+}
+
 fn normalize_chat_body(body: HyperBytes, default_thinking: bool) -> Result<HyperBytes> {
     let payload: serde_json::Value = serde_json::from_slice(&body)?;
     let normalized = normalize_chat_request(payload, default_thinking)?;
     Ok(HyperBytes::from(serde_json::to_vec(&normalized.payload)?))
+}
+
+#[derive(Default)]
+struct RustRuntimeManager {
+    selected_backend: Option<String>,
+    loaded: Option<LoadedRustRuntime>,
+}
+
+struct LoadedRustRuntime {
+    backend_id: String,
+    model: String,
+    mmproj: Option<String>,
+    ctx_size: Option<u32>,
+    process: RuntimeProcess,
+    proxy_model_ref: Option<String>,
+}
+
+impl RustRuntimeManager {
+    fn select_backend(&mut self, backend_id: &str) -> Result<Value> {
+        let registry = BackendRegistry::load_current();
+        let backend = registry
+            .get(backend_id)
+            .ok_or_else(|| anyhow::anyhow!("unsupported backend: {backend_id}"))?;
+        if self.selected_backend.as_deref() != Some(backend_id) {
+            self.stop_runtime()?;
+        }
+        self.selected_backend = Some(backend_id.to_string());
+        local_state::save_selected_backend(backend_id)?;
+        Ok(json!({
+            "ok": true,
+            "selected_backend": backend_id,
+            "binary_exists": backend.binary_exists(),
+            "models_dir": backend.models_dir,
+        }))
+    }
+
+    fn stop_runtime(&mut self) -> Result<Value> {
+        if let Some(mut loaded) = self.loaded.take() {
+            loaded.process.stop(Duration::from_secs(8))?;
+        }
+        Ok(json!({
+            "ok": true,
+            "stopped": true,
+            "selected_backend": self.selected_backend,
+        }))
+    }
+
+    fn load_model(
+        &mut self,
+        payload: Value,
+        backend_host: String,
+        startup_timeout: Duration,
+    ) -> Result<Value> {
+        let model = json_required_str(&payload, "model")?.to_string();
+        let requested_backend = payload
+            .get("backend")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| self.selected_backend.clone())
+            .or_else(|| {
+                BackendRegistry::load_current()
+                    .api_payload(BackendScope::Installed)
+                    .get("recommended")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| anyhow::anyhow!("no installed backend available"))?;
+        let registry = BackendRegistry::load_current();
+        let backend = registry
+            .get(&requested_backend)
+            .ok_or_else(|| anyhow::anyhow!("unsupported backend: {requested_backend}"))?;
+        if backend.runtime_mode != "external_server" {
+            anyhow::bail!(
+                "{} is an embedded backend; Rust gateway runtime manager currently supports external server backends only",
+                backend.id
+            );
+        }
+        if !backend.binary_exists() {
+            anyhow::bail!(
+                "backend launcher not found: {}",
+                backend.launcher_path.as_deref().unwrap_or("(unset)")
+            );
+        }
+        let model_path = resolve_model_for_backend(&model, backend)?;
+        let mmproj_path = payload
+            .get("mmproj")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| resolve_path_for_backend(value, backend, "mmproj file"))
+            .transpose()?;
+        let ctx_size = payload
+            .get("ctx_size")
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok());
+        let launch_args = payload
+            .get("launch_args")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            });
+        let port = pick_runtime_port(&backend_host)?;
+        let backend_payload = serde_json::to_value(backend)?;
+        let plan = build_external_runtime_plan(&ExternalRuntimeRequest {
+            backend: backend_payload,
+            model_path: model_path.clone(),
+            mmproj_path: mmproj_path.clone(),
+            host: backend_host.clone(),
+            port,
+            ctx_size,
+            launch_args,
+        })?;
+        self.stop_runtime()?;
+        let log_path = PathBuf::from(&backend.runtime_dir)
+            .join("logs")
+            .join(&plan.log_file_name);
+        let process = RuntimeProcess::start(
+            &plan,
+            RuntimeProcessOptions {
+                log_path,
+                env: runtime_env_for_backend(backend),
+                startup_timeout,
+                health_host: backend_host.clone(),
+            },
+        )?;
+        let info = process.info().clone();
+        self.selected_backend = Some(backend.id.clone());
+        local_state::save_selected_backend(&backend.id)?;
+        local_state::save_selected_model(&model_path, mmproj_path.as_deref(), plan.ctx_size)?;
+        self.loaded = Some(LoadedRustRuntime {
+            backend_id: backend.id.clone(),
+            model: model_path.clone(),
+            mmproj: mmproj_path.clone(),
+            ctx_size: plan.ctx_size,
+            proxy_model_ref: plan.proxy_model_ref.clone(),
+            process,
+        });
+        Ok(json!({
+            "ok": true,
+            "selected_backend": backend.id,
+            "selected_model": model_path,
+            "selected_mmproj": mmproj_path,
+            "selected_ctx_size": plan.ctx_size,
+            "backend_pid": info.pid,
+            "backend_port": info.port,
+            "launch_command": info.command,
+            "log_path": info.log_path.display().to_string(),
+        }))
+    }
+
+    fn current_proxy_base(&self) -> Option<String> {
+        self.loaded
+            .as_ref()
+            .map(|loaded| format!("http://127.0.0.1:{}", loaded.process.info().port))
+    }
+
+    fn snapshot(&self) -> Value {
+        let selected_backend = self.selected_backend.clone().or_else(|| {
+            local_state::load_state()
+                .ok()
+                .and_then(|state| state.selected_backend)
+        });
+        let Some(loaded) = self.loaded.as_ref() else {
+            return json!({
+                "backend": selected_backend,
+                "backend_ready": false,
+                "model": null,
+                "mmproj": null,
+                "ctx_size": null,
+                "runtime": null,
+            });
+        };
+        let info = loaded.process.info();
+        json!({
+            "backend": loaded.backend_id,
+            "backend_ready": true,
+            "model": loaded.model,
+            "mmproj": loaded.mmproj,
+            "ctx_size": loaded.ctx_size,
+            "runtime": {
+                "mode": "external_server",
+                "host": "127.0.0.1",
+                "port": info.port,
+                "pid": info.pid,
+                "launch_command": info.command,
+                "log_path": info.log_path.display().to_string(),
+                "proxy_model_ref": loaded.proxy_model_ref,
+            },
+            "backend_pid": info.pid,
+            "backend_port": info.port,
+            "launch_command": info.command,
+            "log_path": info.log_path.display().to_string(),
+        })
+    }
+}
+
+fn backend_health(snapshot: &Value) -> Value {
+    if snapshot
+        .get("backend_ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        json!({"status": "ok"})
+    } else {
+        json!({"status": "not_loaded"})
+    }
+}
+
+fn json_required_str<'a>(payload: &'a Value, key: &'static str) -> Result<&'a str> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("field '{key}' is required"))
+}
+
+fn resolve_model_for_backend(
+    model: &str,
+    backend: &backend_registry::BackendSpec,
+) -> Result<String> {
+    if backend.model_artifact == "reference" {
+        return Ok(model.to_string());
+    }
+    let path = resolve_path_for_backend(model, backend, "model")?;
+    if backend.model_artifact == "file" && PathBuf::from(&path).is_dir() {
+        return discover_gguf_in_dir(&PathBuf::from(path));
+    }
+    Ok(path)
+}
+
+fn resolve_path_for_backend(
+    text: &str,
+    backend: &backend_registry::BackendSpec,
+    label: &str,
+) -> Result<String> {
+    let mut path = expand_home(PathBuf::from(text.trim()));
+    if !path.is_absolute() {
+        let Some(models_dir) = backend.models_dir.as_deref() else {
+            anyhow::bail!("relative {label} path requires a configured models_dir");
+        };
+        path = PathBuf::from(models_dir).join(path);
+    }
+    if label == "model" && backend.model_artifact == "directory" {
+        if !path.is_dir() {
+            anyhow::bail!("model directory not found: {}", path.display());
+        }
+    } else if !path.exists() {
+        anyhow::bail!("{label} not found: {}", path.display());
+    }
+    Ok(path.display().to_string())
+}
+
+fn discover_gguf_in_dir(dir: &PathBuf) -> Result<String> {
+    let mut files = std::fs::read_dir(dir)?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("gguf"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+        .into_iter()
+        .next()
+        .map(|path| path.display().to_string())
+        .ok_or_else(|| anyhow::anyhow!("no GGUF model found in {}", dir.display()))
+}
+
+fn expand_home(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest);
+    }
+    path
+}
+
+fn pick_runtime_port(host: &str) -> Result<u16> {
+    let listener = std::net::TcpListener::bind((host, 0))?;
+    Ok(listener.local_addr()?.port())
+}
+
+fn runtime_env_for_backend(backend: &backend_registry::BackendSpec) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Some(launcher) = backend.launcher_path.as_deref()
+        && let Some(parent) = PathBuf::from(launcher).parent()
+        && std::env::consts::OS != "windows"
+    {
+        let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        let value = if existing.is_empty() {
+            parent.display().to_string()
+        } else {
+            format!("{}:{existing}", parent.display())
+        };
+        env.push(("LD_LIBRARY_PATH".to_string(), value));
+    }
+    if backend.capabilities.iter().any(|cap| cap == "cuda")
+        && let Ok(devices) = std::env::var("OMNIINFER_CUDA_VISIBLE_DEVICES")
+        && !devices.trim().is_empty()
+    {
+        env.push(("CUDA_VISIBLE_DEVICES".to_string(), devices));
+    }
+    env
 }
 
 fn auth_context(request: &Request<Body>, peer_ip: IpAddr) -> RequestAuthContext {
@@ -429,6 +933,63 @@ mod tests {
         upstream.stop().await;
     }
 
+    #[tokio::test]
+    async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
+        let temp = temp_root("rust-gateway-runtime");
+        let model = temp.join("model.gguf");
+        std::fs::create_dir_all(&temp).unwrap();
+        std::fs::write(&model, "").unwrap();
+        install_fake_llama_server(&temp);
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+        let port = gateway.port;
+
+        let load_response = tokio::task::spawn_blocking({
+            let model = model.clone();
+            move || {
+                ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                    .send_json(json!({
+                        "backend": "llama.cpp-linux-cuda",
+                        "model": model.display().to_string(),
+                        "ctx_size": 512
+                    }))
+                    .unwrap()
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(load_response.status().as_u16(), 200);
+        let load_body: Value = load_response.into_body().read_json().unwrap();
+        assert_eq!(load_body["selected_backend"], "llama.cpp-linux-cuda");
+        assert_eq!(load_body["selected_ctx_size"], 512);
+        assert!(load_body["backend_pid"].as_u64().unwrap() > 0);
+
+        let chat_response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .send_json(json!({
+                    "model": "omniinfer",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": false,
+                    "think": false
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(chat_response.status().as_u16(), 200);
+        let chat_body: Value = chat_response.into_body().read_json().unwrap();
+        assert_eq!(
+            chat_body["choices"][0]["message"]["content"],
+            "fake backend"
+        );
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
     struct TestServer {
         port: u16,
         stop: Option<oneshot::Sender<()>>,
@@ -527,6 +1088,99 @@ mod tests {
             port,
             stop: Some(tx),
             stopped,
+        }
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("omniinfer-rs-{name}-{nanos}"))
+    }
+
+    fn install_fake_llama_server(root: &std::path::Path) {
+        let launcher = root
+            .join(".local")
+            .join("runtime")
+            .join("linux")
+            .join("llama.cpp-linux-cuda")
+            .join("bin")
+            .join("llama-server");
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        let script = r#"#!/usr/bin/env bash
+port=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --port) port="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+python3 - "$port" <<'PY'
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+port = int(sys.argv[1])
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+    def _json(self, payload):
+        raw = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+    def do_GET(self):
+        if self.path.startswith("/health"):
+            self._json({"status": "ok"})
+        else:
+            self._json({"ok": True})
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length:
+            self.rfile.read(length)
+        self._json({"choices": [{"message": {"content": "fake backend"}}]})
+
+HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+PY
+"#;
+        std::fs::write(&launcher, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&launcher).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&launcher, permissions).unwrap();
+        }
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        old: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let old = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(old) = &self.old {
+                    std::env::set_var(self.key, old);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
         }
     }
 }
