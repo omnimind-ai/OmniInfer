@@ -9,5 +9,6 @@ pub mod local_state;
 pub mod model_load;
 pub mod paths;
 pub mod request_normalization;
+pub mod runtime_plan;
 pub mod serve_state;
 pub mod version;
