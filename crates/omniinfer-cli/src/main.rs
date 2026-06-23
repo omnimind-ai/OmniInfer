@@ -595,7 +595,17 @@ fn load_model_with_request(
     request: &model_load::ModelLoadRequest,
     verbose: bool,
 ) -> Result<(serde_json::Value, model_load::ModelLoadPlan)> {
-    let backends = get_local_json("/omni/backends?scope=all", Duration::from_secs(10))?;
+    let config = config::load_app_config().unwrap_or_default();
+    load_model_with_request_for_config(request, verbose, &config)
+}
+
+fn load_model_with_request_for_config(
+    request: &model_load::ModelLoadRequest,
+    verbose: bool,
+    config: &config::AppConfig,
+) -> Result<(serde_json::Value, model_load::ModelLoadPlan)> {
+    let backends =
+        get_local_json_for_config("/omni/backends?scope=all", Duration::from_secs(10), config)?;
     let rows = backends
         .get("data")
         .and_then(serde_json::Value::as_array)
@@ -622,7 +632,8 @@ fn load_model_with_request(
         &std::env::current_dir()?,
     )?;
     println!("Loading model...");
-    let response = post_local_model_load(&plan.payload, verbose, Duration::from_secs(600))?;
+    let response =
+        post_local_model_load_for_config(&plan.payload, verbose, Duration::from_secs(600), config)?;
     let selected_backend = json_str(&response, "selected_backend").unwrap_or(&plan.backend);
     local_state::save_selected_backend(selected_backend)?;
     let selected_model = json_str(&response, "selected_model")
@@ -996,7 +1007,7 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
                 config: None,
                 backend_extra_args: Vec::new(),
             };
-            let (response, plan) = load_model_with_request(&request, false)?;
+            let (response, plan) = load_model_with_request_for_config(&request, false, &config)?;
             if plan.auto_selected {
                 println!("Auto-selected backend: {}", plan.backend);
             }
@@ -1004,28 +1015,47 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         }
         Ok(())
     })();
-    if let Err(error) = configure_result {
-        if let Some(mut child) = cloudflared_child {
-            let _ = child.kill();
-            let _ = child.wait();
+    match configure_result {
+        Ok(_) => {}
+        Err(error) => {
+            if let Some(mut child) = cloudflared_child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            let _ = http_client::post_json(
+                &format!("{}/omni/shutdown", config.service_base_url()),
+                &serde_json::json!({}),
+                Duration::from_secs(10),
+            );
+            return Err(error);
         }
-        let _ = http_client::post_json(
-            &format!("{}/omni/shutdown", config.service_base_url()),
-            &serde_json::json!({}),
-            Duration::from_secs(10),
-        );
-        return Err(error);
     }
     let state = get_serve_health_state(&config)?;
     let mut smoke_text = None;
     let mut smoke_failed = false;
     if args.smoke_test {
         let local_base_url = format!("http://127.0.0.1:{}", config.port);
-        match serve_smoke(&local_base_url) {
-            Ok(text) => smoke_text = Some(text),
+        match serve_smoke(&local_base_url, api_key.as_deref()) {
+            Ok(local_text) => {
+                if let Some(public_url) = public_url.as_deref() {
+                    match serve_smoke_with_retry(public_url, api_key.as_deref()) {
+                        Ok(public_text) => {
+                            smoke_text =
+                                Some(format!("local ok: {local_text}; public ok: {public_text}"));
+                        }
+                        Err(error) => {
+                            smoke_failed = true;
+                            smoke_text =
+                                Some(format!("local ok: {local_text}; public failed: {error}"));
+                        }
+                    }
+                } else {
+                    smoke_text = Some(local_text);
+                }
+            }
             Err(error) => {
                 smoke_failed = true;
-                smoke_text = Some(format!("failed: {error}"));
+                smoke_text = Some(format!("local failed: {error}"));
             }
         }
     }
@@ -1191,7 +1221,9 @@ fn resolve_cloudflared(explicit_path: Option<&str>) -> Result<PathBuf> {
         return Ok(managed);
     }
 
-    let output = ProcessCommand::new(python_executable())
+    let mut command = ProcessCommand::new(python_executable());
+    pass_rust_path_overrides(&mut command);
+    let output = command
         .arg("-c")
         .arg("from service_core.remote_access import find_cloudflared; print(find_cloudflared())")
         .current_dir(paths::repo_root())
@@ -1332,6 +1364,7 @@ fn start_serve_child(
         .open(log_path)?;
     let stderr = stdout.try_clone()?;
     let mut command = ProcessCommand::new(python_executable());
+    pass_rust_path_overrides(&mut command);
     command
         .arg(paths::repo_root().join("omniinfer.py"))
         .arg("serve")
@@ -1469,7 +1502,7 @@ fn print_serve_ready(
     }
 }
 
-fn serve_smoke(base_url: &str) -> Result<String> {
+fn serve_smoke(base_url: &str, api_key: Option<&str>) -> Result<String> {
     let mut payload = serde_json::Map::new();
     payload.insert("model".to_string(), serde_json::json!("omniinfer"));
     payload.insert(
@@ -1481,9 +1514,10 @@ fn serve_smoke(base_url: &str) -> Result<String> {
     payload.insert("stream".to_string(), serde_json::json!(false));
 
     let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
-    let response = http_client::post_json(
+    let response = http_client::post_json_with_bearer(
         &url,
         &serde_json::Value::Object(payload),
+        api_key,
         Duration::from_secs(120),
     )?;
     if response.status >= 400 {
@@ -1504,6 +1538,32 @@ fn serve_smoke(base_url: &str) -> Result<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .ok_or_else(|| anyhow::anyhow!("Smoke test returned an empty response."))
+}
+
+fn serve_smoke_with_retry(base_url: &str, api_key: Option<&str>) -> Result<String> {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        match serve_smoke(base_url, api_key) {
+            Ok(text) => return Ok(text),
+            Err(error) => {
+                if !is_transient_public_smoke_error(&error) || Instant::now() >= deadline {
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        }
+    }
+}
+
+fn is_transient_public_smoke_error(error: &anyhow::Error) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("failed to lookup address")
+        || text.contains("name or service not known")
+        || text.contains("temporary failure in name resolution")
+        || text.contains("connection refused")
+        || text.contains("connection reset")
+        || text.contains("timed out")
+        || text.contains("operation timed out")
 }
 
 fn print_chat(args: &ChatArgs) -> Result<()> {
@@ -1769,7 +1829,15 @@ fn json_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
 
 fn get_local_json(endpoint: &str, timeout: Duration) -> Result<serde_json::Value> {
     let config = config::load_app_config().unwrap_or_default();
-    ensure_local_gateway_running(&config)?;
+    get_local_json_for_config(endpoint, timeout, &config)
+}
+
+fn get_local_json_for_config(
+    endpoint: &str,
+    timeout: Duration,
+    config: &config::AppConfig,
+) -> Result<serde_json::Value> {
+    ensure_local_gateway_running(config)?;
     let url = format!("{}{}", config.service_base_url(), endpoint);
     let response = http_client::get_json(&url, timeout)?;
     if response.status >= 400 {
@@ -1793,13 +1861,13 @@ fn post_local_json(
     Ok(response.body)
 }
 
-fn post_local_model_load(
+fn post_local_model_load_for_config(
     body: &serde_json::Value,
     verbose: bool,
     timeout: Duration,
+    config: &config::AppConfig,
 ) -> Result<serde_json::Value> {
-    let config = config::load_app_config().unwrap_or_default();
-    ensure_local_gateway_running(&config)?;
+    ensure_local_gateway_running(config)?;
     let url = format!("{}/omni/model/select", config.service_base_url());
     let response = http_client::post_streaming_lines(
         &url,
@@ -1888,6 +1956,7 @@ fn start_gateway_background(config: &config::AppConfig) -> Result<()> {
         .open(&log_path)?;
     let stderr = stdout.try_clone()?;
     let mut command = ProcessCommand::new(python_executable());
+    pass_rust_path_overrides(&mut command);
     command
         .arg(paths::repo_root().join("omniinfer.py"))
         .arg("serve")
@@ -1912,6 +1981,14 @@ fn start_gateway_background(config: &config::AppConfig) -> Result<()> {
     }
     command.spawn()?;
     Ok(())
+}
+
+fn pass_rust_path_overrides(command: &mut ProcessCommand) {
+    for key in ["OMNIINFER_RUST_REPO_ROOT", "OMNIINFER_RUST_STATE_ROOT"] {
+        if let Some(value) = std::env::var_os(key).filter(|value| !value.is_empty()) {
+            command.env(key, value);
+        }
+    }
 }
 
 fn wait_for_gateway_ready(config: &config::AppConfig) -> Result<()> {
