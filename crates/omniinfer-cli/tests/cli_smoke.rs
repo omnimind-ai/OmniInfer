@@ -33,10 +33,103 @@ fn completion_generates_bash_script() {
 fn strict_mode_reports_unported_commands_without_fallback() {
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .args(["advisor", "system"])
+        .args(["advisor", "fit", "missing.gguf"])
         .assert()
         .success()
         .stdout(predicate::str::contains("implementation pending"));
+}
+
+#[test]
+fn advisor_system_json_uses_rust_path() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(test_backends_payload()),
+    ]);
+    let port = gateway.port;
+    let source_root = temp_repo_root("advisor-system-source");
+    let state_root = temp_repo_root("advisor-system-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let output = cmd
+        .env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .args(["advisor", "system", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""object": "advisor.system""#))
+        .stdout(predicate::str::contains(
+            r#""recommended_installed_backend": "llama.cpp-linux-cuda""#,
+        ))
+        .stdout(predicate::str::contains(r#""installed": true"#))
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&output).expect("advisor system json");
+    assert_eq!(payload["object"], "advisor.system");
+    assert_eq!(
+        payload["summary"]["recommended_installed_backend"],
+        "llama.cpp-linux-cuda"
+    );
+    let health = gateway.request();
+    assert!(health.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
+fn advisor_system_text_prints_usable_backends() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(test_backends_payload()),
+    ]);
+    let port = gateway.port;
+    let source_root = temp_repo_root("advisor-system-text-source");
+    let state_root = temp_repo_root("advisor-system-text-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .args(["advisor", "system"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OmniInfer Advisor System"))
+        .stdout(predicate::str::contains("Usable backends:"))
+        .stdout(predicate::str::contains("llama.cpp-linux-cuda"))
+        .stdout(predicate::str::contains("Hidden backends:"));
+    let health = gateway.request();
+    assert!(health.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
 }
 
 #[test]
@@ -1125,6 +1218,45 @@ fn fake_python_launcher(root: &std::path::Path) -> std::path::PathBuf {
     {
         fake_python_launcher_windows(root)
     }
+}
+
+fn test_backends_payload() -> &'static str {
+    r#"{
+      "object": "list",
+      "recommended": "llama.cpp-linux-cuda",
+      "data": [
+        {
+          "id": "llama.cpp-linux-cuda",
+          "label": "llama.cpp Linux CUDA",
+          "family": "llama.cpp",
+          "selected": true,
+          "binary_exists": true,
+          "capabilities": ["chat", "vision", "stream", "gpu", "cuda", "linux"],
+          "compatibility": "installed",
+          "priority": 0
+        },
+        {
+          "id": "llama.cpp-linux-vulkan",
+          "label": "llama.cpp Linux Vulkan",
+          "family": "llama.cpp",
+          "selected": false,
+          "binary_exists": false,
+          "capabilities": ["chat", "vision", "stream", "gpu", "vulkan", "linux"],
+          "compatibility": "compatible",
+          "priority": 0
+        },
+        {
+          "id": "mnn-linux",
+          "label": "MNN Linux",
+          "family": "mnn",
+          "selected": false,
+          "binary_exists": true,
+          "capabilities": ["chat", "vision", "stream", "cpu", "linux", "mnn"],
+          "compatibility": "installed",
+          "priority": 99
+        }
+      ]
+    }"#
 }
 
 #[cfg(unix)]

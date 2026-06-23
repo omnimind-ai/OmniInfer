@@ -21,6 +21,7 @@ use omniinfer_core::{
     paths, serve_state, version,
 };
 
+mod advisor;
 mod gateway;
 
 #[derive(Debug, Parser)]
@@ -378,6 +379,9 @@ fn run_ported_command(command: &Command) -> Result<()> {
             command: ModelCommand::Load(args),
         }
         | Command::Load(args) => load_model(args),
+        Command::Advisor {
+            command: AdvisorCommand::System { json },
+        } => print_advisor_system(*json),
         Command::Thinking {
             command: ThinkingCommand::Show,
         } => {
@@ -553,6 +557,16 @@ fn print_backend_list(scope: BackendScope) -> Result<()> {
         println!("{backend:<width$}  {selected:<8}  {installed:<9}");
     }
     Ok(())
+}
+
+fn print_advisor_system(json_output: bool) -> Result<()> {
+    let backends = get_local_json_for_config(
+        "/omni/backends?scope=all",
+        Duration::from_secs(10),
+        &config::load_app_config().unwrap_or_default(),
+    )?;
+    let payload = advisor::system_payload(backends);
+    advisor::print_system(&payload, json_output)
 }
 
 fn select_backend(backend: &str) -> Result<()> {
