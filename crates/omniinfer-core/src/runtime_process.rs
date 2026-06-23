@@ -207,12 +207,7 @@ fn _path_exists(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::io::Write;
     use std::net::TcpListener;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
 
     use super::*;
 
@@ -308,26 +303,32 @@ mod tests {
 
     fn write_test_server(root: &Path, port: u16) -> PathBuf {
         fs::create_dir_all(root).unwrap();
-        let ready = Arc::new(AtomicBool::new(false));
-        let ready_for_thread = Arc::clone(&ready);
-        std::thread::spawn(move || {
-            let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
-            ready_for_thread.store(true, Ordering::SeqCst);
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else {
-                    break;
-                };
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}",
-                );
-                let _ = stream.flush();
-            }
-        });
-        while !ready.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(10));
-        }
         let script = root.join("server.sh");
-        fs::write(&script, "#!/usr/bin/env bash\nsleep 30\n").unwrap();
+        fs::write(
+            &script,
+            format!(
+                r#"#!/usr/bin/env bash
+python3 - <<'PY'
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+    def do_GET(self):
+        raw = json.dumps({{"status": "ok"}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+HTTPServer(("127.0.0.1", {port}), Handler).serve_forever()
+PY
+"#
+            ),
+        )
+        .unwrap();
         make_executable(&script);
         script
     }
