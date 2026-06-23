@@ -2,6 +2,7 @@ pub mod backend_args;
 pub mod backend_profiles;
 pub mod chat_stream;
 pub mod config;
+pub mod gateway_auth;
 pub mod http_client;
 pub mod local_state;
 pub mod model_load;

@@ -96,6 +96,12 @@ HTTP streaming paths still use the existing hand-written localhost client, while
 public JSON checks use a blocking rustls-backed client suitable for CLI control
 flow.
 
+Gateway replacement work has started at the shared-core layer. The Rust core now
+has tested access-policy/auth helpers matching the Python gateway behavior for
+loopback clients, remote public inference endpoints, local-only management
+endpoints, Bearer and `x-api-key` credentials, trusted proxy headers, and
+insecure LAN opt-in. The HTTP server itself is still Python-backed.
+
 ## Contract Snapshots
 
 Capture current Python contracts:
