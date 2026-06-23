@@ -45,11 +45,8 @@ In the root `gradle.properties`:
 android.useAndroidX=true
 ```
 
-Find the latest released version on Maven Central:
-
-```text
-https://central.sonatype.com/artifact/io.github.omnimind-ai/omniinfer
-```
+Find the latest released version on
+[Maven Central](https://central.sonatype.com/artifact/io.github.omnimind-ai/omniinfer).
 
 For larger apps, keep the version in `gradle/libs.versions.toml`:
 
