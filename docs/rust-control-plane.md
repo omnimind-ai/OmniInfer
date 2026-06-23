@@ -214,6 +214,16 @@ Latest local validation artifact:
 That run passed formatting, workspace tests, Python contracts, strict Rust
 contracts, forced-Python contracts, Python/Rust profiles, and `git diff
 --check`.
+The later `--runs 7` artifact is
+`tmp/test_results/20260623-rust-control-plane-validation-runs7/summary.md`;
+it passed the same full validation suite with seven profiling samples per
+scenario.
+
+Latest VLM/mmproj smoke artifact:
+`tmp/test_results/20260623-vlm-mmproj-full-smoke/summary.md`. It validated the
+Rust `serve` orchestration path with Stepfun 4B plus mmproj and Qwen3.6 27B
+with both BF16 and F16 projectors, including real image chat requests through
+the OpenAI-compatible endpoint.
 
 ## Before Switching `./omniinfer`
 
@@ -241,11 +251,8 @@ available for at least one release cycle.
 
 Remaining pre-switch work after the current Linux validation:
 
-- Run the consolidated validation with more profile samples, for example
-  `--runs 3` or `--runs 7`, before making performance claims.
 - Run cross-platform launcher validation on Windows and macOS, including
   PowerShell/cmd wrappers and packaged source-checkout behavior.
-- Run a real VLM smoke matrix for image chat and mmproj load paths.
 - Decide whether the long-term no-Python target requires replacing the Python
   runtime manager/backend registry/request normalization; the current Rust
   gateway intentionally proxies to a loopback Python upstream.
