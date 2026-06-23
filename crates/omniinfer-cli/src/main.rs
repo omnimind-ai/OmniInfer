@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use omniinfer_core::{
     backend_profiles, backend_registry, chat_stream, config, gateway_auth, http_client,
-    local_state, model_load, paths, serve_state, version,
+    local_state, model_catalog, model_load, paths, serve_state, version,
 };
 
 mod advisor;
@@ -710,15 +710,11 @@ pub(crate) fn select_backend_for_config(backend: &str, config: &config::AppConfi
 fn print_model_list(all: bool, best: bool) -> Result<()> {
     let best = best || !all;
     let system = current_system_name();
-    let endpoint = if best {
-        "/omni/supported-models/best"
+    let payload = if best {
+        model_catalog::list_supported_models_best(system)?
     } else {
-        "/omni/supported-models"
+        model_catalog::list_supported_models(system)?
     };
-    let payload = get_local_json(
-        &format!("{endpoint}?system={system}"),
-        Duration::from_secs(60),
-    )?;
     println!("Supported models ({system})");
     if best {
         print_best_model_catalog(&payload);

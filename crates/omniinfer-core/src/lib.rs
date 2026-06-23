@@ -7,6 +7,7 @@ pub mod gateway_auth;
 pub mod http_client;
 pub mod local_state;
 pub mod model_artifacts;
+pub mod model_catalog;
 pub mod model_load;
 pub mod paths;
 pub mod request_normalization;

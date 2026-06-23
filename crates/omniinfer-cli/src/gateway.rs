@@ -23,6 +23,7 @@ use omniinfer_core::backend_registry::{BackendRegistry, BackendScope};
 use omniinfer_core::gateway_auth::{GatewayAccessPolicy, RequestAuthContext, authorize_request};
 use omniinfer_core::local_state;
 use omniinfer_core::model_artifacts::{discover_llama_cpp_model_artifacts, maybe_auto_mmproj};
+use omniinfer_core::model_catalog;
 use omniinfer_core::request_normalization::normalize_chat_request;
 use omniinfer_core::runtime_plan::{ExternalRuntimeRequest, build_external_runtime_plan};
 use omniinfer_core::runtime_process::{RuntimeProcess, RuntimeProcessOptions};
@@ -178,6 +179,9 @@ async fn proxy_request_inner(
 async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path: &str) -> bool {
     match (method, path) {
         (&Method::GET, "/health" | "/omni/state" | "/omni/backends") => true,
+        (&Method::GET, "/omni/supported-models" | "/omni/supported-models/best" | "/v1/models") => {
+            true
+        }
         (&Method::POST, "/omni/backend/select" | "/omni/backend/stop" | "/omni/model/select") => {
             true
         }
@@ -241,6 +245,47 @@ async fn try_handle_rust_endpoint(
             Ok(Some(json_response(
                 StatusCode::OK,
                 BackendRegistry::load_current().api_payload(scope),
+            )))
+        }
+        (&Method::GET, "/omni/supported-models") => {
+            let system = query_value(request.uri(), "system").unwrap_or_else(current_system_name);
+            match model_catalog::list_supported_models(&system) {
+                Ok(payload) => Ok(Some(json_response(StatusCode::OK, payload))),
+                Err(error) => Ok(Some(json_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({"error": {"message": error.to_string()}}),
+                ))),
+            }
+        }
+        (&Method::GET, "/omni/supported-models/best") => {
+            let system = query_value(request.uri(), "system").unwrap_or_else(current_system_name);
+            match model_catalog::list_supported_models_best(&system) {
+                Ok(payload) => Ok(Some(json_response(StatusCode::OK, payload))),
+                Err(error) => Ok(Some(json_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({"error": {"message": error.to_string()}}),
+                ))),
+            }
+        }
+        (&Method::GET, "/v1/models") => {
+            let snapshot = state.runtime.lock().await.snapshot();
+            let mut data = Vec::new();
+            if snapshot
+                .get("backend_ready")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                && let Some(model_id) = snapshot.get("model").and_then(Value::as_str)
+            {
+                data.push(json!({
+                    "id": model_id,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "omniinfer",
+                }));
+            }
+            Ok(Some(json_response(
+                StatusCode::OK,
+                json!({"object": "list", "data": data}),
             )))
         }
         (&Method::POST, "/omni/backend/select") => {
@@ -685,6 +730,21 @@ fn upstream_uri(base: &str, uri: &Uri) -> Result<Uri> {
     Ok(format!("{}{}", base.trim_end_matches('/'), path).parse()?)
 }
 
+fn query_value(uri: &Uri, key: &str) -> Option<String> {
+    uri.query()?.split('&').find_map(|part| {
+        let (name, value) = part.split_once('=')?;
+        (name == key && !value.trim().is_empty()).then(|| value.to_string())
+    })
+}
+
+fn current_system_name() -> String {
+    match std::env::consts::OS {
+        "macos" => "mac".to_string(),
+        "windows" => "windows".to_string(),
+        _ => "linux".to_string(),
+    }
+}
+
 fn should_forward_header(name: &HeaderName) -> bool {
     !is_hop_by_hop_header(name) && *name != HOST && *name != CONTENT_LENGTH
 }
@@ -910,6 +970,47 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("*")
         );
+        gateway.stop().await;
+        upstream.stop().await;
+    }
+
+    #[tokio::test]
+    async fn proxy_serves_model_catalog_without_upstream() {
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+        let port = gateway.port;
+        let response = tokio::task::spawn_blocking(move || {
+            ureq::get(format!(
+                "http://127.0.0.1:{port}/omni/supported-models/best?system=linux"
+            ))
+            .call()
+            .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let value: Value = response.into_body().read_json().unwrap();
+        assert!(value.is_object());
+        gateway.stop().await;
+        upstream.stop().await;
+    }
+
+    #[tokio::test]
+    async fn proxy_serves_empty_openai_models_without_loaded_runtime() {
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+        let port = gateway.port;
+        let response = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/v1/models"))
+                .call()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let value: Value = response.into_body().read_json().unwrap();
+        assert_eq!(value["object"], "list");
+        assert!(value["data"].as_array().unwrap().is_empty());
         gateway.stop().await;
         upstream.stop().await;
     }
