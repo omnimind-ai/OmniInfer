@@ -33,7 +33,7 @@ fn completion_generates_bash_script() {
 fn strict_mode_reports_unported_commands_without_fallback() {
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .args(["advisor", "fit", "missing.gguf"])
+        .args(["build", "llama.cpp-linux"])
         .assert()
         .success()
         .stdout(predicate::str::contains("implementation pending"));
@@ -130,6 +130,191 @@ fn advisor_system_text_prints_usable_backends() {
     gateway.join();
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
+fn advisor_inspect_json_estimates_local_model() {
+    let root = temp_repo_root("advisor-inspect");
+    fs::create_dir_all(&root).expect("create root");
+    let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
+    fs::write(&model, vec![0_u8; 1024]).expect("write model");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let output = cmd
+        .env("OMNIINFER_RUST_STRICT", "1")
+        .args(["advisor", "inspect"])
+        .arg(&model)
+        .arg("--json")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""object": "advisor.model""#))
+        .stdout(predicate::str::contains(r#""quantization": "Q4_K_M""#))
+        .stdout(predicate::str::contains(r#""params_b": 4.0"#))
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&output).expect("inspect json");
+    assert_eq!(payload["format"], "gguf");
+    assert_eq!(payload["artifact_kind"], "file");
+    assert_eq!(payload["exists"], true);
+    assert_eq!(payload["estimate"]["breakdown"]["context_size"], 8192);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn advisor_fit_json_ranks_installed_cuda_backend() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(test_backends_payload()),
+    ]);
+    let root = temp_repo_root("advisor-fit");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+    let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
+    fs::write(&model, vec![0_u8; 1024]).expect("write model");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let output = cmd
+        .env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["advisor", "fit"])
+        .arg(&model)
+        .args(["--ctx-size", "512", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""object": "advisor.fit""#))
+        .stdout(predicate::str::contains(
+            r#""backend": "llama.cpp-linux-cuda""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""recommendation_confidence": "high""#,
+        ))
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&output).expect("fit json");
+    assert_eq!(payload["recommended"]["backend"], "llama.cpp-linux-cuda");
+    assert_eq!(payload["recommended"]["fit"], "good");
+    assert_eq!(payload["recommended"]["evidence"]["level"], "direct");
+    assert!(
+        payload["next_command"]
+            .as_str()
+            .unwrap()
+            .contains("omniinfer backend select llama.cpp-linux-cuda")
+    );
+
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn advisor_plan_text_shows_simulated_hardware() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(test_backends_payload()),
+    ]);
+    let root = temp_repo_root("advisor-plan");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+    let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
+    fs::write(&model, vec![0_u8; 1024]).expect("write model");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["advisor", "plan"])
+        .arg(&model)
+        .args([
+            "--ctx-size",
+            "512",
+            "--gpu-vram",
+            "2",
+            "--ram",
+            "4",
+            "--cpu-cores",
+            "8",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OmniInfer Advisor Plan"))
+        .stdout(predicate::str::contains(
+            "Planning hardware: free_vram=2.0 GiB",
+        ))
+        .stdout(predicate::str::contains("Run paths:"));
+
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn advisor_recommend_json_scans_managed_models() {
+    let root = temp_repo_root("advisor-recommend");
+    let models_dir = root.join("models");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::create_dir_all(&models_dir).expect("create models dir");
+    let model = models_dir.join("Qwen3.5-Coder-4B-Q4_K_M.gguf");
+    fs::write(&model, vec![0_u8; 1024]).expect("write model");
+    let payload = test_backends_payload_with_models_dir(&models_dir);
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(&payload),
+    ]);
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let output = cmd
+        .env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args([
+            "advisor",
+            "recommend",
+            "--task",
+            "coding",
+            "-n",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""object": "advisor.recommend""#))
+        .stdout(predicate::str::contains(r#""returned": 1"#))
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&output).expect("recommend json");
+    assert_eq!(payload["models_scanned"], 1);
+    assert_eq!(
+        payload["recommendations"][0]["recommended"]["backend"],
+        "llama.cpp-linux-cuda"
+    );
+    assert_eq!(payload["recommendations"][0]["evidence"]["level"], "direct");
+
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /omni/backends?scope=all HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]
@@ -1257,6 +1442,41 @@ fn test_backends_payload() -> &'static str {
         }
       ]
     }"#
+}
+
+fn test_backends_payload_with_models_dir(models_dir: &std::path::Path) -> String {
+    format!(
+        r#"{{
+      "object": "list",
+      "recommended": "llama.cpp-linux-cuda",
+      "data": [
+        {{
+          "id": "llama.cpp-linux-cuda",
+          "label": "llama.cpp Linux CUDA",
+          "family": "llama.cpp",
+          "selected": true,
+          "binary_exists": true,
+          "models_dir": "{}",
+          "capabilities": ["chat", "vision", "stream", "gpu", "cuda", "linux"],
+          "compatibility": "installed",
+          "priority": 0
+        }},
+        {{
+          "id": "llama.cpp-linux",
+          "label": "llama.cpp Linux CPU",
+          "family": "llama.cpp",
+          "selected": false,
+          "binary_exists": true,
+          "models_dir": "{}",
+          "capabilities": ["chat", "stream", "cpu", "linux"],
+          "compatibility": "installed",
+          "priority": 1
+        }}
+      ]
+    }}"#,
+        models_dir.display(),
+        models_dir.display()
+    )
 }
 
 #[cfg(unix)]

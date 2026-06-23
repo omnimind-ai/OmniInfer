@@ -382,6 +382,59 @@ fn run_ported_command(command: &Command) -> Result<()> {
         Command::Advisor {
             command: AdvisorCommand::System { json },
         } => print_advisor_system(*json),
+        Command::Advisor {
+            command:
+                AdvisorCommand::Inspect {
+                    model,
+                    mmproj,
+                    json,
+                },
+        } => print_advisor_inspect(model, mmproj.as_deref(), *json),
+        Command::Advisor {
+            command:
+                AdvisorCommand::Fit {
+                    model,
+                    mmproj,
+                    ctx_size,
+                    backend,
+                    json,
+                },
+        } => print_advisor_fit(
+            model,
+            mmproj.as_deref(),
+            *ctx_size,
+            backend.as_deref(),
+            *json,
+        ),
+        Command::Advisor {
+            command:
+                AdvisorCommand::Plan {
+                    model,
+                    mmproj,
+                    ctx_size,
+                    gpu_vram,
+                    ram,
+                    cpu_cores,
+                    json,
+                },
+        } => print_advisor_plan(
+            model,
+            mmproj.as_deref(),
+            *ctx_size,
+            *gpu_vram,
+            *ram,
+            *cpu_cores,
+            *json,
+        ),
+        Command::Advisor {
+            command:
+                AdvisorCommand::Recommend {
+                    task,
+                    limit,
+                    ctx_size,
+                    json,
+                },
+        } => print_advisor_recommend(task.as_deref(), *limit, *ctx_size, *json),
         Command::Thinking {
             command: ThinkingCommand::Show,
         } => {
@@ -567,6 +620,69 @@ fn print_advisor_system(json_output: bool) -> Result<()> {
     )?;
     let payload = advisor::system_payload(backends);
     advisor::print_system(&payload, json_output)
+}
+
+fn print_advisor_inspect(model: &str, mmproj: Option<&str>, json_output: bool) -> Result<()> {
+    let payload = advisor::inspect_payload(model, mmproj, None)?;
+    advisor::print_inspect(&payload, json_output)
+}
+
+fn print_advisor_fit(
+    model: &str,
+    mmproj: Option<&str>,
+    ctx_size: Option<u32>,
+    backend: Option<&str>,
+    json_output: bool,
+) -> Result<()> {
+    let backends = get_local_json_for_config(
+        "/omni/backends?scope=all",
+        Duration::from_secs(10),
+        &config::load_app_config().unwrap_or_default(),
+    )?;
+    let payload = advisor::fit_payload(model, mmproj, ctx_size, backend, backends)?;
+    advisor::print_fit(&payload, json_output)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_advisor_plan(
+    model: &str,
+    mmproj: Option<&str>,
+    ctx_size: Option<u32>,
+    gpu_vram_gib: Option<f64>,
+    ram_gib: Option<f64>,
+    cpu_cores: Option<u32>,
+    json_output: bool,
+) -> Result<()> {
+    let backends = get_local_json_for_config(
+        "/omni/backends?scope=all",
+        Duration::from_secs(10),
+        &config::load_app_config().unwrap_or_default(),
+    )?;
+    let payload = advisor::plan_payload(
+        model,
+        mmproj,
+        ctx_size,
+        gpu_vram_gib,
+        ram_gib,
+        cpu_cores,
+        backends,
+    )?;
+    advisor::print_plan(&payload, json_output)
+}
+
+fn print_advisor_recommend(
+    task: Option<&str>,
+    limit: u32,
+    ctx_size: Option<u32>,
+    json_output: bool,
+) -> Result<()> {
+    let backends = get_local_json_for_config(
+        "/omni/backends?scope=all",
+        Duration::from_secs(10),
+        &config::load_app_config().unwrap_or_default(),
+    )?;
+    let payload = advisor::recommend_payload(task, limit, ctx_size, backends);
+    advisor::print_recommend(&payload, json_output)
 }
 
 fn select_backend(backend: &str) -> Result<()> {

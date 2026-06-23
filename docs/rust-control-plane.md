@@ -28,6 +28,10 @@ Implemented directly in Rust:
 - `advisor system` / `advisor system --json`, including host RAM/CPU probe,
   CUDA device probe, usable backend table, full JSON probe, and recommended
   installed backend derived from the current backend registry.
+- `advisor inspect`, `advisor fit`, `advisor plan`, and `advisor recommend`,
+  including local model artifact inspection, memory breakdown estimates,
+  evidence/confidence labels, backend fit ranking, hardware planning
+  simulations, and locally managed model recommendations.
 - `thinking show`
 - `thinking set on|off`
 - `serve status --port <port>`
@@ -60,7 +64,6 @@ Implemented directly in Rust:
 Fallback to the Python implementation:
 
 - no-argument TUI
-- `advisor inspect`, `advisor fit`, `advisor plan`, and `advisor recommend`
 - all other unported commands
 
 ## Fallback Controls
