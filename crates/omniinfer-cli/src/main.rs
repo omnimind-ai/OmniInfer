@@ -23,6 +23,7 @@ use omniinfer_core::{
 
 mod advisor;
 mod gateway;
+mod tui;
 
 #[derive(Debug, Parser)]
 #[command(name = "omniinfer-rs")]
@@ -227,8 +228,8 @@ struct ChatArgs {
     max_tokens: Option<u32>,
 }
 
-#[derive(Debug, Args)]
-struct ServeArgs {
+#[derive(Debug, Clone, Args)]
+pub(crate) struct ServeArgs {
     #[command(subcommand)]
     command: Option<ServeCommand>,
     #[arg(short = 'm', long)]
@@ -305,7 +306,7 @@ struct GatewayArgs {
     trust_proxy_headers: bool,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum ServeCommand {
     /// Show service status for a port.
     Status {
@@ -344,7 +345,7 @@ fn main() -> Result<()> {
     }
     let cli = Cli::parse();
     match cli.command.as_ref() {
-        None => print_tui_placeholder(),
+        None => tui::run()?,
         Some(Command::Status) => print_status(),
         Some(Command::Completion { shell }) => print_completion(shell.clone()),
         Some(Command::Gateway(args)) => run_gateway_command(args)?,
@@ -457,6 +458,9 @@ fn run_ported_command(command: &Command) -> Result<()> {
             command: Some(ServeCommand::Stop { port }),
             ..
         }) => stop_serve(*port),
+        Command::Serve(args) if can_serve_locally(args) && should_run_server_tui(args) => {
+            tui::run_server(args)
+        }
         Command::Serve(args) if can_serve_locally(args) => serve_orchestrated(args),
         Command::Gateway(args) => run_gateway_command(args),
         other => fallback_to_python(other),
@@ -476,19 +480,6 @@ fn run_gateway_command(args: &GatewayArgs) -> Result<()> {
             trust_proxy_headers: args.trust_proxy_headers,
         },
     })
-}
-
-fn print_tui_placeholder() {
-    if should_force_python() {
-        let _ = exec_python(env::args().skip(1));
-        return;
-    }
-    if should_strict_rust() {
-        println!("OmniInfer Rust TUI is not implemented yet.");
-        println!("Unset OMNIINFER_RUST_STRICT or use ./omniinfer for the current Python TUI.");
-        return;
-    }
-    let _ = exec_python(env::args().skip(1));
 }
 
 fn print_status() {
@@ -690,7 +681,7 @@ fn select_backend(backend: &str) -> Result<()> {
     select_backend_for_config(backend, &config)
 }
 
-fn select_backend_for_config(backend: &str, config: &config::AppConfig) -> Result<()> {
+pub(crate) fn select_backend_for_config(backend: &str, config: &config::AppConfig) -> Result<()> {
     let backends =
         get_local_json_for_config("/omni/backends?scope=all", Duration::from_secs(10), config)?;
     let rows = backends
@@ -778,7 +769,7 @@ fn load_model_with_request(
     load_model_with_request_for_config(request, verbose, &config)
 }
 
-fn load_model_with_request_for_config(
+pub(crate) fn load_model_with_request_for_config(
     request: &model_load::ModelLoadRequest,
     verbose: bool,
     config: &config::AppConfig,
@@ -951,7 +942,7 @@ fn print_thinking_set(mode: ThinkingMode) -> Result<()> {
     Ok(())
 }
 
-fn shutdown_service() -> Result<()> {
+pub(crate) fn shutdown_service() -> Result<()> {
     let config = config::load_app_config().unwrap_or_default();
     let url = format!("{}/omni/shutdown", config.service_base_url());
     match http_client::post_json(&url, &serde_json::json!({}), Duration::from_secs(10)) {
@@ -1096,7 +1087,17 @@ fn can_serve_locally(args: &ServeArgs) -> bool {
     args.command.is_none()
 }
 
-fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
+fn should_run_server_tui(args: &ServeArgs) -> bool {
+    use std::io::IsTerminal;
+    args.command.is_none()
+        && !args.detach
+        && args.model.is_none()
+        && !env_flag("OMNIINFER_SERVE_DIRECT")
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal()
+}
+
+pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     if args.no_smoke_test && args.smoke_test {
         anyhow::bail!("Use either --smoke-test or --no-smoke-test, not both.");
     }
@@ -1936,7 +1937,7 @@ fn build_chat_payload(args: &ChatArgs) -> Result<serde_json::Map<String, serde_j
     Ok(payload)
 }
 
-fn build_chat_messages(message: &str, args: &ChatArgs) -> Result<serde_json::Value> {
+pub(crate) fn build_chat_messages(message: &str, args: &ChatArgs) -> Result<serde_json::Value> {
     let Some(image) = args
         .image
         .as_deref()
@@ -2046,7 +2047,7 @@ fn print_chat_response(response: &serde_json::Value) {
     }
 }
 
-fn print_chat_performance(response: &serde_json::Value) {
+pub(crate) fn print_chat_performance(response: &serde_json::Value) {
     println!("Performance");
     println!("  Model: {}", json_str(response, "model").unwrap_or("-"));
     if let Some(usage) = response.get("usage") {
@@ -2110,18 +2111,18 @@ fn print_serve_status(port: u16) {
     }
 }
 
-fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+pub(crate) fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     value
         .get(key)
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.trim().is_empty())
 }
 
-fn json_bool(value: &serde_json::Value, key: &str) -> Option<bool> {
+pub(crate) fn json_bool(value: &serde_json::Value, key: &str) -> Option<bool> {
     value.get(key).and_then(serde_json::Value::as_bool)
 }
 
-fn json_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
+pub(crate) fn json_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
     value.get(key).and_then(serde_json::Value::as_u64)
 }
 
@@ -2130,7 +2131,7 @@ fn get_local_json(endpoint: &str, timeout: Duration) -> Result<serde_json::Value
     get_local_json_for_config(endpoint, timeout, &config)
 }
 
-fn get_local_json_for_config(
+pub(crate) fn get_local_json_for_config(
     endpoint: &str,
     timeout: Duration,
     config: &config::AppConfig,
@@ -2153,7 +2154,7 @@ fn post_local_json(
     post_local_json_for_config(endpoint, body, timeout, &config)
 }
 
-fn post_local_json_for_config(
+pub(crate) fn post_local_json_for_config(
     endpoint: &str,
     body: &serde_json::Value,
     timeout: Duration,

@@ -30,6 +30,17 @@ fn completion_generates_bash_script() {
 }
 
 #[test]
+fn tui_requires_interactive_terminal_without_python_fallback() {
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "OmniInfer TUI requires an interactive terminal.",
+        ));
+}
+
+#[test]
 fn strict_mode_reports_unported_commands_without_fallback() {
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")

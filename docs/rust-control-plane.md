@@ -32,6 +32,11 @@ Implemented directly in Rust:
   including local model artifact inspection, memory breakdown estimates,
   evidence/confidence labels, backend fit ranking, hardware planning
   simulations, and locally managed model recommendations.
+- no-argument TUI, including backend/model selection, managed model linking,
+  advisor badges and load preflight, streaming chat, conversation slash
+  commands, thinking/reasoning toggles, status display, and shutdown on exit.
+- interactive `serve` launcher in TTY sessions, reusing the Rust serve
+  orchestration path after backend/model selection.
 - `thinking show`
 - `thinking set on|off`
 - `serve status --port <port>`
@@ -63,7 +68,6 @@ Implemented directly in Rust:
 
 Fallback to the Python implementation:
 
-- no-argument TUI
 - all other unported commands
 
 ## Fallback Controls
