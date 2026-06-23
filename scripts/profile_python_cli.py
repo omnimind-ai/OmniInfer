@@ -344,6 +344,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, default=None, help="directory for raw.json and summary.md")
     parser.add_argument("--scenario", action="append", choices=[s.name for s in SCENARIOS], help="scenario to run; repeatable")
     parser.add_argument(
+        "--state-root",
+        type=Path,
+        default=None,
+        help="isolate OmniInfer .local/config/log/run state under this root",
+    )
+    parser.add_argument(
         "--skip-import-trace",
         action="store_true",
         help="skip representative Python -X importtime traces",
@@ -362,6 +368,14 @@ def main(argv: list[str] | None = None) -> int:
 
     env = os.environ.copy()
     env.setdefault("NO_COLOR", "1")
+    if args.state_root:
+        state_root = args.state_root.resolve()
+        (state_root / ".local" / "config").mkdir(parents=True, exist_ok=True)
+        (state_root / ".local" / "logs").mkdir(parents=True, exist_ok=True)
+        (state_root / ".local" / "run").mkdir(parents=True, exist_ok=True)
+        (state_root / "config").mkdir(parents=True, exist_ok=True)
+        env["OMNIINFER_RUST_REPO_ROOT"] = str(REPO_ROOT)
+        env["OMNIINFER_RUST_STATE_ROOT"] = str(state_root)
     payload: dict[str, Any] = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "host": {
@@ -372,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         "git": _git_info(),
         "runs_per_scenario": args.runs,
         "binary": args.binary,
+        "state_root": str(args.state_root.resolve()) if args.state_root else "",
         "scenarios": [],
     }
 

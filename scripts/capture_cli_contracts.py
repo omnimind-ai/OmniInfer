@@ -77,6 +77,13 @@ def _read_optional(path: Path) -> bytes | None:
         return None
 
 
+def _state_path(extra_env: dict[str, str]) -> Path:
+    state_root = extra_env.get("OMNIINFER_RUST_STATE_ROOT")
+    if state_root:
+        return Path(state_root) / ".local" / "config" / "state.json"
+    return STATE_PATH
+
+
 def _run_scenario(
     binary: str,
     scenario: ContractScenario,
@@ -84,7 +91,8 @@ def _run_scenario(
     extra_env: dict[str, str],
     fixture_model: Path,
 ) -> dict[str, Any]:
-    before_state = _read_optional(STATE_PATH)
+    state_path = _state_path(extra_env)
+    before_state = _read_optional(state_path)
     expanded_args = [
         str(fixture_model) if arg == "{fixture_model}" else arg
         for arg in scenario.args
@@ -111,7 +119,7 @@ def _run_scenario(
         stdout = exc.stdout or b""
         stderr = exc.stderr or b""
     elapsed = time.perf_counter() - started
-    after_state = _read_optional(STATE_PATH)
+    after_state = _read_optional(state_path)
 
     stdout_preview = stdout.decode("utf-8", errors="replace")[:4000]
     stderr_preview = stderr.decode("utf-8", errors="replace")[:4000]
@@ -130,6 +138,7 @@ def _run_scenario(
         and not timed_out
         and (scenario.allow_pending or not pending),
         "read_only": scenario.read_only,
+        "state_path": str(state_path),
         "state_changed": before_state != after_state,
         "wall_s": elapsed,
         "stdout_bytes": len(stdout),
@@ -194,6 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--binary", default="./omniinfer", help="entrypoint binary or script")
     parser.add_argument("--output-dir", type=Path, default=None, help="snapshot output directory")
     parser.add_argument("--scenario", action="append", choices=[s.name for s in SCENARIOS])
+    parser.add_argument(
+        "--state-root",
+        type=Path,
+        default=None,
+        help="isolate OmniInfer .local/config/log/run state under this root",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--rust-strict", action="store_true", help="set OMNIINFER_RUST_STRICT=1 for the snapshot")
     mode.add_argument("--force-python", action="store_true", help="set OMNIINFER_FORCE_PYTHON=1 for the snapshot")
@@ -213,12 +228,21 @@ def main(argv: list[str] | None = None) -> int:
         extra_env["OMNIINFER_RUST_STRICT"] = "1"
     if args.force_python:
         extra_env["OMNIINFER_FORCE_PYTHON"] = "1"
+    if args.state_root:
+        state_root = args.state_root.resolve()
+        (state_root / ".local" / "config").mkdir(parents=True, exist_ok=True)
+        (state_root / ".local" / "logs").mkdir(parents=True, exist_ok=True)
+        (state_root / ".local" / "run").mkdir(parents=True, exist_ok=True)
+        (state_root / "config").mkdir(parents=True, exist_ok=True)
+        extra_env["OMNIINFER_RUST_REPO_ROOT"] = str(REPO_ROOT)
+        extra_env["OMNIINFER_RUST_STATE_ROOT"] = str(state_root)
 
     payload = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "binary": args.binary,
         "env": extra_env,
         "fixture_model": str(fixture_model),
+        "state_path": str(_state_path(extra_env)),
         "git": _git_info(),
         "results": [
             _run_scenario(args.binary, scenario, extra_env=extra_env, fixture_model=fixture_model)

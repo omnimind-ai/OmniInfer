@@ -159,6 +159,8 @@ python3 scripts/capture_cli_contracts.py \
 
 The contract snapshot records command, exit code, stdout/stderr hashes, preview
 text, and whether read-only scenarios modified `.local/config/state.json`.
+Use `--state-root tmp/test_results/<run>/state` when validating the Rust
+entrypoint so contract runs do not mutate the real checkout state.
 
 ## Profiling
 
@@ -182,6 +184,30 @@ python3 scripts/profile_python_cli.py \
   --skip-import-trace \
   --output-dir tmp/test_results/rust-control-plane-rust-readonly-profile
 ```
+
+Use `--state-root` for the same reason as contract snapshots.
+
+## Pre-Switch Validation
+
+Run the consolidated local validation before changing `./omniinfer` to the
+Rust entrypoint:
+
+```bash
+python3 scripts/validate_rust_control_plane.py \
+  --runs 3 \
+  --output-dir tmp/test_results/rust-control-plane-pre-switch-validation
+```
+
+The script records:
+
+- `cargo fmt --all -- --check`
+- `cargo test --workspace`
+- Python, strict Rust, and forced-Python CLI contract snapshots
+- Python and Rust CLI profiling summaries
+- `git diff --check`
+
+Each contract/profile run uses an isolated state root and writes artifacts under
+the selected output directory.
 
 ## Before Switching `./omniinfer`
 
