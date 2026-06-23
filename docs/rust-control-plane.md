@@ -63,6 +63,19 @@ Implemented directly in Rust:
   graceful shutdown after `/omni/shutdown`. Rust normalizes
   `/v1/chat/completions` bodies before forwarding, including thinking/reasoning
   aliases, legacy function tools, request defaults, and stream-format options.
+- Rust-native gateway runtime management for external-server backends,
+  including `/omni/backend/select`, `/omni/backend/stop`,
+  `/omni/model/select`, `/health`, `/omni/state`, `/omni/backends`,
+  `/v1/models`, and direct `/v1/chat/completions` forwarding to the loaded
+  backend after Rust request normalization.
+- Bundled model catalog handling for `model list`,
+  `/omni/supported-models`, and `/omni/supported-models/best`, including
+  installed-backend filtering, best-backend merge, and local RAM/VRAM fit
+  annotations.
+- llama.cpp-compatible model artifact discovery, including recursive directory
+  scanning for a single text GGUF, mmproj GGUF detection, sibling/project-root
+  mmproj auto-discovery, and ambiguity errors for multiple text models or
+  projectors.
 - `shutdown`
 - `completion bash`
 - `chat <prompt>`, `chat --no-stream <prompt>`, and local `chat --image <path>`
@@ -134,14 +147,15 @@ Rust runtime preparation now includes two no-user-visible core layers:
 - `runtime_process` starts an external runtime command, redirects stdout/stderr
   to the runtime log, waits for `/health`, and stops the child with graceful
   termination followed by kill-on-timeout cleanup. This is covered by unit tests
-  but is not yet wired into the user-facing gateway path.
+  and is wired into the Rust gateway path for external-server backends.
 
-Gateway replacement covers the user-facing HTTP server layer. Rust listens on
-the public/local `serve` port and proxies to a loopback Python upstream that
-still owns full runtime/model orchestration for user requests. This keeps
-runtime behavior compatible while moving the externally exposed gateway
-surface, auth boundary, CORS handling, request normalization, SSE pass-through,
-and `/omni/shutdown` lifecycle into Rust.
+Gateway replacement covers the user-facing HTTP server layer and the primary
+external-server runtime path. Rust listens on the public/local `serve` port,
+handles the core management endpoints listed above, launches external
+llama.cpp/ik/vLLM-style runtimes directly, synthesizes Python-compatible
+health/state snapshots, and forwards OpenAI chat directly to the loaded backend.
+Endpoints that are not yet native still proxy to the loopback Python upstream,
+preserving compatibility while the remaining control-plane surface is migrated.
 
 ## Contract Snapshots
 
@@ -233,20 +247,22 @@ Each contract/profile run uses an isolated state root and writes artifacts under
 the selected output directory.
 
 Latest local validation artifact:
-`tmp/test_results/20260623-rust-control-plane-validation-smoke-2/summary.md`.
-That run passed formatting, workspace tests, Python contracts, strict Rust
+`tmp/test_results/20260623-validation-after-runtime-native/summary.md`. That
+run passed formatting, workspace tests, Python contracts, strict Rust
 contracts, forced-Python contracts, Python/Rust profiles, and `git diff
 --check`.
-The later `--runs 7` artifact is
-`tmp/test_results/20260623-rust-control-plane-validation-runs7/summary.md`;
-it passed the same full validation suite with seven profiling samples per
-scenario.
+
+Latest Rust-native gateway smoke artifact:
+`tmp/test_results/20260623-rust-native-gateway-real-smoke/summary.md`. It
+loaded Qwen3.5 4B through the Rust gateway's native `/omni/model/select`,
+reported `backend_ready=true`, exposed one model through `/v1/models`, and
+returned `rust-native-ok` through direct OpenAI chat forwarding.
 
 Latest VLM/mmproj smoke artifact:
-`tmp/test_results/20260623-vlm-mmproj-full-smoke/summary.md`. It validated the
-Rust `serve` orchestration path with Stepfun 4B plus mmproj and Qwen3.6 27B
-with both BF16 and F16 projectors, including real image chat requests through
-the OpenAI-compatible endpoint.
+`tmp/test_results/20260623-vlm-mmproj-after-rust-native-full/summary.md`. It
+validated the Rust `serve` orchestration path with Stepfun 4B plus mmproj and
+Qwen3.6 27B with both BF16 and F16 projectors, including real image chat
+requests through the OpenAI-compatible endpoint.
 
 ## Before Switching `./omniinfer`
 
@@ -276,12 +292,9 @@ Remaining pre-switch work after the current Linux validation:
 
 - Run cross-platform launcher validation on Windows and macOS, including
   PowerShell/cmd wrappers and packaged source-checkout behavior.
-- Finish wiring Rust runtime process management into the gateway/server path so
-  model load, backend stop, health snapshots, and OpenAI chat can run without
-  delegating runtime orchestration to the Python upstream.
 - Replace remaining Python runtime-manager responsibilities that are not yet in
-  Rust: embedded MLX/MNN drivers, supported-model catalog endpoints,
-  tokenizer/cache management endpoints, model artifact discovery helpers, and
-  backend health/snapshot synthesis.
+  Rust: embedded MLX/MNN drivers, tokenizer/cache management endpoints,
+  Anthropic direct runtime handling, and any less-used management endpoints that
+  still proxy to the Python upstream.
 - Switch `./omniinfer` only after the above checks are recorded, then keep
   `OMNIINFER_FORCE_PYTHON=1` available for rollback during at least one release.
