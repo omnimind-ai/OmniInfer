@@ -281,6 +281,9 @@ async fn try_handle_rust_endpoint(
                     "object": "model",
                     "created": 0,
                     "owned_by": "omniinfer",
+                    "permission": [],
+                    "root": model_id,
+                    "parent": null,
                 }));
             }
             Ok(Some(json_response(
@@ -404,6 +407,7 @@ struct LoadedRustRuntime {
     model: String,
     mmproj: Option<String>,
     ctx_size: Option<u32>,
+    launch_args: Vec<String>,
     process: RuntimeProcess,
     proxy_model_ref: Option<String>,
 }
@@ -502,6 +506,9 @@ impl RustRuntimeManager {
                     .map(str::to_string)
                     .collect::<Vec<_>>()
             });
+        let effective_launch_args = launch_args
+            .clone()
+            .unwrap_or_else(|| backend.default_args.clone());
         let port = pick_runtime_port(&backend_host)?;
         let backend_payload = serde_json::to_value(backend)?;
         let plan = build_external_runtime_plan(&ExternalRuntimeRequest {
@@ -539,6 +546,7 @@ impl RustRuntimeManager {
             model: resolved_model.model_path.clone(),
             mmproj: mmproj_path.clone(),
             ctx_size: plan.ctx_size,
+            launch_args: effective_launch_args,
             proxy_model_ref: plan.proxy_model_ref.clone(),
             process,
         });
@@ -574,6 +582,15 @@ impl RustRuntimeManager {
                 "model": null,
                 "mmproj": null,
                 "ctx_size": null,
+                "request_defaults": {},
+                "runtime_mode": null,
+                "backend_pid": null,
+                "backend_port": null,
+                "launch_args": [],
+                "launch_command": [],
+                "proxy_model": null,
+                "backend_log": null,
+                "effective_parameters": {},
                 "runtime": null,
             });
         };
@@ -584,6 +601,15 @@ impl RustRuntimeManager {
             "model": loaded.model,
             "mmproj": loaded.mmproj,
             "ctx_size": loaded.ctx_size,
+            "request_defaults": {},
+            "runtime_mode": "external_server",
+            "backend_pid": info.pid,
+            "backend_port": info.port,
+            "launch_args": loaded.launch_args,
+            "launch_command": info.command,
+            "proxy_model": loaded.proxy_model_ref,
+            "backend_log": info.log_path.display().to_string(),
+            "effective_parameters": {},
             "runtime": {
                 "mode": "external_server",
                 "host": "127.0.0.1",
@@ -593,9 +619,6 @@ impl RustRuntimeManager {
                 "log_path": info.log_path.display().to_string(),
                 "proxy_model_ref": loaded.proxy_model_ref,
             },
-            "backend_pid": info.pid,
-            "backend_port": info.port,
-            "launch_command": info.command,
             "log_path": info.log_path.display().to_string(),
         })
     }
