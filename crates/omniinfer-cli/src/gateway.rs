@@ -17,6 +17,7 @@ use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use omniinfer_core::gateway_auth::{GatewayAccessPolicy, RequestAuthContext, authorize_request};
+use omniinfer_core::request_normalization::normalize_chat_request;
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -104,7 +105,10 @@ async fn proxy_request_inner(
     let should_shutdown = request.method() == Method::POST && path == "/omni/shutdown";
     let upstream = upstream_uri(&state.upstream_base, request.uri())?;
     let (parts, body) = request.into_parts();
-    let body = body.collect().await?.to_bytes();
+    let mut body = body.collect().await?.to_bytes();
+    if parts.method == Method::POST && path == "/v1/chat/completions" {
+        body = normalize_chat_body(body, false)?;
+    }
     let mut builder = Request::builder().method(parts.method).uri(upstream);
     for (name, value) in parts.headers.iter() {
         if should_forward_header(name) {
@@ -142,6 +146,12 @@ async fn proxy_request_inner(
         }
     }
     Ok(response)
+}
+
+fn normalize_chat_body(body: HyperBytes, default_thinking: bool) -> Result<HyperBytes> {
+    let payload: serde_json::Value = serde_json::from_slice(&body)?;
+    let normalized = normalize_chat_request(payload, default_thinking)?;
+    Ok(HyperBytes::from(serde_json::to_vec(&normalized.payload)?))
 }
 
 fn auth_context(request: &Request<Body>, peer_ip: IpAddr) -> RequestAuthContext {
@@ -337,6 +347,43 @@ mod tests {
         assert_eq!(value["trace"], "1");
         assert_eq!(value["body"]["model"], "omniinfer");
         assert_eq!(value["auth"], "Bearer secret");
+        gateway.stop().await;
+        upstream.stop().await;
+    }
+
+    #[tokio::test]
+    async fn proxy_normalizes_chat_request_before_upstream() {
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+        let port = gateway.port;
+        let response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .send_json(serde_json::json!({
+                    "model": "omniinfer",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "think": false,
+                    "reasoning": {"effort": "high"},
+                    "request_defaults": {"temperature": 0.2},
+                    "functions": [{"name": "context_time_now", "parameters": {"type": "object"}}],
+                    "function_call": {"name": "context_time_now"}
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let value: serde_json::Value = response.into_body().read_json().unwrap();
+        let body = &value["body"];
+        assert!(body.get("think").is_none());
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("request_defaults").is_none());
+        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
+        assert_eq!(body["reasoning_format"], "none");
+        assert_eq!(body["tools"][0]["function"]["name"], "context_time_now");
+        assert_eq!(
+            body["tool_choice"],
+            json!({"type": "function", "function": {"name": "context_time_now"}})
+        );
         gateway.stop().await;
         upstream.stop().await;
     }
