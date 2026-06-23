@@ -118,6 +118,21 @@ pub fn save_selected_model(
     save_state_value(&value)
 }
 
+pub fn save_tui_show_reasoning(enabled: bool) -> Result<(), StateError> {
+    let mut value = load_state_value().unwrap_or_else(|_| serde_json::json!({}));
+    if !value.is_object() {
+        value = serde_json::json!({});
+    }
+    let map = value
+        .as_object_mut()
+        .expect("state value was normalized to object");
+    map.insert(
+        "tui_show_reasoning".to_string(),
+        Value::String(if enabled { "on" } else { "off" }.to_string()),
+    );
+    save_state_value(&value)
+}
+
 fn load_state_value() -> Result<Value, StateError> {
     let path = if paths::state_file().is_file() {
         paths::state_file()
@@ -257,6 +272,20 @@ mod tests {
         );
         let state = parse_state_value(&value);
         assert_eq!(state.selected_backend.as_deref(), Some("new"));
+        assert_eq!(value["future"]["keep"], true);
+    }
+
+    #[test]
+    fn tui_reasoning_state_uses_python_shape() {
+        let mut value = serde_json::json!({
+            "future": { "keep": true }
+        });
+        value.as_object_mut().unwrap().insert(
+            "tui_show_reasoning".to_string(),
+            Value::String("on".to_string()),
+        );
+        let state = parse_state_value(&value);
+        assert!(state.tui_show_reasoning);
         assert_eq!(value["future"]["keep"], true);
     }
 
