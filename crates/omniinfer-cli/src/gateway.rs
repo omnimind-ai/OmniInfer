@@ -22,6 +22,7 @@ use omniinfer_core::backend_registry;
 use omniinfer_core::backend_registry::{BackendRegistry, BackendScope};
 use omniinfer_core::gateway_auth::{GatewayAccessPolicy, RequestAuthContext, authorize_request};
 use omniinfer_core::local_state;
+use omniinfer_core::model_artifacts::{discover_llama_cpp_model_artifacts, maybe_auto_mmproj};
 use omniinfer_core::request_normalization::normalize_chat_request;
 use omniinfer_core::runtime_plan::{ExternalRuntimeRequest, build_external_runtime_plan};
 use omniinfer_core::runtime_process::{RuntimeProcess, RuntimeProcessOptions};
@@ -429,13 +430,19 @@ impl RustRuntimeManager {
                 backend.launcher_path.as_deref().unwrap_or("(unset)")
             );
         }
-        let model_path = resolve_model_for_backend(&model, backend)?;
-        let mmproj_path = payload
+        let resolved_model = resolve_model_for_backend(&model, backend)?;
+        let explicit_mmproj = payload
             .get("mmproj")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(|value| resolve_path_for_backend(value, backend, "mmproj file"))
             .transpose()?;
+        let mmproj_path = explicit_mmproj.or(resolved_model.mmproj_path).or_else(|| {
+            maybe_auto_mmproj(backend.models_dir.as_deref(), &resolved_model.model_path)
+        });
+        if mmproj_path.is_some() && !backend.supports_mmproj {
+            anyhow::bail!("{} does not support mmproj inputs", backend.id);
+        }
         let ctx_size = payload
             .get("ctx_size")
             .and_then(Value::as_u64)
@@ -454,7 +461,7 @@ impl RustRuntimeManager {
         let backend_payload = serde_json::to_value(backend)?;
         let plan = build_external_runtime_plan(&ExternalRuntimeRequest {
             backend: backend_payload,
-            model_path: model_path.clone(),
+            model_path: resolved_model.model_path.clone(),
             mmproj_path: mmproj_path.clone(),
             host: backend_host.clone(),
             port,
@@ -477,10 +484,14 @@ impl RustRuntimeManager {
         let info = process.info().clone();
         self.selected_backend = Some(backend.id.clone());
         local_state::save_selected_backend(&backend.id)?;
-        local_state::save_selected_model(&model_path, mmproj_path.as_deref(), plan.ctx_size)?;
+        local_state::save_selected_model(
+            &resolved_model.model_path,
+            mmproj_path.as_deref(),
+            plan.ctx_size,
+        )?;
         self.loaded = Some(LoadedRustRuntime {
             backend_id: backend.id.clone(),
-            model: model_path.clone(),
+            model: resolved_model.model_path.clone(),
             mmproj: mmproj_path.clone(),
             ctx_size: plan.ctx_size,
             proxy_model_ref: plan.proxy_model_ref.clone(),
@@ -489,7 +500,7 @@ impl RustRuntimeManager {
         Ok(json!({
             "ok": true,
             "selected_backend": backend.id,
-            "selected_model": model_path,
+            "selected_model": resolved_model.model_path,
             "selected_mmproj": mmproj_path,
             "selected_ctx_size": plan.ctx_size,
             "backend_pid": info.pid,
@@ -568,15 +579,21 @@ fn json_required_str<'a>(payload: &'a Value, key: &'static str) -> Result<&'a st
 fn resolve_model_for_backend(
     model: &str,
     backend: &backend_registry::BackendSpec,
-) -> Result<String> {
+) -> Result<omniinfer_core::model_artifacts::ResolvedModelArtifacts> {
     if backend.model_artifact == "reference" {
-        return Ok(model.to_string());
+        return Ok(omniinfer_core::model_artifacts::ResolvedModelArtifacts {
+            model_path: model.to_string(),
+            mmproj_path: None,
+        });
     }
     let path = resolve_path_for_backend(model, backend, "model")?;
     if backend.model_artifact == "file" && PathBuf::from(&path).is_dir() {
-        return discover_gguf_in_dir(&PathBuf::from(path));
+        return Ok(discover_llama_cpp_model_artifacts(&PathBuf::from(path))?);
     }
-    Ok(path)
+    Ok(omniinfer_core::model_artifacts::ResolvedModelArtifacts {
+        model_path: path,
+        mmproj_path: None,
+    })
 }
 
 fn resolve_path_for_backend(
@@ -599,25 +616,6 @@ fn resolve_path_for_backend(
         anyhow::bail!("{label} not found: {}", path.display());
     }
     Ok(path.display().to_string())
-}
-
-fn discover_gguf_in_dir(dir: &PathBuf) -> Result<String> {
-    let mut files = std::fs::read_dir(dir)?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("gguf"))
-                .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
-    files.sort();
-    files
-        .into_iter()
-        .next()
-        .map(|path| path.display().to_string())
-        .ok_or_else(|| anyhow::anyhow!("no GGUF model found in {}", dir.display()))
 }
 
 fn expand_home(path: PathBuf) -> PathBuf {
@@ -983,6 +981,53 @@ mod tests {
         assert_eq!(
             chat_body["choices"][0]["message"]["content"],
             "fake backend"
+        );
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
+    #[tokio::test]
+    async fn rust_gateway_discovers_model_directory_artifacts() {
+        let temp = temp_root("rust-gateway-artifacts");
+        let model_dir = temp.join("models").join("vision-model");
+        let nested = model_dir.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let model = nested.join("model.gguf");
+        let mmproj = model_dir.join("mmproj-F16.gguf");
+        std::fs::write(&model, "").unwrap();
+        std::fs::write(&mmproj, "").unwrap();
+        install_fake_llama_server(&temp);
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+        let port = gateway.port;
+
+        let load_response = tokio::task::spawn_blocking({
+            let model_dir = model_dir.clone();
+            move || {
+                ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                    .send_json(json!({
+                        "backend": "llama.cpp-linux-cuda",
+                        "model": model_dir.display().to_string(),
+                        "ctx_size": 512
+                    }))
+                    .unwrap()
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(load_response.status().as_u16(), 200);
+        let load_body: Value = load_response.into_body().read_json().unwrap();
+        assert_eq!(
+            load_body["selected_model"].as_str().unwrap(),
+            model.display().to_string()
+        );
+        assert_eq!(
+            load_body["selected_mmproj"].as_str().unwrap(),
+            mmproj.display().to_string()
         );
 
         gateway.stop().await;
