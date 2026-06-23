@@ -33,6 +33,18 @@ SCENARIOS = [
     ContractScenario("help", ["--help"]),
     ContractScenario("advisor-help", ["advisor"], expected_returncodes=(2,)),
     ContractScenario("advisor-system-json", ["advisor", "system", "--json"], timeout_s=60.0),
+    ContractScenario("advisor-inspect-json", ["advisor", "inspect", "{fixture_model}", "--json"], timeout_s=60.0),
+    ContractScenario(
+        "advisor-fit-json",
+        ["advisor", "fit", "{fixture_model}", "--ctx-size", "512", "--json"],
+        timeout_s=60.0,
+    ),
+    ContractScenario(
+        "advisor-plan-json",
+        ["advisor", "plan", "{fixture_model}", "--ctx-size", "512", "--json"],
+        timeout_s=60.0,
+    ),
+    ContractScenario("advisor-recommend-json", ["advisor", "recommend", "-n", "2", "--json"], timeout_s=60.0),
     ContractScenario("serve-help", ["serve", "--help"]),
     ContractScenario("completion-bash", ["completion", "bash"]),
     ContractScenario("status", ["status"], timeout_s=60.0),
@@ -65,9 +77,19 @@ def _read_optional(path: Path) -> bytes | None:
         return None
 
 
-def _run_scenario(binary: str, scenario: ContractScenario, *, extra_env: dict[str, str]) -> dict[str, Any]:
+def _run_scenario(
+    binary: str,
+    scenario: ContractScenario,
+    *,
+    extra_env: dict[str, str],
+    fixture_model: Path,
+) -> dict[str, Any]:
     before_state = _read_optional(STATE_PATH)
-    command = [binary, *scenario.args]
+    expanded_args = [
+        str(fixture_model) if arg == "{fixture_model}" else arg
+        for arg in scenario.args
+    ]
+    command = [binary, *expanded_args]
     started = time.perf_counter()
     try:
         completed = subprocess.run(
@@ -144,6 +166,7 @@ def _write_summary(path: Path, payload: dict[str, Any]) -> None:
         f"- Timestamp: `{payload['timestamp_utc']}`",
         f"- Binary: `{payload['binary']}`",
         f"- Env: `{payload.get('env') or {}}`",
+        f"- Fixture model: `{payload['fixture_model']}`",
         f"- Git branch: `{payload['git'].get('branch', '-')}`",
         f"- Git commit: `{payload['git'].get('commit', '-')}`",
         "",
@@ -183,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
 
     output_dir = args.output_dir or DEFAULT_OUTPUT_ROOT / f"{_utc_stamp()}-cli-contracts"
     output_dir.mkdir(parents=True, exist_ok=True)
+    fixture_model = _ensure_fixture_model(output_dir)
 
     extra_env: dict[str, str] = {}
     if args.rust_strict:
@@ -194,8 +218,12 @@ def main(argv: list[str] | None = None) -> int:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "binary": args.binary,
         "env": extra_env,
+        "fixture_model": str(fixture_model),
         "git": _git_info(),
-        "results": [_run_scenario(args.binary, scenario, extra_env=extra_env) for scenario in selected],
+        "results": [
+            _run_scenario(args.binary, scenario, extra_env=extra_env, fixture_model=fixture_model)
+            for scenario in selected
+        ],
     }
     raw_path = output_dir / "raw.json"
     summary_path = output_dir / "summary.md"
@@ -210,6 +238,15 @@ def main(argv: list[str] | None = None) -> int:
     if state_mutations:
         print("Read-only scenarios changed state:", ", ".join(result["name"] for result in state_mutations), file=sys.stderr)
     return 1 if failed or state_mutations else 0
+
+
+def _ensure_fixture_model(output_dir: Path) -> Path:
+    fixtures = output_dir / "fixtures"
+    fixtures.mkdir(parents=True, exist_ok=True)
+    model = fixtures / "Qwen3.5-4B-Q4_K_M.gguf"
+    if not model.exists():
+        model.write_bytes(b"OmniInfer advisor contract fixture\n")
+    return model
 
 
 if __name__ == "__main__":
