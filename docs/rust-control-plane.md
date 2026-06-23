@@ -39,9 +39,9 @@ Implemented directly in Rust:
 - `serve --cloudflare --detach`, including loopback gateway binding, managed or
   explicit `cloudflared` resolution, Quick Tunnel URL parsing, generated or
   configured API keys, serve pid files with tunnel pid, stop cleanup, and
-  ready/curl output. Rust smoke-test for this path currently validates the local
-  OpenAI endpoint; HTTPS smoke through the public URL remains delegated to the
-  Python path until the Rust HTTP client grows TLS support.
+  ready/curl output. `--smoke-test` first validates the local OpenAI endpoint,
+  then validates the public HTTPS `trycloudflare.com` URL with the same bearer
+  key and short retries for fresh Quick Tunnel DNS/edge propagation.
 - `shutdown`
 - `completion bash`
 - `chat <prompt>`, `chat --no-stream <prompt>`, and local `chat --image <path>`
@@ -69,7 +69,9 @@ OMNIINFER_RUST_STATE_ROOT=/tmp/omniinfer-state target/debug/omniinfer-rs status
 - `OMNIINFER_RUST_STATE_ROOT=/path/to/root` keeps `.local/`, `config/`, logs,
   run files, state, and backend profiles under a separate root while
   `OMNIINFER_RUST_REPO_ROOT` continues to identify the source checkout. This is
-  useful for isolated integration tests against the real Python gateway.
+  useful for isolated integration tests against the real Python gateway. Rust
+  serve orchestration passes both path overrides into Python child processes so
+  model loading, health checks, logs, and pid files use the same state root.
 - `OMNIINFER_PYTHON=/path/to/python` selects the Python executable used by
   fallback.
 
@@ -88,6 +90,11 @@ validation, ctx-size precedence, launch args, and request defaults. The Rust
 path can POST JSON model-load responses and persist selected backend/model
 state. It also parses model-load SSE progress, done, and error events while
 printing progress as event lines arrive.
+
+Rust core also includes a small HTTPS JSON client for public smoke tests. Local
+HTTP streaming paths still use the existing hand-written localhost client, while
+public JSON checks use a blocking rustls-backed client suitable for CLI control
+flow.
 
 ## Contract Snapshots
 
