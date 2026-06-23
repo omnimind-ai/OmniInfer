@@ -194,6 +194,11 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
         (&Method::POST, "/v1/messages") => {
             state.runtime.lock().await.current_proxy_base().is_some()
         }
+        (
+            &Method::POST,
+            "/tokenize" | "/detokenize" | "/omni/tokenize" | "/omni/detokenize"
+            | "/omni/cache/clear",
+        ) => state.runtime.lock().await.current_proxy_base().is_some(),
         _ => false,
     }
 }
@@ -385,6 +390,30 @@ async fn try_handle_rust_endpoint(
             .await?;
             Ok(Some(response))
         }
+        (&Method::POST, "/tokenize" | "/detokenize" | "/omni/tokenize" | "/omni/detokenize") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let operation = if path.ends_with("detokenize") {
+                "detokenize"
+            } else {
+                "tokenize"
+            };
+            let target = state.runtime.lock().await.current_proxy_base();
+            let Some(target) = target else {
+                return Ok(None);
+            };
+            let response =
+                proxy_body_to_runtime(&state.client, &format!("{target}/{operation}"), body)
+                    .await?;
+            Ok(Some(response))
+        }
+        (&Method::POST, "/omni/cache/clear") => {
+            let target = state.runtime.lock().await.current_proxy_base();
+            let Some(target) = target else {
+                return Ok(None);
+            };
+            let response = clear_runtime_cache(&state.client, &target).await?;
+            Ok(Some(response))
+        }
         (&Method::POST, "/v1/messages") => {
             let body = request.into_body().collect().await?.to_bytes();
             let payload: Value = serde_json::from_slice(&body)?;
@@ -455,6 +484,50 @@ async fn proxy_body_to_runtime(
         .body(Full::new(body))?;
     let response = client.request(request).await?;
     response_from_upstream(response).await
+}
+
+async fn clear_runtime_cache(
+    client: &Client<HttpConnector, Full<HyperBytes>>,
+    runtime_base: &str,
+) -> Result<Response<Body>> {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("{runtime_base}/slots/0?action=erase"))
+        .body(Full::new(HyperBytes::new()))?;
+    let response = client.request(request).await?;
+    let status = response.status();
+    let body = response.into_body().collect().await?.to_bytes();
+    if status.is_success() {
+        return Ok(json_response(
+            StatusCode::OK,
+            json!({"ok": true, "message": "KV cache cleared"}),
+        ));
+    }
+    let detail = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or_else(|| String::from_utf8_lossy(&body).trim().to_string());
+    let message = if detail.to_ascii_lowercase().contains("multimodal") {
+        "KV cache clear is not supported for multimodal models by llama.cpp; use /omni/backend/stop + /omni/model/select to reload instead".to_string()
+    } else if detail.is_empty() {
+        format!("backend slot erase failed: HTTP {}", status.as_u16())
+    } else {
+        format!(
+            "backend slot erase failed: HTTP {} - {detail}",
+            status.as_u16()
+        )
+    };
+    Ok(json_response(
+        StatusCode::CONFLICT,
+        json!({"error": {"message": message}}),
+    ))
 }
 
 async fn proxy_anthropic_to_runtime(
@@ -1260,6 +1333,40 @@ mod tests {
             json!({"type": "text", "text": "fake backend"})
         );
 
+        let tokenize_response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/tokenize"))
+                .send_json(json!({"content": "hello", "add_special": true}))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(tokenize_response.status().as_u16(), 200);
+        let tokenize_body: Value = tokenize_response.into_body().read_json().unwrap();
+        assert_eq!(tokenize_body["tokens"], json!([1, 2, 3]));
+        assert_eq!(tokenize_body["echo"]["content"], "hello");
+
+        let detokenize_response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/detokenize"))
+                .send_json(json!({"tokens": [1, 2, 3]}))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(detokenize_response.status().as_u16(), 200);
+        let detokenize_body: Value = detokenize_response.into_body().read_json().unwrap();
+        assert_eq!(detokenize_body["content"], "hello");
+
+        let cache_response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/cache/clear"))
+                .send_empty()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(cache_response.status().as_u16(), 200);
+        let cache_body: Value = cache_response.into_body().read_json().unwrap();
+        assert_eq!(cache_body["ok"], true);
+
         gateway.stop().await;
         upstream.stop().await;
         std::fs::remove_dir_all(temp).ok();
@@ -1574,6 +1681,15 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length else b"{}"
         payload = json.loads(body.decode() or "{}")
+        if self.path.startswith("/tokenize"):
+            self._json({"tokens": [1, 2, 3], "echo": payload})
+            return
+        if self.path.startswith("/detokenize"):
+            self._json({"content": "hello", "echo": payload})
+            return
+        if self.path.startswith("/slots/0"):
+            self._json({"ok": True})
+            return
         if self.path.startswith("/v1/chat/completions") and payload.get("stream") is True:
             frames = [
                 'data: {"choices":[{"delta":{"content":"fake"}}]}\n\n',
