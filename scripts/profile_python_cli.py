@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import platform
@@ -114,6 +115,46 @@ def _scenario_for_binary(scenario: Scenario, binary: str) -> Scenario:
         description=scenario.description,
         expected_returncodes=scenario.expected_returncodes,
     )
+
+
+def _free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _prepare_state_root(state_root: Path) -> int:
+    port = _free_loopback_port()
+    (state_root / ".local" / "config").mkdir(parents=True, exist_ok=True)
+    (state_root / ".local" / "logs").mkdir(parents=True, exist_ok=True)
+    (state_root / ".local" / "run").mkdir(parents=True, exist_ok=True)
+    (state_root / "config").mkdir(parents=True, exist_ok=True)
+    config = {
+        "host": "127.0.0.1",
+        "port": port,
+        "startup_timeout": 10,
+        "window_mode": "hidden",
+        "default_thinking": "off",
+    }
+    (state_root / "config" / "omniinfer.json").write_text(
+        json.dumps(config, indent=2), encoding="utf-8"
+    )
+    return port
+
+
+def _shutdown_state_root_service(binary: str, env: dict[str, str]) -> None:
+    if "OMNIINFER_RUST_STATE_ROOT" not in env:
+        return
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            [binary, "shutdown"],
+            cwd=REPO_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5.0,
+            env=env,
+            check=False,
+        )
 
 
 def _run_once(scenario: Scenario, *, env: dict[str, str]) -> dict[str, Any]:
@@ -370,12 +411,11 @@ def main(argv: list[str] | None = None) -> int:
     env.setdefault("NO_COLOR", "1")
     if args.state_root:
         state_root = args.state_root.resolve()
-        (state_root / ".local" / "config").mkdir(parents=True, exist_ok=True)
-        (state_root / ".local" / "logs").mkdir(parents=True, exist_ok=True)
-        (state_root / ".local" / "run").mkdir(parents=True, exist_ok=True)
-        (state_root / "config").mkdir(parents=True, exist_ok=True)
+        state_port = _prepare_state_root(state_root)
         env["OMNIINFER_RUST_REPO_ROOT"] = str(REPO_ROOT)
         env["OMNIINFER_RUST_STATE_ROOT"] = str(state_root)
+    else:
+        state_port = None
     payload: dict[str, Any] = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "host": {
@@ -387,6 +427,7 @@ def main(argv: list[str] | None = None) -> int:
         "runs_per_scenario": args.runs,
         "binary": args.binary,
         "state_root": str(args.state_root.resolve()) if args.state_root else "",
+        "state_port": state_port,
         "scenarios": [],
     }
 
@@ -405,6 +446,8 @@ def main(argv: list[str] | None = None) -> int:
         if not args.skip_import_trace and scenario.name in IMPORT_TRACE_SCENARIOS:
             item["import_trace"] = _run_import_trace(scenario, env=env)
         payload["scenarios"].append(item)
+
+    _shutdown_state_root_service(args.binary, env)
 
     raw_path = output_dir / "raw.json"
     summary_path = output_dir / "summary.md"

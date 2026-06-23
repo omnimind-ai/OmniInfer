@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import contextlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -82,6 +84,46 @@ def _state_path(extra_env: dict[str, str]) -> Path:
     if state_root:
         return Path(state_root) / ".local" / "config" / "state.json"
     return STATE_PATH
+
+
+def _free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _prepare_state_root(state_root: Path) -> int:
+    port = _free_loopback_port()
+    (state_root / ".local" / "config").mkdir(parents=True, exist_ok=True)
+    (state_root / ".local" / "logs").mkdir(parents=True, exist_ok=True)
+    (state_root / ".local" / "run").mkdir(parents=True, exist_ok=True)
+    (state_root / "config").mkdir(parents=True, exist_ok=True)
+    config = {
+        "host": "127.0.0.1",
+        "port": port,
+        "startup_timeout": 10,
+        "window_mode": "hidden",
+        "default_thinking": "off",
+    }
+    (state_root / "config" / "omniinfer.json").write_text(
+        json.dumps(config, indent=2), encoding="utf-8"
+    )
+    return port
+
+
+def _shutdown_state_root_service(binary: str, extra_env: dict[str, str]) -> None:
+    if "OMNIINFER_RUST_STATE_ROOT" not in extra_env:
+        return
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            [binary, "shutdown"],
+            cwd=REPO_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5.0,
+            env={**os.environ, "NO_COLOR": "1", **extra_env},
+            check=False,
+        )
 
 
 def _run_scenario(
@@ -230,12 +272,11 @@ def main(argv: list[str] | None = None) -> int:
         extra_env["OMNIINFER_FORCE_PYTHON"] = "1"
     if args.state_root:
         state_root = args.state_root.resolve()
-        (state_root / ".local" / "config").mkdir(parents=True, exist_ok=True)
-        (state_root / ".local" / "logs").mkdir(parents=True, exist_ok=True)
-        (state_root / ".local" / "run").mkdir(parents=True, exist_ok=True)
-        (state_root / "config").mkdir(parents=True, exist_ok=True)
+        state_port = _prepare_state_root(state_root)
         extra_env["OMNIINFER_RUST_REPO_ROOT"] = str(REPO_ROOT)
         extra_env["OMNIINFER_RUST_STATE_ROOT"] = str(state_root)
+    else:
+        state_port = None
 
     payload = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -243,12 +284,14 @@ def main(argv: list[str] | None = None) -> int:
         "env": extra_env,
         "fixture_model": str(fixture_model),
         "state_path": str(_state_path(extra_env)),
+        "state_port": state_port,
         "git": _git_info(),
         "results": [
             _run_scenario(args.binary, scenario, extra_env=extra_env, fixture_model=fixture_model)
             for scenario in selected
         ],
     }
+    _shutdown_state_root_service(args.binary, extra_env)
     raw_path = output_dir / "raw.json"
     summary_path = output_dir / "summary.md"
     raw_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
