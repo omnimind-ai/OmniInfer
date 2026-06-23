@@ -60,7 +60,9 @@ Implemented directly in Rust:
 - Rust-facing HTTP gateway/proxy used by `serve`, including auth policy, CORS
   preflight responses, OpenAI/Anthropic/public endpoint forwarding, local-only
   management protection, SSE streaming responses, body/query forwarding, and
-  graceful shutdown after `/omni/shutdown`.
+  graceful shutdown after `/omni/shutdown`. Rust normalizes
+  `/v1/chat/completions` bodies before forwarding, including thinking/reasoning
+  aliases, legacy function tools, request defaults, and stream-format options.
 - `shutdown`
 - `completion bash`
 - `chat <prompt>`, `chat --no-stream <prompt>`, and local `chat --image <path>`
@@ -113,12 +115,33 @@ HTTP streaming paths still use the existing hand-written localhost client, while
 public JSON checks use a blocking rustls-backed client suitable for CLI control
 flow.
 
-Gateway replacement now covers the user-facing HTTP server layer. Rust listens
-on the public/local `serve` port and proxies to a loopback Python upstream that
-still owns runtime/backend orchestration and request normalization. This keeps
-runtime behavior compatible while moving the externally exposed gateway surface,
-auth boundary, CORS handling, SSE pass-through, and `/omni/shutdown` lifecycle
-into Rust.
+Rust backend registry now mirrors the Python backend templates for Linux,
+Windows, macOS, Android, and iOS, including backend priority, runtime paths,
+environment/config overrides, installed-runtime probing, capabilities,
+model-artifact semantics, and OpenAI-server protocol metadata. Read-only
+backend/advisor/TUI flows use this registry directly, so `backend list`,
+`advisor system`, `advisor fit`, `advisor plan`, `advisor recommend`, and TUI
+advisor preflight no longer need to auto-start the Python gateway just to read
+backend metadata.
+
+Rust runtime preparation now includes two no-user-visible core layers:
+
+- `runtime_plan` builds Python-compatible external backend launch commands for
+  llama.cpp-compatible servers, ik_llama.cpp, and vLLM OpenAI servers,
+  including ctx-size replacement, reserved OmniInfer-managed flag validation,
+  slot-save paths, mmproj args, vLLM served-model-name defaults, cwd, log file
+  name, and proxy model ref.
+- `runtime_process` starts an external runtime command, redirects stdout/stderr
+  to the runtime log, waits for `/health`, and stops the child with graceful
+  termination followed by kill-on-timeout cleanup. This is covered by unit tests
+  but is not yet wired into the user-facing gateway path.
+
+Gateway replacement covers the user-facing HTTP server layer. Rust listens on
+the public/local `serve` port and proxies to a loopback Python upstream that
+still owns full runtime/model orchestration for user requests. This keeps
+runtime behavior compatible while moving the externally exposed gateway
+surface, auth boundary, CORS handling, request normalization, SSE pass-through,
+and `/omni/shutdown` lifecycle into Rust.
 
 ## Contract Snapshots
 
@@ -253,8 +276,12 @@ Remaining pre-switch work after the current Linux validation:
 
 - Run cross-platform launcher validation on Windows and macOS, including
   PowerShell/cmd wrappers and packaged source-checkout behavior.
-- Decide whether the long-term no-Python target requires replacing the Python
-  runtime manager/backend registry/request normalization; the current Rust
-  gateway intentionally proxies to a loopback Python upstream.
+- Finish wiring Rust runtime process management into the gateway/server path so
+  model load, backend stop, health snapshots, and OpenAI chat can run without
+  delegating runtime orchestration to the Python upstream.
+- Replace remaining Python runtime-manager responsibilities that are not yet in
+  Rust: embedded MLX/MNN drivers, supported-model catalog endpoints,
+  tokenizer/cache management endpoints, model artifact discovery helpers, and
+  backend health/snapshot synthesis.
 - Switch `./omniinfer` only after the above checks are recorded, then keep
   `OMNIINFER_FORCE_PYTHON=1` available for rollback during at least one release.
