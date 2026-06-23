@@ -720,6 +720,7 @@ dependencies = [
 name = "omniinfer-core"
 version = "0.2.1"
 dependencies = [
+ "rand",
  "serde",
  "serde_json",
  "thiserror",

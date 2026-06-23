@@ -1,3 +1,4 @@
+pub mod anthropic;
 pub mod backend_args;
 pub mod backend_profiles;
 pub mod backend_registry;

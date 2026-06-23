@@ -18,6 +18,9 @@ use http_body_util::{BodyExt, Full};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use omniinfer_core::anthropic::{
+    anthropic_request_to_openai, openai_response_to_anthropic, openai_sse_to_anthropic_sse,
+};
 use omniinfer_core::backend_registry;
 use omniinfer_core::backend_registry::{BackendRegistry, BackendScope};
 use omniinfer_core::gateway_auth::{GatewayAccessPolicy, RequestAuthContext, authorize_request};
@@ -186,6 +189,9 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
             true
         }
         (&Method::POST, "/v1/chat/completions") => {
+            state.runtime.lock().await.current_proxy_base().is_some()
+        }
+        (&Method::POST, "/v1/messages") => {
             state.runtime.lock().await.current_proxy_base().is_some()
         }
         _ => false,
@@ -379,6 +385,41 @@ async fn try_handle_rust_endpoint(
             .await?;
             Ok(Some(response))
         }
+        (&Method::POST, "/v1/messages") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let payload: Value = serde_json::from_slice(&body)?;
+            let messages = payload.get("messages").and_then(Value::as_array);
+            if !messages.is_some_and(|messages| !messages.is_empty()) {
+                return Ok(Some(json_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({"error": {"type": "invalid_request_error", "message": "messages is required"}}),
+                )));
+            }
+            let response_model = payload
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("omniinfer")
+                .to_string();
+            let openai_payload = anthropic_request_to_openai(&payload);
+            let normalized = normalize_chat_request(openai_payload, false)?;
+            let target = state.runtime.lock().await.current_proxy_base();
+            let Some(target) = target else {
+                return Ok(None);
+            };
+            let response = proxy_anthropic_to_runtime(
+                &state.client,
+                &format!("{target}/v1/chat/completions"),
+                HyperBytes::from(serde_json::to_vec(&normalized.payload)?),
+                &response_model,
+                normalized
+                    .payload
+                    .get("stream")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            )
+            .await?;
+            Ok(Some(response))
+        }
         _ => Ok(None),
     }
 }
@@ -414,6 +455,39 @@ async fn proxy_body_to_runtime(
         .body(Full::new(body))?;
     let response = client.request(request).await?;
     response_from_upstream(response).await
+}
+
+async fn proxy_anthropic_to_runtime(
+    client: &Client<HttpConnector, Full<HyperBytes>>,
+    uri: &str,
+    body: HyperBytes,
+    response_model: &str,
+    stream: bool,
+) -> Result<Response<Body>> {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Full::new(body))?;
+    let response = client.request(request).await?;
+    let status = response.status();
+    if !status.is_success() {
+        return response_from_upstream(response).await;
+    }
+    let body = response.into_body().collect().await?.to_bytes();
+    if stream {
+        let converted = openai_sse_to_anthropic_sse(&body, response_model);
+        let mut response = Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "text/event-stream")
+            .header(CONTENT_LENGTH, converted.len().to_string())
+            .body(Body::from(converted))?;
+        add_cors_headers(response.headers_mut());
+        return Ok(response);
+    }
+    let payload: Value = serde_json::from_slice(&body)?;
+    let converted = openai_response_to_anthropic(&payload, response_model);
+    Ok(json_response(StatusCode::OK, converted))
 }
 
 async fn response_from_upstream(
@@ -1165,6 +1239,27 @@ mod tests {
             "fake backend"
         );
 
+        let anthropic_response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/v1/messages"))
+                .send_json(json!({
+                    "model": "claude-compatible",
+                    "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": false
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(anthropic_response.status().as_u16(), 200);
+        let anthropic_body: Value = anthropic_response.into_body().read_json().unwrap();
+        assert_eq!(anthropic_body["type"], "message");
+        assert_eq!(anthropic_body["model"], "claude-compatible");
+        assert_eq!(
+            anthropic_body["content"][0],
+            json!({"type": "text", "text": "fake backend"})
+        );
+
         gateway.stop().await;
         upstream.stop().await;
         std::fs::remove_dir_all(temp).ok();
@@ -1210,6 +1305,59 @@ mod tests {
         .unwrap();
         let chat_body: Value = chat_response.into_body().read_json().unwrap();
         assert_eq!(chat_body["body"]["model"], "omniinfer");
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
+    #[tokio::test]
+    async fn rust_gateway_converts_anthropic_streams() {
+        let temp = temp_root("rust-gateway-anthropic-stream");
+        let model = temp.join("model.gguf");
+        std::fs::create_dir_all(&temp).unwrap();
+        std::fs::write(&model, "").unwrap();
+        install_fake_llama_server(&temp);
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+        let port = gateway.port;
+
+        tokio::task::spawn_blocking({
+            let model = model.clone();
+            move || {
+                ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                    .send_json(json!({
+                        "backend": "llama.cpp-linux-cuda",
+                        "model": model.display().to_string(),
+                        "ctx_size": 512
+                    }))
+                    .unwrap()
+            }
+        })
+        .await
+        .unwrap();
+
+        let response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/v1/messages"))
+                .send_json(json!({
+                    "model": "claude-compatible",
+                    "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": true
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let text = response.into_body().read_to_string().unwrap();
+        assert!(text.contains("event: message_start"));
+        assert!(text.contains("event: content_block_delta"));
+        assert!(text.contains("\"text\":\"fake\""));
+        assert!(text.contains("\"text\":\" backend\""));
+        assert!(text.contains("event: message_stop"));
 
         gateway.stop().await;
         upstream.stop().await;
@@ -1424,9 +1572,25 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True})
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
-        if length:
-            self.rfile.read(length)
-        self._json({"choices": [{"message": {"content": "fake backend"}}]})
+        body = self.rfile.read(length) if length else b"{}"
+        payload = json.loads(body.decode() or "{}")
+        if self.path.startswith("/v1/chat/completions") and payload.get("stream") is True:
+            frames = [
+                'data: {"choices":[{"delta":{"content":"fake"}}]}\n\n',
+                'data: {"choices":[{"delta":{"content":" backend"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n',
+                'data: [DONE]\n\n',
+            ]
+            raw = "".join(frames).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        self._json({
+            "choices": [{"message": {"content": "fake backend"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+        })
 
 HTTPServer(("127.0.0.1", port), Handler).serve_forever()
 PY
