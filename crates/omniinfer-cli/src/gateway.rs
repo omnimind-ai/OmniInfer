@@ -319,8 +319,37 @@ async fn try_handle_rust_endpoint(
             Ok(Some(json_response(StatusCode::OK, result)))
         }
         (&Method::POST, "/omni/model/select") => {
-            let body = request.into_body().collect().await?.to_bytes();
+            let (parts, body) = request.into_parts();
+            let body = body.collect().await?.to_bytes();
             let payload: Value = serde_json::from_slice(&body)?;
+            let requested_backend = {
+                let mut runtime = state.runtime.lock().await;
+                let requested_backend = runtime.resolve_requested_backend(&payload)?;
+                let registry = BackendRegistry::load_current();
+                let backend = registry
+                    .get(&requested_backend)
+                    .ok_or_else(|| anyhow::anyhow!("unsupported backend: {requested_backend}"))?;
+                if backend.runtime_mode == "embedded" {
+                    runtime.stop_runtime()?;
+                    runtime.selected_backend = Some(backend.id.clone());
+                    local_state::save_selected_backend(&backend.id)?;
+                    Some(backend.id.clone())
+                } else {
+                    None
+                }
+            };
+            if requested_backend.is_some() {
+                let response = proxy_collected_body_to_upstream(
+                    &state.client,
+                    &state.upstream_base,
+                    &parts.method,
+                    &parts.uri,
+                    &parts.headers,
+                    body,
+                )
+                .await?;
+                return Ok(Some(response));
+            }
             let backend_host = state.backend_host.clone();
             let runtime = Arc::clone(&state.runtime);
             let result = tokio::task::spawn_blocking(move || {
@@ -354,6 +383,25 @@ async fn try_handle_rust_endpoint(
     }
 }
 
+async fn proxy_collected_body_to_upstream(
+    client: &Client<HttpConnector, Full<HyperBytes>>,
+    upstream_base: &str,
+    method: &Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    body: HyperBytes,
+) -> Result<Response<Body>> {
+    let upstream = upstream_uri(upstream_base, uri)?;
+    let mut builder = Request::builder().method(method).uri(upstream);
+    for (name, value) in headers.iter() {
+        if should_forward_header(name) {
+            builder = builder.header(name, value);
+        }
+    }
+    let upstream_request = builder.body(Full::new(body))?;
+    response_from_upstream(client.request(upstream_request).await?).await
+}
+
 async fn proxy_body_to_runtime(
     client: &Client<HttpConnector, Full<HyperBytes>>,
     uri: &str,
@@ -365,6 +413,12 @@ async fn proxy_body_to_runtime(
         .header(CONTENT_TYPE, "application/json")
         .body(Full::new(body))?;
     let response = client.request(request).await?;
+    response_from_upstream(response).await
+}
+
+async fn response_from_upstream(
+    response: hyper::Response<hyper::body::Incoming>,
+) -> Result<Response<Body>> {
     let status = response.status();
     let content_type = response
         .headers()
@@ -449,20 +503,7 @@ impl RustRuntimeManager {
         startup_timeout: Duration,
     ) -> Result<Value> {
         let model = json_required_str(&payload, "model")?.to_string();
-        let requested_backend = payload
-            .get("backend")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .or_else(|| self.selected_backend.clone())
-            .or_else(|| {
-                BackendRegistry::load_current()
-                    .api_payload(BackendScope::Installed)
-                    .get("recommended")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .ok_or_else(|| anyhow::anyhow!("no installed backend available"))?;
+        let requested_backend = self.resolve_requested_backend(&payload)?;
         let registry = BackendRegistry::load_current();
         let backend = registry
             .get(&requested_backend)
@@ -561,6 +602,23 @@ impl RustRuntimeManager {
             "launch_command": info.command,
             "log_path": info.log_path.display().to_string(),
         }))
+    }
+
+    fn resolve_requested_backend(&self, payload: &Value) -> Result<String> {
+        payload
+            .get("backend")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| self.selected_backend.clone())
+            .or_else(|| {
+                BackendRegistry::load_current()
+                    .api_payload(BackendScope::Installed)
+                    .get("recommended")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| anyhow::anyhow!("no installed backend available"))
     }
 
     fn current_proxy_base(&self) -> Option<String> {
@@ -1113,6 +1171,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rust_gateway_delegates_embedded_model_loads_to_upstream() {
+        let temp = temp_root("rust-gateway-embedded");
+        std::fs::create_dir_all(&temp).unwrap();
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+        let port = gateway.port;
+
+        let load_response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                .send_json(json!({
+                    "backend": "mnn-linux",
+                    "model": "embedded-demo",
+                    "ctx_size": 512
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(load_response.status().as_u16(), 200);
+        let load_body: Value = load_response.into_body().read_json().unwrap();
+        assert_eq!(load_body["selected_backend"], "mnn-linux");
+        assert_eq!(load_body["delegated"], true);
+        assert_eq!(load_body["body"]["model"], "embedded-demo");
+
+        let chat_response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .send_json(json!({
+                    "model": "omniinfer",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": false
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let chat_body: Value = chat_response.into_body().read_json().unwrap();
+        assert_eq!(chat_body["body"]["model"], "omniinfer");
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
+    #[tokio::test]
     async fn rust_gateway_discovers_model_directory_artifacts() {
         let temp = temp_root("rust-gateway-artifacts");
         let model_dir = temp.join("models").join("vision-model");
@@ -1194,6 +1298,7 @@ mod tests {
                 get(|| async { axum::Json(json!({"status": "ok"})) }),
             )
             .route("/v1/chat/completions", post(echo_chat_completion))
+            .route("/omni/model/select", post(echo_model_select))
             .route(
                 "/omni/shutdown",
                 post(|| async { axum::Json(json!({"ok": true})) }),
@@ -1223,6 +1328,16 @@ mod tests {
         Json(json!({
             "trace": query.get("trace").cloned().unwrap_or_default(),
             "auth": header_text(&headers, "authorization").unwrap_or_default(),
+            "body": body,
+        }))
+    }
+
+    async fn echo_model_select(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+        Json(json!({
+            "ok": true,
+            "delegated": true,
+            "selected_backend": body.get("backend").cloned().unwrap_or(Value::Null),
+            "selected_model": body.get("model").cloned().unwrap_or(Value::Null),
             "body": body,
         }))
     }
