@@ -209,13 +209,20 @@ The script records:
 Each contract/profile run uses an isolated state root and writes artifacts under
 the selected output directory.
 
+Latest local validation artifact:
+`tmp/test_results/20260623-rust-control-plane-validation-smoke-2/summary.md`.
+That run passed formatting, workspace tests, Python contracts, strict Rust
+contracts, forced-Python contracts, Python/Rust profiles, and `git diff
+--check`.
+
 ## Before Switching `./omniinfer`
 
 Do not switch the default entrypoint until these conditions are satisfied:
 
 - All user-visible commands parse in Rust and either run natively or fallback
   without changing stdout/stderr/exit-code semantics.
-- Contract snapshots pass for Python and Rust wrapper entrypoints.
+- Contract snapshots pass for Python, strict Rust, and forced-Python wrapper
+  entrypoints.
 - State/config compatibility is covered for `.local/config/state.json`,
   legacy `cli_state.json`, backend profiles, serve pid files, and
   `config/omniinfer.json`.
@@ -231,3 +238,16 @@ Do not switch the default entrypoint until these conditions are satisfied:
 
 Only after that should `./omniinfer` default to Rust. Keep the Python fallback
 available for at least one release cycle.
+
+Remaining pre-switch work after the current Linux validation:
+
+- Run the consolidated validation with more profile samples, for example
+  `--runs 3` or `--runs 7`, before making performance claims.
+- Run cross-platform launcher validation on Windows and macOS, including
+  PowerShell/cmd wrappers and packaged source-checkout behavior.
+- Run a real VLM smoke matrix for image chat and mmproj load paths.
+- Decide whether the long-term no-Python target requires replacing the Python
+  runtime manager/backend registry/request normalization; the current Rust
+  gateway intentionally proxies to a loopback Python upstream.
+- Switch `./omniinfer` only after the above checks are recorded, then keep
+  `OMNIINFER_FORCE_PYTHON=1` available for rollback during at least one release.
