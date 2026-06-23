@@ -26,6 +26,7 @@ class ContractScenario:
     expected_returncodes: tuple[int, ...] = (0,)
     timeout_s: float = 30.0
     read_only: bool = True
+    allow_pending: bool = False
 
 
 SCENARIOS = [
@@ -90,6 +91,10 @@ def _run_scenario(binary: str, scenario: ContractScenario, *, extra_env: dict[st
     elapsed = time.perf_counter() - started
     after_state = _read_optional(STATE_PATH)
 
+    stdout_preview = stdout.decode("utf-8", errors="replace")[:4000]
+    stderr_preview = stderr.decode("utf-8", errors="replace")[:4000]
+    pending = _contains_pending_marker(stdout_preview) or _contains_pending_marker(stderr_preview)
+
     return {
         "name": scenario.name,
         "command": command,
@@ -97,7 +102,11 @@ def _run_scenario(binary: str, scenario: ContractScenario, *, extra_env: dict[st
         "expected_returncodes": list(scenario.expected_returncodes),
         "returncode": returncode,
         "timed_out": timed_out,
-        "ok": (returncode in scenario.expected_returncodes) and not timed_out,
+        "pending": pending,
+        "allow_pending": scenario.allow_pending,
+        "ok": (returncode in scenario.expected_returncodes)
+        and not timed_out
+        and (scenario.allow_pending or not pending),
         "read_only": scenario.read_only,
         "state_changed": before_state != after_state,
         "wall_s": elapsed,
@@ -105,9 +114,13 @@ def _run_scenario(binary: str, scenario: ContractScenario, *, extra_env: dict[st
         "stderr_bytes": len(stderr),
         "stdout_sha256": _sha256(stdout),
         "stderr_sha256": _sha256(stderr),
-        "stdout_preview": stdout.decode("utf-8", errors="replace")[:4000],
-        "stderr_preview": stderr.decode("utf-8", errors="replace")[:4000],
+        "stdout_preview": stdout_preview,
+        "stderr_preview": stderr_preview,
     }
+
+
+def _contains_pending_marker(text: str) -> bool:
+    return "implementation pending" in text or "not implemented yet" in text
 
 
 def _git_info() -> dict[str, str]:
@@ -134,15 +147,16 @@ def _write_summary(path: Path, payload: dict[str, Any]) -> None:
         f"- Git branch: `{payload['git'].get('branch', '-')}`",
         f"- Git commit: `{payload['git'].get('commit', '-')}`",
         "",
-        "| Scenario | Exit | Expected | State changed | stdout | stderr |",
-        "|---|---:|---|---:|---:|---:|",
+        "| Scenario | Exit | Expected | Pending | State changed | stdout | stderr |",
+        "|---|---:|---|---:|---:|---:|---:|",
     ]
     for result in payload["results"]:
         lines.append(
-            "| {name} | {exit} | {expected} | {state} | {stdout} | {stderr} |".format(
+            "| {name} | {exit} | {expected} | {pending} | {state} | {stdout} | {stderr} |".format(
                 name=result["name"],
                 exit="timeout" if result["timed_out"] else result["returncode"],
                 expected=",".join(str(code) for code in result["expected_returncodes"]),
+                pending="yes" if result["pending"] else "no",
                 state="yes" if result["state_changed"] else "no",
                 stdout=result["stdout_bytes"],
                 stderr=result["stderr_bytes"],
