@@ -1119,9 +1119,15 @@ fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
                                 Some(format!("local ok: {local_text}; public ok: {public_text}"));
                         }
                         Err(error) => {
-                            smoke_failed = true;
+                            let transient_public_error = is_transient_public_smoke_error(&error);
+                            smoke_failed = !transient_public_error;
+                            let public_status = if transient_public_error {
+                                "public warning"
+                            } else {
+                                "public failed"
+                            };
                             smoke_text =
-                                Some(format!("local ok: {local_text}; public failed: {error}"));
+                                Some(format!("local ok: {local_text}; {public_status}: {error}"));
                         }
                     }
                 } else {
@@ -1689,7 +1695,7 @@ fn serve_smoke(base_url: &str, api_key: Option<&str>) -> Result<String> {
 }
 
 fn serve_smoke_with_retry(base_url: &str, api_key: Option<&str>) -> Result<String> {
-    let deadline = Instant::now() + Duration::from_secs(45);
+    let deadline = Instant::now() + public_smoke_retry_duration();
     loop {
         match serve_smoke(base_url, api_key) {
             Ok(text) => return Ok(text),
@@ -1703,6 +1709,14 @@ fn serve_smoke_with_retry(base_url: &str, api_key: Option<&str>) -> Result<Strin
     }
 }
 
+fn public_smoke_retry_duration() -> Duration {
+    env::var("OMNIINFER_RUST_PUBLIC_SMOKE_RETRY_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(45))
+}
+
 fn is_transient_public_smoke_error(error: &anyhow::Error) -> bool {
     let text = error.to_string().to_ascii_lowercase();
     text.contains("failed to lookup address")
@@ -1712,6 +1726,12 @@ fn is_transient_public_smoke_error(error: &anyhow::Error) -> bool {
         || text.contains("connection reset")
         || text.contains("timed out")
         || text.contains("operation timed out")
+        || text.contains("http status: 520")
+        || text.contains("http status: 521")
+        || text.contains("http status: 522")
+        || text.contains("http status: 523")
+        || text.contains("http status: 524")
+        || text.contains("http status: 530")
 }
 
 fn print_chat(args: &ChatArgs) -> Result<()> {
@@ -2223,4 +2243,21 @@ fn python_executable() -> std::ffi::OsString {
     env::var_os("OMNIINFER_PYTHON")
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "python3".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloudflare_edge_530_is_transient_public_smoke_error() {
+        let error = anyhow::anyhow!("HTTPS request failed: http status: 530");
+        assert!(is_transient_public_smoke_error(&error));
+    }
+
+    #[test]
+    fn auth_failures_are_not_transient_public_smoke_errors() {
+        let error = anyhow::anyhow!("HTTPS request failed: http status: 401");
+        assert!(!is_transient_public_smoke_error(&error));
+    }
 }

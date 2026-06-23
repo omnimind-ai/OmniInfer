@@ -41,7 +41,14 @@ Implemented directly in Rust:
   configured API keys, serve pid files with tunnel pid, stop cleanup, and
   ready/curl output. `--smoke-test` first validates the local OpenAI endpoint,
   then validates the public HTTPS `trycloudflare.com` URL with the same bearer
-  key and short retries for fresh Quick Tunnel DNS/edge propagation.
+  key and short retries for fresh Quick Tunnel DNS/edge propagation. Transient
+  public DNS/edge failures are reported as warnings after local smoke passes,
+  because the tunnel URL can become reachable after the CLI has printed the
+  ready block.
+- Rust-facing HTTP gateway/proxy used by `serve`, including auth policy, CORS
+  preflight responses, OpenAI/Anthropic/public endpoint forwarding, local-only
+  management protection, SSE streaming responses, body/query forwarding, and
+  graceful shutdown after `/omni/shutdown`.
 - `shutdown`
 - `completion bash`
 - `chat <prompt>`, `chat --no-stream <prompt>`, and local `chat --image <path>`
@@ -96,11 +103,12 @@ HTTP streaming paths still use the existing hand-written localhost client, while
 public JSON checks use a blocking rustls-backed client suitable for CLI control
 flow.
 
-Gateway replacement work has started at the shared-core layer. The Rust core now
-has tested access-policy/auth helpers matching the Python gateway behavior for
-loopback clients, remote public inference endpoints, local-only management
-endpoints, Bearer and `x-api-key` credentials, trusted proxy headers, and
-insecure LAN opt-in. The HTTP server itself is still Python-backed.
+Gateway replacement now covers the user-facing HTTP server layer. Rust listens
+on the public/local `serve` port and proxies to a loopback Python upstream that
+still owns runtime/backend orchestration and request normalization. This keeps
+runtime behavior compatible while moving the externally exposed gateway surface,
+auth boundary, CORS handling, SSE pass-through, and `/omni/shutdown` lifecycle
+into Rust.
 
 ## Contract Snapshots
 
@@ -177,7 +185,7 @@ Do not switch the default entrypoint until these conditions are satisfied:
   `config/omniinfer.json`.
 - Runtime process management is ported or explicitly delegated to fallback.
 - Gateway API compatibility is covered for `/health`, OpenAI chat, Anthropic
-  messages, management endpoints, CORS, auth, and shutdown.
+  messages, management endpoints, CORS, auth, SSE pass-through, and shutdown.
 - One-command public serve still supports Cloudflare, `--detach`,
   `--api-key auto`, smoke tests, status, stop, logs, and curl output.
 - TUI either has a Rust implementation or intentionally falls back to Python.
