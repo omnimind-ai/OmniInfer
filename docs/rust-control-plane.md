@@ -4,13 +4,16 @@ OmniInfer is migrating CLI, TUI, gateway orchestration, and local service
 management to Rust. Inference runtimes remain external runtime backends such as
 llama.cpp, vLLM, MLX, and MNN.
 
-The production entrypoint is still `./omniinfer`. The experimental Rust
-entrypoint is:
+The source-checkout `./omniinfer` entrypoint now defaults to the Rust control
+plane on this branch. Build or refresh it with:
 
 ```bash
 cargo build -p omniinfer-cli
-target/debug/omniinfer-rs --help
+./omniinfer --help
 ```
+
+Set `OMNIINFER_FORCE_PYTHON=1` to run the legacy Python entrypoint during the
+rollback window.
 
 ## Current Rust Coverage
 
@@ -73,11 +76,15 @@ Implemented directly in Rust:
   Rust external-server runtime is stopped, preserving MNN/MLX embedded driver
   behavior without making Rust own those in-process runtimes.
 - Rust-native compatibility endpoints for loaded external-server backends:
-  Anthropic `/v1/messages` request/response conversion, basic Anthropic SSE
-  conversion from OpenAI chat streams, `/tokenize`, `/detokenize`,
-  `/omni/tokenize`, `/omni/detokenize`, and `/omni/cache/clear` via llama.cpp
-  slot erase. When no Rust external runtime is loaded, these endpoints still
-  fall back to the Python upstream for embedded and legacy compatibility.
+  Anthropic `/v1/messages` request/response conversion, true incremental
+  Anthropic SSE streaming converted from OpenAI chat streams, `/tokenize`,
+  `/detokenize`, `/omni/tokenize`, `/omni/detokenize`, and
+  `/omni/cache/clear` via llama.cpp slot erase. When no Rust external runtime
+  is loaded, these endpoints still fall back to the Python upstream for
+  embedded and legacy compatibility.
+- Rust-native small management endpoints for loaded external-server backends:
+  `/omni/thinking`, `/omni/thinking/select`, `/omni/backend/props`, and the
+  deprecated `/omni/models` compatibility response.
 - Bundled model catalog handling for `model list`,
   `/omni/supported-models`, and `/omni/supported-models/best`, including
   installed-backend filtering, best-backend merge, and local RAM/VRAM fit
@@ -211,10 +218,11 @@ entrypoint so contract runs do not mutate the real checkout state.
 
 ## Profiling
 
-Capture Python baseline:
+Capture Python baseline through the forced fallback path:
 
 ```bash
 python3 scripts/profile_python_cli.py \
+  --force-python \
   --runs 7 \
   --output-dir tmp/test_results/rust-control-plane-python-profile
 ```
@@ -234,15 +242,15 @@ python3 scripts/profile_python_cli.py \
 
 Use `--state-root` for the same reason as contract snapshots.
 
-## Pre-Switch Validation
+## Post-Switch Validation
 
-Run the consolidated local validation before changing `./omniinfer` to the
-Rust entrypoint:
+Run the consolidated local validation after changing `./omniinfer` to the Rust
+entrypoint:
 
 ```bash
 python3 scripts/validate_rust_control_plane.py \
-  --runs 3 \
-  --output-dir tmp/test_results/rust-control-plane-pre-switch-validation
+  --runs 7 \
+  --output-dir tmp/test_results/rust-control-plane-post-switch-validation
 ```
 
 The script records:
@@ -257,10 +265,10 @@ Each contract/profile run uses an isolated state root and writes artifacts under
 the selected output directory.
 
 Latest local validation artifact:
-`tmp/test_results/20260623-validation-after-anthropic-token-cache/summary.md`.
-That run passed formatting, workspace tests, Python contracts, strict Rust
-contracts, forced-Python contracts, Python/Rust profiles, and `git diff
---check`.
+`tmp/test_results/20260624-final-rust-entrypoint-validation-2/summary.md`.
+That run passed formatting, workspace tests, Python contracts through
+`OMNIINFER_FORCE_PYTHON=1`, strict Rust contracts, forced-Python contracts,
+Python/Rust profiles, and `git diff --check`.
 
 Latest Rust-native gateway smoke artifact:
 `tmp/test_results/20260623-rust-native-gateway-real-smoke/summary.md`. It
@@ -269,10 +277,11 @@ reported `backend_ready=true`, exposed one model through `/v1/models`, and
 returned `rust-native-ok` through direct OpenAI chat forwarding.
 
 Latest compatibility endpoint smoke artifact:
-`tmp/test_results/20260623-real-smoke-anthropic-token-cache-gpu4/summary.md`.
-It loaded Qwen3.5 4B through Rust serve on an isolated state root and verified
-Anthropic `/v1/messages`, `/tokenize`, `/detokenize`, and `/omni/cache/clear`
-against a real llama.cpp CUDA backend.
+`tmp/test_results/20260624-real-smoke-entrypoint-anthropic-stream/summary.md`.
+It started the switched `./omniinfer` entrypoint, loaded Qwen3.5 4B through
+Rust serve on an isolated state root, and verified real Anthropic
+`/v1/messages` streaming produced `message_start`, `content_block_delta`, and
+`message_stop` before the temporary service was stopped.
 
 Latest VLM/mmproj smoke artifact:
 `tmp/test_results/20260623-vlm-mmproj-after-rust-native-full/summary.md`. It
@@ -280,37 +289,27 @@ validated the Rust `serve` orchestration path with Stepfun 4B plus mmproj and
 Qwen3.6 27B with both BF16 and F16 projectors, including real image chat
 requests through the OpenAI-compatible endpoint.
 
-## Before Switching `./omniinfer`
+## After Switching `./omniinfer`
 
-Do not switch the default entrypoint until these conditions are satisfied:
+The default source-checkout entrypoint has been switched to Rust on
+`refactor/rust-control-plane`. The following entrypoints are expected to work:
 
-- All user-visible commands parse in Rust and either run natively or fallback
-  without changing stdout/stderr/exit-code semantics.
-- Contract snapshots pass for Python, strict Rust, and forced-Python wrapper
-  entrypoints.
-- State/config compatibility is covered for `.local/config/state.json`,
-  legacy `cli_state.json`, backend profiles, serve pid files, and
-  `config/omniinfer.json`.
-- Runtime process management is ported or explicitly delegated to fallback.
-- Gateway API compatibility is covered for `/health`, OpenAI chat, Anthropic
-  messages, management endpoints, CORS, auth, SSE pass-through, and shutdown.
-- One-command public serve still supports Cloudflare, `--detach`,
-  `--api-key auto`, smoke tests, status, stop, logs, and curl output.
-- TUI either has a Rust implementation or intentionally falls back to Python.
-- Linux, macOS, and Windows launchers have equivalent fallback behavior.
-- `cargo fmt --all -- --check`, `cargo test --workspace`, Python compatibility
-  tests, contract snapshots, and profiling comparisons are recorded.
+- `./omniinfer ...` uses `target/debug/omniinfer-rs` by default when the binary
+  exists.
+- `OMNIINFER_FORCE_PYTHON=1 ./omniinfer ...` keeps the Python fallback available
+  for rollback.
+- `target/debug/omniinfer-rs ...` remains available for direct Rust testing.
 
-Only after that should `./omniinfer` default to Rust. Keep the Python fallback
-available for at least one release cycle.
+The switch is intentionally limited to this source-checkout launcher until
+packaging and cross-platform wrapper validation are recorded.
 
-Remaining pre-switch work after the current Linux validation:
+Remaining work after the current Linux switch:
 
 - Run cross-platform launcher validation on Windows and macOS, including
   PowerShell/cmd wrappers and packaged source-checkout behavior.
-- Replace remaining Python runtime-manager responsibilities that are not yet in
-  Rust: embedded MLX/MNN drivers, tokenizer/cache management endpoints,
-  Anthropic direct runtime handling, and any less-used management endpoints that
-  still proxy to the Python upstream.
-- Switch `./omniinfer` only after the above checks are recorded, then keep
-  `OMNIINFER_FORCE_PYTHON=1` available for rollback during at least one release.
+- Keep `OMNIINFER_FORCE_PYTHON=1` available for at least one release cycle and
+  monitor real user paths before removing the fallback.
+- Finish packaging/release wiring after the user validates the local source
+  checkout behavior.
+- Decide whether embedded MLX/MNN in-process drivers should remain delegated to
+  Python or become a separate Rust-native runtime-driver project.
