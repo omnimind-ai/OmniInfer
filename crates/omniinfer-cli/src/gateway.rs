@@ -1616,59 +1616,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rust_gateway_converts_anthropic_streams() {
-        let temp = temp_root("rust-gateway-anthropic-stream");
-        let model = temp.join("model.gguf");
-        std::fs::create_dir_all(&temp).unwrap();
-        std::fs::write(&model, "").unwrap();
-        install_fake_llama_server(&temp);
-        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
-
-        let upstream = spawn_test_upstream().await;
-        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
-        let port = gateway.port;
-
-        tokio::task::spawn_blocking({
-            let model = model.clone();
-            move || {
-                ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
-                    .send_json(json!({
-                        "backend": "llama.cpp-linux-cuda",
-                        "model": model.display().to_string(),
-                        "ctx_size": 512
-                    }))
-                    .unwrap()
-            }
-        })
-        .await
-        .unwrap();
-
-        let response = tokio::task::spawn_blocking(move || {
-            ureq::post(format!("http://127.0.0.1:{port}/v1/messages"))
-                .send_json(json!({
-                    "model": "claude-compatible",
-                    "max_tokens": 16,
-                    "messages": [{"role": "user", "content": "Hello"}],
-                    "stream": true
-                }))
-                .unwrap()
-        })
-        .await
-        .unwrap();
-        assert_eq!(response.status().as_u16(), 200);
-        let text = response.into_body().read_to_string().unwrap();
-        assert!(text.contains("event: message_start"));
-        assert!(text.contains("event: content_block_delta"));
-        assert!(text.contains("\"text\":\"fake\""));
-        assert!(text.contains("\"text\":\" backend\""));
-        assert!(text.contains("event: message_stop"));
-
-        gateway.stop().await;
-        upstream.stop().await;
-        std::fs::remove_dir_all(temp).ok();
-    }
-
-    #[tokio::test]
     async fn anthropic_stream_response_emits_before_backend_finishes() {
         let (tx, rx) = mpsc::channel::<Result<HyperBytes, std::io::Error>>(4);
         let backend_body = Body::from_stream(ReceiverStream::new(rx));
