@@ -3,6 +3,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayAccessPolicy {
     pub api_key: String,
+    pub admin_api_key: String,
     pub allow_insecure_lan: bool,
     pub allow_remote_management: bool,
     pub trust_proxy_headers: bool,
@@ -12,6 +13,7 @@ impl Default for GatewayAccessPolicy {
     fn default() -> Self {
         Self {
             api_key: String::new(),
+            admin_api_key: String::new(),
             allow_insecure_lan: false,
             allow_remote_management: false,
             trust_proxy_headers: false,
@@ -60,13 +62,14 @@ pub fn authorize_request(
     if !is_remote_client(policy, request) {
         return Ok(());
     }
-    if !is_public_endpoint(&request.method, &request.path) && !policy.allow_remote_management {
+    let management_endpoint = !is_public_endpoint(&request.method, &request.path);
+    if management_endpoint && !policy.allow_remote_management {
         return Err(GatewayAuthError::RemoteManagementForbidden);
     }
-    if remote_request_authenticated(policy, request) {
+    if remote_request_authenticated(policy, request, management_endpoint) {
         return Ok(());
     }
-    if policy.api_key.trim().is_empty() {
+    if required_key(policy, management_endpoint).is_empty() {
         Err(GatewayAuthError::RemoteAccessRequiresApiKey)
     } else {
         Err(GatewayAuthError::MissingOrInvalidApiKey)
@@ -87,15 +90,26 @@ fn is_remote_client(policy: &GatewayAccessPolicy, request: &RequestAuthContext) 
 fn remote_request_authenticated(
     policy: &GatewayAccessPolicy,
     request: &RequestAuthContext,
+    management_endpoint: bool,
 ) -> bool {
-    let api_key = policy.api_key.trim();
+    let api_key = required_key(policy, management_endpoint);
     if api_key.is_empty() {
-        return policy.allow_insecure_lan;
+        return policy.allow_insecure_lan && !management_endpoint;
     }
     let token = bearer_token(request)
         .or_else(|| request.x_api_key.as_deref().map(str::trim))
         .unwrap_or("");
     !token.is_empty() && constant_time_eq(token.as_bytes(), api_key.as_bytes())
+}
+
+fn required_key(policy: &GatewayAccessPolicy, management_endpoint: bool) -> &str {
+    if management_endpoint {
+        let admin_api_key = policy.admin_api_key.trim();
+        if !admin_api_key.is_empty() {
+            return admin_api_key;
+        }
+    }
+    policy.api_key.trim()
 }
 
 fn bearer_token(request: &RequestAuthContext) -> Option<&str> {
@@ -239,6 +253,42 @@ mod tests {
         };
         let mut request = request("POST", "/omni/shutdown");
         request.authorization = Some("Bearer secret".to_string());
+        assert_eq!(authorize_request(&policy, &request), Ok(()));
+    }
+
+    #[test]
+    fn remote_management_endpoint_prefers_admin_api_key() {
+        let policy = GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            ..GatewayAccessPolicy::default()
+        };
+        let mut request = request("POST", "/omni/model/select");
+        request.authorization = Some("Bearer inference".to_string());
+        assert_eq!(
+            authorize_request(&policy, &request).unwrap_err(),
+            GatewayAuthError::MissingOrInvalidApiKey
+        );
+        request.authorization = Some("Bearer admin".to_string());
+        assert_eq!(authorize_request(&policy, &request), Ok(()));
+    }
+
+    #[test]
+    fn remote_public_endpoint_still_uses_inference_api_key() {
+        let policy = GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            ..GatewayAccessPolicy::default()
+        };
+        let mut request = request("POST", "/v1/chat/completions");
+        request.authorization = Some("Bearer admin".to_string());
+        assert_eq!(
+            authorize_request(&policy, &request).unwrap_err(),
+            GatewayAuthError::MissingOrInvalidApiKey
+        );
+        request.authorization = Some("Bearer inference".to_string());
         assert_eq!(authorize_request(&policy, &request), Ok(()));
     }
 

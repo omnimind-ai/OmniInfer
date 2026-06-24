@@ -251,9 +251,13 @@ pub(crate) struct ServeArgs {
     #[arg(long)]
     api_key: Option<String>,
     #[arg(long)]
+    admin_api_key: Option<String>,
+    #[arg(long)]
     allow_insecure_lan: bool,
     #[arg(long)]
     allow_remote_management: bool,
+    #[arg(long)]
+    behind_proxy: bool,
     #[arg(long)]
     detach: bool,
     #[arg(long)]
@@ -298,6 +302,8 @@ struct GatewayArgs {
     upstream_port: u16,
     #[arg(long)]
     api_key: Option<String>,
+    #[arg(long)]
+    admin_api_key: Option<String>,
     #[arg(long)]
     allow_insecure_lan: bool,
     #[arg(long)]
@@ -475,6 +481,7 @@ fn run_gateway_command(args: &GatewayArgs) -> Result<()> {
         upstream_port: args.upstream_port,
         access_policy: gateway_auth::GatewayAccessPolicy {
             api_key: args.api_key.clone().unwrap_or_default(),
+            admin_api_key: args.admin_api_key.clone().unwrap_or_default(),
             allow_insecure_lan: args.allow_insecure_lan,
             allow_remote_management: args.allow_remote_management,
             trust_proxy_headers: args.trust_proxy_headers,
@@ -1124,13 +1131,21 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     let remote_bind = !args.cloudflare && !is_loopback_host(&config.host);
     let generate_session_key = args.cloudflare || (remote_bind && !args.allow_insecure_lan);
     let api_key = resolve_serve_api_key(args, generate_session_key)?;
+    let admin_api_key = resolve_serve_admin_api_key(args)?;
     if remote_bind && api_key.is_none() && !args.allow_insecure_lan {
         anyhow::bail!(
             "Refusing to expose OmniInfer on a non-loopback host without an API key. Use --lan to generate a session key, --api-key/OMNIINFER_API_KEY to set one, or --allow-insecure-lan for trusted test networks."
         );
     }
-    if args.allow_remote_management && api_key.is_none() {
-        anyhow::bail!("--allow-remote-management requires --api-key or OMNIINFER_API_KEY");
+    if args.behind_proxy && api_key.is_none() && !args.allow_insecure_lan {
+        anyhow::bail!(
+            "--behind-proxy exposes OmniInfer through trusted proxy headers and requires --api-key or OMNIINFER_API_KEY"
+        );
+    }
+    if args.allow_remote_management && admin_api_key.is_none() {
+        anyhow::bail!(
+            "--allow-remote-management requires --admin-api-key or OMNIINFER_ADMIN_API_KEY"
+        );
     }
     let use_rust_gateway = env::var("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY")
         .map(|value| value.trim() != "1")
@@ -1153,6 +1168,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             args,
             &log_path,
             api_key.as_deref(),
+            admin_api_key.as_deref(),
         )?;
         wait_for_gateway_ready(&public_config)?;
         Some(child)
@@ -1352,6 +1368,11 @@ fn validate_serve_remote_access_args(args: &ServeArgs) -> Result<()> {
             "--cloudflare keeps /omni/* management endpoints local-only; do not use --allow-remote-management."
         );
     }
+    if args.cloudflare && args.behind_proxy {
+        anyhow::bail!(
+            "--cloudflare already configures proxy headers; do not combine it with --behind-proxy."
+        );
+    }
     Ok(())
 }
 
@@ -1390,6 +1411,24 @@ fn resolve_serve_api_key(args: &ServeArgs, generate_session_key: bool) -> Result
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string))
+}
+
+fn resolve_serve_admin_api_key(args: &ServeArgs) -> Result<Option<String>> {
+    let value = args
+        .admin_api_key
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            env::var("OMNIINFER_ADMIN_API_KEY")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        });
+    match value.as_deref() {
+        Some(value) if value.eq_ignore_ascii_case("auto") => Ok(Some(generate_session_api_key()?)),
+        _ => Ok(value),
+    }
 }
 
 fn lan_base_urls(config: &config::AppConfig, lan_enabled: bool) -> Vec<String> {
@@ -1661,6 +1700,7 @@ fn start_rust_gateway_child(
     args: &ServeArgs,
     log_path: &std::path::Path,
     api_key: Option<&str>,
+    admin_api_key: Option<&str>,
 ) -> Result<std::process::Child> {
     let stdout = OpenOptions::new()
         .create(true)
@@ -1685,13 +1725,16 @@ fn start_rust_gateway_child(
     if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
         command.arg("--api-key").arg(api_key);
     }
+    if let Some(admin_api_key) = admin_api_key.filter(|value| !value.trim().is_empty()) {
+        command.arg("--admin-api-key").arg(admin_api_key);
+    }
     if args.allow_insecure_lan {
         command.arg("--allow-insecure-lan");
     }
     if args.allow_remote_management {
         command.arg("--allow-remote-management");
     }
-    if args.cloudflare {
+    if args.cloudflare || args.behind_proxy {
         command.arg("--trust-proxy-headers");
     }
     Ok(command.spawn()?)
