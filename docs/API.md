@@ -105,6 +105,7 @@ Quick Tunnel is intended for demos and short-lived testing. For best compatibili
 | `GET` | `/omni/thinking` | Default thinking setting |
 | `GET` | `/omni/backend/props` | Active backend `/props` payload |
 | `GET` | `/omni/models` | Deprecated, returns `410` |
+| `GET` | `/omni/public-models` | Public model ids exposed by `--public-model-root` |
 | `GET` | `/omni/supported-models?system=windows\|mac\|linux` | Bundled supported-model catalog |
 | `GET` | `/omni/supported-models/best?system=windows\|mac\|linux` | Best-backend model catalog |
 | `GET` | `/v1/models` | OpenAI-compatible loaded-model list |
