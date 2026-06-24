@@ -760,6 +760,7 @@ struct RustRuntimeManager {
 struct LoadedRustRuntime {
     backend_id: String,
     model: String,
+    public_model_id: Option<String>,
     mmproj: Option<String>,
     ctx_size: Option<u32>,
     launch_args: Vec<String>,
@@ -804,6 +805,11 @@ impl RustRuntimeManager {
         startup_timeout: Duration,
     ) -> Result<Value> {
         let model = json_required_str(&payload, "model")?.to_string();
+        let public_model_id = payload
+            .get("public_model_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
         let requested_backend = self.resolve_requested_backend(&payload)?;
         let registry = BackendRegistry::load_current();
         let backend = registry
@@ -892,6 +898,7 @@ impl RustRuntimeManager {
         self.loaded = Some(LoadedRustRuntime {
             backend_id: backend.id.clone(),
             model: resolved_model.model_path.clone(),
+            public_model_id: public_model_id.clone(),
             mmproj: mmproj_path.clone(),
             ctx_size: plan.ctx_size,
             launch_args: effective_launch_args,
@@ -902,6 +909,7 @@ impl RustRuntimeManager {
             "ok": true,
             "selected_backend": backend.id,
             "selected_model": resolved_model.model_path,
+            "selected_public_model_id": public_model_id,
             "selected_mmproj": mmproj_path,
             "selected_ctx_size": plan.ctx_size,
             "backend_pid": info.pid,
@@ -945,6 +953,7 @@ impl RustRuntimeManager {
                 "backend": selected_backend,
                 "backend_ready": false,
                 "model": null,
+                "public_model_id": null,
                 "mmproj": null,
                 "ctx_size": null,
                 "request_defaults": {},
@@ -964,6 +973,7 @@ impl RustRuntimeManager {
             "backend": loaded.backend_id,
             "backend_ready": true,
             "model": loaded.model,
+            "public_model_id": loaded.public_model_id,
             "mmproj": loaded.mmproj,
             "ctx_size": loaded.ctx_size,
             "request_defaults": {},
