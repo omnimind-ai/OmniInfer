@@ -1156,6 +1156,8 @@ fn add_cors_headers(headers: &mut HeaderMap) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     use axum::Json;
     use axum::extract::Query;
     use axum::routing::{get, post};
@@ -1370,6 +1372,7 @@ mod tests {
 
     #[tokio::test]
     async fn rust_gateway_serves_small_management_endpoints() {
+        let _env_lock = TEST_ENV_LOCK.lock().await;
         let temp = temp_root("rust-gateway-small-management");
         std::fs::create_dir_all(&temp).unwrap();
         let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
@@ -1448,11 +1451,13 @@ mod tests {
 
     #[tokio::test]
     async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
+        let _env_lock = TEST_ENV_LOCK.lock().await;
         let temp = temp_root("rust-gateway-runtime");
         let model = temp.join("model.gguf");
         std::fs::create_dir_all(&temp).unwrap();
         std::fs::write(&model, "").unwrap();
-        install_fake_llama_server(&temp);
+        let backend_id = external_test_backend_id();
+        install_fake_llama_server(&temp, backend_id);
         let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
 
         let upstream = spawn_test_upstream().await;
@@ -1464,7 +1469,7 @@ mod tests {
             move || {
                 ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
                     .send_json(json!({
-                        "backend": "llama.cpp-linux-cuda",
+                        "backend": backend_id,
                         "model": model.display().to_string(),
                         "ctx_size": 512
                     }))
@@ -1475,7 +1480,7 @@ mod tests {
         .unwrap();
         assert_eq!(load_response.status().as_u16(), 200);
         let load_body: Value = load_response.into_body().read_json().unwrap();
-        assert_eq!(load_body["selected_backend"], "llama.cpp-linux-cuda");
+        assert_eq!(load_body["selected_backend"], backend_id);
         assert_eq!(load_body["selected_ctx_size"], 512);
         assert!(load_body["backend_pid"].as_u64().unwrap() > 0);
 
@@ -1571,6 +1576,10 @@ mod tests {
 
     #[tokio::test]
     async fn rust_gateway_delegates_embedded_model_loads_to_upstream() {
+        let Some(backend_id) = embedded_test_backend_id() else {
+            return;
+        };
+        let _env_lock = TEST_ENV_LOCK.lock().await;
         let temp = temp_root("rust-gateway-embedded");
         std::fs::create_dir_all(&temp).unwrap();
         let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
@@ -1582,7 +1591,7 @@ mod tests {
         let load_response = tokio::task::spawn_blocking(move || {
             ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
                 .send_json(json!({
-                    "backend": "mnn-linux",
+                    "backend": backend_id,
                     "model": "embedded-demo",
                     "ctx_size": 512
                 }))
@@ -1592,7 +1601,7 @@ mod tests {
         .unwrap();
         assert_eq!(load_response.status().as_u16(), 200);
         let load_body: Value = load_response.into_body().read_json().unwrap();
-        assert_eq!(load_body["selected_backend"], "mnn-linux");
+        assert_eq!(load_body["selected_backend"], backend_id);
         assert_eq!(load_body["delegated"], true);
         assert_eq!(load_body["body"]["model"], "embedded-demo");
 
@@ -1656,6 +1665,7 @@ mod tests {
 
     #[tokio::test]
     async fn rust_gateway_discovers_model_directory_artifacts() {
+        let _env_lock = TEST_ENV_LOCK.lock().await;
         let temp = temp_root("rust-gateway-artifacts");
         let model_dir = temp.join("models").join("vision-model");
         let nested = model_dir.join("nested");
@@ -1664,7 +1674,8 @@ mod tests {
         let mmproj = model_dir.join("mmproj-F16.gguf");
         std::fs::write(&model, "").unwrap();
         std::fs::write(&mmproj, "").unwrap();
-        install_fake_llama_server(&temp);
+        let backend_id = external_test_backend_id();
+        install_fake_llama_server(&temp, backend_id);
         let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
 
         let upstream = spawn_test_upstream().await;
@@ -1676,7 +1687,7 @@ mod tests {
             move || {
                 ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
                     .send_json(json!({
-                        "backend": "llama.cpp-linux-cuda",
+                        "backend": backend_id,
                         "model": model_dir.display().to_string(),
                         "ctx_size": 512
                     }))
@@ -1821,14 +1832,49 @@ mod tests {
         std::env::temp_dir().join(format!("omniinfer-rs-{name}-{nanos}"))
     }
 
-    fn install_fake_llama_server(root: &std::path::Path) {
+    fn external_test_backend_id() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "llama.cpp-mac"
+        } else if cfg!(target_os = "windows") {
+            "llama.cpp-cpu"
+        } else {
+            "llama.cpp-linux-cuda"
+        }
+    }
+
+    fn embedded_test_backend_id() -> Option<&'static str> {
+        if cfg!(target_os = "macos") {
+            Some("mlx-mac")
+        } else if cfg!(target_os = "linux") {
+            Some("mnn-linux")
+        } else {
+            None
+        }
+    }
+
+    fn test_runtime_platform_dir() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(target_os = "windows") {
+            "windows"
+        } else {
+            "linux"
+        }
+    }
+
+    fn install_fake_llama_server(root: &std::path::Path, backend_id: &str) {
+        let launcher_name = if cfg!(target_os = "windows") {
+            "llama-server.exe"
+        } else {
+            "llama-server"
+        };
         let launcher = root
             .join(".local")
             .join("runtime")
-            .join("linux")
-            .join("llama.cpp-linux-cuda")
+            .join(test_runtime_platform_dir())
+            .join(backend_id)
             .join("bin")
-            .join("llama-server");
+            .join(launcher_name);
         std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
         let script = r#"#!/usr/bin/env bash
 port=""
