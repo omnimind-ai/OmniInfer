@@ -24,10 +24,13 @@ use omniinfer_core::anthropic::{
 };
 use omniinfer_core::backend_registry;
 use omniinfer_core::backend_registry::{BackendRegistry, BackendScope};
-use omniinfer_core::gateway_auth::{GatewayAccessPolicy, RequestAuthContext, authorize_request};
+use omniinfer_core::gateway_auth::{
+    GatewayAccessPolicy, RequestAuthContext, authorize_request, is_remote_request,
+};
 use omniinfer_core::local_state;
 use omniinfer_core::model_artifacts::{discover_llama_cpp_model_artifacts, maybe_auto_mmproj};
 use omniinfer_core::model_catalog;
+use omniinfer_core::public_models;
 use omniinfer_core::request_normalization::normalize_chat_request;
 use omniinfer_core::runtime_plan::{ExternalRuntimeRequest, build_external_runtime_plan};
 use omniinfer_core::runtime_process::{RuntimeProcess, RuntimeProcessOptions};
@@ -44,6 +47,7 @@ pub struct GatewayConfig {
     pub upstream_host: String,
     pub upstream_port: u16,
     pub access_policy: GatewayAccessPolicy,
+    pub public_model_root: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -51,6 +55,7 @@ struct GatewayState {
     upstream_base: String,
     backend_host: String,
     access_policy: GatewayAccessPolicy,
+    public_model_root: Option<PathBuf>,
     client: Client<HttpConnector, Full<HyperBytes>>,
     shutdown: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
     runtime: Arc<tokio::sync::Mutex<RustRuntimeManager>>,
@@ -69,6 +74,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
         upstream_base: format!("http://{}:{}", config.upstream_host, config.upstream_port),
         backend_host: "127.0.0.1".to_string(),
         access_policy: config.access_policy,
+        public_model_root: config.public_model_root,
         client: Client::builder(TokioExecutor::new()).build_http(),
         shutdown: Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx))),
         runtime: Arc::new(tokio::sync::Mutex::new(RustRuntimeManager::default())),
@@ -114,6 +120,7 @@ async fn proxy_request_inner(
 
     let path = request.uri().path().to_string();
     let auth_context = auth_context(&request, peer_ip);
+    let remote_request = is_remote_request(&state.access_policy, &auth_context);
     if let Err(error) = authorize_request(&state.access_policy, &auth_context) {
         return Ok(json_response(
             StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::FORBIDDEN),
@@ -123,7 +130,9 @@ async fn proxy_request_inner(
 
     let should_shutdown = request.method() == Method::POST && path == "/omni/shutdown";
     if should_handle_rust_endpoint(&state, request.method(), &path).await {
-        let Some(response) = try_handle_rust_endpoint(&state, &path, request).await? else {
+        let Some(response) =
+            try_handle_rust_endpoint(&state, &path, remote_request, request).await?
+        else {
             return Ok(json_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({"error": {"message": "Rust endpoint handler declined a selected request"}}),
@@ -189,6 +198,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
             "/health" | "/omni/state" | "/omni/backends" | "/omni/thinking" | "/omni/models",
         ) => true,
         (&Method::GET, "/omni/backend/props") => true,
+        (&Method::GET, "/omni/public-models") => true,
         (&Method::GET, "/omni/supported-models" | "/omni/supported-models/best" | "/v1/models") => {
             true
         }
@@ -214,6 +224,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
 async fn try_handle_rust_endpoint(
     state: &GatewayState,
     path: &str,
+    remote_request: bool,
     request: Request<Body>,
 ) -> Result<Option<Response<Body>>> {
     match (request.method(), path) {
@@ -282,6 +293,18 @@ async fn try_handle_rust_endpoint(
             StatusCode::GONE,
             json!({"error": {"message": "GET /omni/models has been deprecated and is no longer maintained"}}),
         ))),
+        (&Method::GET, "/omni/public-models") => {
+            match public_models::list_public_models(state.public_model_root.as_deref()) {
+                Ok(entries) => Ok(Some(json_response(
+                    StatusCode::OK,
+                    public_models::public_models_payload(&entries),
+                ))),
+                Err(error) => Ok(Some(json_response(
+                    public_model_error_status(&error),
+                    json!({"error": {"message": error.to_string()}}),
+                ))),
+            }
+        }
         (&Method::GET, "/omni/supported-models") => {
             let system = query_value(request.uri(), "system").unwrap_or_else(current_system_name);
             match model_catalog::list_supported_models(&system) {
@@ -381,7 +404,13 @@ async fn try_handle_rust_endpoint(
         (&Method::POST, "/omni/model/select") => {
             let (parts, body) = request.into_parts();
             let body = body.collect().await?.to_bytes();
-            let payload: Value = serde_json::from_slice(&body)?;
+            let mut payload: Value = serde_json::from_slice(&body)?;
+            if let Err(error) = normalize_public_model_select(&mut payload, state, remote_request) {
+                return Ok(Some(json_response(
+                    public_model_error_status(&error),
+                    json!({"error": {"message": error.to_string()}}),
+                )));
+            }
             let requested_backend = {
                 let mut runtime = state.runtime.lock().await;
                 let requested_backend = runtime.resolve_requested_backend(&payload)?;
@@ -969,6 +998,88 @@ fn backend_health(snapshot: &Value) -> Value {
         json!({"status": "ok"})
     } else {
         json!({"status": "not_loaded"})
+    }
+}
+
+fn normalize_public_model_select(
+    payload: &mut Value,
+    state: &GatewayState,
+    remote_request: bool,
+) -> Result<(), public_models::PublicModelError> {
+    let Some(model) = payload
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let path_like = PathBuf::from(model).is_absolute()
+        || model.starts_with("~/")
+        || model.contains('/')
+        || model.contains('\\');
+    if remote_request && path_like {
+        return Err(public_models::PublicModelError::ModelNotFound(
+            model.to_string(),
+        ));
+    }
+    if path_like || !public_models::looks_like_public_model_id(model) {
+        return Ok(());
+    }
+    let entry = public_models::resolve_public_model(state.public_model_root.as_deref(), model)?;
+    let object = payload
+        .as_object_mut()
+        .expect("serde_json object remains object after field lookup");
+    object.insert(
+        "model".to_string(),
+        Value::String(entry.model_path.display().to_string()),
+    );
+    object.insert(
+        "public_model_id".to_string(),
+        Value::String(entry.manifest.id.clone()),
+    );
+    if let Some(mmproj) = entry.mmproj_path {
+        object
+            .entry("mmproj".to_string())
+            .or_insert_with(|| Value::String(mmproj.display().to_string()));
+    }
+    if let Some(backend) = entry.manifest.backend {
+        object
+            .entry("backend".to_string())
+            .or_insert_with(|| Value::String(backend));
+    }
+    if let Some(ctx_size) = entry.manifest.ctx_size {
+        object
+            .entry("ctx_size".to_string())
+            .or_insert_with(|| Value::Number(u64::from(ctx_size).into()));
+    }
+    if !entry.manifest.launch_args.is_empty() {
+        object.entry("launch_args".to_string()).or_insert_with(|| {
+            Value::Array(
+                entry
+                    .manifest
+                    .launch_args
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            )
+        });
+    }
+    Ok(())
+}
+
+fn public_model_error_status(error: &public_models::PublicModelError) -> StatusCode {
+    match error {
+        public_models::PublicModelError::RootNotConfigured => StatusCode::NOT_FOUND,
+        public_models::PublicModelError::RootMissing(_) => StatusCode::SERVICE_UNAVAILABLE,
+        public_models::PublicModelError::ModelNotFound(_) => StatusCode::NOT_FOUND,
+        public_models::PublicModelError::InvalidId(_)
+        | public_models::PublicModelError::InvalidRelativePath(_)
+        | public_models::PublicModelError::ManifestParse { .. }
+        | public_models::PublicModelError::DuplicateId(_)
+        | public_models::PublicModelError::ModelFileMissing(_)
+        | public_models::PublicModelError::MmprojFileMissing(_) => StatusCode::BAD_REQUEST,
+        public_models::PublicModelError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -1721,6 +1832,98 @@ mod tests {
         std::fs::remove_dir_all(temp).ok();
     }
 
+    #[tokio::test]
+    async fn public_models_requires_admin_key_for_remote_clients() {
+        let temp = temp_root("rust-gateway-public-models-auth");
+        let root = temp.join("public_models");
+        write_public_model_manifest(&root, "qwen3.5-4b-q4_k_m");
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway_with_public_root(
+            upstream.port,
+            GatewayAccessPolicy {
+                api_key: "inference".to_string(),
+                admin_api_key: "admin".to_string(),
+                allow_remote_management: true,
+                trust_proxy_headers: true,
+                ..GatewayAccessPolicy::default()
+            },
+            Some(root),
+        )
+        .await;
+        let port = gateway.port;
+
+        let denied = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/public-models"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", "Bearer inference")
+                .call()
+                .unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert!(denied.to_string().contains("401"));
+
+        let allowed = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/public-models"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", "Bearer admin")
+                .call()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(allowed.status().as_u16(), 200);
+        let body: Value = allowed.into_body().read_json().unwrap();
+        assert_eq!(body["data"][0]["id"], "qwen3.5-4b-q4_k_m");
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
+    #[tokio::test]
+    async fn remote_public_model_select_resolves_model_id() {
+        let temp = temp_root("rust-gateway-public-model-select");
+        let root = temp.join("public_models");
+        let model_path = write_public_model_manifest(&root, "qwen3.5-4b-q4_k_m");
+        install_fake_llama_server(&temp, external_test_backend_id());
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway_with_public_root(
+            upstream.port,
+            GatewayAccessPolicy {
+                api_key: "inference".to_string(),
+                admin_api_key: "admin".to_string(),
+                allow_remote_management: true,
+                trust_proxy_headers: true,
+                ..GatewayAccessPolicy::default()
+            },
+            Some(root),
+        )
+        .await;
+        let port = gateway.port;
+
+        let response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", "Bearer admin")
+                .send_json(json!({"model": "qwen3.5-4b-q4_k_m"}))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let body: Value = response.into_body().read_json().unwrap();
+        assert_eq!(body["selected_model"], model_path.display().to_string());
+        assert_eq!(body["selected_backend"], external_test_backend_id());
+        assert_eq!(body["selected_ctx_size"], 512);
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
     struct TestServer {
         port: u16,
         stop: Option<oneshot::Sender<()>>,
@@ -1804,6 +2007,14 @@ mod tests {
         upstream_port: u16,
         access_policy: GatewayAccessPolicy,
     ) -> TestServer {
+        spawn_test_gateway_with_public_root(upstream_port, access_policy, None).await
+    }
+
+    async fn spawn_test_gateway_with_public_root(
+        upstream_port: u16,
+        access_policy: GatewayAccessPolicy,
+        public_model_root: Option<PathBuf>,
+    ) -> TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -1818,6 +2029,7 @@ mod tests {
                     upstream_host: "127.0.0.1".to_string(),
                     upstream_port,
                     access_policy,
+                    public_model_root,
                 }) => {
                     let _ = result;
                 }
@@ -1869,6 +2081,31 @@ mod tests {
         } else {
             "linux"
         }
+    }
+
+    fn write_public_model_manifest(root: &std::path::Path, id: &str) -> PathBuf {
+        let dir = root.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("model.gguf");
+        std::fs::write(&model, b"gguf").unwrap();
+        std::fs::write(
+            dir.join("omni-model.json"),
+            format!(
+                r#"{{
+                    "id": "{id}",
+                    "display_name": "Qwen3.5 4B Q4_K_M",
+                    "backend": "{}",
+                    "model": "model.gguf",
+                    "ctx_size": 512,
+                    "modalities": ["text"],
+                    "quant": "Q4_K_M",
+                    "launch_args": ["-ngl", "999"]
+                }}"#,
+                external_test_backend_id()
+            ),
+        )
+        .unwrap();
+        model
     }
 
     fn install_fake_llama_server(root: &std::path::Path, backend_id: &str) {

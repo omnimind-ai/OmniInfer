@@ -11,6 +11,7 @@ pub mod model_artifacts;
 pub mod model_catalog;
 pub mod model_load;
 pub mod paths;
+pub mod public_models;
 pub mod request_normalization;
 pub mod runtime_plan;
 pub mod runtime_process;

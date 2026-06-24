@@ -259,6 +259,8 @@ pub(crate) struct ServeArgs {
     #[arg(long)]
     behind_proxy: bool,
     #[arg(long)]
+    public_model_root: Option<String>,
+    #[arg(long)]
     detach: bool,
     #[arg(long)]
     smoke_test: bool,
@@ -310,6 +312,8 @@ struct GatewayArgs {
     allow_remote_management: bool,
     #[arg(long)]
     trust_proxy_headers: bool,
+    #[arg(long)]
+    public_model_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -486,6 +490,7 @@ fn run_gateway_command(args: &GatewayArgs) -> Result<()> {
             allow_remote_management: args.allow_remote_management,
             trust_proxy_headers: args.trust_proxy_headers,
         },
+        public_model_root: args.public_model_root.as_deref().map(expand_home_path),
     })
 }
 
@@ -1147,6 +1152,15 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             "--allow-remote-management requires --admin-api-key or OMNIINFER_ADMIN_API_KEY"
         );
     }
+    let public_model_root = args.public_model_root.as_deref().map(expand_home_path);
+    if args.allow_remote_management && public_model_root.is_none() {
+        anyhow::bail!("--allow-remote-management requires --public-model-root");
+    }
+    if let Some(root) = public_model_root.as_ref()
+        && !root.is_dir()
+    {
+        anyhow::bail!("public model root does not exist: {}", root.display());
+    }
     let use_rust_gateway = env::var("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY")
         .map(|value| value.trim() != "1")
         .unwrap_or(true);
@@ -1169,6 +1183,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             &log_path,
             api_key.as_deref(),
             admin_api_key.as_deref(),
+            public_model_root.as_deref(),
         )?;
         wait_for_gateway_ready(&public_config)?;
         Some(child)
@@ -1701,6 +1716,7 @@ fn start_rust_gateway_child(
     log_path: &std::path::Path,
     api_key: Option<&str>,
     admin_api_key: Option<&str>,
+    public_model_root: Option<&std::path::Path>,
 ) -> Result<std::process::Child> {
     let stdout = OpenOptions::new()
         .create(true)
@@ -1728,6 +1744,9 @@ fn start_rust_gateway_child(
     if let Some(admin_api_key) = admin_api_key.filter(|value| !value.trim().is_empty()) {
         command.arg("--admin-api-key").arg(admin_api_key);
     }
+    if let Some(public_model_root) = public_model_root {
+        command.arg("--public-model-root").arg(public_model_root);
+    }
     if args.allow_insecure_lan {
         command.arg("--allow-insecure-lan");
     }
@@ -1738,6 +1757,17 @@ fn start_rust_gateway_child(
         command.arg("--trust-proxy-headers");
     }
     Ok(command.spawn()?)
+}
+
+fn expand_home_path(value: &str) -> PathBuf {
+    let path = PathBuf::from(value.trim());
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest);
+    }
+    path
 }
 
 fn get_serve_health_state(config: &config::AppConfig) -> Result<serde_json::Value> {

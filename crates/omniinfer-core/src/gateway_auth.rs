@@ -80,6 +80,10 @@ pub fn should_require_remote_api_key(host: &str) -> bool {
     !is_loopback_bind_host(host)
 }
 
+pub fn is_remote_request(policy: &GatewayAccessPolicy, request: &RequestAuthContext) -> bool {
+    is_remote_client(policy, request)
+}
+
 fn is_remote_client(policy: &GatewayAccessPolicy, request: &RequestAuthContext) -> bool {
     if policy.trust_proxy_headers && proxy_header_remote_address(request).is_some() {
         return true;
