@@ -19,7 +19,8 @@ use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use omniinfer_core::anthropic::{
-    anthropic_request_to_openai, openai_response_to_anthropic, openai_sse_to_anthropic_sse,
+    AnthropicStreamConverter, anthropic_request_to_openai, openai_response_to_anthropic,
+    parse_openai_sse_events,
 };
 use omniinfer_core::backend_registry;
 use omniinfer_core::backend_registry::{BackendRegistry, BackendScope};
@@ -32,7 +33,9 @@ use omniinfer_core::runtime_plan::{ExternalRuntimeRequest, build_external_runtim
 use omniinfer_core::runtime_process::{RuntimeProcess, RuntimeProcessOptions};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio_stream::wrappers::ReceiverStream;
 
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
@@ -547,20 +550,77 @@ async fn proxy_anthropic_to_runtime(
     if !status.is_success() {
         return response_from_upstream(response).await;
     }
-    let body = response.into_body().collect().await?.to_bytes();
     if stream {
-        let converted = openai_sse_to_anthropic_sse(&body, response_model);
-        let mut response = Response::builder()
-            .status(StatusCode::OK)
-            .header(CONTENT_TYPE, "text/event-stream")
-            .header(CONTENT_LENGTH, converted.len().to_string())
-            .body(Body::from(converted))?;
-        add_cors_headers(response.headers_mut());
-        return Ok(response);
+        let converted =
+            anthropic_stream_response(Body::new(response.into_body()), response_model.to_string());
+        return Ok(converted);
     }
+    let body = response.into_body().collect().await?.to_bytes();
     let payload: Value = serde_json::from_slice(&body)?;
     let converted = openai_response_to_anthropic(&payload, response_model);
     Ok(json_response(StatusCode::OK, converted))
+}
+
+fn anthropic_stream_response(mut body: Body, response_model: String) -> Response<Body> {
+    let (tx, rx) = mpsc::channel::<Result<HyperBytes, std::io::Error>>(16);
+    tokio::spawn(async move {
+        let mut converter = AnthropicStreamConverter::new(&response_model);
+        for frame in converter.preamble() {
+            if tx.send(Ok(HyperBytes::from(frame))).await.is_err() {
+                return;
+            }
+        }
+        let mut buffered = Vec::<u8>::new();
+        while let Some(frame) = body.frame().await {
+            let frame = match frame {
+                Ok(frame) => frame,
+                Err(error) => {
+                    let _ = tx.send(Err(std::io::Error::other(error.to_string()))).await;
+                    return;
+                }
+            };
+            let Some(data) = frame.data_ref() else {
+                continue;
+            };
+            buffered.extend_from_slice(data);
+            while let Some(index) = buffered.windows(2).position(|window| window == b"\n\n") {
+                let chunk = buffered.drain(..index + 2).collect::<Vec<_>>();
+                for event in parse_openai_sse_events(&chunk) {
+                    if let Ok(value) = serde_json::from_str::<Value>(&event) {
+                        for frame in converter.process_chunk(&value) {
+                            if tx.send(Ok(HyperBytes::from(frame))).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !buffered.is_empty() {
+            for event in parse_openai_sse_events(&buffered) {
+                if let Ok(value) = serde_json::from_str::<Value>(&event) {
+                    for frame in converter.process_chunk(&value) {
+                        if tx.send(Ok(HyperBytes::from(frame))).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        for frame in converter.epilogue() {
+            if tx.send(Ok(HyperBytes::from(frame))).await.is_err() {
+                return;
+            }
+        }
+    });
+    let stream = ReceiverStream::new(rx);
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/event-stream")
+        .body(Body::from_stream(stream))
+        .expect("response should build");
+    add_cors_headers(response.headers_mut());
+    response
 }
 
 async fn response_from_upstream(
@@ -1469,6 +1529,45 @@ mod tests {
         gateway.stop().await;
         upstream.stop().await;
         std::fs::remove_dir_all(temp).ok();
+    }
+
+    #[tokio::test]
+    async fn anthropic_stream_response_emits_before_backend_finishes() {
+        let (tx, rx) = mpsc::channel::<Result<HyperBytes, std::io::Error>>(4);
+        let backend_body = Body::from_stream(ReceiverStream::new(rx));
+        let response = anthropic_stream_response(backend_body, "claude-compatible".to_string());
+        let mut body = response.into_body();
+
+        tx.send(Ok(HyperBytes::from_static(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"fake\"}}]}\n\n",
+        )))
+        .await
+        .unwrap();
+
+        let first = tokio::time::timeout(Duration::from_millis(300), body.frame())
+            .await
+            .expect("first Anthropic stream frame should arrive before backend completes")
+            .expect("body frame")
+            .expect("body frame ok")
+            .into_data()
+            .expect("data frame");
+        let first_text = String::from_utf8(first.to_vec()).unwrap();
+        assert!(first_text.contains("event: message_start"));
+
+        tx.send(Ok(HyperBytes::from_static(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\" backend\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n",
+        )))
+        .await
+        .unwrap();
+        tx.send(Ok(HyperBytes::from_static(b"data: [DONE]\n\n")))
+            .await
+            .unwrap();
+        drop(tx);
+        let rest = body.collect().await.unwrap().to_bytes();
+        let rest_text = String::from_utf8(rest.to_vec()).unwrap();
+        assert!(rest_text.contains("\"text\":\"fake\""));
+        assert!(rest_text.contains("\"text\":\" backend\""));
+        assert!(rest_text.contains("event: message_stop"));
     }
 
     #[tokio::test]

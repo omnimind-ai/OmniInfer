@@ -245,27 +245,42 @@ pub fn openai_response_to_anthropic(response: &Value, model: &str) -> Value {
 }
 
 pub fn openai_sse_to_anthropic_sse(raw: &[u8], model: &str) -> Vec<u8> {
-    let mut converter = OpenaiStreamConverter::new(model);
+    let mut converter = AnthropicStreamConverter::new(model);
     let mut output = converter.preamble();
-    for frame in String::from_utf8_lossy(raw).split("\n\n") {
-        for line in frame.lines() {
-            let Some(data) = line.strip_prefix("data:") else {
-                continue;
-            };
-            let data = data.trim();
-            if data.is_empty() || data == "[DONE]" {
-                continue;
-            }
-            if let Ok(chunk) = serde_json::from_str::<Value>(data) {
-                output.extend(converter.process_chunk(&chunk));
-            }
+    for data in parse_openai_sse_events(raw) {
+        if let Ok(chunk) = serde_json::from_str::<Value>(&data) {
+            output.extend(converter.process_chunk(&chunk));
         }
     }
     output.extend(converter.epilogue());
     output.concat().into_bytes()
 }
 
-struct OpenaiStreamConverter {
+pub fn parse_openai_sse_events(raw: &[u8]) -> Vec<String> {
+    let mut events = Vec::new();
+    for frame in String::from_utf8_lossy(raw).split("\n\n") {
+        let mut data_lines = Vec::new();
+        for line in frame.lines() {
+            let Some(data) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let data = data.trim();
+            if !data.is_empty() {
+                data_lines.push(data);
+            }
+        }
+        if data_lines.is_empty() {
+            continue;
+        }
+        let data = data_lines.join("\n");
+        if data != "[DONE]" {
+            events.push(data);
+        }
+    }
+    events
+}
+
+pub struct AnthropicStreamConverter {
     model: String,
     msg_id: String,
     tool_blocks: BTreeMap<u64, u64>,
@@ -276,8 +291,8 @@ struct OpenaiStreamConverter {
     completion_tokens: u64,
 }
 
-impl OpenaiStreamConverter {
-    fn new(model: &str) -> Self {
+impl AnthropicStreamConverter {
+    pub fn new(model: &str) -> Self {
         Self {
             model: model.to_string(),
             msg_id: make_message_id(),
@@ -290,7 +305,7 @@ impl OpenaiStreamConverter {
         }
     }
 
-    fn preamble(&self) -> Vec<String> {
+    pub fn preamble(&self) -> Vec<String> {
         vec![
             sse(
                 "message_start",
@@ -312,7 +327,7 @@ impl OpenaiStreamConverter {
         ]
     }
 
-    fn process_chunk(&mut self, chunk: &Value) -> Vec<String> {
+    pub fn process_chunk(&mut self, chunk: &Value) -> Vec<String> {
         let mut frames = Vec::new();
         let choice = chunk
             .get("choices")
@@ -423,7 +438,7 @@ impl OpenaiStreamConverter {
         frames
     }
 
-    fn epilogue(&mut self) -> Vec<String> {
+    pub fn epilogue(&mut self) -> Vec<String> {
         let mut frames = Vec::new();
         if self.text_block_index.is_none() && self.tool_blocks.is_empty() {
             self.text_block_index = Some(self.next_block_index);
