@@ -22,6 +22,17 @@ if [ "$is_android" -eq 1 ]; then
     exit 1
 fi
 
+rust_cli="$SCRIPT_DIR/target/debug/omniinfer-rs"
+
+if [ "${OMNIINFER_FORCE_PYTHON:-}" != "1" ] && [ "${OMNIINFER_FORCE_PYTHON:-}" != "true" ] && [ "${OMNIINFER_FORCE_PYTHON:-}" != "yes" ] && [ "${OMNIINFER_FORCE_PYTHON:-}" != "on" ]; then
+    if [ -x "$rust_cli" ]; then
+        exec "$rust_cli" "$@"
+    fi
+    echo "Rust OmniInfer CLI was not found at $rust_cli. Run: cargo build -p omniinfer-cli" >&2
+    echo "To use the Python fallback now, set OMNIINFER_FORCE_PYTHON=1." >&2
+    exit 1
+fi
+
 if [ -n "${OMNIINFER_PYTHON:-}" ] && [ -x "${OMNIINFER_PYTHON}" ]; then
     exec "${OMNIINFER_PYTHON}" "$SCRIPT_DIR/omniinfer.py" "$@"
 fi

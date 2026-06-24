@@ -25,6 +25,7 @@ class Step:
     command: list[str]
     timeout_s: float = 300.0
     required: bool = True
+    env_overrides: dict[str, str] | None = None
 
 
 def _utc_stamp() -> str:
@@ -40,7 +41,7 @@ def _run_step(step: Step, *, env: dict[str, str], output_dir: Path) -> dict[str,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=step.timeout_s,
-            env=env,
+            env={**env, **(step.env_overrides or {})},
             check=False,
         )
         timed_out = False
@@ -158,6 +159,7 @@ def _base_steps(output_dir: Path, state_root: Path, runs: int) -> list[Step]:
                 str(python_contracts),
             ],
             timeout_s=600.0,
+            env_overrides={"OMNIINFER_FORCE_PYTHON": "1"},
         ),
         Step(
             "rust-strict-contracts",
@@ -198,6 +200,7 @@ def _base_steps(output_dir: Path, state_root: Path, runs: int) -> list[Step]:
                 str(runs),
                 "--binary",
                 "./omniinfer",
+                "--force-python",
                 "--state-root",
                 str(state_root / "python-profile"),
                 "--output-dir",
