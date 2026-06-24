@@ -1310,6 +1310,9 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         public_url.as_deref(),
         &lan_base_urls(&public_config, args.lan),
         api_key.as_deref(),
+        admin_api_key.as_deref(),
+        public_model_root.as_deref(),
+        args.allow_remote_management,
         !args.cloudflare_no_print_key,
         &log_path,
         smoke_text.as_deref(),
@@ -1788,6 +1791,9 @@ fn print_serve_ready(
     public_url: Option<&str>,
     lan_base_urls: &[String],
     api_key: Option<&str>,
+    admin_api_key: Option<&str>,
+    public_model_root: Option<&std::path::Path>,
+    remote_management: bool,
     print_api_key: bool,
     log_path: &std::path::Path,
     smoke_text: Option<&str>,
@@ -1804,6 +1810,19 @@ fn print_serve_ready(
     println!("Local Base URL: http://127.0.0.1:{port}/v1");
     if let Some(api_key) = api_key.filter(|_| print_api_key) {
         println!("API Key: {api_key}");
+    }
+    if remote_management {
+        println!("Remote management: enabled");
+        if let Some(admin_api_key) = admin_api_key.filter(|_| print_api_key) {
+            println!("Admin API Key: {admin_api_key}");
+        }
+        if let Some(public_model_root) = public_model_root {
+            println!("Public model root: {}", public_model_root.display());
+            match omniinfer_core::public_models::list_public_models(Some(public_model_root)) {
+                Ok(models) => println!("Public models: {}", models.len()),
+                Err(error) => println!("Public models: unavailable ({error})"),
+            }
+        }
     }
     println!("Backend: {}", json_str(state, "backend").unwrap_or("-"));
     println!(
@@ -1837,6 +1856,22 @@ fn print_serve_ready(
             "  curl -sS{} -H 'Content-Type: application/json' {}/chat/completions -d '{{\"model\":\"omniinfer\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}],\"stream\":false}}'",
             auth, remote_base_url
         );
+        if remote_management {
+            let management_base = remote_base_url.trim_end_matches("/v1");
+            let admin_auth = if let Some(admin_api_key) = admin_api_key.filter(|_| print_api_key) {
+                format!(" -H 'Authorization: Bearer {admin_api_key}'")
+            } else {
+                String::new()
+            };
+            println!(
+                "  curl -sS{} {}/omni/public-models",
+                admin_auth, management_base
+            );
+            println!(
+                "  curl -sS{} -H 'Content-Type: application/json' {}/omni/model/select -d '{{\"model\":\"qwen3.5-4b-q4_k_m\"}}'",
+                admin_auth, management_base
+            );
+        }
     }
 }
 
