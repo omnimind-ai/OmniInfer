@@ -369,6 +369,40 @@ LAN and Cloudflare access can run at the same time:
 
 In this mode, OmniInfer binds to `0.0.0.0` for LAN clients and starts Cloudflare Quick Tunnel against `http://127.0.0.1:<port>`. Both remote entry points require the same API key, and `/omni/*` management endpoints remain local-only.
 
+For a fixed HTTPS hostname behind a trusted reverse proxy such as nginx + frp, keep OmniInfer on loopback and let the proxy publish the public URL. Use a separate admin key when remote clients need model-management endpoints:
+
+```sh
+./omniinfer serve \
+  --backend llama.cpp-linux-cuda \
+  --public-model-root /path/to/public_models \
+  --api-key oi_inference_key \
+  --admin-api-key oi_admin_key \
+  --allow-remote-management \
+  --behind-proxy \
+  --detach
+```
+
+`--public-model-root` is the only model tree remote management requests may select from. Each model lives in a directory with an `omni-model.json` manifest:
+
+```text
+public_models/
+  qwen3.5-4b-q4_k_m/
+    omni-model.json
+    Qwen3.5-4B-Q4_K_M.gguf
+```
+
+Remote clients list selectable models with `GET /omni/public-models` and switch models with `POST /omni/model/select`:
+
+```sh
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  https://omniinfer.example.com/omni/public-models
+
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  -H 'Content-Type: application/json' \
+  https://omniinfer.example.com/omni/model/select \
+  -d '{"model":"qwen3.5-4b-q4_k_m"}'
+```
+
 On Windows, allow the port through the Private-network firewall profile when needed:
 
 ```powershell
