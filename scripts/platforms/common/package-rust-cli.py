@@ -31,7 +31,7 @@ def make_executable(path: Path) -> None:
 
 def install_unix_launcher(target: Path, binary_name: str) -> None:
     target.write_text(
-        f"""#!/bin/sh
+        rf"""#!/bin/sh
 set -eu
 
 SCRIPT_PATH="$0"
@@ -41,10 +41,20 @@ case "$SCRIPT_PATH" in
 esac
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
-if [ -z "${{OMNIINFER_PYTHON:-}}" ] && [ -x "$ROOT/runtime/mlx-mac/venv/bin/python3" ]; then
+
+python_works() {{
+  [ -x "$1" ] || return 1
+  version_output="$("$1" --version 2>/dev/null)" || return 1
+  case "$version_output" in
+    Python\ *) return 0 ;;
+    *) return 1 ;;
+  esac
+}}
+
+if [ -z "${{OMNIINFER_PYTHON:-}}" ] && python_works "$ROOT/runtime/mlx-mac/venv/bin/python3"; then
   export OMNIINFER_PYTHON="$ROOT/runtime/mlx-mac/venv/bin/python3"
 fi
-if [ -z "${{OMNIINFER_PYTHON:-}}" ] && [ -x "$ROOT/runtime/mnn-linux/venv/bin/python3" ]; then
+if [ -z "${{OMNIINFER_PYTHON:-}}" ] && python_works "$ROOT/runtime/mnn-linux/venv/bin/python3"; then
   export OMNIINFER_PYTHON="$ROOT/runtime/mnn-linux/venv/bin/python3"
 fi
 exec "$ROOT/{binary_name}" "$@"
