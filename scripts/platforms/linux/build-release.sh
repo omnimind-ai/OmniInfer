@@ -11,6 +11,7 @@ VULKAN_SCRIPT="${SCRIPT_DIR}/build-llama-vulkan.sh"
 S390X_SCRIPT="${SCRIPT_DIR}/build-llama-s390x.sh"
 OPENVINO_SCRIPT="${SCRIPT_DIR}/build-llama-openvino.sh"
 RUNTIME_BACKENDS_HELPER="${SCRIPT_DIR}/release_runtime_backends.py"
+RUST_CLI_PACKAGER="${REPO_ROOT}/scripts/platforms/common/package-rust-cli.py"
 
 PACKAGE_NAME="OmniInfer"
 PLATFORM_TAG="linux-x64"
@@ -129,17 +130,7 @@ require_command() {
   fi
 }
 
-ensure_pyinstaller() {
-  if ! python3 -c "import PyInstaller" &>/dev/null; then
-    echo "PyInstaller not found. Installing..."
-    python3 -m pip install pyinstaller || { echo "ERROR: Failed to install PyInstaller." >&2; exit 1; }
-  fi
-}
-
 require_command python3 "Install Python 3.10+ first."
-if [[ ${DRY_RUN} -eq 0 ]]; then
-  ensure_pyinstaller
-fi
 
 # --- optional backend builds ---
 
@@ -221,35 +212,14 @@ mkdir -p "${RUNTIME_ROOT}" "${CONFIG_ROOT}" "${BUILD_ROOT}"
 RUNTIME_BACKENDS_MANIFEST="${BUILD_ROOT}/runtime-backends.json"
 printf '%s\n' "${RUNTIME_BACKENDS_JSON}" > "${RUNTIME_BACKENDS_MANIFEST}"
 
-CLI_ENTRY="${REPO_ROOT}/omniinfer.py"
+[[ ! -f "${RUST_CLI_PACKAGER}" ]] && { echo "ERROR: Rust CLI packager not found: ${RUST_CLI_PACKAGER}" >&2; exit 1; }
 
-[[ ! -f "${CLI_ENTRY}" ]] && { echo "ERROR: CLI entry not found: ${CLI_ENTRY}" >&2; exit 1; }
-
-# --- PyInstaller: CLI (--onedir) ---
-
-CLI_DIST="${BUILD_ROOT}/cli-dist"
 echo ""
-echo "Building omniinfer (CLI) with PyInstaller..."
-python3 -m PyInstaller \
-  --noconfirm \
-  --clean \
-  --onedir \
-  --console \
-  --name "omniinfer" \
-  --distpath "${CLI_DIST}" \
-  --workpath "${BUILD_ROOT}/pyinstaller-work-cli" \
-  --specpath "${BUILD_ROOT}/pyinstaller-spec-cli" \
-  --add-data "${REPO_ROOT}/service_core/model_catalogs:service_core/model_catalogs" \
-  "${CLI_ENTRY}"
-
-CLI_BIN="${CLI_DIST}/omniinfer/omniinfer"
-if [[ ! -f "${CLI_BIN}" ]]; then
-  echo "ERROR: CLI build succeeded but omniinfer not found at ${CLI_BIN}" >&2
-  exit 1
-fi
-
-cp -a "${CLI_DIST}/omniinfer/." "${RELEASE_ROOT}/"
-chmod +x "${RELEASE_ROOT}/omniinfer"
+echo "Building Rust omniinfer CLI..."
+python3 "${RUST_CLI_PACKAGER}" \
+  --repo-root "${REPO_ROOT}" \
+  --portable-root "${RELEASE_ROOT}" \
+  --platform linux
 
 # --- config ---
 

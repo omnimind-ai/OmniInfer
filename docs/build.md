@@ -214,7 +214,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 
 - It can prebuild any of the Windows runtimes above before packaging
 - It packages only the requested backends when `-Backends` is provided; otherwise it packages every built backend under `.local/runtime/windows`
-- It builds `omniinfer.exe` with PyInstaller `--onedir` and excludes optional heavyweight scientific/image stacks such as MKL, NumPy, SciPy, PIL, Torch, pandas, and OpenCV from the CLI bundle
+- It builds the Rust control-plane CLI with `cargo build --release -p omniinfer-cli` and installs it as `omniinfer.exe`
+- It still copies `omniinfer.py` and `service_core/` into the package so `OMNIINFER_FORCE_PYTHON=1` can use the Python fallback during the rollback window
 - It writes PowerShell and cmd.exe launchers; use `omniinfer.ps1` from PowerShell and keep `omniinfer.cmd` for cmd.exe compatibility
 
 ## Linux
@@ -355,7 +356,11 @@ such as `mnn-linux` are packaged when their runtime Python entrypoint exists.
 while Python runtime backends such as `vllm-linux-cuda` and `mnn-linux` copy the
 runtime environment needed by their launcher or embedded driver.
 
-The portable package exposes `omniinfer` as the real CLI binary.
+The portable package exposes `omniinfer` as the user-facing launcher and
+`omniinfer-rs` as the Rust control-plane binary. Packaging builds the CLI with
+`cargo build --release -p omniinfer-cli` and also copies `omniinfer.py` plus
+`service_core/` so `OMNIINFER_FORCE_PYTHON=1` can use the Python fallback during
+the rollback window.
 
 Optional prebuild examples:
 
@@ -482,13 +487,13 @@ To build and package every supported macOS backend:
 bash ./scripts/platforms/macos/build-release.sh --all-supported
 ```
 
-The release exposes `omniinfer` as the user-facing CLI entrypoint. The packaging
-mode depends on the selected backends:
-
-- Releases without `mlx-mac` build `omniinfer` as a PyInstaller binary.
-- Releases with `mlx-mac` skip PyInstaller and install `omniinfer` as a launcher
-  that runs `omniinfer.py` with `runtime/mlx-mac/venv/bin/python3`, so the embedded
-  MLX backend can import its Python runtime packages.
+The release exposes `omniinfer` as the user-facing launcher and `omniinfer-rs`
+as the Rust control-plane binary. Packaging builds the CLI with
+`cargo build --release -p omniinfer-cli` and also copies `omniinfer.py` plus
+`service_core/` so `OMNIINFER_FORCE_PYTHON=1` can use the Python fallback during
+the rollback window. When `mlx-mac` is packaged, the launcher points
+`OMNIINFER_PYTHON` at `runtime/mlx-mac/venv/bin/python3` so embedded MLX
+fallback paths can import their bundled Python runtime packages.
 
 For `mlx-mac` releases, the packaging script creates a fresh venv inside the
 release package and installs `scripts/platforms/macos/mlx-mac/requirements.txt`.
