@@ -729,6 +729,7 @@ fn load_model(args: &ModelLoadArgs) -> Result<()> {
         model: args.model.clone(),
         mmproj: args.mmproj.clone(),
         ctx_size: args.ctx_size,
+        backend_port: None,
         config: args.config.clone(),
         backend_extra_args: args.backend_extra_args.clone(),
     };
@@ -1184,6 +1185,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
                 model: model.to_string(),
                 mmproj: args.mmproj.clone(),
                 ctx_size: args.ctx_size,
+                backend_port: args.backend_port,
                 config: None,
                 backend_extra_args: Vec::new(),
             };

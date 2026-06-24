@@ -822,7 +822,13 @@ impl RustRuntimeManager {
         let effective_launch_args = launch_args
             .clone()
             .unwrap_or_else(|| backend.default_args.clone());
-        let port = pick_runtime_port(&backend_host)?;
+        let port = payload
+            .get("backend_port")
+            .and_then(Value::as_u64)
+            .filter(|value| (1..=u64::from(u16::MAX)).contains(value))
+            .and_then(|value| u16::try_from(value).ok())
+            .map(Ok)
+            .unwrap_or_else(|| pick_runtime_port(&backend_host))?;
         let backend_payload = serde_json::to_value(backend)?;
         let plan = build_external_runtime_plan(&ExternalRuntimeRequest {
             backend: backend_payload,
@@ -1463,6 +1469,7 @@ mod tests {
         let upstream = spawn_test_upstream().await;
         let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
         let port = gateway.port;
+        let backend_port = pick_runtime_port("127.0.0.1").unwrap();
 
         let load_response = tokio::task::spawn_blocking({
             let model = model.clone();
@@ -1471,7 +1478,8 @@ mod tests {
                     .send_json(json!({
                         "backend": backend_id,
                         "model": model.display().to_string(),
-                        "ctx_size": 512
+                        "ctx_size": 512,
+                        "backend_port": backend_port
                     }))
                     .unwrap()
             }
@@ -1482,6 +1490,7 @@ mod tests {
         let load_body: Value = load_response.into_body().read_json().unwrap();
         assert_eq!(load_body["selected_backend"], backend_id);
         assert_eq!(load_body["selected_ctx_size"], 512);
+        assert_eq!(load_body["backend_port"], backend_port);
         assert!(load_body["backend_pid"].as_u64().unwrap() > 0);
 
         let chat_response = tokio::task::spawn_blocking(move || {

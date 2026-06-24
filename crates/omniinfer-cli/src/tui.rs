@@ -100,6 +100,7 @@ fn load_remembered_model(
         model: model.model.clone(),
         mmproj: model.mmproj.clone(),
         ctx_size: model.ctx_size,
+        backend_port: None,
         config: None,
         backend_extra_args: Vec::new(),
     };
@@ -250,6 +251,7 @@ fn load_model_interactive(
         model: model.to_string(),
         mmproj: None,
         ctx_size: None,
+        backend_port: None,
         config: None,
         backend_extra_args: Vec::new(),
     };

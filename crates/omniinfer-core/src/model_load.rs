@@ -11,6 +11,7 @@ pub struct ModelLoadRequest {
     pub model: String,
     pub mmproj: Option<String>,
     pub ctx_size: Option<u32>,
+    pub backend_port: Option<u16>,
     pub config: Option<String>,
     pub backend_extra_args: Vec<String>,
 }
@@ -119,6 +120,12 @@ pub fn build_model_load_payload(
         payload.insert(
             "ctx_size".to_string(),
             Value::Number(u64::from(ctx_size).into()),
+        );
+    }
+    if let Some(backend_port) = request.backend_port {
+        payload.insert(
+            "backend_port".to_string(),
+            Value::Number(u64::from(backend_port).into()),
         );
     }
     payload.insert("backend".to_string(), Value::String(backend_id.clone()));
@@ -367,6 +374,7 @@ mod tests {
         let request = ModelLoadRequest {
             model: model.display().to_string(),
             ctx_size: Some(8192),
+            backend_port: Some(12345),
             ..ModelLoadRequest::default()
         };
         let plan = build_model_load_payload(
@@ -379,6 +387,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.payload["ctx_size"], serde_json::json!(8192));
+        assert_eq!(plan.payload["backend_port"], serde_json::json!(12345));
         std::fs::remove_dir_all(cwd).ok();
     }
 

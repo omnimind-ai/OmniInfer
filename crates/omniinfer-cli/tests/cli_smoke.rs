@@ -494,6 +494,7 @@ fn serve_detach_loads_model_before_ready() {
         ),
     ]);
     let port = gateway.port;
+    let backend_port = 50212;
     let source_root = temp_repo_root("serve-detach-load-source");
     let state_root = temp_repo_root("serve-detach-load-state");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -520,6 +521,8 @@ fn serve_detach_loads_model_before_ready() {
         .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--port"])
         .arg(port.to_string())
+        .arg("--backend-port")
+        .arg(backend_port.to_string())
         .arg("--model")
         .arg(&model)
         .args(["--ctx-size", "1024"])
@@ -535,6 +538,7 @@ fn serve_detach_loads_model_before_ready() {
     let request = gateway.request();
     assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
     assert!(request.contains(r#""ctx_size":1024"#));
+    assert!(request.contains(&format!(r#""backend_port":{backend_port}"#)));
     let request = gateway.request();
     assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
     gateway.join();
