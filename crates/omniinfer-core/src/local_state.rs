@@ -119,6 +119,14 @@ pub fn save_selected_model(
 }
 
 pub fn save_tui_show_reasoning(enabled: bool) -> Result<(), StateError> {
+    save_boolish_state_field("tui_show_reasoning", enabled)
+}
+
+pub fn save_default_thinking(enabled: bool) -> Result<(), StateError> {
+    save_boolish_state_field("default_thinking", enabled)
+}
+
+fn save_boolish_state_field(key: &str, enabled: bool) -> Result<(), StateError> {
     let mut value = load_state_value().unwrap_or_else(|_| serde_json::json!({}));
     if !value.is_object() {
         value = serde_json::json!({});
@@ -127,7 +135,7 @@ pub fn save_tui_show_reasoning(enabled: bool) -> Result<(), StateError> {
         .as_object_mut()
         .expect("state value was normalized to object");
     map.insert(
-        "tui_show_reasoning".to_string(),
+        key.to_string(),
         Value::String(if enabled { "on" } else { "off" }.to_string()),
     );
     save_state_value(&value)
@@ -230,6 +238,7 @@ fn boolish_field(value: Option<&Value>) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parses_python_state_shape() {
@@ -307,5 +316,52 @@ mod tests {
             })
         );
         assert_eq!(value["future"]["keep"], true);
+    }
+
+    #[test]
+    fn saves_default_thinking_as_python_shape() {
+        let root = temp_root("default-thinking");
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", root.display().to_string());
+        save_default_thinking(true).expect("save");
+        let state = load_state().expect("load");
+        assert_eq!(state.default_thinking, Some(true));
+        let raw = std::fs::read_to_string(crate::paths::state_file()).expect("read state");
+        assert!(raw.contains(r#""default_thinking": "on""#));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("omniinfer-rs-local-state-{name}-{nanos}"))
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        old: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let old = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(old) = &self.old {
+                    std::env::set_var(self.key, old);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
     }
 }

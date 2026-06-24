@@ -184,13 +184,18 @@ async fn proxy_request_inner(
 
 async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path: &str) -> bool {
     match (method, path) {
-        (&Method::GET, "/health" | "/omni/state" | "/omni/backends") => true,
+        (
+            &Method::GET,
+            "/health" | "/omni/state" | "/omni/backends" | "/omni/thinking" | "/omni/models",
+        ) => true,
+        (&Method::GET, "/omni/backend/props") => true,
         (&Method::GET, "/omni/supported-models" | "/omni/supported-models/best" | "/v1/models") => {
             true
         }
         (&Method::POST, "/omni/backend/select" | "/omni/backend/stop" | "/omni/model/select") => {
             true
         }
+        (&Method::POST, "/omni/thinking/select") => true,
         (&Method::POST, "/v1/chat/completions") => {
             state.runtime.lock().await.current_proxy_base().is_some()
         }
@@ -261,6 +266,22 @@ async fn try_handle_rust_endpoint(
                 BackendRegistry::load_current().api_payload(scope),
             )))
         }
+        (&Method::GET, "/omni/thinking") => Ok(Some(json_response(
+            StatusCode::OK,
+            json!({"default_enabled": default_thinking_enabled()}),
+        ))),
+        (&Method::GET, "/omni/backend/props") => {
+            let target = state.runtime.lock().await.current_proxy_base();
+            let Some(target) = target else {
+                return Ok(Some(json_response(StatusCode::OK, json!({}))));
+            };
+            let response = proxy_get_to_runtime(&state.client, &format!("{target}/props")).await?;
+            Ok(Some(response))
+        }
+        (&Method::GET, "/omni/models") => Ok(Some(json_response(
+            StatusCode::GONE,
+            json!({"error": {"message": "GET /omni/models has been deprecated and is no longer maintained"}}),
+        ))),
         (&Method::GET, "/omni/supported-models") => {
             let system = query_value(request.uri(), "system").unwrap_or_else(current_system_name);
             match model_catalog::list_supported_models(&system) {
@@ -331,6 +352,31 @@ async fn try_handle_rust_endpoint(
             })
             .await??;
             Ok(Some(json_response(StatusCode::OK, result)))
+        }
+        (&Method::POST, "/omni/thinking/select") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let payload: Value = serde_json::from_slice(&body)?;
+            let raw_enabled = payload.get("enabled").or_else(|| payload.get("think"));
+            let Some(raw_enabled) = raw_enabled else {
+                return Ok(Some(json_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({"error": {"message": "field 'enabled' is required"}}),
+                )));
+            };
+            let enabled = match omniinfer_core::request_normalization::parse_boolish(raw_enabled) {
+                Ok(enabled) => enabled,
+                Err(error) => {
+                    return Ok(Some(json_response(
+                        StatusCode::BAD_REQUEST,
+                        json!({"error": {"message": error.to_string()}}),
+                    )));
+                }
+            };
+            local_state::save_default_thinking(enabled)?;
+            Ok(Some(json_response(
+                StatusCode::OK,
+                json!({"ok": true, "default_enabled": enabled}),
+            )))
         }
         (&Method::POST, "/omni/model/select") => {
             let (parts, body) = request.into_parts();
@@ -454,6 +500,18 @@ async fn try_handle_rust_endpoint(
         }
         _ => Ok(None),
     }
+}
+
+async fn proxy_get_to_runtime(
+    client: &Client<HttpConnector, Full<HyperBytes>>,
+    uri: &str,
+) -> Result<Response<Body>> {
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .body(Full::new(HyperBytes::new()))?;
+    let response = client.request(request).await?;
+    response_from_upstream(response).await
 }
 
 async fn proxy_collected_body_to_upstream(
@@ -655,6 +713,13 @@ fn normalize_chat_body(body: HyperBytes, default_thinking: bool) -> Result<Hyper
     let payload: serde_json::Value = serde_json::from_slice(&body)?;
     let normalized = normalize_chat_request(payload, default_thinking)?;
     Ok(HyperBytes::from(serde_json::to_vec(&normalized.payload)?))
+}
+
+fn default_thinking_enabled() -> bool {
+    local_state::load_state()
+        .ok()
+        .and_then(|state| state.default_thinking)
+        .unwrap_or(false)
 }
 
 #[derive(Default)]
@@ -1304,6 +1369,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rust_gateway_serves_small_management_endpoints() {
+        let temp = temp_root("rust-gateway-small-management");
+        std::fs::create_dir_all(&temp).unwrap();
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+        let port = gateway.port;
+
+        let thinking = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/thinking"))
+                .call()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let thinking_body: Value = thinking.into_body().read_json().unwrap();
+        assert_eq!(thinking_body["default_enabled"], false);
+
+        let selected = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/thinking/select"))
+                .send_json(json!({"enabled": true}))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let selected_body: Value = selected.into_body().read_json().unwrap();
+        assert_eq!(selected_body["default_enabled"], true);
+        assert_eq!(
+            local_state::load_state()
+                .unwrap()
+                .default_thinking
+                .unwrap_or(false),
+            true
+        );
+
+        let props = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/backend/props"))
+                .call()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let props_body: Value = props.into_body().read_json().unwrap();
+        assert_eq!(props_body, json!({}));
+
+        let deprecated = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/models"))
+                .call()
+                .unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert!(deprecated.to_string().contains("410"));
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
+    #[tokio::test]
     async fn proxy_shutdown_stops_gateway_after_upstream_success() {
         let upstream = spawn_test_upstream().await;
         let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
@@ -1426,6 +1552,17 @@ mod tests {
         assert_eq!(cache_response.status().as_u16(), 200);
         let cache_body: Value = cache_response.into_body().read_json().unwrap();
         assert_eq!(cache_body["ok"], true);
+
+        let props_response = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/backend/props"))
+                .call()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(props_response.status().as_u16(), 200);
+        let props_body: Value = props_response.into_body().read_json().unwrap();
+        assert_eq!(props_body["n_ctx"], 512);
 
         gateway.stop().await;
         upstream.stop().await;
@@ -1771,9 +1908,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.end_headers()
+    def do_PUT(self):
+        self._json({"ok": True})
+    def do_DELETE(self):
+        self._json({"ok": True})
+    def do_PATCH(self):
+        self._json({"ok": True})
     def do_GET(self):
         if self.path.startswith("/health"):
             self._json({"status": "ok"})
+        elif self.path.startswith("/props"):
+            self._json({"n_ctx": 512, "slots": 1})
         else:
             self._json({"ok": True})
     def do_POST(self):
