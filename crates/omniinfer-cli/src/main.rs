@@ -678,6 +678,14 @@ fn select_backend(backend: &str) -> Result<()> {
 }
 
 pub(crate) fn select_backend_for_config(backend: &str, config: &config::AppConfig) -> Result<()> {
+    select_backend_for_config_with_autostart(backend, config, true)
+}
+
+fn select_backend_for_config_with_autostart(
+    backend: &str,
+    config: &config::AppConfig,
+    autostart: bool,
+) -> Result<()> {
     let backends = rust_backend_payload(BackendScope::All);
     let rows = backends
         .get("data")
@@ -695,11 +703,12 @@ pub(crate) fn select_backend_for_config(backend: &str, config: &config::AppConfi
             anyhow::anyhow!("Unsupported backend: {backend}\nAvailable backends: {available}")
         })?;
 
-    let _payload = post_local_json_for_config(
+    let _payload = post_local_json_for_config_with_autostart(
         "/omni/backend/select",
         &serde_json::json!({ "backend": backend }),
         Duration::from_secs(30),
         config,
+        autostart,
     )?;
     local_state::save_selected_backend(backend)?;
     let profile = backend_profiles::ensure_backend_profile_template(backend_payload)?;
@@ -766,6 +775,15 @@ pub(crate) fn load_model_with_request_for_config(
     verbose: bool,
     config: &config::AppConfig,
 ) -> Result<(serde_json::Value, model_load::ModelLoadPlan)> {
+    load_model_with_request_for_config_and_autostart(request, verbose, config, true)
+}
+
+fn load_model_with_request_for_config_and_autostart(
+    request: &model_load::ModelLoadRequest,
+    verbose: bool,
+    config: &config::AppConfig,
+    autostart: bool,
+) -> Result<(serde_json::Value, model_load::ModelLoadPlan)> {
     let backends = rust_backend_payload(BackendScope::All);
     let rows = backends
         .get("data")
@@ -793,8 +811,13 @@ pub(crate) fn load_model_with_request_for_config(
         &std::env::current_dir()?,
     )?;
     println!("Loading model...");
-    let response =
-        post_local_model_load_for_config(&plan.payload, verbose, Duration::from_secs(600), config)?;
+    let response = post_local_model_load_for_config_with_autostart(
+        &plan.payload,
+        verbose,
+        Duration::from_secs(600),
+        config,
+        autostart,
+    )?;
     let selected_backend = json_str(&response, "selected_backend").unwrap_or(&plan.backend);
     local_state::save_selected_backend(selected_backend)?;
     let selected_model = json_str(&response, "selected_model")
@@ -1221,7 +1244,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
-            select_backend_for_config(backend, &public_config)?;
+            select_backend_for_config_with_autostart(backend, &public_config, false)?;
         }
         if let Some(model) = args
             .model
@@ -1236,8 +1259,12 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
                 config: None,
                 backend_extra_args: Vec::new(),
             };
-            let (response, plan) =
-                load_model_with_request_for_config(&request, false, &public_config)?;
+            let (response, plan) = load_model_with_request_for_config_and_autostart(
+                &request,
+                false,
+                &public_config,
+                false,
+            )?;
             if plan.auto_selected {
                 println!("Auto-selected backend: {}", plan.backend);
             }
@@ -2347,7 +2374,19 @@ pub(crate) fn post_local_json_for_config(
     timeout: Duration,
     config: &config::AppConfig,
 ) -> Result<serde_json::Value> {
-    ensure_local_gateway_running(config)?;
+    post_local_json_for_config_with_autostart(endpoint, body, timeout, config, true)
+}
+
+fn post_local_json_for_config_with_autostart(
+    endpoint: &str,
+    body: &serde_json::Value,
+    timeout: Duration,
+    config: &config::AppConfig,
+    autostart: bool,
+) -> Result<serde_json::Value> {
+    if autostart {
+        ensure_local_gateway_running(config)?;
+    }
     let url = format!("{}{}", config.service_base_url(), endpoint);
     let response = http_client::post_json(&url, body, timeout)?;
     if response.status >= 400 {
@@ -2356,13 +2395,16 @@ pub(crate) fn post_local_json_for_config(
     Ok(response.body)
 }
 
-fn post_local_model_load_for_config(
+fn post_local_model_load_for_config_with_autostart(
     body: &serde_json::Value,
     verbose: bool,
     timeout: Duration,
     config: &config::AppConfig,
+    autostart: bool,
 ) -> Result<serde_json::Value> {
-    ensure_local_gateway_running(config)?;
+    if autostart {
+        ensure_local_gateway_running(config)?;
+    }
     let url = format!("{}/omni/model/select", config.service_base_url());
     let response = http_client::post_streaming_lines(
         &url,

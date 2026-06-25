@@ -552,7 +552,6 @@ fn serve_detach_loads_model_before_ready() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"starting"}"#),
         Response::new(r#"{"status":"ok"}"#),
-        Response::new(r#"{"status":"ok"}"#),
         Response::new(
             r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_ctx_size":1024}"#,
         ),
@@ -601,7 +600,6 @@ fn serve_detach_loads_model_before_ready() {
 
     let _ = gateway.request();
     let _ = gateway.request();
-    let _ = gateway.request();
     let request = gateway.request();
     assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
     assert!(request.contains(r#""ctx_size":1024"#));
@@ -618,7 +616,6 @@ fn serve_detach_runs_smoke_test() {
     let backend_id = test_external_backend_id();
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
         Response::new(r#"{"status":"ok"}"#),
         Response::new(
             r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/model.gguf","selected_ctx_size":1024}"#,
@@ -661,7 +658,6 @@ fn serve_detach_runs_smoke_test() {
         .success()
         .stdout(predicate::str::contains("Smoke: hello smoke"));
 
-    let _ = gateway.request();
     let _ = gateway.request();
     let _ = gateway.request();
     let _ = gateway.request();
