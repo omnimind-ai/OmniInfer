@@ -219,7 +219,7 @@ mod tests {
         let root = temp_root("runtime-process-ready");
         let script = write_test_server(&root, port);
         let plan = ExternalRuntimePlan {
-            command: vec![script.display().to_string()],
+            command: test_script_command(&script),
             cwd: root.clone(),
             port,
             ctx_size: None,
@@ -251,7 +251,7 @@ mod tests {
         fs::write(&script, "#!/usr/bin/env bash\nexit 7\n").unwrap();
         make_executable(&script);
         let plan = ExternalRuntimePlan {
-            command: vec![script.display().to_string()],
+            command: test_script_command(&script),
             cwd: root.clone(),
             port: 9,
             ctx_size: None,
@@ -280,7 +280,7 @@ mod tests {
         fs::write(&script, "#!/usr/bin/env bash\nsleep 30\n").unwrap();
         make_executable(&script);
         let plan = ExternalRuntimePlan {
-            command: vec![script.display().to_string()],
+            command: test_script_command(&script),
             cwd: root.clone(),
             port: 9,
             ctx_size: None,
@@ -351,6 +351,16 @@ PY
 
     #[cfg(windows)]
     fn make_executable(_path: &Path) {}
+
+    #[cfg(unix)]
+    fn test_script_command(path: &Path) -> Vec<String> {
+        vec!["bash".to_string(), path.display().to_string()]
+    }
+
+    #[cfg(windows)]
+    fn test_script_command(path: &Path) -> Vec<String> {
+        vec![path.display().to_string()]
+    }
 
     fn process_exited(pid: u32, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
