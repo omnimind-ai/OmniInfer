@@ -351,8 +351,75 @@ fn serve_detach_rejects_remote_management_without_key() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "--allow-remote-management requires --api-key or OMNIINFER_API_KEY",
+            "--allow-remote-management requires --admin-api-key or OMNIINFER_ADMIN_API_KEY",
         ));
+}
+
+#[test]
+fn serve_detach_external_backend_runs_without_python_upstream() {
+    let source_root = temp_repo_root("serve-rust-external-source");
+    let state_root = temp_repo_root("serve-rust-external-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    let port = free_port();
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"llama.cpp-linux-cuda"}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+    install_fake_backend(&state_root, "llama.cpp-linux-cuda");
+    let launcher = fake_python_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["serve", "--detach", "--api-key", "test-key", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OmniInfer service is ready"))
+        .stdout(predicate::str::contains(format!(
+            "Local Base URL: http://127.0.0.1:{}/v1",
+            port
+        )));
+
+    assert!(
+        !state_root.join("started_gateway.args").exists(),
+        "external-server serve should not start the Python compatibility upstream"
+    );
+    let health = wait_for_http_json(port, "/health");
+    assert_eq!(health["status"], "ok");
+    let state_raw = fs::read_to_string(
+        state_root
+            .join(".local")
+            .join("run")
+            .join(format!("serve-{port}.json")),
+    )
+    .expect("serve state");
+    let state: serde_json::Value = serde_json::from_str(&state_raw).expect("serve state json");
+    assert_eq!(state["port"], port);
+    assert!(state["pid"].as_u64().unwrap_or(0) > 0);
+
+    let mut stop = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    stop.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .args(["serve", "stop", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "OmniInfer service stopped on port {port}"
+        )));
+    assert!(wait_for_port_closed(port));
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
 }
 
 #[test]
@@ -1544,4 +1611,34 @@ fn wait_for_file(path: std::path::PathBuf) -> String {
         thread::sleep(Duration::from_millis(10));
     }
     panic!("timed out waiting for {}", path.display());
+}
+
+fn free_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind free port");
+    listener.local_addr().expect("local addr").port()
+}
+
+fn wait_for_http_json(port: u16, path: &str) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let url = format!("http://127.0.0.1:{port}{path}");
+    while Instant::now() < deadline {
+        if let Ok(response) = ureq::get(&url).call()
+            && response.status().is_success()
+        {
+            return response.into_body().read_json().expect("json response");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!("timed out waiting for {url}");
+}
+
+fn wait_for_port_closed(port: u16) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    false
 }

@@ -202,6 +202,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
         (&Method::GET, "/omni/supported-models" | "/omni/supported-models/best" | "/v1/models") => {
             true
         }
+        (&Method::POST, "/omni/shutdown") => true,
         (&Method::POST, "/omni/backend/select" | "/omni/backend/stop" | "/omni/model/select") => {
             true
         }
@@ -375,6 +376,23 @@ async fn try_handle_rust_endpoint(
             })
             .await??;
             Ok(Some(json_response(StatusCode::OK, result)))
+        }
+        (&Method::POST, "/omni/shutdown") => {
+            let result = tokio::task::spawn_blocking({
+                let runtime = Arc::clone(&state.runtime);
+                move || {
+                    let handle = tokio::runtime::Handle::current();
+                    handle.block_on(async move { runtime.lock().await.stop_runtime() })
+                }
+            })
+            .await??;
+            if let Some(sender) = state.shutdown.lock().await.take() {
+                let _ = sender.send(());
+            }
+            Ok(Some(json_response(
+                StatusCode::OK,
+                json!({"ok": true, "runtime": result}),
+            )))
         }
         (&Method::POST, "/omni/thinking/select") => {
             let body = request.into_body().collect().await?.to_bytes();
@@ -1034,6 +1052,9 @@ fn normalize_public_model_select(
         ));
     }
     if path_like || !public_models::looks_like_public_model_id(model) {
+        return Ok(());
+    }
+    if state.public_model_root.is_none() {
         return Ok(());
     }
     let entry = public_models::resolve_public_model(state.public_model_root.as_deref(), model)?;
@@ -1893,6 +1914,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_public_model_select_resolves_model_id() {
+        let _env_lock = TEST_ENV_LOCK.lock().await;
         let temp = temp_root("rust-gateway-public-model-select");
         let root = temp.join("public_models");
         let model_path = write_public_model_manifest(&root, "qwen3.5-4b-q4_k_m");
@@ -2246,4 +2268,5 @@ PY
             }
         }
     }
+
 }

@@ -1164,17 +1164,26 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     let use_rust_gateway = env::var("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY")
         .map(|value| value.trim() != "1")
         .unwrap_or(true);
+    let use_python_compat_upstream = use_rust_gateway && should_use_python_compat_upstream(args)?;
     let public_config = config.clone();
     let mut upstream_config = config.clone();
     if use_rust_gateway {
+        // Keep fallback proxy traffic off the public listener. In pure Rust mode no
+        // upstream is started, but the address must still be distinct to avoid
+        // accidental self-proxy recursion for unhandled endpoints.
         upstream_config.host = "127.0.0.1".to_string();
         upstream_config.port = choose_upstream_port(&public_config)?;
     }
     let log_path = paths::local_logs_dir().join(format!("serve-{}.log", public_config.port));
-    let child = start_serve_child(&upstream_config, args, &log_path, api_key.as_deref())?;
     println!("Starting OmniInfer service on port {}...", config.port);
     println!("Log: {}", log_path.display());
-    wait_for_gateway_ready(&upstream_config)?;
+    let upstream_child = if use_python_compat_upstream || !use_rust_gateway {
+        let child = start_serve_child(&upstream_config, args, &log_path, api_key.as_deref())?;
+        wait_for_gateway_ready(&upstream_config)?;
+        Some(child)
+    } else {
+        None
+    };
     let rust_gateway = if use_rust_gateway {
         let child = start_rust_gateway_child(
             &public_config,
@@ -1239,11 +1248,13 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             if let Some(rust_gateway) = &rust_gateway {
                 stop_process(rust_gateway.id());
             }
-            let _ = http_client::post_json(
-                &format!("{}/omni/shutdown", upstream_config.service_base_url()),
-                &serde_json::json!({}),
-                Duration::from_secs(10),
-            );
+            if upstream_child.is_some() {
+                let _ = http_client::post_json(
+                    &format!("{}/omni/shutdown", upstream_config.service_base_url()),
+                    &serde_json::json!({}),
+                    Duration::from_secs(10),
+                );
+            }
             return Err(error);
         }
     }
@@ -1287,7 +1298,8 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             rust_gateway
                 .as_ref()
                 .map(std::process::Child::id)
-                .unwrap_or_else(|| child.id()),
+                .or_else(|| upstream_child.as_ref().map(std::process::Child::id))
+                .ok_or_else(|| anyhow::anyhow!("serve has no process pid to record"))?,
         ),
         cloudflared_pid: cloudflared_child.as_ref().map(std::process::Child::id),
         port: Some(public_config.port),
@@ -1324,7 +1336,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         println!("Press Ctrl+C to stop.");
         let status = wait_for_foreground_service(
             rust_gateway,
-            child,
+            upstream_child,
             cloudflared_child,
             public_config.port,
         )?;
@@ -1337,17 +1349,22 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
 
 fn wait_for_foreground_service(
     rust_gateway: Option<std::process::Child>,
-    mut upstream_child: std::process::Child,
+    mut upstream_child: Option<std::process::Child>,
     cloudflared_child: Option<std::process::Child>,
     port: u16,
 ) -> Result<std::process::ExitStatus> {
     let status = if let Some(mut rust_gateway) = rust_gateway {
         let status = rust_gateway.wait()?;
-        let _ = upstream_child.kill();
-        let _ = upstream_child.wait();
+        if let Some(upstream_child) = upstream_child.as_mut() {
+            let _ = upstream_child.kill();
+            let _ = upstream_child.wait();
+        }
         status
     } else {
-        upstream_child.wait()?
+        upstream_child
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("serve has no foreground process to wait for"))?
+            .wait()?
     };
     if let Some(mut tunnel) = cloudflared_child {
         let _ = tunnel.kill();
@@ -1355,6 +1372,53 @@ fn wait_for_foreground_service(
     }
     let _ = serve_state::remove_serve_pid_info(port);
     Ok(status)
+}
+
+fn should_use_python_compat_upstream(args: &ServeArgs) -> Result<bool> {
+    if env::var("OMNIINFER_RUST_FORCE_PYTHON_UPSTREAM")
+        .map(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
+    let Some(backend_id) = resolve_serve_start_backend(args)? else {
+        return Ok(false);
+    };
+    let registry = backend_registry::BackendRegistry::load_current();
+    let Some(backend) = registry.get(&backend_id) else {
+        return Ok(false);
+    };
+    Ok(backend.runtime_mode == "embedded")
+}
+
+fn resolve_serve_start_backend(args: &ServeArgs) -> Result<Option<String>> {
+    if let Some(backend) = args
+        .backend
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Ok(Some(backend.to_string()));
+    }
+    if let Some(default_backend) = args
+        .default_backend
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Ok(Some(default_backend.to_string()));
+    }
+    if let Some(selected_backend) = local_state::load_state()
+        .ok()
+        .and_then(|state| state.selected_backend)
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Ok(Some(selected_backend));
+    }
+    Ok(backend_registry::BackendRegistry::load_current()
+        .api_payload(backend_registry::BackendScope::Installed)
+        .get("recommended")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string))
 }
 
 fn choose_upstream_port(public_config: &config::AppConfig) -> Result<u16> {
@@ -1721,6 +1785,9 @@ fn start_rust_gateway_child(
     admin_api_key: Option<&str>,
     public_model_root: Option<&std::path::Path>,
 ) -> Result<std::process::Child> {
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let stdout = OpenOptions::new()
         .create(true)
         .append(true)
