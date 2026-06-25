@@ -1204,7 +1204,8 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     if args.cloudflare {
         let cloudflared = resolve_cloudflared(args.cloudflared_path.as_deref())?;
         let local_url = format!("http://127.0.0.1:{}", config.port);
-        let (child, url) = start_cloudflare_quick_tunnel(&cloudflared, &local_url, &log_path)?;
+        let (child, url) =
+            start_cloudflare_quick_tunnel(&cloudflared, &local_url, &log_path, args.detach)?;
         cloudflared_child = Some(child);
         public_url = Some(url);
     }
@@ -1600,6 +1601,7 @@ fn start_cloudflare_quick_tunnel(
     cloudflared: &Path,
     local_url: &str,
     log_path: &Path,
+    detach: bool,
 ) -> Result<(std::process::Child, String)> {
     let stdout = OpenOptions::new()
         .create(true)
@@ -1609,12 +1611,16 @@ fn start_cloudflare_quick_tunnel(
         .create(true)
         .append(true)
         .open(log_path)?;
-    let mut child = ProcessCommand::new(cloudflared)
+    let mut command = ProcessCommand::new(cloudflared);
+    command
         .args(["tunnel", "--url", local_url])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    if detach {
+        detach_child_process(&mut command);
+    }
+    let mut child = command.spawn()?;
 
     let stdout_pipe = child
         .stdout
@@ -1773,6 +1779,9 @@ fn start_serve_child(
     if args.debug_body {
         command.arg("--debug-body");
     }
+    if args.detach {
+        detach_child_process(&mut command);
+    }
     Ok(command.spawn()?)
 }
 
@@ -1826,7 +1835,24 @@ fn start_rust_gateway_child(
     if args.cloudflare || args.behind_proxy {
         command.arg("--trust-proxy-headers");
     }
+    if args.detach {
+        detach_child_process(&mut command);
+    }
     Ok(command.spawn()?)
+}
+
+fn detach_child_process(command: &mut ProcessCommand) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
 }
 
 fn expand_home_path(value: &str) -> PathBuf {
