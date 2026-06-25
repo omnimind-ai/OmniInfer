@@ -129,7 +129,12 @@ fn is_public_endpoint(method: &str, path: &str) -> bool {
         "GET" => matches!(path, "/health" | "/v1/models"),
         "POST" => matches!(
             path,
-            "/v1/chat/completions" | "/v1/messages" | "/tokenize" | "/detokenize"
+            "/v1/chat/completions"
+                | "/v1/messages"
+                | "/tokenize"
+                | "/detokenize"
+                | "/omni/tokenize"
+                | "/omni/detokenize"
         ),
         _ => false,
     }
