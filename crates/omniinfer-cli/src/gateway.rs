@@ -783,6 +783,8 @@ struct LoadedRustRuntime {
     mmproj: Option<String>,
     ctx_size: Option<u32>,
     launch_args: Vec<String>,
+    cuda_visible_devices: Option<String>,
+    cuda_warning: Option<String>,
     process: RuntimeProcess,
     proxy_model_ref: Option<String>,
 }
@@ -923,6 +925,12 @@ impl RustRuntimeManager {
             mmproj: mmproj_path.clone(),
             ctx_size: plan.ctx_size,
             launch_args: effective_launch_args,
+            cuda_visible_devices: cuda_selection
+                .as_ref()
+                .map(|selection| selection.visible_devices.clone()),
+            cuda_warning: cuda_selection
+                .as_ref()
+                .and_then(|selection| selection.warning.clone()),
             proxy_model_ref: plan.proxy_model_ref.clone(),
             process,
         });
@@ -989,6 +997,8 @@ impl RustRuntimeManager {
                 "backend_pid": null,
                 "backend_port": null,
                 "launch_args": [],
+                "cuda_visible_devices": null,
+                "warning": null,
                 "launch_command": [],
                 "proxy_model": null,
                 "backend_log": null,
@@ -1009,6 +1019,8 @@ impl RustRuntimeManager {
             "backend_pid": info.pid,
             "backend_port": info.port,
             "launch_args": loaded.launch_args,
+            "cuda_visible_devices": loaded.cuda_visible_devices,
+            "warning": loaded.cuda_warning,
             "launch_command": info.command,
             "proxy_model": loaded.proxy_model_ref,
             "backend_log": info.log_path.display().to_string(),
@@ -1018,6 +1030,7 @@ impl RustRuntimeManager {
                 "host": "127.0.0.1",
                 "port": info.port,
                 "pid": info.pid,
+                "cuda_visible_devices": loaded.cuda_visible_devices,
                 "launch_command": info.command,
                 "log_path": info.log_path.display().to_string(),
                 "proxy_model_ref": loaded.proxy_model_ref,
