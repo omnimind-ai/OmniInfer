@@ -1,5 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::process::Command as ProcessCommand;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -896,11 +897,13 @@ impl RustRuntimeManager {
         let log_path = PathBuf::from(&backend.runtime_dir)
             .join("logs")
             .join(&plan.log_file_name);
+        let (runtime_env, cuda_selection) =
+            runtime_env_for_backend(backend, &effective_launch_args);
         let process = RuntimeProcess::start(
             &plan,
             RuntimeProcessOptions {
                 log_path,
-                env: runtime_env_for_backend(backend),
+                env: runtime_env,
                 startup_timeout,
                 health_host: backend_host.clone(),
             },
@@ -923,7 +926,7 @@ impl RustRuntimeManager {
             proxy_model_ref: plan.proxy_model_ref.clone(),
             process,
         });
-        Ok(json!({
+        let mut response = json!({
             "ok": true,
             "selected_backend": backend.id,
             "selected_model": resolved_model.model_path,
@@ -934,7 +937,14 @@ impl RustRuntimeManager {
             "backend_port": info.port,
             "launch_command": info.command,
             "log_path": info.log_path.display().to_string(),
-        }))
+        });
+        if let Some(selection) = cuda_selection {
+            response["cuda_visible_devices"] = json!(selection.visible_devices);
+            if let Some(warning) = selection.warning {
+                response["warning"] = json!(warning);
+            }
+        }
+        Ok(response)
     }
 
     fn resolve_requested_backend(&self, payload: &Value) -> Result<String> {
@@ -1179,7 +1189,16 @@ fn pick_runtime_port(host: &str) -> Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
-fn runtime_env_for_backend(backend: &backend_registry::BackendSpec) -> Vec<(String, String)> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeCudaSelection {
+    visible_devices: String,
+    warning: Option<String>,
+}
+
+fn runtime_env_for_backend(
+    backend: &backend_registry::BackendSpec,
+    launch_args: &[String],
+) -> (Vec<(String, String)>, Option<RuntimeCudaSelection>) {
     let mut env = Vec::new();
     if let Some(launcher) = backend.launcher_path.as_deref()
         && let Some(parent) = PathBuf::from(launcher).parent()
@@ -1193,13 +1212,158 @@ fn runtime_env_for_backend(backend: &backend_registry::BackendSpec) -> Vec<(Stri
         };
         env.push(("LD_LIBRARY_PATH".to_string(), value));
     }
-    if backend.capabilities.iter().any(|cap| cap == "cuda")
-        && let Ok(devices) = std::env::var("OMNIINFER_CUDA_VISIBLE_DEVICES")
+    let mut cuda_selection = None;
+    if backend.capabilities.iter().any(|cap| cap == "cuda") {
+        cuda_selection = select_cuda_visible_devices(launch_args);
+    }
+    if let Some(selection) = cuda_selection.as_ref() {
+        env.push((
+            "CUDA_VISIBLE_DEVICES".to_string(),
+            selection.visible_devices.clone(),
+        ));
+    }
+    (env, cuda_selection)
+}
+
+fn select_cuda_visible_devices(launch_args: &[String]) -> Option<RuntimeCudaSelection> {
+    if let Ok(devices) = std::env::var("OMNIINFER_CUDA_VISIBLE_DEVICES")
         && !devices.trim().is_empty()
     {
-        env.push(("CUDA_VISIBLE_DEVICES".to_string(), devices));
+        return Some(RuntimeCudaSelection {
+            visible_devices: devices,
+            warning: None,
+        });
     }
-    env
+    if let Ok(devices) = std::env::var("CUDA_VISIBLE_DEVICES")
+        && !devices.trim().is_empty()
+    {
+        return Some(RuntimeCudaSelection {
+            visible_devices: devices,
+            warning: None,
+        });
+    }
+    if uses_explicit_cuda_device_args(launch_args) {
+        return None;
+    }
+    select_idle_cuda_device_from_nvidia_smi().map(|device| RuntimeCudaSelection {
+        visible_devices: device.index,
+        warning: device.warning,
+    })
+}
+
+fn uses_explicit_cuda_device_args(args: &[String]) -> bool {
+    args.iter().any(|token| {
+        let flag = token.split_once('=').map(|(flag, _)| flag).unwrap_or(token);
+        matches!(
+            flag,
+            "--tensor-split" | "--split-mode" | "--main-gpu" | "--device" | "-mg"
+        )
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CudaDeviceChoice {
+    index: String,
+    warning: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CudaDeviceUsage {
+    index: String,
+    uuid: String,
+    used_memory_mib: u64,
+    compute_processes: u32,
+}
+
+fn select_idle_cuda_device_from_nvidia_smi() -> Option<CudaDeviceChoice> {
+    let output = ProcessCommand::new("nvidia-smi")
+        .args([
+            "--query-gpu=index,uuid,memory.used",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let gpu_rows = String::from_utf8_lossy(&output.stdout);
+    let mut devices = parse_cuda_gpu_rows(&gpu_rows);
+    if devices.is_empty() {
+        return None;
+    }
+    if let Ok(process_output) = ProcessCommand::new("nvidia-smi")
+        .args([
+            "--query-compute-apps=gpu_uuid,pid",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        && process_output.status.success()
+    {
+        let process_rows = String::from_utf8_lossy(&process_output.stdout);
+        apply_cuda_process_rows(&mut devices, &process_rows);
+    }
+    select_cuda_device_from_usage(&devices)
+}
+
+fn parse_cuda_gpu_rows(text: &str) -> Vec<CudaDeviceUsage> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split(',').map(str::trim);
+            let index = parts.next()?.to_string();
+            let uuid = parts.next()?.to_string();
+            let used_memory_mib = parts.next()?.parse().ok()?;
+            Some(CudaDeviceUsage {
+                index,
+                uuid,
+                used_memory_mib,
+                compute_processes: 0,
+            })
+        })
+        .collect()
+}
+
+fn apply_cuda_process_rows(devices: &mut [CudaDeviceUsage], text: &str) {
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Some(uuid) = line.split(',').next().map(str::trim) else {
+            continue;
+        };
+        if let Some(device) = devices.iter_mut().find(|device| device.uuid == uuid) {
+            device.compute_processes = device.compute_processes.saturating_add(1);
+        }
+    }
+}
+
+fn select_cuda_device_from_usage(devices: &[CudaDeviceUsage]) -> Option<CudaDeviceChoice> {
+    let idle = devices
+        .iter()
+        .filter(|device| device.compute_processes == 0)
+        .min_by_key(|device| parse_cuda_index(&device.index));
+    if let Some(device) = idle {
+        return Some(CudaDeviceChoice {
+            index: device.index.clone(),
+            warning: None,
+        });
+    }
+    let selected = devices.iter().min_by_key(|device| {
+        (
+            device.compute_processes,
+            device.used_memory_mib,
+            parse_cuda_index(&device.index),
+        )
+    })?;
+    Some(CudaDeviceChoice {
+        index: selected.index.clone(),
+        warning: Some(cuda_all_busy_warning()),
+    })
+}
+
+fn parse_cuda_index(index: &str) -> u32 {
+    index.parse().unwrap_or(u32::MAX)
+}
+
+fn cuda_all_busy_warning() -> String {
+    "Warning: all CUDA GPUs appear to be in use; OmniInfer selected the least-used GPU and set CUDA_VISIBLE_DEVICES for the backend process."
+        .to_string()
 }
 
 fn auth_context(request: &Request<Body>, peer_ip: IpAddr) -> RequestAuthContext {
@@ -1723,6 +1887,79 @@ mod tests {
         gateway.stop().await;
         upstream.stop().await;
         std::fs::remove_dir_all(temp).ok();
+    }
+
+    #[test]
+    fn cuda_picker_prefers_lowest_idle_index() {
+        let mut devices = parse_cuda_gpu_rows(
+            "\
+0, GPU-a, 128
+1, GPU-b, 64
+2, GPU-c, 0
+",
+        );
+        apply_cuda_process_rows(&mut devices, "GPU-a, 1001\n");
+
+        let choice = select_cuda_device_from_usage(&devices).unwrap();
+
+        assert_eq!(choice.index, "1");
+        assert_eq!(choice.warning, None);
+    }
+
+    #[test]
+    fn cuda_picker_warns_and_uses_least_loaded_when_all_busy() {
+        let mut devices = parse_cuda_gpu_rows(
+            "\
+0, GPU-a, 900
+1, GPU-b, 256
+2, GPU-c, 512
+",
+        );
+        apply_cuda_process_rows(&mut devices, "GPU-a, 1001\nGPU-b, 1002\nGPU-c, 1003\n");
+
+        let choice = select_cuda_device_from_usage(&devices).unwrap();
+
+        assert_eq!(choice.index, "1");
+        assert!(
+            choice
+                .warning
+                .as_deref()
+                .unwrap()
+                .contains("all CUDA GPUs appear to be in use")
+        );
+    }
+
+    #[test]
+    fn cuda_picker_allows_driver_memory_when_no_compute_process() {
+        let mut devices = parse_cuda_gpu_rows(
+            "\
+0, GPU-a, 512
+1, GPU-b, 128
+",
+        );
+        apply_cuda_process_rows(&mut devices, "GPU-a, 1001\n");
+
+        let choice = select_cuda_device_from_usage(&devices).unwrap();
+
+        assert_eq!(choice.index, "1");
+        assert_eq!(choice.warning, None);
+    }
+
+    #[test]
+    fn cuda_picker_detects_explicit_multi_gpu_args() {
+        assert!(uses_explicit_cuda_device_args(&[
+            "--tensor-split".to_string(),
+            "1,1".to_string()
+        ]));
+        assert!(uses_explicit_cuda_device_args(&[
+            "--main-gpu=1".to_string(),
+            "-ngl".to_string(),
+            "999".to_string()
+        ]));
+        assert!(!uses_explicit_cuda_device_args(&[
+            "-ngl".to_string(),
+            "999".to_string()
+        ]));
     }
 
     #[tokio::test]

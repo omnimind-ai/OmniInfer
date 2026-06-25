@@ -832,6 +832,12 @@ fn print_model_loaded(
             .map(|value| value.to_string())
             .unwrap_or_else(|| "-".to_string())
     );
+    if let Some(devices) = json_str(response, "cuda_visible_devices") {
+        println!("CUDA_VISIBLE_DEVICES: {devices}");
+    }
+    if let Some(warning) = json_str(response, "warning") {
+        println!("{warning}");
+    }
     Ok(())
 }
 
