@@ -1122,6 +1122,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         anyhow::bail!("Use either --smoke-test or --no-smoke-test, not both.");
     }
     validate_serve_remote_access_args(args)?;
+    let restore_model = resolve_serve_restore_model(args);
     let mut config = config::load_app_config().unwrap_or_default();
     config.port = args.port;
     if let Some(host) = args
@@ -1250,12 +1251,23 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             .model
             .as_deref()
             .filter(|value| !value.trim().is_empty())
-        {
-            let request = model_load::ModelLoadRequest {
-                model: model.to_string(),
+            .map(|value| ServeModelRequest {
+                model: value.to_string(),
                 mmproj: args.mmproj.clone(),
                 ctx_size: args.ctx_size,
                 backend_port: args.backend_port,
+                restored: false,
+            })
+            .or_else(|| restore_model.clone())
+        {
+            if model.restored {
+                println!("Restoring last model: {}", model.model);
+            }
+            let request = model_load::ModelLoadRequest {
+                model: model.model,
+                mmproj: model.mmproj,
+                ctx_size: model.ctx_size,
+                backend_port: model.backend_port,
                 config: None,
                 backend_extra_args: Vec::new(),
             };
@@ -1379,6 +1391,42 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ServeModelRequest {
+    model: String,
+    mmproj: Option<String>,
+    ctx_size: Option<u32>,
+    backend_port: Option<u16>,
+    restored: bool,
+}
+
+fn resolve_serve_restore_model(args: &ServeArgs) -> Option<ServeModelRequest> {
+    if args
+        .model
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return None;
+    }
+    if args.mmproj.is_some() || args.ctx_size.is_some() {
+        return None;
+    }
+    if should_run_server_tui(args) {
+        return None;
+    }
+    let selected = local_state::load_state().ok()?.selected_model?;
+    if selected.model.trim().is_empty() {
+        return None;
+    }
+    Some(ServeModelRequest {
+        model: selected.model,
+        mmproj: selected.mmproj,
+        ctx_size: selected.ctx_size,
+        backend_port: args.backend_port,
+        restored: true,
+    })
 }
 
 fn wait_for_foreground_service(

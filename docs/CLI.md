@@ -317,7 +317,7 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 
 In a terminal, `serve` opens the Rust server launcher. It asks you to choose a backend and then a model every time. The last selected backend and model are preselected and marked `last selected`, so pressing Enter twice reuses the previous choices. After the model is loaded, the launcher starts the gateway and keeps it running until you press `Ctrl+C`.
 
-When `serve` is used from a non-interactive script, or when `OMNIINFER_SERVE_DIRECT=1` is set, it starts the gateway directly without the launcher.
+When `serve` is used from a non-interactive script, or when `OMNIINFER_SERVE_DIRECT=1` is set, it starts the gateway directly without the launcher. If no `--model` is supplied, OmniInfer reloads the last selected model from `.local/config/state.json` when one is available; otherwise it starts an empty gateway.
 
 To expose only the inference API to trusted devices on the same LAN, use:
 

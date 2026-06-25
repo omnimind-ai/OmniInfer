@@ -612,6 +612,160 @@ fn serve_detach_loads_model_before_ready() {
 }
 
 #[test]
+fn serve_detach_restores_last_model_when_model_is_omitted() {
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"starting"}"#),
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(
+            r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/last-model.gguf","selected_mmproj":"/tmp/mmproj-F16.gguf","selected_ctx_size":4096}"#,
+        ),
+        Response::new(
+            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":true,"model":"/tmp/last-model.gguf","mmproj":"/tmp/mmproj-F16.gguf","ctx_size":4096}}"#,
+        ),
+    ]);
+    let port = gateway.port;
+    let source_root = temp_repo_root("serve-detach-restore-source");
+    let state_root = temp_repo_root("serve-detach-restore-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+    let model = state_root.join("last-model.gguf");
+    let mmproj = state_root.join("mmproj-F16.gguf");
+    fs::write(&model, "gguf").expect("write model");
+    fs::write(&mmproj, "gguf").expect("write mmproj");
+    fs::create_dir_all(state_root.join(".local").join("config")).expect("create local config");
+    fs::write(
+        state_root.join(".local").join("config").join("state.json"),
+        format!(
+            r#"{{
+  "selected_backend": "llama.cpp-linux-cuda",
+  "selected_model": "{}",
+  "selected_mmproj": "{}",
+  "selected_ctx_size": 4096
+}}"#,
+            model.display(),
+            mmproj.display()
+        ),
+    )
+    .expect("write state");
+    install_fake_backend(&state_root, "llama.cpp-linux-cuda");
+    let launcher = fake_python_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["serve", "--detach", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "Restoring last model: {}",
+            model.display()
+        )))
+        .stdout(predicate::str::contains("Backend ready: yes"))
+        .stdout(predicate::str::contains("ctx-size: 4096"));
+
+    let _ = gateway.request();
+    let _ = gateway.request();
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
+    assert!(request.contains(&format!(r#""model":"{}""#, model.display())));
+    assert!(request.contains(&format!(r#""mmproj":"{}""#, mmproj.display())));
+    assert!(request.contains(r#""ctx_size":4096"#));
+    let request = gateway.request();
+    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
+    gateway.join();
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn serve_detach_restores_last_model_without_python_upstream() {
+    let source_root = temp_repo_root("serve-rust-restore-source");
+    let state_root = temp_repo_root("serve-rust-restore-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::create_dir_all(state_root.join(".local").join("config")).expect("create local config");
+    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
+    let port = free_port();
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"llama.cpp-linux-cuda"}}"#,
+            port
+        ),
+    )
+    .expect("write config");
+    let model = state_root.join("last-model.gguf");
+    fs::write(&model, "gguf").expect("write model");
+    fs::write(
+        state_root.join(".local").join("config").join("state.json"),
+        format!(
+            r#"{{
+  "selected_backend": "llama.cpp-linux-cuda",
+  "selected_model": "{}",
+  "selected_ctx_size": 512
+}}"#,
+            model.display()
+        ),
+    )
+    .expect("write state");
+    install_fake_runtime_server(&state_root, "llama.cpp-linux-cuda");
+    let launcher = fake_python_launcher(&state_root);
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_PYTHON", &launcher)
+        .args(["serve", "--detach", "--api-key", "test-key", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "Restoring last model: {}",
+            model.display()
+        )))
+        .stdout(predicate::str::contains("Backend ready: yes"))
+        .stdout(predicate::str::contains("ctx-size: 512"));
+
+    assert!(
+        !state_root.join("started_gateway.args").exists(),
+        "serve restore should use the Rust gateway/runtime path, not Python fallback"
+    );
+    let health = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(health["status"], "ok");
+    assert_eq!(
+        health["omni"]["model"].as_str().unwrap(),
+        model.display().to_string()
+    );
+
+    let mut stop = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    stop.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .args(["serve", "stop", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success();
+    assert!(wait_for_port_closed(port));
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
 fn serve_detach_runs_smoke_test() {
     let backend_id = test_external_backend_id();
     let gateway = TestGateway::start(vec![
@@ -1470,6 +1624,66 @@ fn test_runtime_platform_dir() -> &'static str {
     } else {
         "linux"
     }
+}
+
+#[cfg(unix)]
+fn install_fake_runtime_server(root: &std::path::Path, backend_id: &str) {
+    let launcher = root
+        .join(".local")
+        .join("runtime")
+        .join("linux")
+        .join(backend_id)
+        .join("bin")
+        .join("llama-server");
+    fs::create_dir_all(launcher.parent().unwrap()).expect("create fake runtime dir");
+    fs::write(
+        &launcher,
+        r#"#!/usr/bin/env bash
+port=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --port) port="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+python3 - "$port" <<'PY'
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+port = int(sys.argv[1])
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+    def _json(self, payload):
+        raw = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+    def do_GET(self):
+        if self.path.startswith("/health"):
+            self._json({"status": "ok"})
+        else:
+            self._json({"ok": True})
+    def do_POST(self):
+        self._json({
+            "choices": [{"message": {"content": "fake backend"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+        })
+
+HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+PY
+"#,
+    )
+    .expect("write fake runtime");
+    let mut permissions = fs::metadata(&launcher)
+        .expect("fake runtime metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&launcher, permissions).expect("chmod fake runtime");
 }
 
 #[cfg(unix)]
