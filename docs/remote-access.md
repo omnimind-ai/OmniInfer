@@ -36,7 +36,7 @@ Windows:
 OmniInfer will:
 
 - load the supplied `--model`, or ask for the backend and model when running interactively without `--model`
-- keep the local gateway bound to `127.0.0.1`, unless `--lan` is also used
+- keep the local gateway bound to `127.0.0.1`, unless `--lan` or an explicit `--host` is used
 - download and update a managed `cloudflared` binary under `.local/tools/cloudflared`
 - require an API key for requests arriving through Cloudflare
 - generate a session API key when `--api-key` or `OMNIINFER_API_KEY` is not set
@@ -89,11 +89,13 @@ For a stable public hostname, run OmniInfer behind a trusted reverse proxy or tu
   --backend llama.cpp-linux-cuda \
   --public-model-root /path/to/public_models \
   --api-key oi_inference_key \
-  --admin-api-key oi_admin_key \
   --allow-remote-management \
   --behind-proxy \
+  --no-restore-model \
   --detach
 ```
+
+For multiple admins, put named admin keys in `.local/config/admin_keys.json` instead of passing them on the command line.
 
 `--behind-proxy` tells OmniInfer to treat trusted proxy headers such as `X-Forwarded-For`, `X-Real-IP`, and `CF-Connecting-IP` as remote-client evidence. Use it only when requests come through a proxy you control; otherwise local loopback traffic could be misclassified.
 

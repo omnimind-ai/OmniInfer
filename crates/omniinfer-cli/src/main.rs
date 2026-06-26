@@ -1130,13 +1130,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     let restore_model = resolve_serve_restore_model(args);
     let mut config = config::load_app_config().unwrap_or_default();
     config.port = args.port;
-    if let Some(host) = args
-        .host
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        config.host = host.to_string();
-    }
+    config.host = resolve_serve_listen_host(args);
     if let Some(default_backend) = args
         .default_backend
         .as_deref()
@@ -1160,12 +1154,6 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     }
     if let Some(timeout) = args.startup_timeout {
         config.startup_timeout = f64::from(timeout);
-    }
-
-    if args.lan && args.host.is_none() {
-        config.host = "0.0.0.0".to_string();
-    } else if args.cloudflare && args.host.is_none() {
-        config.host = "127.0.0.1".to_string();
     }
 
     let remote_bind = !args.cloudflare && !is_loopback_host(&config.host);
@@ -1412,6 +1400,20 @@ struct ServeModelRequest {
     ctx_size: Option<u32>,
     backend_port: Option<u16>,
     restored: bool,
+}
+
+fn resolve_serve_listen_host(args: &ServeArgs) -> String {
+    args.host
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if args.lan {
+                "0.0.0.0".to_string()
+            } else {
+                "127.0.0.1".to_string()
+            }
+        })
 }
 
 fn resolve_serve_restore_model(args: &ServeArgs) -> Option<ServeModelRequest> {
