@@ -119,18 +119,20 @@ class RuntimeRootResolutionTests(unittest.TestCase):
 
 class PlatformMemoryTests(unittest.TestCase):
     def test_linux_memory_uses_memavailable_not_free_pages(self) -> None:
-        meminfo = "\n".join(
-            [
-                "MemTotal:       131421924 kB",
-                "MemFree:        14952332 kB",
-                "MemAvailable:   107321928 kB",
-            ]
-        )
+        meminfo_values = {
+            "MemTotal": 131421924 * 1024,
+            "MemFree": 14952332 * 1024,
+            "MemAvailable": 107321928 * 1024,
+        }
 
         with (
+            patch("service_core.platforms.common.os.name", "posix"),
             patch("service_core.platforms.common.platform.system", return_value="Linux"),
-            patch("service_core.platforms.common.Path.read_text", return_value=meminfo),
-            patch("service_core.platforms.common.os.sysconf") as sysconf,
+            patch(
+                "service_core.platforms.common._read_linux_meminfo_bytes",
+                return_value=meminfo_values,
+            ),
+            patch("service_core.platforms.common.os.sysconf", create=True) as sysconf,
         ):
             self.assertEqual(get_available_memory_bytes(), 107321928 * 1024)
             self.assertEqual(get_total_memory_bytes(), 131421924 * 1024)
