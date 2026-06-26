@@ -304,6 +304,8 @@ struct GatewayArgs {
     upstream_host: String,
     #[arg(long)]
     upstream_port: u16,
+    #[arg(long, hide = true)]
+    no_compat_upstream: bool,
     #[arg(long)]
     api_key: Option<String>,
     #[arg(long)]
@@ -487,6 +489,7 @@ fn run_gateway_command(args: &GatewayArgs) -> Result<()> {
         listen_port: args.port,
         upstream_host: args.upstream_host.clone(),
         upstream_port: args.upstream_port,
+        compat_upstream: !args.no_compat_upstream,
         access_policy: gateway_auth::GatewayAccessPolicy {
             api_key: args.api_key.clone().unwrap_or_default(),
             admin_api_key: args.admin_api_key.clone().unwrap_or_default(),
@@ -1231,6 +1234,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             admin_api_key.as_deref(),
             &admin_api_keys,
             public_model_root.as_deref(),
+            use_python_compat_upstream,
         )?;
         wait_for_gateway_ready(&public_config)?;
         Some(child)
@@ -1947,6 +1951,7 @@ fn start_rust_gateway_child(
     admin_api_key: Option<&str>,
     admin_api_keys: &[gateway_auth::GatewayAdminApiKey],
     public_model_root: Option<&std::path::Path>,
+    compat_upstream: bool,
 ) -> Result<std::process::Child> {
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -1971,6 +1976,9 @@ fn start_rust_gateway_child(
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    if !compat_upstream {
+        command.arg("--no-compat-upstream");
+    }
     if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
         command.arg("--api-key").arg(api_key);
     }

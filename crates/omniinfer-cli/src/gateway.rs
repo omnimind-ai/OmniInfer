@@ -48,6 +48,7 @@ pub struct GatewayConfig {
     pub listen_port: u16,
     pub upstream_host: String,
     pub upstream_port: u16,
+    pub compat_upstream: bool,
     pub access_policy: GatewayAccessPolicy,
     pub public_model_root: Option<PathBuf>,
 }
@@ -55,6 +56,7 @@ pub struct GatewayConfig {
 #[derive(Clone)]
 struct GatewayState {
     upstream_base: String,
+    compat_upstream: bool,
     backend_host: String,
     access_policy: Arc<tokio::sync::Mutex<DynamicAccessPolicy>>,
     public_model_root: Option<PathBuf>,
@@ -74,6 +76,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let state = GatewayState {
         upstream_base: format!("http://{}:{}", config.upstream_host, config.upstream_port),
+        compat_upstream: config.compat_upstream,
         backend_host: "127.0.0.1".to_string(),
         access_policy: Arc::new(tokio::sync::Mutex::new(DynamicAccessPolicy::new(
             config.access_policy,
@@ -321,7 +324,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
         ) => true,
         (&Method::POST, "/omni/thinking/select") => true,
         (&Method::POST, "/v1/chat/completions" | "/v1/messages") => {
-            state.runtime.lock().await.has_loaded_runtime()
+            state.runtime.lock().await.has_loaded_runtime() || !state.compat_upstream
         }
         (
             &Method::POST,
@@ -2034,6 +2037,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pure_rust_gateway_rejects_chat_without_loaded_runtime() {
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway_with_options(
+            upstream.port,
+            GatewayAccessPolicy::default(),
+            None,
+            false,
+        )
+        .await;
+        let port = gateway.port;
+        let response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .config()
+                .http_status_as_error(false)
+                .build()
+                .send_json(serde_json::json!({
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": false
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let status = response.status();
+        let body: Value = response.into_body().read_json().unwrap();
+        assert_eq!(status.as_u16(), 503);
+        assert_eq!(body["error"]["message"], "no model is loaded");
+        gateway.stop().await;
+        upstream.stop().await;
+    }
+
+    #[tokio::test]
+    async fn pure_rust_gateway_rejects_unloaded_chat_model() {
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway_with_options(
+            upstream.port,
+            GatewayAccessPolicy::default(),
+            None,
+            false,
+        )
+        .await;
+        let port = gateway.port;
+        let response = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .config()
+                .http_status_as_error(false)
+                .build()
+                .send_json(serde_json::json!({
+                    "model": "not-loaded",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": false
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let status = response.status();
+        let body: Value = response.into_body().read_json().unwrap();
+        assert_eq!(status.as_u16(), 404);
+        assert_eq!(body["error"]["message"], "model is not loaded: not-loaded");
+        gateway.stop().await;
+        upstream.stop().await;
+    }
+
+    #[tokio::test]
     async fn rust_gateway_serves_small_management_endpoints() {
         let _env_lock = TEST_ENV_LOCK.lock().await;
         let temp = temp_root("rust-gateway-small-management");
@@ -2799,6 +2867,15 @@ mod tests {
         access_policy: GatewayAccessPolicy,
         public_model_root: Option<PathBuf>,
     ) -> TestServer {
+        spawn_test_gateway_with_options(upstream_port, access_policy, public_model_root, true).await
+    }
+
+    async fn spawn_test_gateway_with_options(
+        upstream_port: u16,
+        access_policy: GatewayAccessPolicy,
+        public_model_root: Option<PathBuf>,
+        compat_upstream: bool,
+    ) -> TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -2812,6 +2889,7 @@ mod tests {
                     listen_port: port,
                     upstream_host: "127.0.0.1".to_string(),
                     upstream_port,
+                    compat_upstream,
                     access_policy,
                     public_model_root,
                 }) => {
