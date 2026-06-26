@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 LOCAL_RUNTIME_ROOT="${REPO_ROOT}/.local/runtime/macos"
 MLX_REQUIREMENTS_FILE="${SCRIPT_DIR}/mlx-mac/requirements.txt"
+RUST_CLI_PACKAGER="${REPO_ROOT}/scripts/platforms/common/package-rust-cli.py"
 
 PACKAGE_NAME="OmniInfer"
 PLATFORM_TAG=""
@@ -294,13 +295,6 @@ require_command() {
   fi
 }
 
-ensure_pyinstaller() {
-  if ! python3 -c "import PyInstaller" >/dev/null 2>&1; then
-    echo "PyInstaller not found. Installing..."
-    python3 -m pip install pyinstaller || die "Failed to install PyInstaller."
-  fi
-}
-
 selected_backends_include_mlx() {
   contains_backend "mlx-mac" "${SELECTED_BACKENDS[@]}"
 }
@@ -365,92 +359,15 @@ copy_backend_runtime() {
   chmod +x "${target_root}/bin/llama-server"
 }
 
-copy_source_entrypoint() {
-  cp "${REPO_ROOT}/omniinfer.py" "${RELEASE_ROOT}/omniinfer.py"
-  rm -rf "${RELEASE_ROOT}/service_core"
-  mkdir -p "${RELEASE_ROOT}/service_core"
-  cp -a "${REPO_ROOT}/service_core/." "${RELEASE_ROOT}/service_core/"
-  find "${RELEASE_ROOT}/service_core" -type d -name "__pycache__" -prune -exec rm -rf {} +
-  find "${RELEASE_ROOT}/service_core" -type f -name "*.pyc" -delete
-}
-
-write_launcher() {
-  cat > "${RELEASE_ROOT}/omniinfer" <<'EOF'
-#!/bin/sh
-set -eu
-
-SCRIPT_PATH="$0"
-case "$SCRIPT_PATH" in
-  /*) ;;
-  *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
-esac
-
-ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
-MLX_PYTHON="$ROOT/runtime/mlx-mac/venv/bin/python3"
-
-if [ ! -x "$MLX_PYTHON" ]; then
-  echo "mlx-mac Python runtime was not found: $MLX_PYTHON" >&2
-  exit 1
-fi
-
-exec "$MLX_PYTHON" "$ROOT/omniinfer.py" "$@"
-EOF
-  chmod +x "${RELEASE_ROOT}/omniinfer"
-}
-
-build_pyinstaller_cli() {
+install_rust_cli() {
   require_command python3 "Install Python 3.10+ first."
-  ensure_pyinstaller
-
-  local cli_entry="${REPO_ROOT}/omniinfer.py"
-  [[ -f "${cli_entry}" ]] || die "CLI entry point not found: ${cli_entry}"
-
-  local pyinstaller_excludes=(
-    "cv2"
-    "matplotlib"
-    "mkl"
-    "numpy"
-    "pandas"
-    "PIL"
-    "scipy"
-    "sklearn"
-    "sympy"
-    "torch"
-    "torchvision"
-  )
-
-  local pyinstaller_args=(
-    --noconfirm
-    --clean
-    --onedir
-    --console
-    --name "omniinfer"
-    --distpath "${CLI_DIST}"
-    --workpath "${BUILD_ROOT}/pyinstaller-work-cli"
-    --specpath "${BUILD_ROOT}/pyinstaller-spec-cli"
-    --add-data "${MODEL_CATALOG_ROOT}:service_core/model_catalogs"
-  )
-  local exclude
-  for exclude in "${pyinstaller_excludes[@]}"; do
-    pyinstaller_args+=(--exclude-module "${exclude}")
-  done
-  pyinstaller_args+=("${cli_entry}")
-
+  [[ -f "${RUST_CLI_PACKAGER}" ]] || die "Rust CLI packager not found: ${RUST_CLI_PACKAGER}"
   echo
-  echo "Building omniinfer (CLI) with PyInstaller..."
-  python3 -m PyInstaller "${pyinstaller_args[@]}"
-
-  local cli_bin="${CLI_DIST}/omniinfer/omniinfer"
-  [[ -f "${cli_bin}" ]] || die "CLI build succeeded but omniinfer not found at ${cli_bin}"
-
-  cp -a "${CLI_DIST}/omniinfer/." "${RELEASE_ROOT}/"
-}
-
-install_mlx_source_cli() {
-  echo
-  echo "Installing source CLI launcher for mlx-mac..."
-  copy_source_entrypoint
-  write_launcher
+  echo "Building Rust omniinfer CLI..."
+  python3 "${RUST_CLI_PACKAGER}" \
+    --repo-root "${REPO_ROOT}" \
+    --portable-root "${RELEASE_ROOT}" \
+    --platform macos
 }
 
 while (($# > 0)); do
@@ -535,10 +452,8 @@ done
 
 RELEASE_ROOT="${REPO_ROOT}/release/portable/${PLATFORM_TAG}/${PACKAGE_NAME}"
 BUILD_ROOT="${REPO_ROOT}/release/build"
-CLI_DIST="${BUILD_ROOT}/macos-cli-dist"
 RUNTIME_ROOT="${RELEASE_ROOT}/runtime"
 CONFIG_ROOT="${RELEASE_ROOT}/config"
-MODEL_CATALOG_ROOT="${REPO_ROOT}/service_core/model_catalogs"
 
 if [[ ${ALL_SUPPORTED} -eq 1 ]]; then
   SELECTED_BACKENDS=("${SUPPORTED_BACKENDS[@]}")
@@ -583,11 +498,11 @@ else
   echo "Archive: disabled"
 fi
 if selected_backends_include_mlx; then
-  echo "CLI mode: source launcher with mlx-mac venv"
+  echo "CLI mode: Rust binary with mlx-mac Python fallback"
   echo "MLX env manager: uv"
   echo "Slim release: $([[ ${SLIM_RELEASE} -eq 1 ]] && echo yes || echo no)"
 else
-  echo "CLI mode: PyInstaller binary"
+  echo "CLI mode: Rust binary"
 fi
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
@@ -598,11 +513,7 @@ fi
 rm -rf "${RELEASE_ROOT}" "${BUILD_ROOT}"
 mkdir -p "${RELEASE_ROOT}" "${RUNTIME_ROOT}" "${CONFIG_ROOT}" "${BUILD_ROOT}"
 
-if selected_backends_include_mlx; then
-  install_mlx_source_cli
-else
-  build_pyinstaller_cli
-fi
+install_rust_cli
 
 cat > "${CONFIG_ROOT}/omniinfer.json" <<EOF
 {

@@ -530,6 +530,13 @@ def _advisor_model_details(model_path: Path, recommendations: dict[str, dict[str
     backend = str(recommended.get("backend") or "").strip()
     if backend:
         details.append(backend)
+    evidence = recommended.get("evidence") if isinstance(recommended.get("evidence"), dict) else {}
+    level = str(evidence.get("level") or "").strip()
+    confidence = str(recommended.get("recommendation_confidence") or evidence.get("confidence") or "").strip()
+    if level:
+        details.append(level)
+    if confidence:
+        details.append(confidence)
     warnings = row.get("warnings") if isinstance(row.get("warnings"), list) else []
     if warnings:
         details.append("warning")
@@ -677,7 +684,17 @@ def _print_advisor_preflight_summary(payload: dict[str, Any]) -> None:
 
     _print_section("Advisor", "Load preflight")
     _print_kv("Recommended", f"{backend} ({fit})")
+    evidence = recommended.get("evidence") if isinstance(recommended.get("evidence"), dict) else {}
+    if evidence.get("level") or recommended.get("recommendation_confidence"):
+        _print_kv(
+            "Evidence",
+            f"{evidence.get('level') or '-'} / {recommended.get('recommendation_confidence') or evidence.get('confidence') or '-'}",
+        )
     _print_kv("Memory", f"{required} required / {available} available")
+    breakdown = recommended.get("memory_breakdown") if isinstance(recommended.get("memory_breakdown"), dict) else {}
+    breakdown_text = _format_memory_breakdown(breakdown)
+    if breakdown_text:
+        _print_kv("Breakdown", breakdown_text)
     _print_kv("Estimate", str(estimate.get("confidence") or "unknown"))
     for warning in warnings[:2]:
         _print_notice(f"Advisor: {warning}", kind="warning")
@@ -695,11 +712,20 @@ def _print_advisor_fit_details(payload: dict[str, Any]) -> None:
     _print_kv("Quantization", str(model_info.get("quantization") or "-"))
     _print_kv("Recommended backend", str(recommended.get("backend") or "-"))
     _print_kv("Fit", str(recommended.get("fit") or "-"))
+    evidence = recommended.get("evidence") if isinstance(recommended.get("evidence"), dict) else {}
+    _print_kv("Evidence", f"{evidence.get('level') or '-'} / {recommended.get('recommendation_confidence') or evidence.get('confidence') or '-'}")
     _print_kv("Memory", f"{_format_gib(recommended.get('memory_required_gib'))} required / {_format_gib(recommended.get('memory_available_gib'))} available")
+    breakdown = recommended.get("memory_breakdown") if isinstance(recommended.get("memory_breakdown"), dict) else {}
+    breakdown_text = _format_memory_breakdown(breakdown)
+    if breakdown_text:
+        _print_kv("Breakdown", breakdown_text)
     _print_kv("Estimate source", str(estimate.get("estimate_source") or "-"))
     _print_kv("Confidence", str(estimate.get("confidence") or "-"))
     if payload.get("next_command"):
         _print_kv("Command", str(payload["next_command"]))
+    why = recommended.get("why_recommended") if isinstance(recommended.get("why_recommended"), list) else []
+    for reason in why[:3]:
+        print(_THEME.dim(f"  why: {reason}"))
     if alternatives:
         print(_THEME.dim("Alternatives"))
         for candidate in alternatives[:5]:
@@ -716,6 +742,21 @@ def _print_advisor_fit_details(payload: dict[str, Any]) -> None:
     for warning in warnings[:5]:
         _print_notice(f"Advisor: {warning}", kind="warning")
     print()
+
+
+def _format_memory_breakdown(breakdown: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for label, key in (
+        ("weights", "weights_gib"),
+        ("mmproj", "mmproj_gib"),
+        ("kv", "kv_cache_gib"),
+        ("act", "activation_gib"),
+        ("runtime", "runtime_overhead_gib"),
+    ):
+        value = breakdown.get(key)
+        if value is not None:
+            parts.append(f"{label} {_format_gib(value)}")
+    return " · ".join(parts)
 
 
 def _format_gib(value: Any) -> str:

@@ -32,6 +32,49 @@ SYSTEM_CHOICES = ("linux", "mac", "windows")
 PUBLIC_SMOKE_PROMPT = "Reply exactly: omniinfer-public-ok"
 
 
+BACKEND_HELP = """\
+Manage inference runtimes.
+
+Examples:
+  omniinfer backend list
+  omniinfer backend select llama.cpp-linux-cuda
+"""
+
+
+MODEL_HELP = """\
+Discover and load models.
+
+Examples:
+  omniinfer model list
+  omniinfer model load -m /path/to/model.gguf --ctx-size 8192
+"""
+
+
+ADVISOR_HELP = """\
+Inspect hardware, estimate model fit, and plan deployments.
+
+Examples:
+  omniinfer advisor system
+  omniinfer advisor fit /path/to/model.gguf --ctx-size 8192
+  omniinfer advisor plan /path/to/model.gguf --gpu-vram 24 --ram 64
+"""
+
+
+THINKING_HELP = """\
+Manage the default thinking mode used by chat requests.
+
+Examples:
+  omniinfer thinking show
+  omniinfer thinking set off
+"""
+
+
+class CommandGroupParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self.print_help(sys.stderr)
+        self.exit(2, f"Error: {message}\n")
+
+
 HELP_TEXT = """\
 OmniInfer CLI
 
@@ -39,6 +82,7 @@ Common commands:
   omniinfer
   omniinfer advisor system
   omniinfer advisor fit /path/to/model.gguf
+  omniinfer advisor plan /path/to/model.gguf
   omniinfer backend list
   omniinfer backend select <backend>
   omniinfer status
@@ -62,7 +106,7 @@ Design notes:
 Command map:
   backend list              -> show available backends
   backend select <backend>  -> choose a backend
-  advisor system/fit        -> inspect hardware and model fit before loading
+  advisor system/fit/plan   -> inspect hardware, model fit, and hardware requirements
   status                    -> show service status, selected backend, and loaded model
   load                      -> load a model
   model list                -> show models supported on the current system
@@ -292,6 +336,18 @@ def _dump_json(payload: Any) -> int:
     return 0
 
 
+def _print_table(rows: list[list[str]], *, indent: str = "") -> None:
+    if not rows:
+        return
+    widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+    for row_index, row in enumerate(rows):
+        line = "  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip()
+        print(f"{indent}{line}")
+        if row_index == 0:
+            rule = "  ".join("-" * width for width in widths).rstrip()
+            print(f"{indent}{rule}")
+
+
 def print_advisor_system(json_output: bool = False) -> int:
     payload = commands.advisor_system()
     if json_output:
@@ -316,18 +372,31 @@ def print_advisor_system(json_output: bool = False) -> int:
     else:
         print("CUDA devices: none detected")
     print(f"Recommended installed backend: {summary.get('recommended_installed_backend') or '-'}")
-    print("Backends:")
-    for backend in payload.get("backends", []):
-        if not isinstance(backend, dict):
-            continue
-        installed = "yes" if backend.get("installed") else "no"
-        compatible = "yes" if backend.get("hardware_compatible") else "no"
-        print(f"  {backend.get('id')}: installed={installed}, compatible={compatible}, family={backend.get('family')}")
+    usable_backends = [
+        backend
+        for backend in payload.get("backends", [])
+        if isinstance(backend, dict) and backend.get("installed") and backend.get("hardware_compatible")
+    ]
+    print("Usable backends:")
+    if usable_backends:
+        rows = [["Backend", "Family", "Capabilities"]]
+        for backend in usable_backends:
+            capabilities = ", ".join(str(item) for item in backend.get("capabilities", [])[:4])
+            rows.append([str(backend.get("id") or "-"), str(backend.get("family") or "-"), capabilities or "-"])
+        _print_table(rows, indent="  ")
+    else:
+        print("  none installed and compatible")
+    hidden_count = len([backend for backend in payload.get("backends", []) if isinstance(backend, dict)]) - len(usable_backends)
+    if hidden_count > 0:
+        print(f"Hidden backends: {hidden_count} unavailable or incompatible; use --json for the full probe.")
     return 0
 
 
 def print_advisor_inspect(model: str, *, mmproj: str | None = None, json_output: bool = False) -> int:
-    payload = commands.advisor_inspect(model, mmproj=mmproj)
+    try:
+        payload = commands.advisor_inspect(model, mmproj=mmproj)
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
     if json_output:
         return _dump_json(payload)
     print("OmniInfer Advisor Inspect")
@@ -340,6 +409,7 @@ def print_advisor_inspect(model: str, *, mmproj: str | None = None, json_output:
     print(f"Capabilities: {', '.join(payload.get('capabilities') or []) or '-'}")
     estimate = payload.get("estimate") if isinstance(payload.get("estimate"), dict) else {}
     print(f"Estimated memory: {estimate.get('estimated_gpu_memory_gib') or '-'} GiB ({estimate.get('confidence') or 'unknown'} confidence)")
+    _print_memory_breakdown(estimate.get("breakdown") if isinstance(estimate.get("breakdown"), dict) else estimate)
     for warning in payload.get("warnings", []):
         print(f"Warning: {warning}")
     return 0
@@ -353,7 +423,10 @@ def print_advisor_fit(
     backend: str | None = None,
     json_output: bool = False,
 ) -> int:
-    payload = commands.advisor_fit(model, mmproj=mmproj, ctx_size=ctx_size, backend=backend)
+    try:
+        payload = commands.advisor_fit(model, mmproj=mmproj, ctx_size=ctx_size, backend=backend)
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
     if json_output:
         return _dump_json(payload)
     print("OmniInfer Advisor Fit")
@@ -364,8 +437,14 @@ def print_advisor_fit(
     if recommended:
         print(f"Recommended backend: {recommended.get('backend')}")
         print(f"Fit: {recommended.get('fit')}")
+        print(f"Confidence: {recommended.get('recommendation_confidence') or '-'}")
+        evidence = recommended.get("evidence") if isinstance(recommended.get("evidence"), dict) else {}
+        print(f"Evidence: {evidence.get('level') or '-'}")
         print(f"Installed: {'yes' if recommended.get('installed') else 'no'}")
         print(f"Memory: {recommended.get('memory_required_gib')} GiB required / {recommended.get('memory_available_gib') or '-'} GiB available")
+        _print_memory_breakdown(recommended.get("memory_breakdown") if isinstance(recommended.get("memory_breakdown"), dict) else {})
+        for reason in recommended.get("why_recommended", [])[:5]:
+            print(f"Why: {reason}")
     else:
         print("Recommended backend: -")
     if payload.get("next_command"):
@@ -375,9 +454,103 @@ def print_advisor_fit(
         print("Alternatives:")
         for candidate in alternatives[:5]:
             print(f"  {candidate.get('backend')}: fit={candidate.get('fit')}, installed={'yes' if candidate.get('installed') else 'no'}")
+            why_not = candidate.get("why_not") if isinstance(candidate.get("why_not"), list) else []
+            if why_not:
+                print(f"    why_not={why_not[0]}")
     for warning in payload.get("warnings", []):
         print(f"Warning: {warning}")
     return 0
+
+
+def print_advisor_plan(
+    model: str,
+    *,
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+    gpu_vram_gib: float | None = None,
+    ram_gib: float | None = None,
+    cpu_cores: int | None = None,
+    json_output: bool = False,
+) -> int:
+    try:
+        payload = commands.advisor_plan(
+            model,
+            mmproj=mmproj,
+            ctx_size=ctx_size,
+            gpu_vram_gib=gpu_vram_gib,
+            ram_gib=ram_gib,
+            cpu_cores=cpu_cores,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
+    if json_output:
+        return _dump_json(payload)
+    model_info = payload.get("model") if isinstance(payload.get("model"), dict) else {}
+    planning = payload.get("planning_hardware") if isinstance(payload.get("planning_hardware"), dict) else {}
+    print("OmniInfer Advisor Plan")
+    print(f"Model: {model_info.get('model')}")
+    print(f"Context size: {payload.get('context_size')}")
+    print(
+        "Planning hardware: "
+        f"free_vram={planning.get('gpu_vram_free_gib') or '-'} GiB, "
+        f"available_ram={planning.get('available_ram_gib') or '-'} GiB, "
+        f"cpu_cores={planning.get('cpu_cores') or '-'}"
+    )
+    estimate = model_info.get("estimate") if isinstance(model_info.get("estimate"), dict) else {}
+    _print_memory_breakdown(estimate.get("breakdown") if isinstance(estimate.get("breakdown"), dict) else {})
+    recommended = payload.get("recommended_path") if isinstance(payload.get("recommended_path"), dict) else None
+    if recommended:
+        print(f"Recommended path: {recommended.get('path')} ({recommended.get('fit')})")
+    print("Run paths:")
+    for path in payload.get("run_paths", []):
+        if not isinstance(path, dict):
+            continue
+        minimum = path.get("minimum") if isinstance(path.get("minimum"), dict) else {}
+        rec = path.get("recommended") if isinstance(path.get("recommended"), dict) else {}
+        print(
+            "  "
+            f"{path.get('path')}: feasible={'yes' if path.get('feasible_now') else 'no'}, "
+            f"fit={path.get('fit')}, speed={path.get('estimated_relative_speed')}"
+        )
+        print(
+            "    "
+            f"minimum: vram={minimum.get('vram_gib') if minimum.get('vram_gib') is not None else '-'} GiB, "
+            f"ram={minimum.get('ram_gib')} GiB, cpu={minimum.get('cpu_cores')}"
+        )
+        print(
+            "    "
+            f"recommended: vram={rec.get('vram_gib') if rec.get('vram_gib') is not None else '-'} GiB, "
+            f"ram={rec.get('ram_gib')} GiB, cpu={rec.get('cpu_cores')}"
+        )
+    upgrades = payload.get("upgrade_deltas") if isinstance(payload.get("upgrade_deltas"), list) else []
+    if upgrades:
+        print("Upgrade deltas:")
+        for item in upgrades[:5]:
+            print(f"  {item.get('description')}")
+    commands_list = payload.get("next_commands") if isinstance(payload.get("next_commands"), list) else []
+    if commands_list:
+        print("Next commands:")
+        for command in commands_list:
+            print(f"  {command}")
+    for warning in payload.get("warnings", []):
+        print(f"Warning: {warning}")
+    return 0
+
+
+def _print_memory_breakdown(breakdown: dict[str, Any]) -> None:
+    if not breakdown:
+        return
+    fields = [
+        ("weights", breakdown.get("weights_gib")),
+        ("mmproj", breakdown.get("mmproj_gib")),
+        ("kv", breakdown.get("kv_cache_gib")),
+        ("activation", breakdown.get("activation_gib")),
+        ("framework", breakdown.get("framework_overhead_gib")),
+        ("slack", breakdown.get("allocator_slack_gib")),
+    ]
+    rendered = [f"{name}={value} GiB" for name, value in fields if value is not None]
+    if rendered:
+        print("Memory breakdown: " + ", ".join(rendered))
 
 
 def print_advisor_recommend(
@@ -401,7 +574,15 @@ def print_advisor_recommend(
         model_info = row.get("model") if isinstance(row.get("model"), dict) else {}
         recommended = row.get("recommended") if isinstance(row.get("recommended"), dict) else {}
         print(f"{index}. {model_info.get('model')}")
-        print(f"   backend={recommended.get('backend')} fit={recommended.get('fit')} score={row.get('score')}")
+        evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+        print(
+            f"   backend={recommended.get('backend')} fit={recommended.get('fit')} "
+            f"score={row.get('score')} confidence={row.get('recommendation_confidence') or '-'} "
+            f"evidence={evidence.get('level') or '-'}"
+        )
+        why = row.get("why_recommended") if isinstance(row.get("why_recommended"), list) else []
+        if why:
+            print(f"   why={why[0]}")
         if row.get("next_command"):
             print(f"   command={row.get('next_command')}")
     return 0
@@ -1638,7 +1819,7 @@ def handle_hidden_completion(argv: list[str]) -> int:
     if commands.is_backend_build_supported():
         top_level.insert(1, "build")
     backend_sub = ["list", "select", "stop"]
-    advisor_sub = ["system", "inspect", "fit", "recommend"]
+    advisor_sub = ["system", "inspect", "fit", "plan", "recommend"]
     model_sub = ["list", "load"]
     thinking_sub = ["show", "set"]
     serve_sub = ["status", "stop"]
@@ -1686,6 +1867,10 @@ def handle_hidden_completion(argv: list[str]) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    return build_parser_bundle()["parser"]
+
+
+def build_parser_bundle() -> dict[str, argparse.ArgumentParser]:
     parser = argparse.ArgumentParser(
         prog="omniinfer",
         description="OmniInfer local CLI",
@@ -1693,10 +1878,16 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--port", type=int, default=None, help="Gateway port (overrides config file)")
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", parser_class=CommandGroupParser)
 
-    backend = sub.add_parser("backend", help="Backend commands")
-    backend_sub = backend.add_subparsers(dest="backend_command")
+    backend = sub.add_parser(
+        "backend",
+        help="Backend commands",
+        description="OmniInfer backend commands",
+        epilog=BACKEND_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    backend_sub = backend.add_subparsers(dest="backend_command", metavar="COMMAND", parser_class=CommandGroupParser)
     backend_list = backend_sub.add_parser("list", help="List backends available on this system")
     backend_list.add_argument("--scope", choices=("installed", "compatible", "all"), default="compatible", help="Filter backends by scope (default: compatible)")
     backend_list.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON (for scripting)")
@@ -1716,8 +1907,14 @@ def build_parser() -> argparse.ArgumentParser:
     ps = sub.add_parser("ps", help="List all running OmniInfer services")
     ps.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
-    model = sub.add_parser("model", help="Model commands")
-    model_sub = model.add_subparsers(dest="model_command")
+    model = sub.add_parser(
+        "model",
+        help="Model commands",
+        description="OmniInfer model commands",
+        epilog=MODEL_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    model_sub = model.add_subparsers(dest="model_command", metavar="COMMAND", parser_class=CommandGroupParser)
     model_list = model_sub.add_parser("list", help="List supported models")
     model_list.add_argument("--system", choices=SYSTEM_CHOICES, default=detect_system_name(), help="Target system, defaults to the current system")
     model_list.add_argument("--all-backends", action="store_true", help="Show the raw backend-grouped view")
@@ -1727,8 +1924,14 @@ def build_parser() -> argparse.ArgumentParser:
     load_alias = sub.add_parser("load", help="Load a model")
     add_model_load_arguments(load_alias)
 
-    advisor = sub.add_parser("advisor", help="Hardware and model advisor commands")
-    advisor_sub = advisor.add_subparsers(dest="advisor_command")
+    advisor = sub.add_parser(
+        "advisor",
+        help="Hardware and model advisor commands",
+        description="OmniInfer advisor commands",
+        epilog=ADVISOR_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    advisor_sub = advisor.add_subparsers(dest="advisor_command", metavar="COMMAND", parser_class=CommandGroupParser)
     advisor_system = advisor_sub.add_parser("system", help="Inspect local hardware and OmniInfer runtimes")
     advisor_system.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
     advisor_inspect = advisor_sub.add_parser("inspect", help="Inspect a model reference or local model artifact")
@@ -1741,14 +1944,28 @@ def build_parser() -> argparse.ArgumentParser:
     advisor_fit.add_argument("--ctx-size", type=int, help="Context length used for estimation")
     advisor_fit.add_argument("--backend", help="Restrict analysis to a single backend")
     advisor_fit.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    advisor_plan = advisor_sub.add_parser("plan", help="Estimate hardware requirements for a model")
+    advisor_plan.add_argument("model", help="Model path, model directory, or backend reference")
+    advisor_plan.add_argument("-mm", "--mmproj", help="Optional mmproj path")
+    advisor_plan.add_argument("--ctx-size", type=int, help="Context length used for estimation")
+    advisor_plan.add_argument("--gpu-vram", type=float, dest="gpu_vram_gib", help="Simulate available GPU VRAM in GiB")
+    advisor_plan.add_argument("--ram", type=float, dest="ram_gib", help="Simulate available system RAM in GiB")
+    advisor_plan.add_argument("--cpu-cores", type=int, help="Simulate CPU core count")
+    advisor_plan.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
     advisor_recommend = advisor_sub.add_parser("recommend", help="Recommend from locally managed model files")
     advisor_recommend.add_argument("--task", help="Optional task filter: chat, coding, vision, embedding")
     advisor_recommend.add_argument("-n", "--limit", type=int, default=5, help="Maximum recommendations to show")
     advisor_recommend.add_argument("--ctx-size", type=int, help="Context length used for estimation")
     advisor_recommend.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
-    thinking = sub.add_parser("thinking", help="Default thinking controls")
-    thinking_sub = thinking.add_subparsers(dest="thinking_command")
+    thinking = sub.add_parser(
+        "thinking",
+        help="Default thinking controls",
+        description="OmniInfer thinking commands",
+        epilog=THINKING_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    thinking_sub = thinking.add_subparsers(dest="thinking_command", metavar="COMMAND", parser_class=CommandGroupParser)
     thinking_sub.add_parser("show", help="Show the default thinking state")
     thinking_set = thinking_sub.add_parser("set", help="Set the default thinking state")
     thinking_set.add_argument("value", choices=("on", "off"), help="on or off")
@@ -1771,7 +1988,18 @@ def build_parser() -> argparse.ArgumentParser:
     completion = sub.add_parser("completion", help="Print shell completion")
     completion.add_argument("shell", choices=("bash",), help="Currently supported shell: bash")
 
-    return parser
+    return {
+        "parser": parser,
+        "backend": backend,
+        "model": model,
+        "advisor": advisor,
+        "thinking": thinking,
+    }
+
+
+def _group_error(parser: argparse.ArgumentParser, message: str) -> None:
+    parser.print_help(sys.stderr)
+    parser.exit(2, f"Error: {message}\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1781,7 +2009,8 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "__complete":
         return handle_hidden_completion(argv[1:])
 
-    parser = build_parser()
+    parser_bundle = build_parser_bundle()
+    parser = parser_bundle["parser"]
     if argv and argv[0] in {"serve", "server"}:
         args, unknown_args = parser.parse_known_args(argv[:1])
         _cli_port_override = args.port
@@ -1812,14 +2041,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "backend":
         if unknown_args:
-            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+            _group_error(parser_bundle["backend"], f"unrecognized arguments: {' '.join(unknown_args)}")
         if args.backend_command == "list":
             return print_backend_list(scope=args.scope, json_output=getattr(args, "json_output", False))
         if args.backend_command == "select":
             return select_backend(args.backend_name)
         if args.backend_command == "stop":
             return backend_stop()
-        parser.error("backend requires a subcommand: list / select / stop")
+        _group_error(parser_bundle["backend"], "missing subcommand. Try one of: list, select, stop")
 
     if args.command == "build":
         if unknown_args:
@@ -1832,7 +2061,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "advisor":
         if unknown_args:
-            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+            _group_error(parser_bundle["advisor"], f"unrecognized arguments: {' '.join(unknown_args)}")
         if args.advisor_command == "system":
             return print_advisor_system(json_output=getattr(args, "json_output", False))
         if args.advisor_command == "inspect":
@@ -1845,6 +2074,16 @@ def main(argv: list[str] | None = None) -> int:
                 backend=getattr(args, "backend", None),
                 json_output=getattr(args, "json_output", False),
             )
+        if args.advisor_command == "plan":
+            return print_advisor_plan(
+                args.model,
+                mmproj=getattr(args, "mmproj", None),
+                ctx_size=getattr(args, "ctx_size", None),
+                gpu_vram_gib=getattr(args, "gpu_vram_gib", None),
+                ram_gib=getattr(args, "ram_gib", None),
+                cpu_cores=getattr(args, "cpu_cores", None),
+                json_output=getattr(args, "json_output", False),
+            )
         if args.advisor_command == "recommend":
             return print_advisor_recommend(
                 task=getattr(args, "task", None),
@@ -1852,7 +2091,7 @@ def main(argv: list[str] | None = None) -> int:
                 ctx_size=getattr(args, "ctx_size", None),
                 json_output=getattr(args, "json_output", False),
             )
-        parser.error("advisor requires a subcommand: system / inspect / fit / recommend")
+        _group_error(parser_bundle["advisor"], "missing subcommand. Try one of: system, inspect, fit, plan, recommend")
 
     if args.command == "status":
         if unknown_args:
@@ -1865,21 +2104,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "model":
         if args.model_command == "list":
             if unknown_args:
-                parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+                _group_error(parser_bundle["model"], f"unrecognized arguments: {' '.join(unknown_args)}")
             return print_model_list(system_name=args.system, best=not args.all_backends)
         if args.model_command == "load":
             return print_model_load(args)
-        parser.error("model requires a subcommand: list / load")
+        _group_error(parser_bundle["model"], "missing subcommand. Try one of: list, load")
     if args.command == "load":
         return print_model_load(args)
     if args.command == "thinking":
         if unknown_args:
-            parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+            _group_error(parser_bundle["thinking"], f"unrecognized arguments: {' '.join(unknown_args)}")
         if args.thinking_command == "show":
             return print_thinking_show()
         if args.thinking_command == "set":
             return print_thinking_set(args.value)
-        parser.error("thinking requires a subcommand: show / set")
+        _group_error(parser_bundle["thinking"], "missing subcommand. Try one of: show, set")
     if args.command == "chat":
         return chat(args)
     if args.command == "shutdown":

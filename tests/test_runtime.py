@@ -11,7 +11,7 @@ import json
 import os
 import threading
 import time
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -19,7 +19,7 @@ from service_core import cli, commands, tui
 from service_core.platforms.linux import LinuxPlatform
 from service_core.platforms.mac import MacPlatform
 from service_core.platforms.windows import WindowsPlatform
-from service_core.platforms.common import display_path_reference
+from service_core.platforms.common import display_path_reference, get_available_memory_bytes, get_total_memory_bytes
 from service_core.platforms.registry import default_backend_for_current_host
 from service_core.backends.base import BackendSpec
 from service_core.cli import build_parser
@@ -115,6 +115,29 @@ class RuntimeRootResolutionTests(unittest.TestCase):
                 app_root=self.app_root,
             )
             self.assertEqual(resolved.name, expected_name, f"{platform_cls.__name__} folder")
+
+
+class PlatformMemoryTests(unittest.TestCase):
+    def test_linux_memory_uses_memavailable_not_free_pages(self) -> None:
+        meminfo_values = {
+            "MemTotal": 131421924 * 1024,
+            "MemFree": 14952332 * 1024,
+            "MemAvailable": 107321928 * 1024,
+        }
+
+        with (
+            patch("service_core.platforms.common.os.name", "posix"),
+            patch("service_core.platforms.common.platform.system", return_value="Linux"),
+            patch(
+                "service_core.platforms.common._read_linux_meminfo_bytes",
+                return_value=meminfo_values,
+            ),
+            patch("service_core.platforms.common.os.sysconf", create=True) as sysconf,
+        ):
+            self.assertEqual(get_available_memory_bytes(), 107321928 * 1024)
+            self.assertEqual(get_total_memory_bytes(), 131421924 * 1024)
+
+        sysconf.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +286,92 @@ class CliParserTests(unittest.TestCase):
     def test_top_level_select_is_not_a_command(self) -> None:
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["select", "llama.cpp-linux"])
+
+    def test_advisor_without_subcommand_prints_advisor_help(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["advisor"])
+
+        self.assertEqual(raised.exception.code, 2)
+        output = stderr.getvalue()
+        self.assertIn("usage: omniinfer advisor", output)
+        self.assertIn("missing subcommand. Try one of: system, inspect, fit, plan, recommend", output)
+        self.assertIn("Error: missing subcommand", output)
+        self.assertNotIn("omniinfer advisor: error:", output)
+        self.assertIn("omniinfer advisor fit /path/to/model.gguf --ctx-size 8192", output)
+        self.assertNotIn("{backend,build,status", output)
+
+    def test_backend_without_subcommand_prints_backend_help(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["backend"])
+
+        self.assertEqual(raised.exception.code, 2)
+        output = stderr.getvalue()
+        self.assertIn("usage: omniinfer backend", output)
+        self.assertIn("missing subcommand. Try one of: list, select, stop", output)
+        self.assertIn("Error: missing subcommand", output)
+        self.assertNotIn("omniinfer backend: error:", output)
+        self.assertIn("omniinfer backend select llama.cpp-linux-cuda", output)
+        self.assertNotIn("{backend,build,status", output)
+
+    def test_invalid_advisor_subcommand_prints_advisor_help(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["advisor", "nope"])
+
+        self.assertEqual(raised.exception.code, 2)
+        output = stderr.getvalue()
+        self.assertIn("usage: omniinfer advisor", output)
+        self.assertIn("COMMAND", output)
+        self.assertIn("invalid choice: 'nope'", output)
+        self.assertIn("Error: argument COMMAND", output)
+        self.assertNotIn("omniinfer advisor: error:", output)
+        self.assertIn("omniinfer advisor plan /path/to/model.gguf --gpu-vram 24 --ram 64", output)
+        self.assertNotIn("{backend,build,status", output)
+
+    def test_advisor_system_prints_usable_backend_table(self) -> None:
+        payload = {
+            "host": {"system": "linux", "machine": "x86_64", "cpu_cores": 80, "available_ram_gib": 95.81, "total_ram_gib": 125.33},
+            "cuda": {"devices": []},
+            "summary": {"recommended_installed_backend": "llama.cpp-linux-cuda"},
+            "backends": [
+                {
+                    "id": "llama.cpp-linux-cuda",
+                    "family": "llama.cpp",
+                    "installed": True,
+                    "hardware_compatible": True,
+                    "capabilities": ["chat", "gpu", "cuda", "linux"],
+                },
+                {
+                    "id": "llama.cpp-linux-rocm",
+                    "family": "llama.cpp",
+                    "installed": False,
+                    "hardware_compatible": False,
+                    "capabilities": ["chat", "gpu", "rocm"],
+                },
+            ],
+        }
+        stdout = io.StringIO()
+        with patch("service_core.cli.commands.advisor_system", return_value=payload), redirect_stdout(stdout):
+            self.assertEqual(cli.print_advisor_system(), 0)
+
+        output = stdout.getvalue()
+        self.assertIn("RAM: 95.81 GiB available / 125.33 GiB total", output)
+        self.assertIn("Usable backends:", output)
+        self.assertIn("Backend", output)
+        self.assertIn("llama.cpp-linux-cuda", output)
+        self.assertNotIn("llama.cpp-linux-rocm", output)
+        self.assertIn("Hidden backends: 1 unavailable or incompatible", output)
+
+    def test_advisor_inspect_empty_model_reports_cli_error(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            cli.print_advisor_inspect("")
+
+        self.assertEqual(str(raised.exception), "Error: model reference must not be empty")
 
     def test_requested_window_mode_defaults_hidden(self) -> None:
         self.assertEqual(cli._requested_window_mode([]), "hidden")

@@ -24,13 +24,10 @@ $Arm64Script = Join-Path $PlatformRoot "build-llama-arm64.ps1"
 $SyclScript = Join-Path $PlatformRoot "build-llama-sycl.ps1"
 $HipScript = Join-Path $PlatformRoot "build-llama-hip.ps1"
 $LauncherScript = Join-Path $PlatformRoot "write-portable-launchers.ps1"
+$RustCliPackager = Join-Path $RepoRoot "scripts\platforms\common\package-rust-cli.py"
 $PortableRoot = Join-Path $RepoRoot "release\portable\windows-x64\OmniInfer"
 $BuildRoot = Join-Path $RepoRoot "release\build"
-$CliWorkRoot = Join-Path $BuildRoot "pyinstaller-work-cli"
-$CliSpecRoot = Join-Path $BuildRoot "pyinstaller-spec-cli"
-$CliDistRoot = Join-Path $BuildRoot "cli-dist"
 $LocalRuntimeRoot = Join-Path $RepoRoot ".local\runtime\windows"
-$ModelCatalogRoot = Join-Path $RepoRoot "service_core\model_catalogs"
 $UsageTemplate = Join-Path $RepoRoot "tmp\usage.md"
 
 function Stop-RunningPortableRelease {
@@ -61,17 +58,6 @@ function Require-Command {
             $message += " $Hint"
         }
         throw $message
-    }
-}
-
-function Ensure-PyInstaller {
-    $probe = python -c "import importlib.util; print(importlib.util.find_spec('PyInstaller') is not None)" 2>&1
-    if ($probe.ToString().Trim().ToLower() -ne "true") {
-        Write-Host "PyInstaller not found. Installing..."
-        python -m pip install pyinstaller
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to install PyInstaller."
-        }
     }
 }
 
@@ -280,58 +266,28 @@ if ($DryRun) {
 }
 
 Require-Command python "Install Python 3.10+ and ensure it is on PATH."
-Ensure-PyInstaller
 
 Reset-Directory -Path $BuildRoot
 Reset-Directory -Path $PortableRoot
 
-$cliEntry = Join-Path $RepoRoot "omniinfer.py"
-if (-not (Test-Path -LiteralPath $cliEntry)) {
-    throw "CLI entry point not found: $cliEntry"
+if (-not (Test-Path -LiteralPath $RustCliPackager)) {
+    throw "Rust CLI packager not found: $RustCliPackager"
 }
-
-$pyinstallerExcludes = @(
-    "cv2",
-    "matplotlib",
-    "mkl",
-    "numpy",
-    "pandas",
-    "PIL",
-    "scipy",
-    "sklearn",
-    "sympy",
-    "torch",
-    "torchvision"
-)
-$pyinstallerArgs = @(
-    "--noconfirm",
-    "--clean",
-    "--onedir",
-    "--console",
-    "--name", "omniinfer",
-    "--distpath", $CliDistRoot,
-    "--workpath", $CliWorkRoot,
-    "--specpath", $CliSpecRoot,
-    "--add-data", "$ModelCatalogRoot;service_core\model_catalogs"
-)
-foreach ($exclude in $pyinstallerExcludes) {
-    $pyinstallerArgs += @("--exclude-module", $exclude)
-}
-$pyinstallerArgs += $cliEntry
 
 Write-Host ""
-Write-Host "Building omniinfer.exe (CLI) with PyInstaller..."
-python -m PyInstaller @pyinstallerArgs
+Write-Host "Building Rust omniinfer CLI..."
+python $RustCliPackager `
+    --repo-root $RepoRoot `
+    --portable-root $PortableRoot `
+    --platform windows
 if ($LASTEXITCODE -ne 0) {
-    throw "PyInstaller failed for CLI."
+    throw "Rust CLI packaging failed."
 }
 
-$cliDistDir = Join-Path $CliDistRoot "omniinfer"
-$cliExe = Join-Path $cliDistDir "omniinfer.exe"
+$cliExe = Join-Path $PortableRoot "omniinfer.exe"
 if (-not (Test-Path -LiteralPath $cliExe)) {
-    throw "CLI build succeeded but omniinfer.exe not found at $cliExe"
+    throw "Rust CLI packaging succeeded but omniinfer.exe was not found at $cliExe"
 }
-Copy-Item -Path (Join-Path $cliDistDir "*") -Destination $PortableRoot -Recurse -Force
 
 if (Test-Path -LiteralPath $LauncherScript) {
     & $LauncherScript -PortableRoot $PortableRoot

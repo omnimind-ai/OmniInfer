@@ -80,6 +80,60 @@ In combined mode, OmniInfer:
 
 This means LAN clients use `http://<lan-ip>:<port>/v1`, while Cloudflare clients use the printed `https://*.trycloudflare.com/v1` URL.
 
+## Fixed Hostname Behind a Reverse Proxy
+
+For a stable public hostname, run OmniInfer behind a trusted reverse proxy or tunnel such as nginx + frp. Keep OmniInfer bound to loopback, publish only the reverse proxy, and enable remote management with a separate admin key:
+
+```sh
+./omniinfer serve \
+  --backend llama.cpp-linux-cuda \
+  --public-model-root /path/to/public_models \
+  --api-key oi_inference_key \
+  --admin-api-key oi_admin_key \
+  --allow-remote-management \
+  --behind-proxy \
+  --detach
+```
+
+`--behind-proxy` tells OmniInfer to treat trusted proxy headers such as `X-Forwarded-For`, `X-Real-IP`, and `CF-Connecting-IP` as remote-client evidence. Use it only when requests come through a proxy you control; otherwise local loopback traffic could be misclassified.
+
+The public model root is the only model tree remote management requests may select from. Each selectable model uses a manifest:
+
+```json
+{
+  "id": "qwen3.5-4b-q4_k_m",
+  "aliases": ["qwen35-4b-q4_k_m"],
+  "display_name": "Qwen3.5 4B Q4_K_M",
+  "backend": "llama.cpp-linux-cuda",
+  "model": "Qwen3.5-4B-Q4_K_M.gguf",
+  "ctx_size": 8192,
+  "modalities": ["text"],
+  "quant": "Q4_K_M",
+  "launch_args": ["-ngl", "999"]
+}
+```
+
+List and switch public models through the fixed hostname:
+
+```sh
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  https://omniinfer.example.com/omni/public-models
+
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  -H 'Content-Type: application/json' \
+  https://omniinfer.example.com/omni/model/select \
+  -d '{"model":"qwen3.5-4b-q4_k_m"}'
+```
+
+Inference requests continue to use the inference API key:
+
+```sh
+curl -sS -H 'Authorization: Bearer oi_inference_key' \
+  -H 'Content-Type: application/json' \
+  https://omniinfer.example.com/v1/chat/completions \
+  -d '{"model":"omniinfer","messages":[{"role":"user","content":"Hello"}],"stream":false}'
+```
+
 ## Managed cloudflared
 
 OmniInfer uses its own managed `cloudflared` binary by default instead of relying on a system-wide install. This avoids old system versions and keeps Cloudflare mode self-contained.

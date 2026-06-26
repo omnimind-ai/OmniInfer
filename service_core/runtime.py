@@ -242,6 +242,7 @@ class RuntimeManager:
             backend_overrides=self.backend_overrides,
         )
         installed_backend_ids = [bid for bid, spec in self.backends.items() if spec.binary_exists]
+        self.installed_backend_ids = installed_backend_ids
         self.catalog = SupportedModelCatalog(self.platform, installed_backend_ids)
         best_installed = (
             min(installed_backend_ids, key=lambda bid: BACKEND_PRIORITY.get(bid, 999))

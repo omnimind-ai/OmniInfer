@@ -1,0 +1,30 @@
+[workspace]
+members = [
+    "crates/omniinfer-cli",
+    "crates/omniinfer-core",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.2.1"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/omnimind-ai/OmniInfer"
+
+[workspace.dependencies]
+anyhow = "1.0"
+axum = "0.8"
+base64 = "0.22"
+bytes = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+clap_complete = "4.5"
+http-body-util = "0.1"
+hyper = "1.0"
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+rand = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio-stream = "0.1"
+ureq = { version = "3.1", default-features = false, features = ["json", "rustls"] }

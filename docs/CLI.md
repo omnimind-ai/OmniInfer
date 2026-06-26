@@ -34,7 +34,7 @@ Linux and macOS:
 ./omniinfer --help
 ```
 
-Run `./omniinfer` without arguments in an interactive terminal to open the basic TUI. On first use, the TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop. When a manual directory is scanned, the selected model is linked into `.local/models/<detected-model-dir>/<model-file>` instead of preserving unrelated parent folders. Later TUI launches automatically reload the last selected backend and model when the model path still exists.
+Run `./omniinfer` without arguments in an interactive terminal to open the Rust control-plane TUI. On first use, the TUI lets you pick an installed backend, choose a model found in OmniInfer-managed `.local` model directories or enter a model path manually, load it, and enter a simple chat loop. When a manual directory is scanned, the selected model is linked into `.local/models/<detected-model-dir>/<model-file>` instead of preserving unrelated parent folders. Later TUI launches automatically reload the last selected backend and model when the model path still exists.
 
 The TUI also surfaces the advisor without adding a setup step. Managed model rows show small advisor fit/backend badges when local recommendations are available. Before a newly selected model is loaded, the TUI shows a short advisor preflight with the recommended backend, fit, and memory estimate. Press Enter to apply the recommendation and continue, `A` for details, `B` to choose another backend, `S` to keep the current backend, or `Q` to cancel. Automatic reload of the last model skips this preflight so repeat launches stay fast.
 
@@ -159,6 +159,16 @@ Estimate fit and get a recommended backend:
 ./omniinfer advisor fit /path/to/model.gguf --ctx-size 8192
 ./omniinfer advisor fit Qwen/Qwen2.5-7B-Instruct --backend vllm-linux-cuda --json
 ```
+
+Plan hardware requirements for a model:
+
+```sh
+./omniinfer advisor plan /path/to/model.gguf --ctx-size 8192
+./omniinfer advisor plan /path/to/model.gguf --gpu-vram 24 --ram 64 --cpu-cores 16
+./omniinfer advisor plan /path/to/model.gguf --json
+```
+
+The plan command reports GPU, CPU-offload, and CPU-only paths with minimum/recommended VRAM, RAM, CPU cores, current feasibility, and upgrade deltas.
 
 Recommend from OmniInfer-managed local model directories:
 
@@ -296,7 +306,7 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 
 ### Linux, macOS, Windows
 
-- The CLI uses the Python entrypoint in [omniinfer.py](../omniinfer.py).
+- The CLI uses the Rust control-plane entrypoint by default. Set `OMNIINFER_FORCE_PYTHON=1` to run the legacy Python entrypoint in [omniinfer.py](../omniinfer.py) during the rollback window.
 - The desktop CLI auto-starts the local OmniInfer gateway when required.
 - CUDA desktop backends default to one GPU. If `CUDA_VISIBLE_DEVICES` is unset, OmniInfer picks the visible GPU with the most free memory and lowest utilization before launching the backend. Set `CUDA_VISIBLE_DEVICES` or `OMNIINFER_CUDA_VISIBLE_DEVICES` to override this.
 - If you want to launch the gateway from an interactive terminal, use:
@@ -305,9 +315,9 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 ./omniinfer serve
 ```
 
-In a terminal, `serve` opens a compact server launcher. It asks you to choose a backend and then a model every time. The last selected backend and model are preselected and marked `last selected`, so pressing Enter twice reuses the previous choices. After the model is loaded, the launcher shows the gateway logs and keeps the gateway running until you press `Ctrl+C`.
+In a terminal, `serve` opens the Rust server launcher. It asks you to choose a backend and then a model every time. The last selected backend and model are preselected and marked `last selected`, so pressing Enter twice reuses the previous choices. After the model is loaded, the launcher starts the gateway and keeps it running until you press `Ctrl+C`.
 
-When `serve` is used from a non-interactive script, or when `OMNIINFER_SERVE_DIRECT=1` is set, it starts the gateway directly without the launcher.
+When `serve` is used from a non-interactive script, or when `OMNIINFER_SERVE_DIRECT=1` is set, it starts the gateway directly without the launcher. If no `--model` is supplied, OmniInfer reloads the last selected model from `.local/config/state.json` when one is available; otherwise it starts an empty gateway.
 
 To expose only the inference API to trusted devices on the same LAN, use:
 
@@ -358,6 +368,40 @@ LAN and Cloudflare access can run at the same time:
 ```
 
 In this mode, OmniInfer binds to `0.0.0.0` for LAN clients and starts Cloudflare Quick Tunnel against `http://127.0.0.1:<port>`. Both remote entry points require the same API key, and `/omni/*` management endpoints remain local-only.
+
+For a fixed HTTPS hostname behind a trusted reverse proxy such as nginx + frp, keep OmniInfer on loopback and let the proxy publish the public URL. Use a separate admin key when remote clients need model-management endpoints:
+
+```sh
+./omniinfer serve \
+  --backend llama.cpp-linux-cuda \
+  --public-model-root /path/to/public_models \
+  --api-key oi_inference_key \
+  --admin-api-key oi_admin_key \
+  --allow-remote-management \
+  --behind-proxy \
+  --detach
+```
+
+`--public-model-root` is the only model tree remote management requests may select from. Each model lives in a directory with an `omni-model.json` manifest:
+
+```text
+public_models/
+  qwen3.5-4b-q4_k_m/
+    omni-model.json
+    Qwen3.5-4B-Q4_K_M.gguf
+```
+
+Remote clients list selectable models with `GET /omni/public-models` and switch models with `POST /omni/model/select`:
+
+```sh
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  https://omniinfer.example.com/omni/public-models
+
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  -H 'Content-Type: application/json' \
+  https://omniinfer.example.com/omni/model/select \
+  -d '{"model":"qwen3.5-4b-q4_k_m"}'
+```
 
 On Windows, allow the port through the Private-network firewall profile when needed:
 

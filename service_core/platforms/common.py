@@ -149,6 +149,30 @@ def hidden_subprocess_kwargs() -> dict[str, Any]:
     }
 
 
+def _read_linux_meminfo_bytes() -> dict[str, int]:
+    values: dict[str, int] = {}
+    try:
+        lines = Path("/proc/meminfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+
+    for line in lines:
+        if ":" not in line:
+            continue
+        key, raw_value = line.split(":", 1)
+        parts = raw_value.strip().split()
+        if not parts:
+            continue
+        try:
+            value = int(parts[0])
+        except ValueError:
+            continue
+        unit = parts[1].lower() if len(parts) > 1 else "b"
+        multiplier = 1024 if unit == "kb" else 1
+        values[key] = value * multiplier
+    return values
+
+
 def get_available_memory_bytes() -> int:
     if os.name == "nt":
         class MEMORYSTATUSEX(ctypes.Structure):
@@ -210,11 +234,36 @@ def get_available_memory_bytes() -> int:
             if available_pages > 0:
                 return int(page_size * available_pages)
 
+    if platform.system() == "Linux":
+        meminfo = _read_linux_meminfo_bytes()
+        available = meminfo.get("MemAvailable")
+        if available is not None:
+            logger.debug("Available memory from /proc/meminfo: %d bytes (%.2f GiB)", available, available / (1024**3))
+            return available
+        free = meminfo.get("MemFree")
+        if free is not None:
+            return free
+
     page_size = os.sysconf("SC_PAGE_SIZE")
     avail_pages = os.sysconf("SC_AVPHYS_PAGES")
     result = int(page_size * avail_pages)
     logger.debug("Available memory: %d bytes (%.2f GiB)", result, result / (1024**3))
     return result
+
+
+def get_total_memory_bytes() -> int | None:
+    if platform.system() == "Linux":
+        total = _read_linux_meminfo_bytes().get("MemTotal")
+        if total is not None:
+            return total
+    if os.name == "nt":
+        return None
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        pages = os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, OSError, ValueError):
+        return None
+    return int(page_size * pages)
 
 
 def get_available_cuda_memory_bytes() -> int | None:

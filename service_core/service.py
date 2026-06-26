@@ -37,7 +37,13 @@ logger = logging.getLogger("gateway")
 _WINDOWS_VT_ENABLED: bool | None = None
 
 
-if getattr(sys, "frozen", False):
+_RUST_REPO_ROOT = os.environ.get("OMNIINFER_RUST_REPO_ROOT")
+_RUST_STATE_ROOT = os.environ.get("OMNIINFER_RUST_STATE_ROOT")
+
+if _RUST_REPO_ROOT:
+    REPO_ROOT = Path(_RUST_REPO_ROOT).expanduser().resolve()
+    APP_ROOT = Path(_RUST_STATE_ROOT).expanduser().resolve() if _RUST_STATE_ROOT else REPO_ROOT
+elif getattr(sys, "frozen", False):
     APP_ROOT = Path(sys.executable).resolve().parent
     REPO_ROOT = APP_ROOT
 else:

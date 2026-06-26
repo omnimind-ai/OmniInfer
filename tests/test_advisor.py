@@ -8,12 +8,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from service_core.advisor import fit_model, inspect_model
+from service_core.advisor import fit_model, inspect_model, plan_model, system_snapshot
 from service_core.backends.base import BackendSpec
 
 
 class FakePlatform:
     system_name = "linux"
+    gpu_backend_ids = frozenset({"llama.cpp-linux-cuda"})
 
     def is_hardware_compatible(self, backend: BackendSpec) -> bool:
         return True
@@ -56,6 +57,12 @@ class AdvisorTests(unittest.TestCase):
         self.assertEqual(payload["params_b"], 2.0)
         self.assertIn("chat", payload["capabilities"])
         self.assertEqual(payload["estimate"]["estimate_source"], "file_size_heuristic")
+        breakdown = payload["estimate"]["breakdown"]
+        self.assertIn("weights_gib", breakdown)
+        self.assertIn("kv_cache_gib", breakdown)
+        self.assertIn("activation_gib", breakdown)
+        self.assertIn("framework_overhead_gib", breakdown)
+        self.assertIn("allocator_slack_gib", breakdown)
 
     def test_fit_prefers_official_installed_cuda_and_builds_valid_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -91,9 +98,17 @@ class AdvisorTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload["recommended"]["backend"], "llama.cpp-linux-cuda")
+        self.assertEqual(payload["recommended"]["memory_kind"], "gpu")
+        self.assertIn("memory_breakdown", payload["recommended"])
+        self.assertGreater(payload["recommended"]["memory_breakdown"]["kv_cache_gib"], 0)
+        self.assertEqual(payload["recommended"]["evidence"]["level"], "direct")
+        self.assertEqual(payload["recommended"]["recommendation_confidence"], "high")
+        self.assertIn("why_recommended", payload["recommended"])
         self.assertIn("omniinfer backend select llama.cpp-linux-cuda", payload["next_command"])
         self.assertIn("--ctx-size 8192 -ngl 999", payload["next_command"])
         self.assertNotIn("--ctx-size 8192 8192", payload["next_command"])
+        alternatives = {item["backend"]: item for item in payload["alternatives"]}
+        self.assertIn("official llama.cpp is preferred", alternatives["ik_llama.cpp-linux-cuda"]["why_not"][0])
 
     def test_hf_reference_is_compatible_with_vllm_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,8 +137,138 @@ class AdvisorTests(unittest.TestCase):
 
         self.assertEqual(payload["model"]["format"], "hf-reference")
         self.assertEqual(payload["recommended"]["backend"], "vllm-linux-cuda")
+        self.assertIn(payload["recommended"]["evidence"]["level"], {"self_reported", "none"})
         llama = [item for item in payload["all_backends"] if item["backend"] == "llama.cpp-linux-cuda"][0]
         self.assertFalse(llama["compatible"])
+        self.assertTrue(llama["why_not"])
+
+    def test_fit_explains_cpu_alternative_priority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / "Qwen3.5-2B-Q4_K_M.gguf"
+            model.write_bytes(b"x" * 1024 * 1024)
+            cuda_launcher = root / "llama-server-cuda"
+            cuda_launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            cpu_launcher = root / "llama-server-cpu"
+            cpu_launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            backends = {
+                "llama.cpp-linux-cuda": make_backend(
+                    "llama.cpp-linux-cuda",
+                    launcher_path=str(cuda_launcher),
+                    default_args=["-ngl", "999"],
+                ),
+                "llama.cpp-linux": make_backend(
+                    "llama.cpp-linux",
+                    capabilities=["chat", "cpu"],
+                    launcher_path=str(cpu_launcher),
+                ),
+            }
+
+            with patch(
+                "service_core.advisor._query_cuda_devices",
+                return_value=[{"index": "0", "free_gib": 20.0, "utilization_pct": 0}],
+            ):
+                payload = fit_model(
+                    str(model),
+                    platform_obj=FakePlatform(),
+                    backends=backends,
+                    ctx_size=8192,
+                )
+
+        alternatives = {item["backend"]: item for item in payload["alternatives"]}
+        self.assertIn("higher product priority", alternatives["llama.cpp-linux"]["why_not"][0])
+
+    def test_plan_model_reports_paths_and_upgrade_deltas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / "Qwen3.5-4B-Q4_K_M.gguf"
+            model.write_bytes(b"x" * 1024 * 1024)
+            launcher = root / "llama-server"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            backends = {
+                "llama.cpp-linux-cuda": make_backend(
+                    "llama.cpp-linux-cuda",
+                    launcher_path=str(launcher),
+                    default_args=["-ngl", "999"],
+                )
+            }
+
+            with patch(
+                "service_core.advisor._query_cuda_devices",
+                return_value=[{"index": "0", "free_gib": 1.0, "total_gib": 24.0, "name": "Test GPU", "utilization_pct": 0}],
+            ):
+                payload = plan_model(
+                    str(model),
+                    platform_obj=FakePlatform(),
+                    backends=backends,
+                    ctx_size=8192,
+                    gpu_vram_gib=0.1,
+                    ram_gib=2.0,
+                    cpu_cores=8,
+                )
+
+        self.assertEqual(payload["object"], "advisor.plan")
+        paths = {item["path"]: item for item in payload["run_paths"]}
+        self.assertIn("gpu", paths)
+        self.assertIn("cpu_offload", paths)
+        self.assertIn("cpu_only", paths)
+        self.assertFalse(paths["gpu"]["feasible_now"])
+        self.assertTrue(payload["upgrade_deltas"])
+        self.assertTrue(payload["next_commands"])
+
+    def test_system_snapshot_reuses_backend_probe_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            launcher = Path(tmp) / "llama-server"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            backends = {
+                "llama.cpp-linux-cuda": make_backend("llama.cpp-linux-cuda", launcher_path=str(launcher)),
+                "missing-cuda": make_backend("missing-cuda", launcher_path=str(Path(tmp) / "missing")),
+            }
+            calls = 0
+            original = BackendSpec.binary_exists.fget
+
+            def counted_binary_exists(backend: BackendSpec) -> bool:
+                nonlocal calls
+                calls += 1
+                return original(backend)
+
+            with (
+                patch.object(BackendSpec, "binary_exists", property(counted_binary_exists)),
+                patch(
+                    "service_core.advisor._query_cuda_devices",
+                    return_value=[{"index": "0", "free_gib": 20.0, "utilization_pct": 0}],
+                ),
+            ):
+                payload = system_snapshot(FakePlatform(), backends)
+
+        self.assertEqual(calls, len(backends))
+        self.assertEqual(payload["summary"]["recommended_installed_backend"], "llama.cpp-linux-cuda")
+        rows = {item["id"]: item for item in payload["backends"]}
+        self.assertTrue(rows["llama.cpp-linux-cuda"]["installed"])
+        self.assertTrue(rows["llama.cpp-linux-cuda"]["hardware_compatible"])
+        self.assertFalse(rows["missing-cuda"]["installed"])
+
+    def test_system_snapshot_accepts_precomputed_installed_backends(self) -> None:
+        backends = {
+            "llama.cpp-linux-cuda": make_backend("llama.cpp-linux-cuda", launcher_path="/missing"),
+            "missing-cuda": make_backend("missing-cuda", launcher_path="/missing"),
+        }
+        with (
+            patch.object(BackendSpec, "binary_exists", side_effect=AssertionError("binary probe should be reused")),
+            patch(
+                "service_core.advisor._query_cuda_devices",
+                return_value=[{"index": "0", "free_gib": 20.0, "utilization_pct": 0}],
+            ),
+        ):
+            payload = system_snapshot(
+                FakePlatform(),
+                backends,
+                installed_backend_ids=["llama.cpp-linux-cuda"],
+            )
+
+        rows = {item["id"]: item for item in payload["backends"]}
+        self.assertTrue(rows["llama.cpp-linux-cuda"]["installed"])
+        self.assertFalse(rows["missing-cuda"]["installed"])
 
 
 if __name__ == "__main__":

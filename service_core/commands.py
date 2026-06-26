@@ -23,6 +23,7 @@ from service_core.backend_cli_args import (
 from service_core.advisor import (
     fit_model as advisor_fit_model,
     inspect_model as advisor_inspect_model,
+    plan_model as advisor_plan_model,
     recommend_models as advisor_recommend_models,
     system_snapshot as advisor_system_snapshot,
 )
@@ -242,7 +243,11 @@ def local_backend_ids() -> list[str]:
 
 def advisor_system() -> dict[str, Any]:
     manager = _local_runtime_manager()
-    return advisor_system_snapshot(manager.platform, manager.backends)
+    return advisor_system_snapshot(
+        manager.platform,
+        manager.backends,
+        installed_backend_ids=getattr(manager, "installed_backend_ids", None),
+    )
 
 
 def advisor_inspect(model: str, *, mmproj: str | None = None) -> dict[str, Any]:
@@ -267,6 +272,28 @@ def advisor_fit(
         mmproj=mmproj,
         ctx_size=ctx_size,
         backend_filter=backend,
+    )
+
+
+def advisor_plan(
+    model: str,
+    *,
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+    gpu_vram_gib: float | None = None,
+    ram_gib: float | None = None,
+    cpu_cores: int | None = None,
+) -> dict[str, Any]:
+    manager = _local_runtime_manager()
+    return advisor_plan_model(
+        model,
+        platform_obj=manager.platform,
+        backends=manager.backends,
+        mmproj=mmproj,
+        ctx_size=ctx_size,
+        gpu_vram_gib=gpu_vram_gib,
+        ram_gib=ram_gib,
+        cpu_cores=cpu_cores,
     )
 
 

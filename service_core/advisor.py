@@ -12,6 +12,7 @@ from service_core.platforms import HostPlatform, discover_llama_cpp_model_artifa
 from service_core.platforms.common import (
     bytes_to_gib,
     get_available_memory_bytes,
+    get_total_memory_bytes,
     get_available_rocm_memory_bytes,
     hidden_subprocess_kwargs,
 )
@@ -20,6 +21,7 @@ from service_core.platforms.common import (
 DEFAULT_CONTEXT_SIZE = 8192
 GPU_MEMORY_MARGIN_GIB = 0.5
 CPU_MEMORY_MARGIN_GIB = 1.0
+BYTES_PER_GIB = float(1024 ** 3)
 QUANT_PATTERNS = (
     "UD-Q8_K_XL",
     "UD-Q8_K_L",
@@ -58,16 +60,23 @@ QUANT_PATTERNS = (
 )
 
 
-def system_snapshot(platform_obj: HostPlatform, backends: dict[str, BackendSpec]) -> dict[str, Any]:
+def system_snapshot(
+    platform_obj: HostPlatform,
+    backends: dict[str, BackendSpec],
+    *,
+    installed_backend_ids: list[str] | set[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     cuda_devices = _query_cuda_devices()
     visible_filter = os.environ.get("OMNIINFER_CUDA_VISIBLE_DEVICES") or os.environ.get("CUDA_VISIBLE_DEVICES")
     visible_cuda_devices = _filter_visible_cuda_devices(cuda_devices, visible_filter)
-    installed = [backend.id for backend in backends.values() if backend.binary_exists]
-    compatible = [
+    installed_set = set(installed_backend_ids) if installed_backend_ids is not None else {
+        backend.id for backend in backends.values() if backend.binary_exists
+    }
+    compatible_set = {
         backend.id
         for backend in backends.values()
-        if platform_obj.is_hardware_compatible(backend)
-    ]
+        if _system_hardware_compatible(backend, platform_obj, installed_set=installed_set, cuda_devices=cuda_devices)
+    }
     return {
         "object": "advisor.system",
         "host": {
@@ -86,14 +95,14 @@ def system_snapshot(platform_obj: HostPlatform, backends: dict[str, BackendSpec]
             "best_free_device": _best_cuda_device(visible_cuda_devices or cuda_devices),
         },
         "backends": [
-            _backend_payload(backend, platform_obj, installed=set(installed))
+            _backend_payload(backend, installed=installed_set, compatible=compatible_set)
             for backend in sorted(backends.values(), key=lambda item: BACKEND_PRIORITY.get(item.id, 999))
         ],
         "summary": {
-            "installed_backends": installed,
-            "compatible_backends": compatible,
+            "installed_backends": sorted(installed_set),
+            "compatible_backends": sorted(compatible_set),
             "recommended_installed_backend": _recommended_backend_id(
-                [backend for backend in backends.values() if backend.binary_exists and backend.id in compatible]
+                [backend for backend in backends.values() if backend.id in installed_set and backend.id in compatible_set]
             ),
         },
     }
@@ -154,6 +163,8 @@ def fit_model(
     ]
     compatible = [candidate for candidate in candidates if candidate["compatible"]]
     recommended = _recommended_candidate(compatible)
+    if recommended is not None:
+        recommended["why_recommended"] = _why_recommended(recommended, model_info)
     command = _next_load_command(model_info, recommended, context)
     warnings = list(model_info.get("warnings", []))
     if recommended and not recommended.get("installed"):
@@ -165,7 +176,11 @@ def fit_model(
         "model": model_info,
         "context_size": context,
         "recommended": recommended,
-        "alternatives": [candidate for candidate in compatible if recommended is None or candidate["backend"] != recommended["backend"]],
+        "alternatives": [
+            _with_why_not(candidate, recommended, model_info)
+            for candidate in compatible
+            if recommended is None or candidate["backend"] != recommended["backend"]
+        ],
         "all_backends": candidates,
         "next_command": command,
         "warnings": warnings,
@@ -203,11 +218,15 @@ def recommend_models(
             if task and not _task_matches_model(task, fit["model"]):
                 continue
             score = _recommendation_score(recommended, fit["model"])
+            evidence = recommended.get("evidence") if isinstance(recommended.get("evidence"), dict) else {}
             candidates.append(
                 {
                     "score": score,
                     "model": fit["model"],
                     "recommended": recommended,
+                    "evidence": evidence,
+                    "recommendation_confidence": recommended.get("recommendation_confidence"),
+                    "why_recommended": recommended.get("why_recommended", []),
                     "next_command": fit.get("next_command"),
                     "warnings": fit.get("warnings", []),
                 }
@@ -223,13 +242,57 @@ def recommend_models(
     }
 
 
-def _backend_payload(backend: BackendSpec, platform_obj: HostPlatform, *, installed: set[str]) -> dict[str, Any]:
+def plan_model(
+    model: str,
+    *,
+    platform_obj: HostPlatform,
+    backends: dict[str, BackendSpec],
+    mmproj: str | None = None,
+    ctx_size: int | None = None,
+    gpu_vram_gib: float | None = None,
+    ram_gib: float | None = None,
+    cpu_cores: int | None = None,
+) -> dict[str, Any]:
+    context = ctx_size or DEFAULT_CONTEXT_SIZE
+    model_info = inspect_model(model, mmproj=mmproj)
+    estimate = _memory_estimate(
+        model_info.get("size_gib"),
+        model_info.get("mmproj_size_gib"),
+        model_info.get("params_b"),
+        context,
+    )
+    model_info["estimate"] = estimate
+    system = system_snapshot(platform_obj, backends)
+    current = _current_hardware(system)
+    simulated = _apply_hardware_overrides(current, gpu_vram_gib=gpu_vram_gib, ram_gib=ram_gib, cpu_cores=cpu_cores)
+    paths = [
+        _plan_run_path("gpu", estimate, simulated),
+        _plan_run_path("cpu_offload", estimate, simulated),
+        _plan_run_path("cpu_only", estimate, simulated),
+    ]
+    recommended = _recommended_plan_path(paths)
+    return {
+        "object": "advisor.plan",
+        "model": model_info,
+        "context_size": context,
+        "current_hardware": current,
+        "planning_hardware": simulated,
+        "run_paths": paths,
+        "recommended_path": recommended,
+        "upgrade_deltas": _upgrade_deltas(paths, simulated),
+        "estimate_notice": "Hardware planning uses local advisor heuristics; backend logs and benchmark runs remain authoritative.",
+        "next_commands": _plan_next_commands(model_info, context, recommended),
+        "warnings": list(model_info.get("warnings", [])),
+    }
+
+
+def _backend_payload(backend: BackendSpec, *, installed: set[str], compatible: set[str]) -> dict[str, Any]:
     return {
         "id": backend.id,
         "label": backend.label,
         "family": backend.family,
         "installed": backend.id in installed,
-        "hardware_compatible": platform_obj.is_hardware_compatible(backend),
+        "hardware_compatible": backend.id in compatible,
         "runtime_mode": backend.runtime_mode,
         "model_artifact": backend.model_artifact,
         "supports_mmproj": backend.supports_mmproj,
@@ -242,6 +305,201 @@ def _backend_payload(backend: BackendSpec, platform_obj: HostPlatform, *, instal
     }
 
 
+def _system_hardware_compatible(
+    backend: BackendSpec,
+    platform_obj: HostPlatform,
+    *,
+    installed_set: set[str],
+    cuda_devices: list[dict[str, Any]],
+) -> bool:
+    caps = set(backend.capabilities)
+    machine = platform.machine().lower()
+    if "arm64" in caps and machine not in {"arm64", "aarch64"}:
+        return False
+    if "s390x" in caps and machine != "s390x":
+        return False
+    if "openvino" in caps or "eagle3" in caps:
+        return backend.id in installed_set
+    if backend.id not in platform_obj.gpu_backend_ids:
+        return True
+    if "cuda" in caps:
+        return bool(cuda_devices)
+    if "metal" in caps:
+        return True
+    return platform_obj.is_hardware_compatible(backend)
+
+
+def _current_hardware(system_payload: dict[str, Any]) -> dict[str, Any]:
+    host = system_payload.get("host") if isinstance(system_payload.get("host"), dict) else {}
+    cuda = system_payload.get("cuda") if isinstance(system_payload.get("cuda"), dict) else {}
+    devices = cuda.get("visible_devices") or cuda.get("devices") or []
+    best = cuda.get("best_free_device") if isinstance(cuda.get("best_free_device"), dict) else None
+    return {
+        "available_ram_gib": host.get("available_ram_gib"),
+        "total_ram_gib": host.get("total_ram_gib"),
+        "cpu_cores": host.get("cpu_cores"),
+        "gpu_vram_free_gib": best.get("free_gib") if best else None,
+        "gpu_vram_total_gib": best.get("total_gib") if best else None,
+        "gpu_name": best.get("name") if best else None,
+        "gpu_count": len(devices) if isinstance(devices, list) else 0,
+    }
+
+
+def _apply_hardware_overrides(
+    current: dict[str, Any],
+    *,
+    gpu_vram_gib: float | None,
+    ram_gib: float | None,
+    cpu_cores: int | None,
+) -> dict[str, Any]:
+    result = dict(current)
+    if gpu_vram_gib is not None:
+        result["gpu_vram_free_gib"] = float(gpu_vram_gib)
+        result["gpu_vram_total_gib"] = float(gpu_vram_gib)
+        result["simulated_gpu_vram_gib"] = float(gpu_vram_gib)
+    if ram_gib is not None:
+        result["available_ram_gib"] = float(ram_gib)
+        result["total_ram_gib"] = float(ram_gib)
+        result["simulated_ram_gib"] = float(ram_gib)
+    if cpu_cores is not None:
+        result["cpu_cores"] = int(cpu_cores)
+        result["simulated_cpu_cores"] = int(cpu_cores)
+    return result
+
+
+def _plan_run_path(path: str, estimate: dict[str, Any], hardware: dict[str, Any]) -> dict[str, Any]:
+    required = float(estimate.get("estimated_gpu_memory_gib") or estimate.get("estimated_ram_gib") or 0.0)
+    cpu_cores = int(hardware.get("cpu_cores") or os.cpu_count() or 1)
+    if path == "gpu":
+        available = _float_or_none(hardware.get("gpu_vram_free_gib"))
+        minimum = {
+            "vram_gib": round(required, 2),
+            "ram_gib": round(max(4.0, required * 0.25), 2),
+            "cpu_cores": max(2, min(cpu_cores, 4)),
+        }
+        recommended = {
+            "vram_gib": round(required * 1.2 + GPU_MEMORY_MARGIN_GIB, 2),
+            "ram_gib": round(max(8.0, required * 0.35), 2),
+            "cpu_cores": max(4, min(cpu_cores, 8)),
+        }
+        fit = _fit_level(required, available, GPU_MEMORY_MARGIN_GIB)
+        feasible = available is not None and fit in {"good", "marginal"}
+        notes = ["fastest path when the selected backend can fully or mostly use GPU memory"]
+    elif path == "cpu_offload":
+        available = _float_or_none(hardware.get("available_ram_gib"))
+        minimum = {
+            "vram_gib": 2.0,
+            "ram_gib": round(required, 2),
+            "cpu_cores": max(4, min(cpu_cores, 8)),
+        }
+        recommended = {
+            "vram_gib": 4.0,
+            "ram_gib": round(required * 1.25 + CPU_MEMORY_MARGIN_GIB, 2),
+            "cpu_cores": max(8, min(cpu_cores, 16)),
+        }
+        fit = _fit_level(required, available, CPU_MEMORY_MARGIN_GIB)
+        feasible = available is not None and fit in {"good", "marginal"}
+        notes = ["uses system RAM as the primary pool and GPU for partial acceleration when backend supports it"]
+    else:
+        available = _float_or_none(hardware.get("available_ram_gib"))
+        minimum = {
+            "vram_gib": None,
+            "ram_gib": round(required, 2),
+            "cpu_cores": max(4, min(cpu_cores, 8)),
+        }
+        recommended = {
+            "vram_gib": None,
+            "ram_gib": round(required * 1.35 + CPU_MEMORY_MARGIN_GIB, 2),
+            "cpu_cores": max(8, min(cpu_cores, 32)),
+        }
+        fit = _fit_level(required, available, CPU_MEMORY_MARGIN_GIB)
+        feasible = available is not None and fit in {"good", "marginal"}
+        notes = ["lowest GPU requirement, usually slowest for chat generation"]
+    return {
+        "path": path,
+        "feasible_now": feasible,
+        "fit": fit,
+        "memory_required_gib": round(required, 2) if required else None,
+        "memory_available_gib": available,
+        "minimum": minimum,
+        "recommended": recommended,
+        "estimated_relative_speed": _relative_speed(path, cpu_cores),
+        "notes": notes,
+    }
+
+
+def _recommended_plan_path(paths: list[dict[str, Any]]) -> dict[str, Any] | None:
+    rank_path = {"gpu": 0, "cpu_offload": 1, "cpu_only": 2}
+    rank_fit = {"good": 0, "marginal": 1, "too_tight": 2, "unknown": 3}
+    feasible = [path for path in paths if path.get("feasible_now")]
+    candidates = feasible or paths
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: (rank_fit.get(str(item.get("fit")), 3), rank_path.get(str(item.get("path")), 9)))
+
+
+def _upgrade_deltas(paths: list[dict[str, Any]], hardware: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for path in paths:
+        recommended = path.get("recommended") if isinstance(path.get("recommended"), dict) else {}
+        if path.get("path") == "gpu":
+            current = _float_or_none(hardware.get("gpu_vram_free_gib")) or 0.0
+            target = _float_or_none(recommended.get("vram_gib"))
+            if target is not None and current < target:
+                result.append(
+                    {
+                        "path": "gpu",
+                        "resource": "vram",
+                        "add_gib": round(target - current, 2),
+                        "target_gib": target,
+                        "description": f"add about {round(target - current, 2)} GiB free VRAM for the recommended GPU path",
+                    }
+                )
+        current_ram = _float_or_none(hardware.get("available_ram_gib")) or 0.0
+        target_ram = _float_or_none(recommended.get("ram_gib"))
+        if target_ram is not None and current_ram < target_ram:
+            result.append(
+                {
+                    "path": path.get("path"),
+                    "resource": "ram",
+                    "add_gib": round(target_ram - current_ram, 2),
+                    "target_gib": target_ram,
+                    "description": f"add about {round(target_ram - current_ram, 2)} GiB available RAM for {path.get('path')}",
+                }
+            )
+    return result
+
+
+def _plan_next_commands(model_info: dict[str, Any], ctx_size: int, recommended: dict[str, Any] | None) -> list[str]:
+    if recommended is None:
+        return []
+    model = _shell_quote(str(model_info.get("model") or ""))
+    if not model:
+        return []
+    if recommended.get("path") == "gpu":
+        return [f"omniinfer advisor fit {model} --ctx-size {ctx_size}", f"omniinfer load -m {model} --ctx-size {ctx_size}"]
+    if recommended.get("path") == "cpu_offload":
+        return [f"omniinfer advisor fit {model} --ctx-size {ctx_size}", f"omniinfer load -m {model} --ctx-size {ctx_size}"]
+    return [f"omniinfer backend select llama.cpp-linux && omniinfer load -m {model} --ctx-size {ctx_size}"]
+
+
+def _relative_speed(path: str, cpu_cores: int) -> str:
+    if path == "gpu":
+        return "fast"
+    if path == "cpu_offload":
+        return "medium"
+    return "slow" if cpu_cores < 16 else "medium-slow"
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _backend_fit_payload(
     backend: BackendSpec,
     platform_obj: HostPlatform,
@@ -252,7 +510,9 @@ def _backend_fit_payload(
     compatible, reasons = _backend_model_compatible(backend, model_info)
     hardware_ok = platform_obj.is_hardware_compatible(backend)
     available_gib = _available_memory_for_backend(backend)
-    required_gib = estimate["estimated_gpu_memory_gib"] if _is_gpu_backend(backend) else estimate["estimated_ram_gib"]
+    memory_kind = "gpu" if _is_gpu_backend(backend) else "ram"
+    required_gib = estimate["estimated_gpu_memory_gib"] if memory_kind == "gpu" else estimate["estimated_ram_gib"]
+    breakdown = _memory_breakdown_for_backend(estimate, memory_kind)
     margin_gib = GPU_MEMORY_MARGIN_GIB if _is_gpu_backend(backend) else CPU_MEMORY_MARGIN_GIB
     fit_level = _fit_level(required_gib, available_gib, margin_gib)
     launch_args: list[str] = []
@@ -269,6 +529,7 @@ def _backend_fit_payload(
         notes.append("backend hardware probe did not pass")
     if estimate["confidence"] == "low":
         notes.append("memory estimate is based on file size only")
+    evidence = _candidate_evidence(backend, model_info, estimate, compatible, hardware_ok)
     return {
         "backend": backend.id,
         "label": backend.label,
@@ -280,9 +541,14 @@ def _backend_fit_payload(
         "memory_required_gib": required_gib,
         "memory_available_gib": available_gib,
         "memory_margin_gib": margin_gib,
+        "memory_kind": memory_kind,
+        "memory_breakdown": breakdown,
         "launch_args": launch_args,
         "priority": BACKEND_PRIORITY.get(backend.id, 999),
+        "evidence": evidence,
+        "recommendation_confidence": evidence["confidence"],
         "notes": notes,
+        "why_not": _why_not_candidate(backend, compatible, hardware_ok, fit_level, notes),
     }
 
 
@@ -321,6 +587,159 @@ def _recommended_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] |
         return (fit_rank, installed_rank, priority, family_variant, -available, 0 if candidate.get("hardware_compatible") else 1, str(candidate["backend"]))
 
     return min(candidates, key=rank)
+
+
+def _candidate_evidence(
+    backend: BackendSpec,
+    model_info: dict[str, Any],
+    estimate: dict[str, Any],
+    compatible: bool,
+    hardware_ok: bool,
+) -> dict[str, Any]:
+    model_path = model_info.get("model_path")
+    exists = bool(model_info.get("exists"))
+    fmt = str(model_info.get("format") or "")
+    confidence = str(estimate.get("confidence") or "low")
+    sources: list[str] = []
+    if model_path and exists:
+        sources.append("local_model_file")
+    if backend.binary_exists:
+        sources.append("installed_backend")
+    if hardware_ok:
+        sources.append("hardware_probe")
+    if estimate.get("estimate_source"):
+        sources.append(str(estimate["estimate_source"]))
+
+    if not compatible or not hardware_ok:
+        level = "none"
+        confidence_label = "low"
+    elif model_path and exists and backend.binary_exists and hardware_ok and confidence in {"medium", "high"}:
+        level = "direct"
+        confidence_label = "high"
+    elif fmt == "hf-reference" and backend.family == "vllm":
+        level = "self_reported"
+        confidence_label = "medium" if backend.binary_exists and hardware_ok else "low"
+    elif fmt in {"gguf", "directory"} and compatible:
+        level = "variant"
+        confidence_label = "medium" if hardware_ok else "low"
+    else:
+        level = "none"
+        confidence_label = "low"
+
+    return {
+        "level": level,
+        "confidence": confidence_label,
+        "sources": sorted(set(sources)),
+        "notes": _evidence_notes(level, model_info, backend, estimate),
+    }
+
+
+def _evidence_notes(level: str, model_info: dict[str, Any], backend: BackendSpec, estimate: dict[str, Any]) -> list[str]:
+    if level == "direct":
+        return [
+            "local model artifact exists",
+            f"{backend.id} runtime is installed and hardware-compatible",
+            f"memory estimate confidence is {estimate.get('confidence') or 'unknown'}",
+        ]
+    if level == "variant":
+        return [
+            "model format is compatible with backend family",
+            "estimate is inferred from local artifact metadata rather than a measured run",
+        ]
+    if level == "self_reported":
+        return [
+            "model is a remote or external reference accepted by the backend",
+            "local artifact size is unavailable unless the backend downloads or resolves it",
+        ]
+    return ["insufficient compatible local evidence"]
+
+
+def _why_recommended(candidate: dict[str, Any], model_info: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    fit = str(candidate.get("fit") or "unknown")
+    backend = str(candidate.get("backend") or "backend")
+    reasons.append(f"{backend} has the best ranked fit among compatible backends ({fit})")
+    if candidate.get("installed"):
+        reasons.append("runtime is already installed")
+    if candidate.get("hardware_compatible"):
+        reasons.append("hardware probe passed")
+    evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+    level = evidence.get("level")
+    if level:
+        reasons.append(f"recommendation evidence level is {level}")
+    memory_required = candidate.get("memory_required_gib")
+    memory_available = candidate.get("memory_available_gib")
+    if memory_required is not None and memory_available is not None:
+        reasons.append(f"estimated memory {memory_required} GiB fits available {memory_available} GiB")
+    capabilities = ", ".join(model_info.get("capabilities") or [])
+    if capabilities:
+        reasons.append(f"model capabilities: {capabilities}")
+    return reasons
+
+
+def _why_not_candidate(
+    backend: BackendSpec,
+    compatible: bool,
+    hardware_ok: bool,
+    fit_level: str,
+    notes: list[str],
+) -> list[str]:
+    reasons: list[str] = []
+    if not compatible:
+        reasons.extend(notes or ["model format is not compatible with this backend"])
+    if not backend.binary_exists:
+        reasons.append("runtime is not installed")
+    if not hardware_ok:
+        reasons.append("hardware probe did not pass")
+    if fit_level == "too_tight":
+        reasons.append("estimated memory requirement exceeds available memory")
+    if fit_level == "marginal":
+        reasons.append("estimated memory fits but has little headroom")
+    return reasons
+
+
+def _with_why_not(candidate: dict[str, Any], recommended: dict[str, Any] | None, model_info: dict[str, Any]) -> dict[str, Any]:
+    result = dict(candidate)
+    why_not = list(result.get("why_not") or [])
+    if recommended is not None and not why_not:
+        why_not.extend(_rank_difference_reasons(result, recommended))
+    if not why_not and model_info.get("format"):
+        why_not.append(f"compatible with {model_info.get('format')}, but not the top-ranked option")
+    result["why_not"] = why_not
+    return result
+
+
+def _rank_difference_reasons(candidate: dict[str, Any], recommended: dict[str, Any]) -> list[str]:
+    if candidate.get("fit") != recommended.get("fit"):
+        return [f"recommended backend has better fit ({recommended.get('fit')} vs {candidate.get('fit')})"]
+    if candidate.get("installed") != recommended.get("installed"):
+        return ["recommended backend is already installed"]
+
+    candidate_priority = int(candidate.get("priority", 999))
+    recommended_priority = int(recommended.get("priority", 999))
+    if candidate_priority > recommended_priority:
+        return [
+            "fit is tied; recommended backend has higher product priority "
+            f"({recommended_priority} vs {candidate_priority})"
+        ]
+
+    candidate_is_ik = str(candidate.get("backend") or "").startswith("ik_llama.cpp")
+    recommended_is_ik = str(recommended.get("backend") or "").startswith("ik_llama.cpp")
+    if candidate_is_ik and not recommended_is_ik:
+        return ["fit and priority are tied; official llama.cpp is preferred over the ik variant"]
+
+    candidate_memory = _float_or_none(candidate.get("memory_available_gib"))
+    recommended_memory = _float_or_none(recommended.get("memory_available_gib"))
+    if candidate_memory is not None and recommended_memory is not None and candidate_memory < recommended_memory:
+        return [
+            "fit is tied; recommended backend has more available memory "
+            f"({recommended_memory} GiB vs {candidate_memory} GiB)"
+        ]
+
+    if candidate.get("hardware_compatible") != recommended.get("hardware_compatible"):
+        return ["recommended backend has a passing hardware probe"]
+
+    return ["ranked below the recommended backend by deterministic tie-breakers"]
 
 
 def _recommended_backend_id(backends: list[BackendSpec]) -> str | None:
@@ -414,6 +833,7 @@ def _memory_estimate(
             "estimated_gpu_memory_gib": None,
             "estimated_ram_gib": None,
             "estimated_kv_cache_gib": None,
+            "breakdown": _unknown_memory_breakdown(ctx_size),
             "estimate_source": "unknown",
             "confidence": "low",
             "notes": ["local model size is unknown; fit cannot be estimated safely"],
@@ -421,23 +841,71 @@ def _memory_estimate(
     base = float(size_gib) + float(mmproj_size_gib or 0.0)
     ctx_factor = max(ctx_size, 1) / DEFAULT_CONTEXT_SIZE
     param_factor = params_b if params_b is not None else max(base * 2.0, 1.0)
+    weights = round(float(size_gib), 2)
+    mmproj_weights = round(float(mmproj_size_gib or 0.0), 2)
     kv_cache = round(max(0.25, param_factor * 0.03 * ctx_factor), 2)
-    overhead = round(max(0.5, base * 0.12), 2)
-    required = round(base + kv_cache + overhead, 2)
+    activation = round(max(0.12, param_factor * 0.01 * min(ctx_factor, 4.0)), 2)
+    framework_overhead = round(max(0.35, base * 0.08), 2)
+    allocator_slack = round(max(0.15, base * 0.04), 2)
+    runtime_overhead = round(framework_overhead + allocator_slack, 2)
+    required = round(weights + mmproj_weights + kv_cache + activation + runtime_overhead, 2)
     confidence = "medium" if params_b is not None else "low"
+    breakdown = {
+        "weights_gib": weights,
+        "mmproj_gib": mmproj_weights,
+        "kv_cache_gib": kv_cache,
+        "activation_gib": activation,
+        "framework_overhead_gib": framework_overhead,
+        "allocator_slack_gib": allocator_slack,
+        "runtime_overhead_gib": runtime_overhead,
+        "total_gib": required,
+        "context_size": ctx_size,
+        "assumptions": [
+            "weights are approximated from local artifact file size",
+            "KV cache is estimated from inferred parameter count and requested context",
+            "activation and framework overhead include conservative runtime buffers and allocator slack",
+        ],
+    }
     return {
         "estimated_gpu_memory_gib": required,
         "estimated_ram_gib": required,
         "estimated_kv_cache_gib": kv_cache,
-        "weight_and_projector_gib": round(base, 2),
-        "overhead_gib": overhead,
+        "weight_and_projector_gib": round(weights + mmproj_weights, 2),
+        "activation_gib": activation,
+        "framework_overhead_gib": framework_overhead,
+        "allocator_slack_gib": allocator_slack,
+        "overhead_gib": runtime_overhead,
+        "breakdown": breakdown,
         "context_size": ctx_size,
         "estimate_source": "file_size_heuristic",
         "confidence": confidence,
         "notes": [
-            "Estimate uses local file size plus conservative overhead; backend logs or benchmark results are authoritative.",
+            "Estimate uses local file size plus KV cache, activation, framework overhead, and allocator slack; backend logs or benchmark results are authoritative.",
         ],
     }
+
+
+def _unknown_memory_breakdown(ctx_size: int) -> dict[str, Any]:
+    return {
+        "weights_gib": None,
+        "mmproj_gib": None,
+        "kv_cache_gib": None,
+        "activation_gib": None,
+        "framework_overhead_gib": None,
+        "allocator_slack_gib": None,
+        "runtime_overhead_gib": None,
+        "total_gib": None,
+        "context_size": ctx_size,
+        "assumptions": ["local model size is unknown"],
+    }
+
+
+def _memory_breakdown_for_backend(estimate: dict[str, Any], memory_kind: str) -> dict[str, Any]:
+    source = estimate.get("breakdown") if isinstance(estimate.get("breakdown"), dict) else {}
+    result = dict(source)
+    result["memory_kind"] = memory_kind
+    result["total_gib"] = estimate.get("estimated_gpu_memory_gib") if memory_kind == "gpu" else estimate.get("estimated_ram_gib")
+    return result
 
 
 def _available_memory_for_backend(backend: BackendSpec) -> float | None:
@@ -573,14 +1041,10 @@ def _available_ram_gib() -> float | None:
 
 
 def _total_ram_gib() -> float | None:
-    try:
-        if os.name == "nt":
-            return None
-        page_size = os.sysconf("SC_PAGE_SIZE")
-        pages = os.sysconf("SC_PHYS_PAGES")
-        return round((page_size * pages) / float(1024 ** 3), 2)
-    except (AttributeError, OSError, ValueError):
+    total = get_total_memory_bytes()
+    if total is None:
         return None
+    return bytes_to_gib(total)
 
 
 def _candidate_model_dirs(backends: dict[str, BackendSpec]) -> list[Path]:

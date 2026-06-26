@@ -105,6 +105,7 @@ Quick Tunnel is intended for demos and short-lived testing. For best compatibili
 | `GET` | `/omni/thinking` | Default thinking setting |
 | `GET` | `/omni/backend/props` | Active backend `/props` payload |
 | `GET` | `/omni/models` | Deprecated, returns `410` |
+| `GET` | `/omni/public-models` | Public model ids exposed by `--public-model-root` |
 | `GET` | `/omni/supported-models?system=windows\|mac\|linux` | Bundled supported-model catalog |
 | `GET` | `/omni/supported-models/best?system=windows\|mac\|linux` | Best-backend model catalog |
 | `GET` | `/v1/models` | OpenAI-compatible loaded-model list |
@@ -448,6 +449,7 @@ Notes:
 - `request_defaults` is merged into later inference requests after this model is loaded.
 - `strict_capabilities` is optional. When true, unsupported load options fail instead of being ignored with warnings.
 - Relative model paths resolve under the selected backend's `models_dir`.
+- When the service is started with `--public-model-root` and remote management is enabled, remote clients should pass a public model id such as `qwen3.5-4b-q4_k_m` instead of a server filesystem path. Remote path selection is rejected; local loopback clients may still use explicit paths.
 
 Example response:
 
@@ -459,6 +461,31 @@ Example response:
   "selected_mmproj": null,
   "selected_ctx_size": 4096,
   "warnings": []
+}
+```
+
+### `GET /omni/public-models`
+
+Lists model ids exposed through `--public-model-root`. This endpoint is intended for authenticated management clients and uses the admin API key when `--admin-api-key` is configured.
+
+Example response:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen3.5-4b-q4_k_m",
+      "aliases": ["qwen35-4b-q4_k_m"],
+      "display_name": "Qwen3.5 4B Q4_K_M",
+      "backend": "llama.cpp-linux-cuda",
+      "modalities": ["text"],
+      "quant": "Q4_K_M",
+      "ctx_size": 8192,
+      "model": "/path/to/public_models/qwen3.5-4b-q4_k_m/Qwen3.5-4B-Q4_K_M.gguf",
+      "mmproj": null
+    }
+  ]
 }
 ```
 

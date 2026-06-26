@@ -44,14 +44,19 @@ class TuiAdvisorTests(unittest.TestCase):
             model.write_text("x", encoding="utf-8")
             recommendations = {
                 tui._advisor_path_key(model): {
-                    "recommended": {"fit": "good", "backend": "llama.cpp-linux-cuda"},
+                    "recommended": {
+                        "fit": "good",
+                        "backend": "llama.cpp-linux-cuda",
+                        "evidence": {"level": "direct", "confidence": "high"},
+                        "recommendation_confidence": "high",
+                    },
                     "warnings": ["low confidence"],
                 }
             }
 
             details = tui._advisor_model_details(model, recommendations)
 
-        self.assertEqual(details, ["advisor good", "llama.cpp-linux-cuda", "warning"])
+        self.assertEqual(details, ["advisor good", "llama.cpp-linux-cuda", "direct", "high", "warning"])
 
     def test_advisor_preflight_enter_applies_recommended_backend(self) -> None:
         options = commands.ModelLoadOptions(model="/tmp/model.gguf")
