@@ -351,7 +351,7 @@ fn serve_detach_rejects_remote_management_without_key() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "--allow-remote-management requires --admin-api-key or OMNIINFER_ADMIN_API_KEY",
+            "--allow-remote-management requires --admin-api-key, --admin-api-keys, OMNIINFER_ADMIN_API_KEY, or OMNIINFER_ADMIN_API_KEYS",
         ));
 }
 
