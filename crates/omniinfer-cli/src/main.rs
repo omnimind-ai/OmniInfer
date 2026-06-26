@@ -267,7 +267,7 @@ pub(crate) struct ServeArgs {
     #[arg(long)]
     smoke_test: bool,
     #[arg(long)]
-    no_smoke_test: bool,
+    no_restore_model: bool,
     #[arg(long, default_value_t = 9000)]
     port: u16,
     #[arg(long)]
@@ -1123,9 +1123,6 @@ fn should_run_server_tui(args: &ServeArgs) -> bool {
 }
 
 pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
-    if args.no_smoke_test && args.smoke_test {
-        anyhow::bail!("Use either --smoke-test or --no-smoke-test, not both.");
-    }
     validate_serve_remote_access_args(args)?;
     let restore_model = resolve_serve_restore_model(args);
     let mut config = config::load_app_config().unwrap_or_default();
@@ -1414,6 +1411,9 @@ struct ServeModelRequest {
 }
 
 fn resolve_serve_restore_model(args: &ServeArgs) -> Option<ServeModelRequest> {
+    if args.no_restore_model {
+        return None;
+    }
     if args
         .model
         .as_deref()
