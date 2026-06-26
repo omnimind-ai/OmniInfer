@@ -147,7 +147,7 @@ fn required_keys_empty(policy: &GatewayAccessPolicy, management_endpoint: bool) 
     if management_endpoint && admin_keys_configured(policy) {
         return false;
     }
-    policy.api_key.trim().is_empty()
+    policy.api_key.trim().is_empty() && !admin_keys_configured(policy)
 }
 
 fn any_required_key_matches(
@@ -163,17 +163,15 @@ fn any_required_key_matches(
         return !api_key.is_empty() && constant_time_eq(token.as_bytes(), api_key.as_bytes());
     }
     let api_key = policy.api_key.trim();
-    !api_key.is_empty() && constant_time_eq(token.as_bytes(), api_key.as_bytes())
+    (!api_key.is_empty() && constant_time_eq(token.as_bytes(), api_key.as_bytes()))
+        || admin_key_matches(policy, token).is_some()
 }
 
 fn matched_remote_admin_id(
     policy: &GatewayAccessPolicy,
     request: &RequestAuthContext,
-    management_endpoint: bool,
+    _management_endpoint: bool,
 ) -> Option<String> {
-    if !management_endpoint {
-        return None;
-    }
     let token = bearer_token(request)
         .or_else(|| request.x_api_key.as_deref().map(str::trim))
         .unwrap_or("");
@@ -407,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_public_endpoint_still_uses_inference_api_key() {
+    fn remote_public_endpoint_accepts_inference_or_admin_key() {
         let policy = GatewayAccessPolicy {
             api_key: "inference".to_string(),
             admin_api_key: "admin".to_string(),
@@ -416,12 +414,28 @@ mod tests {
         };
         let mut request = request("POST", "/v1/chat/completions");
         request.authorization = Some("Bearer admin".to_string());
-        assert_eq!(
-            authorize_request(&policy, &request).unwrap_err(),
-            GatewayAuthError::MissingOrInvalidApiKey
-        );
+        assert_eq!(authorize_request(&policy, &request), Ok(()));
         request.authorization = Some("Bearer inference".to_string());
         assert_eq!(authorize_request(&policy, &request), Ok(()));
+    }
+
+    #[test]
+    fn remote_public_endpoint_accepts_admin_api_key() {
+        let policy = GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_keys: vec![GatewayAdminApiKey {
+                id: "adminA".to_string(),
+                key: "admin-a".to_string(),
+            }],
+            ..GatewayAccessPolicy::default()
+        };
+        let mut request = request("POST", "/v1/chat/completions");
+        request.authorization = Some("Bearer admin-a".to_string());
+
+        let decision = authorize_request_with_identity(&policy, &request).unwrap();
+
+        assert_eq!(decision.admin_id.as_deref(), Some("adminA"));
+        assert!(!decision.management_endpoint);
     }
 
     #[test]
