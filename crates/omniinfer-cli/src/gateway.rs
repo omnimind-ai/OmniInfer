@@ -306,6 +306,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
             | "/omni/backends"
             | "/omni/thinking"
             | "/omni/models"
+            | "/omni/gpus"
             | "/omni/loaded-models",
         ) => true,
         (&Method::GET, "/omni/backend/props") => true,
@@ -405,6 +406,11 @@ async fn try_handle_rust_endpoint(
         }
         (&Method::GET, "/omni/loaded-models") => {
             let payload = state.runtime.lock().await.loaded_models_payload();
+            Ok(Some(json_response(StatusCode::OK, payload)))
+        }
+        (&Method::GET, "/omni/gpus") => {
+            let loaded = state.runtime.lock().await.loaded_runtime_summaries();
+            let payload = gpu_status_payload(&loaded);
             Ok(Some(json_response(StatusCode::OK, payload)))
         }
         (&Method::GET, "/omni/models") => Ok(Some(json_response(
@@ -970,6 +976,13 @@ struct LoadedRustRuntime {
     proxy_model_ref: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct LoadedRuntimeSummary {
+    id: String,
+    owner_admin_id: Option<String>,
+    backend_pid: u32,
+}
+
 impl RustRuntimeManager {
     fn select_backend(&mut self, backend_id: &str) -> Result<Value> {
         let registry = BackendRegistry::load_current();
@@ -1240,6 +1253,17 @@ impl RustRuntimeManager {
             "object": "list",
             "data": self.loaded.values().map(loaded_runtime_payload).collect::<Vec<_>>(),
         })
+    }
+
+    fn loaded_runtime_summaries(&self) -> Vec<LoadedRuntimeSummary> {
+        self.loaded
+            .values()
+            .map(|loaded| LoadedRuntimeSummary {
+                id: loaded.model_key.clone(),
+                owner_admin_id: loaded.owner_admin_id.clone(),
+                backend_pid: loaded.process.info().pid,
+            })
+            .collect()
     }
 
     fn snapshot(&self) -> Value {
@@ -1627,6 +1651,168 @@ struct CudaDeviceUsage {
     uuid: String,
     used_memory_mib: u64,
     compute_processes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GpuStatusDevice {
+    index: String,
+    uuid: String,
+    name: String,
+    memory_total_mib: u64,
+    memory_used_mib: u64,
+    memory_free_mib: u64,
+    utilization_gpu_percent: Option<u32>,
+    processes: Vec<GpuStatusProcess>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GpuStatusProcess {
+    gpu_uuid: String,
+    pid: u32,
+    process_name: String,
+    used_memory_mib: Option<u64>,
+    owner_model: Option<String>,
+    owner_admin_id: Option<String>,
+}
+
+fn gpu_status_payload(loaded: &[LoadedRuntimeSummary]) -> Value {
+    match query_nvidia_smi_gpu_status(loaded) {
+        Ok(devices) => json!({
+            "object": "list",
+            "data": devices.iter().map(gpu_status_device_payload).collect::<Vec<_>>(),
+        }),
+        Err(error) => json!({
+            "object": "list",
+            "data": [],
+            "error": {"message": error.to_string()},
+        }),
+    }
+}
+
+fn gpu_status_device_payload(device: &GpuStatusDevice) -> Value {
+    json!({
+        "index": parse_cuda_index(&device.index),
+        "uuid": device.uuid,
+        "name": device.name,
+        "memory_total_mb": device.memory_total_mib,
+        "memory_used_mb": device.memory_used_mib,
+        "memory_free_mb": device.memory_free_mib,
+        "utilization_gpu": device.utilization_gpu_percent,
+        "processes": device.processes.iter().map(gpu_status_process_payload).collect::<Vec<_>>(),
+    })
+}
+
+fn gpu_status_process_payload(process: &GpuStatusProcess) -> Value {
+    json!({
+        "pid": process.pid,
+        "name": process.process_name,
+        "used_memory_mb": process.used_memory_mib,
+        "owner_model": process.owner_model,
+        "owner_admin_id": process.owner_admin_id,
+    })
+}
+
+fn query_nvidia_smi_gpu_status(loaded: &[LoadedRuntimeSummary]) -> Result<Vec<GpuStatusDevice>> {
+    let gpu_output = ProcessCommand::new("nvidia-smi")
+        .args([
+            "--query-gpu=index,uuid,name,memory.total,memory.used,memory.free,utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()?;
+    if !gpu_output.status.success() {
+        anyhow::bail!("nvidia-smi GPU query failed");
+    }
+    let mut devices = parse_gpu_status_rows(&String::from_utf8_lossy(&gpu_output.stdout));
+    if let Ok(process_output) = ProcessCommand::new("nvidia-smi")
+        .args([
+            "--query-compute-apps=gpu_uuid,pid,process_name,used_memory",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        && process_output.status.success()
+    {
+        let processes =
+            parse_gpu_process_rows(&String::from_utf8_lossy(&process_output.stdout), loaded);
+        apply_gpu_process_rows(&mut devices, processes);
+    }
+    Ok(devices)
+}
+
+fn parse_gpu_status_rows(text: &str) -> Vec<GpuStatusDevice> {
+    text.lines()
+        .filter_map(|line| {
+            let parts = split_csv_row(line);
+            if parts.len() < 7 {
+                return None;
+            }
+            Some(GpuStatusDevice {
+                index: parts[0].clone(),
+                uuid: parts[1].clone(),
+                name: parts[2].clone(),
+                memory_total_mib: parse_mib(&parts[3])?,
+                memory_used_mib: parse_mib(&parts[4])?,
+                memory_free_mib: parse_mib(&parts[5])?,
+                utilization_gpu_percent: parse_optional_u32(&parts[6]),
+                processes: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+fn parse_gpu_process_rows(text: &str, loaded: &[LoadedRuntimeSummary]) -> Vec<GpuStatusProcess> {
+    text.lines()
+        .filter_map(|line| {
+            let parts = split_csv_row(line);
+            if parts.len() < 4 {
+                return None;
+            }
+            let pid = parts[1].parse::<u32>().ok()?;
+            let owner = loaded.iter().find(|runtime| runtime.backend_pid == pid);
+            Some(GpuStatusProcess {
+                gpu_uuid: parts[0].clone(),
+                pid,
+                process_name: parts[2].clone(),
+                used_memory_mib: parse_mib(&parts[3]),
+                owner_model: owner.map(|runtime| runtime.id.clone()),
+                owner_admin_id: owner.and_then(|runtime| runtime.owner_admin_id.clone()),
+            })
+        })
+        .collect()
+}
+
+fn apply_gpu_process_rows(devices: &mut [GpuStatusDevice], processes: Vec<GpuStatusProcess>) {
+    for process in processes {
+        if let Some(device) = devices
+            .iter_mut()
+            .find(|device| device.uuid == process.gpu_uuid)
+        {
+            device.processes.push(process);
+        }
+    }
+}
+
+fn split_csv_row(line: &str) -> Vec<String> {
+    line.split(',')
+        .map(|part| part.trim().to_string())
+        .collect()
+}
+
+fn parse_mib(value: &str) -> Option<u64> {
+    value
+        .trim()
+        .strip_suffix("MiB")
+        .unwrap_or(value.trim())
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn parse_optional_u32(value: &str) -> Option<u32> {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("[not supported]") {
+        return None;
+    }
+    value.parse().ok()
 }
 
 fn select_idle_cuda_device_from_nvidia_smi() -> Option<CudaDeviceChoice> {
@@ -2379,6 +2565,65 @@ mod tests {
             "-ngl".to_string(),
             "999".to_string()
         ]));
+    }
+
+    #[test]
+    fn gpu_status_parses_devices_and_owners() {
+        let mut devices = parse_gpu_status_rows(
+            "\
+0, GPU-a, NVIDIA GeForce RTX 3090, 24576, 12000, 12576, 91
+1, GPU-b, NVIDIA GeForce RTX 3090, 24576, 1, 24258, 0
+",
+        );
+        let loaded = vec![LoadedRuntimeSummary {
+            id: "qwen3.5-35b-a3b-q4_k_m".to_string(),
+            owner_admin_id: Some("adminA".to_string()),
+            backend_pid: 4242,
+        }];
+        let processes = parse_gpu_process_rows(
+            "\
+GPU-a, 4242, llama-server, 11998
+GPU-a, 5151, python, 256
+",
+            &loaded,
+        );
+
+        apply_gpu_process_rows(&mut devices, processes);
+
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].memory_total_mib, 24576);
+        assert_eq!(devices[0].utilization_gpu_percent, Some(91));
+        assert_eq!(devices[0].processes.len(), 2);
+        assert_eq!(
+            devices[0].processes[0].owner_model.as_deref(),
+            Some("qwen3.5-35b-a3b-q4_k_m")
+        );
+        assert_eq!(
+            devices[0].processes[0].owner_admin_id.as_deref(),
+            Some("adminA")
+        );
+        assert_eq!(devices[0].processes[1].owner_model, None);
+        assert!(devices[1].processes.is_empty());
+    }
+
+    #[test]
+    fn gpu_status_payload_uses_numeric_indexes() {
+        let device = GpuStatusDevice {
+            index: "7".to_string(),
+            uuid: "GPU-x".to_string(),
+            name: "NVIDIA GeForce RTX 3090".to_string(),
+            memory_total_mib: 24576,
+            memory_used_mib: 1,
+            memory_free_mib: 24258,
+            utilization_gpu_percent: Some(0),
+            processes: Vec::new(),
+        };
+
+        let payload = gpu_status_device_payload(&device);
+
+        assert_eq!(payload["index"], json!(7));
+        assert_eq!(payload["memory_total_mb"], json!(24576));
+        assert!(payload["processes"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
