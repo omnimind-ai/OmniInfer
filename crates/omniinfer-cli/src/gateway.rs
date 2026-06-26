@@ -2,7 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use axum::body::Body;
@@ -28,13 +28,13 @@ use omniinfer_core::backend_registry::{BackendRegistry, BackendScope};
 use omniinfer_core::gateway_auth::{
     GatewayAccessPolicy, GatewayAuthDecision, RequestAuthContext, authorize_request_with_identity,
 };
-use omniinfer_core::local_state;
 use omniinfer_core::model_artifacts::{discover_llama_cpp_model_artifacts, maybe_auto_mmproj};
 use omniinfer_core::model_catalog;
 use omniinfer_core::public_models;
 use omniinfer_core::request_normalization::normalize_chat_request;
 use omniinfer_core::runtime_plan::{ExternalRuntimeRequest, build_external_runtime_plan};
 use omniinfer_core::runtime_process::{RuntimeProcess, RuntimeProcessOptions};
+use omniinfer_core::{local_state, paths};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use tokio::net::TcpListener;
@@ -56,7 +56,7 @@ pub struct GatewayConfig {
 struct GatewayState {
     upstream_base: String,
     backend_host: String,
-    access_policy: GatewayAccessPolicy,
+    access_policy: Arc<tokio::sync::Mutex<DynamicAccessPolicy>>,
     public_model_root: Option<PathBuf>,
     client: Client<HttpConnector, Full<HyperBytes>>,
     shutdown: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
@@ -75,7 +75,10 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
     let state = GatewayState {
         upstream_base: format!("http://{}:{}", config.upstream_host, config.upstream_port),
         backend_host: "127.0.0.1".to_string(),
-        access_policy: config.access_policy,
+        access_policy: Arc::new(tokio::sync::Mutex::new(DynamicAccessPolicy::new(
+            config.access_policy,
+            paths::admin_keys_file(),
+        ))),
         public_model_root: config.public_model_root,
         client: Client::builder(TokioExecutor::new()).build_http(),
         shutdown: Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx))),
@@ -95,6 +98,103 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
     })
     .await?;
     Ok(())
+}
+
+struct DynamicAccessPolicy {
+    base: GatewayAccessPolicy,
+    path: PathBuf,
+    loaded_mtime: Option<SystemTime>,
+    file_admin_keys: Vec<omniinfer_core::gateway_auth::GatewayAdminApiKey>,
+}
+
+impl DynamicAccessPolicy {
+    fn new(base: GatewayAccessPolicy, path: PathBuf) -> Self {
+        Self {
+            base,
+            path,
+            loaded_mtime: None,
+            file_admin_keys: Vec::new(),
+        }
+    }
+
+    fn effective_policy(&mut self) -> GatewayAccessPolicy {
+        self.reload_if_changed();
+        let mut policy = self.base.clone();
+        policy
+            .admin_api_keys
+            .extend(self.file_admin_keys.iter().cloned());
+        policy
+    }
+
+    fn reload_if_changed(&mut self) {
+        let Ok(metadata) = std::fs::metadata(&self.path) else {
+            if self.loaded_mtime.is_some() || !self.file_admin_keys.is_empty() {
+                self.loaded_mtime = None;
+                self.file_admin_keys.clear();
+            }
+            return;
+        };
+        let modified = metadata.modified().ok();
+        if modified.is_some() && modified == self.loaded_mtime {
+            return;
+        }
+        let Ok(raw) = std::fs::read_to_string(&self.path) else {
+            return;
+        };
+        let Ok(keys) = parse_admin_keys_file(&raw) else {
+            return;
+        };
+        self.loaded_mtime = modified;
+        self.file_admin_keys = keys;
+    }
+}
+
+fn parse_admin_keys_file(
+    raw: &str,
+) -> Result<Vec<omniinfer_core::gateway_auth::GatewayAdminApiKey>> {
+    let value: Value = serde_json::from_str(raw)?;
+    let source = value.get("keys").unwrap_or(&value);
+    let mut keys = Vec::new();
+    match source {
+        Value::Object(map) => {
+            for (id, key) in map {
+                let Some(key) = key.as_str().map(str::trim).filter(|key| !key.is_empty()) else {
+                    continue;
+                };
+                keys.push(omniinfer_core::gateway_auth::GatewayAdminApiKey {
+                    id: id.trim().to_string(),
+                    key: key.to_string(),
+                });
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                let Some(id) = item
+                    .get("id")
+                    .or_else(|| item.get("name"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                else {
+                    continue;
+                };
+                let Some(key) = item
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                else {
+                    continue;
+                };
+                keys.push(omniinfer_core::gateway_auth::GatewayAdminApiKey {
+                    id: id.to_string(),
+                    key: key.to_string(),
+                });
+            }
+        }
+        _ => {}
+    }
+    Ok(keys)
 }
 
 async fn proxy_request(
@@ -122,7 +222,8 @@ async fn proxy_request_inner(
 
     let path = request.uri().path().to_string();
     let auth_context = auth_context(&request, peer_ip);
-    let auth = match authorize_request_with_identity(&state.access_policy, &auth_context) {
+    let access_policy = state.access_policy.lock().await.effective_policy();
+    let auth = match authorize_request_with_identity(&access_policy, &auth_context) {
         Ok(auth) => auth,
         Err(error) => {
             return Ok(json_response(
@@ -526,13 +627,23 @@ async fn try_handle_rust_endpoint(
                 .get("model")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let target = state
-                .runtime
-                .lock()
-                .await
-                .proxy_base_for_model(requested_model.as_deref());
+            let target = {
+                let runtime = state.runtime.lock().await;
+                runtime.proxy_base_for_model(requested_model.as_deref())
+            };
             let Some(target) = target else {
-                return Ok(None);
+                let message = requested_model
+                    .as_deref()
+                    .map(|model| format!("model is not loaded: {model}"))
+                    .unwrap_or_else(|| "no model is loaded".to_string());
+                return Ok(Some(json_response(
+                    if requested_model.is_some() {
+                        StatusCode::NOT_FOUND
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    },
+                    json!({"error": {"message": message}}),
+                )));
             };
             let response = proxy_body_to_runtime(
                 &state.client,
@@ -579,18 +690,23 @@ async fn try_handle_rust_endpoint(
             let response_model = payload
                 .get("model")
                 .and_then(Value::as_str)
-                .unwrap_or("omniinfer")
-                .to_string();
+                .map(str::to_string);
             let openai_payload = anthropic_request_to_openai(&payload);
             let normalized = normalize_chat_request(openai_payload, false)?;
-            let target = state
-                .runtime
-                .lock()
-                .await
-                .proxy_base_for_model(Some(&response_model));
-            let Some(target) = target else {
-                return Ok(None);
+            let mut target = {
+                let runtime = state.runtime.lock().await;
+                runtime.proxy_base_for_model(response_model.as_deref())
             };
+            if target.is_none() && response_model.is_some() {
+                target = state.runtime.lock().await.proxy_base_for_model(None);
+            }
+            let Some(target) = target else {
+                return Ok(Some(json_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    json!({"error": {"message": "no model is loaded"}}),
+                )));
+            };
+            let response_model = response_model.unwrap_or_else(|| "omniinfer".to_string());
             let response = proxy_anthropic_to_runtime(
                 &state.client,
                 &format!("{target}/v1/chat/completions"),
@@ -1087,9 +1203,14 @@ impl RustRuntimeManager {
     }
 
     fn proxy_base_for_model(&self, requested_model: Option<&str>) -> Option<String> {
-        let key = requested_model
-            .and_then(|model| self.resolve_loaded_model_key(model))
-            .or_else(|| self.default_model_key.clone())?;
+        let key = match requested_model
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
+            Some("omniinfer") => self.default_model_key.clone()?,
+            Some(model) => self.resolve_loaded_model_key(model)?,
+            None => self.default_model_key.clone()?,
+        };
         self.loaded
             .get(&key)
             .map(|loaded| format!("http://127.0.0.1:{}", loaded.process.info().port))
@@ -2494,6 +2615,24 @@ mod tests {
         let gemma_chat = remote_chat(port, "inference", "gemma-4-e4b-it-q4_k_m").await;
         assert_eq!(gemma_chat["model_echo"], "gemma-4-e4b-it-q4_k_m");
 
+        let missing_chat = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", "Bearer inference")
+                .send_json(json!({
+                    "model": "not-loaded-model",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": false
+                }))
+                .unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert!(missing_chat.to_string().contains("404"));
+
+        let default_chat = remote_chat_without_model(port, "inference").await;
+        assert_eq!(default_chat["model_echo"], Value::Null);
+
         let loaded = tokio::task::spawn_blocking(move || {
             ureq::get(format!("http://127.0.0.1:{port}/omni/loaded-models"))
                 .header("CF-Connecting-IP", "203.0.113.10")
@@ -2505,6 +2644,64 @@ mod tests {
         .unwrap();
         let loaded_body: Value = loaded.into_body().read_json().unwrap();
         assert_eq!(loaded_body["data"].as_array().unwrap().len(), 2);
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
+    #[tokio::test]
+    async fn gateway_hot_reloads_admin_keys_file() {
+        let _env_lock = TEST_ENV_LOCK.lock().await;
+        let temp = temp_root("rust-gateway-admin-keys-file");
+        let root = temp.join("public_models");
+        write_public_model_manifest(&root, "qwen3.5-4b-q4_k_m");
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway_with_public_root(
+            upstream.port,
+            GatewayAccessPolicy {
+                api_key: "inference".to_string(),
+                admin_api_key: "old-admin".to_string(),
+                allow_remote_management: true,
+                trust_proxy_headers: true,
+                ..GatewayAccessPolicy::default()
+            },
+            Some(root),
+        )
+        .await;
+        let port = gateway.port;
+
+        let before = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/public-models"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", "Bearer alice-key")
+                .call()
+                .unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert!(before.to_string().contains("401"));
+
+        let config_dir = temp.join(".local").join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("admin_keys.json"),
+            r#"{"keys":{"alice":"alice-key","bob":"bob-key"}}"#,
+        )
+        .unwrap();
+
+        let after = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/public-models"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", "Bearer alice-key")
+                .call()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(after.status().as_u16(), 200);
 
         gateway.stop().await;
         upstream.stop().await;
@@ -2657,6 +2854,22 @@ mod tests {
                 .header("Authorization", &format!("Bearer {key}"))
                 .send_json(json!({
                     "model": model,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": false
+                }))
+                .unwrap();
+            response.into_body().read_json().unwrap()
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn remote_chat_without_model(port: u16, key: &'static str) -> Value {
+        tokio::task::spawn_blocking(move || {
+            let response = ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", &format!("Bearer {key}"))
+                .send_json(json!({
                     "messages": [{"role": "user", "content": "Hello"}],
                     "stream": false
                 }))

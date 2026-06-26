@@ -1183,9 +1183,13 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             "--behind-proxy exposes OmniInfer through trusted proxy headers and requires --api-key or OMNIINFER_API_KEY"
         );
     }
-    if args.allow_remote_management && admin_api_key.is_none() && admin_api_keys.is_empty() {
+    if args.allow_remote_management
+        && admin_api_key.is_none()
+        && admin_api_keys.is_empty()
+        && !admin_keys_file_has_entries()
+    {
         anyhow::bail!(
-            "--allow-remote-management requires --admin-api-key, --admin-api-keys, OMNIINFER_ADMIN_API_KEY, or OMNIINFER_ADMIN_API_KEYS"
+            "--allow-remote-management requires --admin-api-key, --admin-api-keys, OMNIINFER_ADMIN_API_KEY, OMNIINFER_ADMIN_API_KEYS, or .local/config/admin_keys.json"
         );
     }
     let public_model_root = args.public_model_root.as_deref().map(expand_home_path);
@@ -1636,6 +1640,31 @@ fn parse_admin_api_keys(raw: Option<&str>) -> Result<Vec<gateway_auth::GatewayAd
         });
     }
     Ok(entries)
+}
+
+fn admin_keys_file_has_entries() -> bool {
+    let path = paths::admin_keys_file();
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    let source = value.get("keys").unwrap_or(&value);
+    match source {
+        serde_json::Value::Object(map) => map.values().any(|key| {
+            key.as_str()
+                .map(str::trim)
+                .is_some_and(|key| !key.is_empty())
+        }),
+        serde_json::Value::Array(items) => items.iter().any(|item| {
+            item.get("key")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .is_some_and(|key| !key.is_empty())
+        }),
+        _ => false,
+    }
 }
 
 fn lan_base_urls(config: &config::AppConfig, lan_enabled: bool) -> Vec<String> {
