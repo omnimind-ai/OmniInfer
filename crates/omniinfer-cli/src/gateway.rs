@@ -410,8 +410,16 @@ async fn try_handle_rust_endpoint(
         }
         (&Method::GET, "/omni/gpus") => {
             let loaded = state.runtime.lock().await.loaded_runtime_summaries();
-            let payload = gpu_status_payload(&loaded);
-            Ok(Some(json_response(StatusCode::OK, payload)))
+            match query_nvidia_smi_gpu_status(&loaded) {
+                Ok(devices) => Ok(Some(json_response(
+                    StatusCode::OK,
+                    gpu_status_payload(&devices),
+                ))),
+                Err(error) => Ok(Some(json_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    json!({"error": {"message": error.to_string()}}),
+                ))),
+            }
         }
         (&Method::GET, "/omni/models") => Ok(Some(json_response(
             StatusCode::GONE,
@@ -1675,18 +1683,11 @@ struct GpuStatusProcess {
     owner_admin_id: Option<String>,
 }
 
-fn gpu_status_payload(loaded: &[LoadedRuntimeSummary]) -> Value {
-    match query_nvidia_smi_gpu_status(loaded) {
-        Ok(devices) => json!({
-            "object": "list",
-            "data": devices.iter().map(gpu_status_device_payload).collect::<Vec<_>>(),
-        }),
-        Err(error) => json!({
-            "object": "list",
-            "data": [],
-            "error": {"message": error.to_string()},
-        }),
-    }
+fn gpu_status_payload(devices: &[GpuStatusDevice]) -> Value {
+    json!({
+        "object": "list",
+        "data": devices.iter().map(gpu_status_device_payload).collect::<Vec<_>>(),
+    })
 }
 
 fn gpu_status_device_payload(device: &GpuStatusDevice) -> Value {
