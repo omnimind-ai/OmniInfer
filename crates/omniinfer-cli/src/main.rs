@@ -252,6 +252,8 @@ pub(crate) struct ServeArgs {
     api_key: Option<String>,
     #[arg(long)]
     admin_api_key: Option<String>,
+    #[arg(long, value_name = "ID:KEY[,ID:KEY...]")]
+    admin_api_keys: Option<String>,
     #[arg(long)]
     allow_insecure_lan: bool,
     #[arg(long)]
@@ -306,6 +308,8 @@ struct GatewayArgs {
     api_key: Option<String>,
     #[arg(long)]
     admin_api_key: Option<String>,
+    #[arg(long, value_name = "ID:KEY[,ID:KEY...]")]
+    admin_api_keys: Option<String>,
     #[arg(long)]
     allow_insecure_lan: bool,
     #[arg(long)]
@@ -486,6 +490,7 @@ fn run_gateway_command(args: &GatewayArgs) -> Result<()> {
         access_policy: gateway_auth::GatewayAccessPolicy {
             api_key: args.api_key.clone().unwrap_or_default(),
             admin_api_key: args.admin_api_key.clone().unwrap_or_default(),
+            admin_api_keys: parse_admin_api_keys(args.admin_api_keys.as_deref())?,
             allow_insecure_lan: args.allow_insecure_lan,
             allow_remote_management: args.allow_remote_management,
             trust_proxy_headers: args.trust_proxy_headers,
@@ -1167,6 +1172,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     let generate_session_key = args.cloudflare || (remote_bind && !args.allow_insecure_lan);
     let api_key = resolve_serve_api_key(args, generate_session_key)?;
     let admin_api_key = resolve_serve_admin_api_key(args)?;
+    let admin_api_keys = resolve_serve_admin_api_keys(args)?;
     if remote_bind && api_key.is_none() && !args.allow_insecure_lan {
         anyhow::bail!(
             "Refusing to expose OmniInfer on a non-loopback host without an API key. Use --lan to generate a session key, --api-key/OMNIINFER_API_KEY to set one, or --allow-insecure-lan for trusted test networks."
@@ -1177,9 +1183,9 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             "--behind-proxy exposes OmniInfer through trusted proxy headers and requires --api-key or OMNIINFER_API_KEY"
         );
     }
-    if args.allow_remote_management && admin_api_key.is_none() {
+    if args.allow_remote_management && admin_api_key.is_none() && admin_api_keys.is_empty() {
         anyhow::bail!(
-            "--allow-remote-management requires --admin-api-key or OMNIINFER_ADMIN_API_KEY"
+            "--allow-remote-management requires --admin-api-key, --admin-api-keys, OMNIINFER_ADMIN_API_KEY, or OMNIINFER_ADMIN_API_KEYS"
         );
     }
     let public_model_root = args.public_model_root.as_deref().map(expand_home_path);
@@ -1222,6 +1228,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             &log_path,
             api_key.as_deref(),
             admin_api_key.as_deref(),
+            &admin_api_keys,
             public_model_root.as_deref(),
         )?;
         wait_for_gateway_ready(&public_config)?;
@@ -1595,6 +1602,42 @@ fn resolve_serve_admin_api_key(args: &ServeArgs) -> Result<Option<String>> {
     }
 }
 
+fn resolve_serve_admin_api_keys(args: &ServeArgs) -> Result<Vec<gateway_auth::GatewayAdminApiKey>> {
+    let raw = args
+        .admin_api_keys
+        .clone()
+        .or_else(|| env::var("OMNIINFER_ADMIN_API_KEYS").ok());
+    parse_admin_api_keys(raw.as_deref())
+}
+
+fn parse_admin_api_keys(raw: Option<&str>) -> Result<Vec<gateway_auth::GatewayAdminApiKey>> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let mut entries = Vec::new();
+    for item in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        let Some((id, key)) = item.split_once(':').or_else(|| item.split_once('=')) else {
+            anyhow::bail!("invalid admin API key entry '{item}'; expected ID:KEY or ID=KEY");
+        };
+        let id = id.trim();
+        let key = key.trim();
+        if id.is_empty() || key.is_empty() {
+            anyhow::bail!(
+                "invalid admin API key entry '{item}'; admin id and key must be non-empty"
+            );
+        }
+        entries.push(gateway_auth::GatewayAdminApiKey {
+            id: id.to_string(),
+            key: key.to_string(),
+        });
+    }
+    Ok(entries)
+}
+
 fn lan_base_urls(config: &config::AppConfig, lan_enabled: bool) -> Vec<String> {
     if !lan_enabled {
         return Vec::new();
@@ -1873,6 +1916,7 @@ fn start_rust_gateway_child(
     log_path: &std::path::Path,
     api_key: Option<&str>,
     admin_api_key: Option<&str>,
+    admin_api_keys: &[gateway_auth::GatewayAdminApiKey],
     public_model_root: Option<&std::path::Path>,
 ) -> Result<std::process::Child> {
     if let Some(parent) = log_path.parent() {
@@ -1903,6 +1947,14 @@ fn start_rust_gateway_child(
     }
     if let Some(admin_api_key) = admin_api_key.filter(|value| !value.trim().is_empty()) {
         command.arg("--admin-api-key").arg(admin_api_key);
+    }
+    if !admin_api_keys.is_empty() {
+        let raw = admin_api_keys
+            .iter()
+            .map(|entry| format!("{}:{}", entry.id, entry.key))
+            .collect::<Vec<_>>()
+            .join(",");
+        command.arg("--admin-api-keys").arg(raw);
     }
     if let Some(public_model_root) = public_model_root {
         command.arg("--public-model-root").arg(public_model_root);

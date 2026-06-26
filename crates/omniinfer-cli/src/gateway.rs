@@ -26,7 +26,7 @@ use omniinfer_core::anthropic::{
 use omniinfer_core::backend_registry;
 use omniinfer_core::backend_registry::{BackendRegistry, BackendScope};
 use omniinfer_core::gateway_auth::{
-    GatewayAccessPolicy, RequestAuthContext, authorize_request, is_remote_request,
+    GatewayAccessPolicy, GatewayAuthDecision, RequestAuthContext, authorize_request_with_identity,
 };
 use omniinfer_core::local_state;
 use omniinfer_core::model_artifacts::{discover_llama_cpp_model_artifacts, maybe_auto_mmproj};
@@ -36,6 +36,7 @@ use omniinfer_core::request_normalization::normalize_chat_request;
 use omniinfer_core::runtime_plan::{ExternalRuntimeRequest, build_external_runtime_plan};
 use omniinfer_core::runtime_process::{RuntimeProcess, RuntimeProcessOptions};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -121,19 +122,19 @@ async fn proxy_request_inner(
 
     let path = request.uri().path().to_string();
     let auth_context = auth_context(&request, peer_ip);
-    let remote_request = is_remote_request(&state.access_policy, &auth_context);
-    if let Err(error) = authorize_request(&state.access_policy, &auth_context) {
-        return Ok(json_response(
-            StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::FORBIDDEN),
-            json!({"error": {"message": error.to_string()}}),
-        ));
-    }
+    let auth = match authorize_request_with_identity(&state.access_policy, &auth_context) {
+        Ok(auth) => auth,
+        Err(error) => {
+            return Ok(json_response(
+                StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::FORBIDDEN),
+                json!({"error": {"message": error.to_string()}}),
+            ));
+        }
+    };
 
     let should_shutdown = request.method() == Method::POST && path == "/omni/shutdown";
     if should_handle_rust_endpoint(&state, request.method(), &path).await {
-        let Some(response) =
-            try_handle_rust_endpoint(&state, &path, remote_request, request).await?
-        else {
+        let Some(response) = try_handle_rust_endpoint(&state, &path, auth, request).await? else {
             return Ok(json_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({"error": {"message": "Rust endpoint handler declined a selected request"}}),
@@ -196,7 +197,12 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
     match (method, path) {
         (
             &Method::GET,
-            "/health" | "/omni/state" | "/omni/backends" | "/omni/thinking" | "/omni/models",
+            "/health"
+            | "/omni/state"
+            | "/omni/backends"
+            | "/omni/thinking"
+            | "/omni/models"
+            | "/omni/loaded-models",
         ) => true,
         (&Method::GET, "/omni/backend/props") => true,
         (&Method::GET, "/omni/public-models") => true,
@@ -204,21 +210,23 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
             true
         }
         (&Method::POST, "/omni/shutdown") => true,
-        (&Method::POST, "/omni/backend/select" | "/omni/backend/stop" | "/omni/model/select") => {
-            true
-        }
+        (
+            &Method::POST,
+            "/omni/backend/select"
+            | "/omni/backend/stop"
+            | "/omni/model/select"
+            | "/omni/model/load"
+            | "/omni/model/unload",
+        ) => true,
         (&Method::POST, "/omni/thinking/select") => true,
-        (&Method::POST, "/v1/chat/completions") => {
-            state.runtime.lock().await.current_proxy_base().is_some()
-        }
-        (&Method::POST, "/v1/messages") => {
-            state.runtime.lock().await.current_proxy_base().is_some()
+        (&Method::POST, "/v1/chat/completions" | "/v1/messages") => {
+            state.runtime.lock().await.has_loaded_runtime()
         }
         (
             &Method::POST,
             "/tokenize" | "/detokenize" | "/omni/tokenize" | "/omni/detokenize"
             | "/omni/cache/clear",
-        ) => state.runtime.lock().await.current_proxy_base().is_some(),
+        ) => state.runtime.lock().await.has_loaded_runtime(),
         _ => false,
     }
 }
@@ -226,7 +234,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
 async fn try_handle_rust_endpoint(
     state: &GatewayState,
     path: &str,
-    remote_request: bool,
+    auth: GatewayAuthDecision,
     request: Request<Body>,
 ) -> Result<Option<Response<Body>>> {
     match (request.method(), path) {
@@ -284,12 +292,16 @@ async fn try_handle_rust_endpoint(
             json!({"default_enabled": default_thinking_enabled()}),
         ))),
         (&Method::GET, "/omni/backend/props") => {
-            let target = state.runtime.lock().await.current_proxy_base();
+            let target = state.runtime.lock().await.proxy_base_for_model(None);
             let Some(target) = target else {
                 return Ok(Some(json_response(StatusCode::OK, json!({}))));
             };
             let response = proxy_get_to_runtime(&state.client, &format!("{target}/props")).await?;
             Ok(Some(response))
+        }
+        (&Method::GET, "/omni/loaded-models") => {
+            let payload = state.runtime.lock().await.loaded_models_payload();
+            Ok(Some(json_response(StatusCode::OK, payload)))
         }
         (&Method::GET, "/omni/models") => Ok(Some(json_response(
             StatusCode::GONE,
@@ -328,24 +340,30 @@ async fn try_handle_rust_endpoint(
             }
         }
         (&Method::GET, "/v1/models") => {
-            let snapshot = state.runtime.lock().await.snapshot();
-            let mut data = Vec::new();
-            if snapshot
-                .get("backend_ready")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-                && let Some(model_id) = snapshot.get("model").and_then(Value::as_str)
-            {
-                data.push(json!({
-                    "id": model_id,
-                    "object": "model",
-                    "created": 0,
-                    "owned_by": "omniinfer",
-                    "permission": [],
-                    "root": model_id,
-                    "parent": null,
-                }));
-            }
+            let loaded = state.runtime.lock().await.loaded_models_payload();
+            let data = loaded
+                .get("data")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|item| {
+                    let id = item
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("omniinfer")
+                        .to_string();
+                    json!({
+                        "id": id,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": "omniinfer",
+                        "permission": [],
+                        "root": id,
+                        "parent": null,
+                    })
+                })
+                .collect::<Vec<_>>();
             Ok(Some(json_response(
                 StatusCode::OK,
                 json!({"object": "list", "data": data}),
@@ -420,11 +438,11 @@ async fn try_handle_rust_endpoint(
                 json!({"ok": true, "default_enabled": enabled}),
             )))
         }
-        (&Method::POST, "/omni/model/select") => {
+        (&Method::POST, "/omni/model/select" | "/omni/model/load") => {
             let (parts, body) = request.into_parts();
             let body = body.collect().await?.to_bytes();
             let mut payload: Value = serde_json::from_slice(&body)?;
-            if let Err(error) = normalize_public_model_select(&mut payload, state, remote_request) {
+            if let Err(error) = normalize_public_model_select(&mut payload, state, auth.remote) {
                 return Ok(Some(json_response(
                     public_model_error_status(&error),
                     json!({"error": {"message": error.to_string()}}),
@@ -463,26 +481,63 @@ async fn try_handle_rust_endpoint(
             let result = tokio::task::spawn_blocking(move || {
                 let handle = tokio::runtime::Handle::current();
                 handle.block_on(async move {
-                    runtime
-                        .lock()
-                        .await
-                        .load_model(payload, backend_host, Duration::from_secs(120))
+                    runtime.lock().await.load_model(
+                        payload,
+                        backend_host,
+                        Duration::from_secs(120),
+                        auth.admin_id.clone(),
+                    )
                 })
             })
             .await??;
             Ok(Some(json_response(StatusCode::OK, result)))
         }
+        (&Method::POST, "/omni/model/unload") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let payload: Value = serde_json::from_slice(&body)?;
+            let Some(model) = payload
+                .get("model")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            else {
+                return Ok(Some(json_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({"error": {"message": "field 'model' is required"}}),
+                )));
+            };
+            match state
+                .runtime
+                .lock()
+                .await
+                .unload_model(model, auth.admin_id.as_deref())
+            {
+                Ok(result) => Ok(Some(json_response(StatusCode::OK, result))),
+                Err(error) => Ok(Some(json_response(
+                    StatusCode::FORBIDDEN,
+                    json!({"error": {"message": error.to_string()}}),
+                ))),
+            }
+        }
         (&Method::POST, "/v1/chat/completions") => {
             let body = request.into_body().collect().await?.to_bytes();
-            let normalized = normalize_chat_body(body, false)?;
-            let target = state.runtime.lock().await.current_proxy_base();
+            let normalized_payload = normalize_chat_request(serde_json::from_slice(&body)?, false)?;
+            let requested_model = normalized_payload
+                .payload
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let target = state
+                .runtime
+                .lock()
+                .await
+                .proxy_base_for_model(requested_model.as_deref());
             let Some(target) = target else {
                 return Ok(None);
             };
             let response = proxy_body_to_runtime(
                 &state.client,
                 &format!("{target}/v1/chat/completions"),
-                normalized,
+                HyperBytes::from(serde_json::to_vec(&normalized_payload.payload)?),
             )
             .await?;
             Ok(Some(response))
@@ -494,7 +549,7 @@ async fn try_handle_rust_endpoint(
             } else {
                 "tokenize"
             };
-            let target = state.runtime.lock().await.current_proxy_base();
+            let target = state.runtime.lock().await.proxy_base_for_model(None);
             let Some(target) = target else {
                 return Ok(None);
             };
@@ -504,7 +559,7 @@ async fn try_handle_rust_endpoint(
             Ok(Some(response))
         }
         (&Method::POST, "/omni/cache/clear") => {
-            let target = state.runtime.lock().await.current_proxy_base();
+            let target = state.runtime.lock().await.proxy_base_for_model(None);
             let Some(target) = target else {
                 return Ok(None);
             };
@@ -528,7 +583,11 @@ async fn try_handle_rust_endpoint(
                 .to_string();
             let openai_payload = anthropic_request_to_openai(&payload);
             let normalized = normalize_chat_request(openai_payload, false)?;
-            let target = state.runtime.lock().await.current_proxy_base();
+            let target = state
+                .runtime
+                .lock()
+                .await
+                .proxy_base_for_model(Some(&response_model));
             let Some(target) = target else {
                 return Ok(None);
             };
@@ -773,10 +832,13 @@ fn default_thinking_enabled() -> bool {
 #[derive(Default)]
 struct RustRuntimeManager {
     selected_backend: Option<String>,
-    loaded: Option<LoadedRustRuntime>,
+    loaded: BTreeMap<String, LoadedRustRuntime>,
+    default_model_key: Option<String>,
 }
 
 struct LoadedRustRuntime {
+    model_key: String,
+    owner_admin_id: Option<String>,
     backend_id: String,
     model: String,
     public_model_id: Option<String>,
@@ -809,9 +871,10 @@ impl RustRuntimeManager {
     }
 
     fn stop_runtime(&mut self) -> Result<Value> {
-        if let Some(mut loaded) = self.loaded.take() {
+        for (_, mut loaded) in std::mem::take(&mut self.loaded) {
             loaded.process.stop(Duration::from_secs(8))?;
         }
+        self.default_model_key = None;
         Ok(json!({
             "ok": true,
             "stopped": true,
@@ -819,11 +882,16 @@ impl RustRuntimeManager {
         }))
     }
 
+    fn has_loaded_runtime(&self) -> bool {
+        !self.loaded.is_empty()
+    }
+
     fn load_model(
         &mut self,
         payload: Value,
         backend_host: String,
         startup_timeout: Duration,
+        owner_admin_id: Option<String>,
     ) -> Result<Value> {
         let model = json_required_str(&payload, "model")?.to_string();
         let public_model_id = payload
@@ -831,6 +899,10 @@ impl RustRuntimeManager {
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
+        let requested_model_key = public_model_id.clone().unwrap_or_else(|| model.clone());
+        if self.loaded.contains_key(&requested_model_key) {
+            anyhow::bail!("model is already loaded: {requested_model_key}");
+        }
         let requested_backend = self.resolve_requested_backend(&payload)?;
         let registry = BackendRegistry::load_current();
         let backend = registry
@@ -895,10 +967,12 @@ impl RustRuntimeManager {
             ctx_size,
             launch_args,
         })?;
-        self.stop_runtime()?;
         let log_path = PathBuf::from(&backend.runtime_dir)
             .join("logs")
-            .join(&plan.log_file_name);
+            .join(model_log_file_name(
+                &plan.log_file_name,
+                &requested_model_key,
+            ));
         let (runtime_env, cuda_selection) =
             runtime_env_for_backend(backend, &effective_launch_args);
         let process = RuntimeProcess::start(
@@ -918,24 +992,32 @@ impl RustRuntimeManager {
             mmproj_path.as_deref(),
             plan.ctx_size,
         )?;
-        self.loaded = Some(LoadedRustRuntime {
-            backend_id: backend.id.clone(),
-            model: resolved_model.model_path.clone(),
-            public_model_id: public_model_id.clone(),
-            mmproj: mmproj_path.clone(),
-            ctx_size: plan.ctx_size,
-            launch_args: effective_launch_args,
-            cuda_visible_devices: cuda_selection
-                .as_ref()
-                .map(|selection| selection.visible_devices.clone()),
-            cuda_warning: cuda_selection
-                .as_ref()
-                .and_then(|selection| selection.warning.clone()),
-            proxy_model_ref: plan.proxy_model_ref.clone(),
-            process,
-        });
+        self.loaded.insert(
+            requested_model_key.clone(),
+            LoadedRustRuntime {
+                model_key: requested_model_key.clone(),
+                owner_admin_id: owner_admin_id.clone(),
+                backend_id: backend.id.clone(),
+                model: resolved_model.model_path.clone(),
+                public_model_id: public_model_id.clone(),
+                mmproj: mmproj_path.clone(),
+                ctx_size: plan.ctx_size,
+                launch_args: effective_launch_args,
+                cuda_visible_devices: cuda_selection
+                    .as_ref()
+                    .map(|selection| selection.visible_devices.clone()),
+                cuda_warning: cuda_selection
+                    .as_ref()
+                    .and_then(|selection| selection.warning.clone()),
+                proxy_model_ref: plan.proxy_model_ref.clone(),
+                process,
+            },
+        );
+        self.default_model_key = Some(requested_model_key.clone());
         let mut response = json!({
             "ok": true,
+            "model": requested_model_key,
+            "owner_admin_id": owner_admin_id,
             "selected_backend": backend.id,
             "selected_model": resolved_model.model_path,
             "selected_public_model_id": public_model_id,
@@ -955,6 +1037,38 @@ impl RustRuntimeManager {
         Ok(response)
     }
 
+    fn unload_model(&mut self, model: &str, admin_id: Option<&str>) -> Result<Value> {
+        let model_key = self
+            .resolve_loaded_model_key(model)
+            .ok_or_else(|| anyhow::anyhow!("model is not loaded: {model}"))?;
+        let owner = self
+            .loaded
+            .get(&model_key)
+            .and_then(|runtime| runtime.owner_admin_id.as_deref())
+            .map(str::to_string);
+        if let Some(owner) = owner.as_deref()
+            && let Some(admin_id) = admin_id
+            && owner != admin_id
+        {
+            anyhow::bail!(
+                "model '{model_key}' is owned by admin '{owner}' and cannot be unloaded by admin '{admin_id}'"
+            );
+        }
+        let Some(mut loaded) = self.loaded.remove(&model_key) else {
+            anyhow::bail!("model is not loaded: {model}");
+        };
+        loaded.process.stop(Duration::from_secs(8))?;
+        if self.default_model_key.as_deref() == Some(&model_key) {
+            self.default_model_key = self.loaded.keys().next_back().cloned();
+        }
+        Ok(json!({
+            "ok": true,
+            "unloaded": true,
+            "model": model_key,
+            "owner_admin_id": owner,
+        }))
+    }
+
     fn resolve_requested_backend(&self, payload: &Value) -> Result<String> {
         payload
             .get("backend")
@@ -972,10 +1086,36 @@ impl RustRuntimeManager {
             .ok_or_else(|| anyhow::anyhow!("no installed backend available"))
     }
 
-    fn current_proxy_base(&self) -> Option<String> {
+    fn proxy_base_for_model(&self, requested_model: Option<&str>) -> Option<String> {
+        let key = requested_model
+            .and_then(|model| self.resolve_loaded_model_key(model))
+            .or_else(|| self.default_model_key.clone())?;
         self.loaded
-            .as_ref()
+            .get(&key)
             .map(|loaded| format!("http://127.0.0.1:{}", loaded.process.info().port))
+    }
+
+    fn resolve_loaded_model_key(&self, requested: &str) -> Option<String> {
+        let requested = requested.trim();
+        if requested.is_empty() {
+            return None;
+        }
+        if self.loaded.contains_key(requested) {
+            return Some(requested.to_string());
+        }
+        self.loaded.iter().find_map(|(key, loaded)| {
+            (loaded.public_model_id.as_deref() == Some(requested)
+                || loaded.model == requested
+                || loaded.proxy_model_ref.as_deref() == Some(requested))
+            .then(|| key.clone())
+        })
+    }
+
+    fn loaded_models_payload(&self) -> Value {
+        json!({
+            "object": "list",
+            "data": self.loaded.values().map(loaded_runtime_payload).collect::<Vec<_>>(),
+        })
     }
 
     fn snapshot(&self) -> Value {
@@ -984,7 +1124,12 @@ impl RustRuntimeManager {
                 .ok()
                 .and_then(|state| state.selected_backend)
         });
-        let Some(loaded) = self.loaded.as_ref() else {
+        let loaded_models = self
+            .loaded
+            .values()
+            .map(loaded_runtime_payload)
+            .collect::<Vec<_>>();
+        let Some(default_key) = self.default_model_key.as_ref() else {
             return json!({
                 "backend": selected_backend,
                 "backend_ready": false,
@@ -1004,14 +1149,42 @@ impl RustRuntimeManager {
                 "backend_log": null,
                 "effective_parameters": {},
                 "runtime": null,
+                "loaded_models": loaded_models,
+                "default_model": null,
+            });
+        };
+        let Some(loaded) = self.loaded.get(default_key) else {
+            return json!({
+                "backend": selected_backend,
+                "backend_ready": false,
+                "model": null,
+                "public_model_id": null,
+                "mmproj": null,
+                "ctx_size": null,
+                "request_defaults": {},
+                "runtime_mode": null,
+                "backend_pid": null,
+                "backend_port": null,
+                "launch_args": [],
+                "cuda_visible_devices": null,
+                "warning": null,
+                "launch_command": [],
+                "proxy_model": null,
+                "backend_log": null,
+                "effective_parameters": {},
+                "runtime": null,
+                "loaded_models": loaded_models,
+                "default_model": null,
             });
         };
         let info = loaded.process.info();
         json!({
             "backend": loaded.backend_id,
             "backend_ready": true,
-            "model": loaded.model,
+            "model": loaded.model_key,
+            "model_path": loaded.model,
             "public_model_id": loaded.public_model_id,
+            "owner_admin_id": loaded.owner_admin_id,
             "mmproj": loaded.mmproj,
             "ctx_size": loaded.ctx_size,
             "request_defaults": {},
@@ -1036,7 +1209,51 @@ impl RustRuntimeManager {
                 "proxy_model_ref": loaded.proxy_model_ref,
             },
             "log_path": info.log_path.display().to_string(),
+            "loaded_models": loaded_models,
+            "default_model": loaded.model_key,
         })
+    }
+}
+
+fn loaded_runtime_payload(loaded: &LoadedRustRuntime) -> Value {
+    let info = loaded.process.info();
+    json!({
+        "id": loaded.model_key,
+        "owner_admin_id": loaded.owner_admin_id,
+        "backend": loaded.backend_id,
+        "model": loaded.model_key,
+        "model_path": loaded.model,
+        "public_model_id": loaded.public_model_id,
+        "mmproj": loaded.mmproj,
+        "ctx_size": loaded.ctx_size,
+        "runtime_mode": "external_server",
+        "backend_pid": info.pid,
+        "backend_port": info.port,
+        "launch_args": loaded.launch_args,
+        "cuda_visible_devices": loaded.cuda_visible_devices,
+        "warning": loaded.cuda_warning,
+        "launch_command": info.command,
+        "proxy_model": loaded.proxy_model_ref,
+        "backend_log": info.log_path.display().to_string(),
+    })
+}
+
+fn model_log_file_name(base: &str, model_key: &str) -> String {
+    let sanitized = model_key
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    match base.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => {
+            format!("{stem}-{sanitized}.{ext}")
+        }
+        _ => format!("{base}-{sanitized}.log"),
     }
 }
 
@@ -2206,6 +2423,94 @@ mod tests {
         std::fs::remove_dir_all(temp).ok();
     }
 
+    #[tokio::test]
+    async fn remote_admins_can_load_multiple_models_with_owner_unload_policy() {
+        let _env_lock = TEST_ENV_LOCK.lock().await;
+        let temp = temp_root("rust-gateway-multi-model-owner");
+        let root = temp.join("public_models");
+        write_public_model_manifest(&root, "qwen3.5-35b-a3b-q4_k_m");
+        write_public_model_manifest(&root, "gemma-4-e4b-it-q4_k_m");
+        install_fake_llama_server(&temp, external_test_backend_id());
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+        let upstream = spawn_test_upstream().await;
+        let gateway = spawn_test_gateway_with_public_root(
+            upstream.port,
+            GatewayAccessPolicy {
+                api_key: "inference".to_string(),
+                admin_api_keys: vec![
+                    omniinfer_core::gateway_auth::GatewayAdminApiKey {
+                        id: "adminA".to_string(),
+                        key: "admin-a".to_string(),
+                    },
+                    omniinfer_core::gateway_auth::GatewayAdminApiKey {
+                        id: "adminB".to_string(),
+                        key: "admin-b".to_string(),
+                    },
+                ],
+                allow_remote_management: true,
+                trust_proxy_headers: true,
+                ..GatewayAccessPolicy::default()
+            },
+            Some(root),
+        )
+        .await;
+        let port = gateway.port;
+
+        let qwen_load = remote_admin_post(
+            port,
+            "/omni/model/load",
+            "admin-a",
+            json!({"model": "qwen3.5-35b-a3b-q4_k_m"}),
+        )
+        .await;
+        assert_eq!(qwen_load["model"], "qwen3.5-35b-a3b-q4_k_m");
+        assert_eq!(qwen_load["owner_admin_id"], "adminA");
+
+        let gemma_load = remote_admin_post(
+            port,
+            "/omni/model/load",
+            "admin-b",
+            json!({"model": "gemma-4-e4b-it-q4_k_m"}),
+        )
+        .await;
+        assert_eq!(gemma_load["model"], "gemma-4-e4b-it-q4_k_m");
+        assert_eq!(gemma_load["owner_admin_id"], "adminB");
+        assert_ne!(qwen_load["backend_port"], gemma_load["backend_port"]);
+
+        let denied = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/model/unload"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", "Bearer admin-b")
+                .send_json(json!({"model": "qwen3.5-35b-a3b-q4_k_m"}))
+                .unwrap_err()
+        })
+        .await
+        .unwrap();
+        assert!(denied.to_string().contains("403"));
+
+        let qwen_chat = remote_chat(port, "inference", "qwen3.5-35b-a3b-q4_k_m").await;
+        assert_eq!(qwen_chat["model_echo"], "qwen3.5-35b-a3b-q4_k_m");
+        let gemma_chat = remote_chat(port, "inference", "gemma-4-e4b-it-q4_k_m").await;
+        assert_eq!(gemma_chat["model_echo"], "gemma-4-e4b-it-q4_k_m");
+
+        let loaded = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/loaded-models"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", "Bearer admin-a")
+                .call()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let loaded_body: Value = loaded.into_body().read_json().unwrap();
+        assert_eq!(loaded_body["data"].as_array().unwrap().len(), 2);
+
+        gateway.stop().await;
+        upstream.stop().await;
+        std::fs::remove_dir_all(temp).ok();
+    }
+
     struct TestServer {
         port: u16,
         stop: Option<oneshot::Sender<()>>,
@@ -2325,6 +2630,41 @@ mod tests {
             stop: Some(tx),
             stopped,
         }
+    }
+
+    async fn remote_admin_post(
+        port: u16,
+        path: &'static str,
+        key: &'static str,
+        payload: Value,
+    ) -> Value {
+        tokio::task::spawn_blocking(move || {
+            let response = ureq::post(format!("http://127.0.0.1:{port}{path}"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", &format!("Bearer {key}"))
+                .send_json(payload)
+                .unwrap();
+            response.into_body().read_json().unwrap()
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn remote_chat(port: u16, key: &'static str, model: &'static str) -> Value {
+        tokio::task::spawn_blocking(move || {
+            let response = ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .header("Authorization", &format!("Bearer {key}"))
+                .send_json(json!({
+                    "model": model,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": false
+                }))
+                .unwrap();
+            response.into_body().read_json().unwrap()
+        })
+        .await
+        .unwrap()
     }
 
     fn temp_root(name: &str) -> PathBuf {
@@ -2476,6 +2816,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json({
             "choices": [{"message": {"content": "fake backend"}, "finish_reason": "stop"}],
+            "model_echo": payload.get("model"),
             "usage": {"prompt_tokens": 3, "completion_tokens": 2},
         })
 

@@ -4,9 +4,16 @@ use thiserror::Error;
 pub struct GatewayAccessPolicy {
     pub api_key: String,
     pub admin_api_key: String,
+    pub admin_api_keys: Vec<GatewayAdminApiKey>,
     pub allow_insecure_lan: bool,
     pub allow_remote_management: bool,
     pub trust_proxy_headers: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayAdminApiKey {
+    pub id: String,
+    pub key: String,
 }
 
 impl Default for GatewayAccessPolicy {
@@ -14,11 +21,19 @@ impl Default for GatewayAccessPolicy {
         Self {
             api_key: String::new(),
             admin_api_key: String::new(),
+            admin_api_keys: Vec::new(),
             allow_insecure_lan: false,
             allow_remote_management: false,
             trust_proxy_headers: false,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayAuthDecision {
+    pub remote: bool,
+    pub management_endpoint: bool,
+    pub admin_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,17 +74,40 @@ pub fn authorize_request(
     policy: &GatewayAccessPolicy,
     request: &RequestAuthContext,
 ) -> Result<(), GatewayAuthError> {
-    if !is_remote_client(policy, request) {
-        return Ok(());
-    }
+    authorize_request_with_identity(policy, request).map(|_| ())
+}
+
+pub fn authorize_request_with_identity(
+    policy: &GatewayAccessPolicy,
+    request: &RequestAuthContext,
+) -> Result<GatewayAuthDecision, GatewayAuthError> {
+    let remote = is_remote_client(policy, request);
     let management_endpoint = !is_public_endpoint(&request.method, &request.path);
+    if !remote {
+        return Ok(GatewayAuthDecision {
+            remote,
+            management_endpoint,
+            admin_id: local_admin_id(policy, request, management_endpoint),
+        });
+    }
     if management_endpoint && !policy.allow_remote_management {
         return Err(GatewayAuthError::RemoteManagementForbidden);
     }
-    if remote_request_authenticated(policy, request, management_endpoint) {
-        return Ok(());
+    if let Some(admin_id) = matched_remote_admin_id(policy, request, management_endpoint) {
+        return Ok(GatewayAuthDecision {
+            remote,
+            management_endpoint,
+            admin_id: Some(admin_id),
+        });
     }
-    if required_key(policy, management_endpoint).is_empty() {
+    if remote_request_authenticated(policy, request, management_endpoint) {
+        return Ok(GatewayAuthDecision {
+            remote,
+            management_endpoint,
+            admin_id: None,
+        });
+    }
+    if required_keys_empty(policy, management_endpoint) {
         Err(GatewayAuthError::RemoteAccessRequiresApiKey)
     } else {
         Err(GatewayAuthError::MissingOrInvalidApiKey)
@@ -96,24 +134,89 @@ fn remote_request_authenticated(
     request: &RequestAuthContext,
     management_endpoint: bool,
 ) -> bool {
-    let api_key = required_key(policy, management_endpoint);
-    if api_key.is_empty() {
+    if required_keys_empty(policy, management_endpoint) {
         return policy.allow_insecure_lan && !management_endpoint;
     }
     let token = bearer_token(request)
         .or_else(|| request.x_api_key.as_deref().map(str::trim))
         .unwrap_or("");
-    !token.is_empty() && constant_time_eq(token.as_bytes(), api_key.as_bytes())
+    !token.is_empty() && any_required_key_matches(policy, management_endpoint, token)
 }
 
-fn required_key(policy: &GatewayAccessPolicy, management_endpoint: bool) -> &str {
+fn required_keys_empty(policy: &GatewayAccessPolicy, management_endpoint: bool) -> bool {
+    if management_endpoint && admin_keys_configured(policy) {
+        return false;
+    }
+    policy.api_key.trim().is_empty()
+}
+
+fn any_required_key_matches(
+    policy: &GatewayAccessPolicy,
+    management_endpoint: bool,
+    token: &str,
+) -> bool {
     if management_endpoint {
-        let admin_api_key = policy.admin_api_key.trim();
-        if !admin_api_key.is_empty() {
-            return admin_api_key;
+        if admin_keys_configured(policy) {
+            return admin_key_matches(policy, token).is_some();
+        }
+        let api_key = policy.api_key.trim();
+        return !api_key.is_empty() && constant_time_eq(token.as_bytes(), api_key.as_bytes());
+    }
+    let api_key = policy.api_key.trim();
+    !api_key.is_empty() && constant_time_eq(token.as_bytes(), api_key.as_bytes())
+}
+
+fn matched_remote_admin_id(
+    policy: &GatewayAccessPolicy,
+    request: &RequestAuthContext,
+    management_endpoint: bool,
+) -> Option<String> {
+    if !management_endpoint {
+        return None;
+    }
+    let token = bearer_token(request)
+        .or_else(|| request.x_api_key.as_deref().map(str::trim))
+        .unwrap_or("");
+    admin_key_matches(policy, token)
+}
+
+fn local_admin_id(
+    policy: &GatewayAccessPolicy,
+    request: &RequestAuthContext,
+    management_endpoint: bool,
+) -> Option<String> {
+    if !management_endpoint {
+        return None;
+    }
+    let token = bearer_token(request)
+        .or_else(|| request.x_api_key.as_deref().map(str::trim))
+        .unwrap_or("");
+    admin_key_matches(policy, token).or_else(|| Some("local".to_string()))
+}
+
+fn admin_key_matches(policy: &GatewayAccessPolicy, token: &str) -> Option<String> {
+    if token.is_empty() {
+        return None;
+    }
+    for entry in &policy.admin_api_keys {
+        let key = entry.key.trim();
+        if !key.is_empty() && constant_time_eq(token.as_bytes(), key.as_bytes()) {
+            return Some(entry.id.trim().to_string());
         }
     }
-    policy.api_key.trim()
+    let admin_api_key = policy.admin_api_key.trim();
+    if !admin_api_key.is_empty() && constant_time_eq(token.as_bytes(), admin_api_key.as_bytes()) {
+        return Some("admin".to_string());
+    }
+    None
+}
+
+fn admin_keys_configured(policy: &GatewayAccessPolicy) -> bool {
+    !policy.admin_api_key.trim().is_empty()
+        || policy
+            .admin_api_keys
+            .iter()
+            .any(|entry| !entry.key.trim().is_empty())
 }
 
 fn bearer_token(request: &RequestAuthContext) -> Option<&str> {
@@ -281,6 +384,26 @@ mod tests {
         );
         request.authorization = Some("Bearer admin".to_string());
         assert_eq!(authorize_request(&policy, &request), Ok(()));
+    }
+
+    #[test]
+    fn remote_management_endpoint_accepts_named_admin_api_keys() {
+        let policy = GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_keys: vec![GatewayAdminApiKey {
+                id: "adminA".to_string(),
+                key: "admin-a".to_string(),
+            }],
+            allow_remote_management: true,
+            ..GatewayAccessPolicy::default()
+        };
+        let mut request = request("POST", "/omni/model/load");
+        request.authorization = Some("Bearer admin-a".to_string());
+
+        let decision = authorize_request_with_identity(&policy, &request).unwrap();
+
+        assert_eq!(decision.admin_id.as_deref(), Some("adminA"));
+        assert!(decision.management_endpoint);
     }
 
     #[test]
