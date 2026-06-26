@@ -1678,9 +1678,12 @@ struct GpuStatusProcess {
     gpu_uuid: String,
     pid: u32,
     process_name: String,
+    display_name: String,
     used_memory_mib: Option<u64>,
     owner_model: Option<String>,
     owner_admin_id: Option<String>,
+    owner_type: String,
+    owner_name: Option<String>,
 }
 
 fn gpu_status_payload(devices: &[GpuStatusDevice]) -> Value {
@@ -1707,9 +1710,12 @@ fn gpu_status_process_payload(process: &GpuStatusProcess) -> Value {
     json!({
         "pid": process.pid,
         "name": process.process_name,
+        "display_name": process.display_name,
         "used_memory_mb": process.used_memory_mib,
         "owner_model": process.owner_model,
         "owner_admin_id": process.owner_admin_id,
+        "owner_type": process.owner_type,
+        "owner_name": process.owner_name,
     })
 }
 
@@ -1769,13 +1775,28 @@ fn parse_gpu_process_rows(text: &str, loaded: &[LoadedRuntimeSummary]) -> Vec<Gp
             }
             let pid = parts[1].parse::<u32>().ok()?;
             let owner = loaded.iter().find(|runtime| runtime.backend_pid == pid);
+            let process_name = parts[2].clone();
+            let (owner_type, owner_name) = if let Some(owner) = owner {
+                (
+                    "admin".to_string(),
+                    owner
+                        .owner_admin_id
+                        .clone()
+                        .or_else(|| Some("admin".to_string())),
+                )
+            } else {
+                ("user".to_string(), process_username(pid))
+            };
             Some(GpuStatusProcess {
                 gpu_uuid: parts[0].clone(),
                 pid,
-                process_name: parts[2].clone(),
+                display_name: short_process_name(&process_name),
+                process_name,
                 used_memory_mib: parse_mib(&parts[3]),
                 owner_model: owner.map(|runtime| runtime.id.clone()),
                 owner_admin_id: owner.and_then(|runtime| runtime.owner_admin_id.clone()),
+                owner_type,
+                owner_name,
             })
         })
         .collect()
@@ -1814,6 +1835,36 @@ fn parse_optional_u32(value: &str) -> Option<u32> {
         return None;
     }
     value.parse().ok()
+}
+
+fn short_process_name(value: &str) -> String {
+    let value = value.trim();
+    PathBuf::from(value)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(value)
+        .to_string()
+}
+
+fn process_username(pid: u32) -> Option<String> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let uid = status.lines().find_map(|line| {
+        line.strip_prefix("Uid:")
+            .and_then(|rest| rest.split_whitespace().next())
+    })?;
+    username_for_uid(uid)
+}
+
+fn username_for_uid(uid: &str) -> Option<String> {
+    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+    passwd.lines().find_map(|line| {
+        let mut parts = line.split(':');
+        let name = parts.next()?;
+        let _password = parts.next()?;
+        let user_id = parts.next()?;
+        (user_id == uid).then(|| name.to_string())
+    })
 }
 
 fn select_idle_cuda_device_from_nvidia_smi() -> Option<CudaDeviceChoice> {
@@ -2603,7 +2654,14 @@ GPU-a, 5151, python, 256
             devices[0].processes[0].owner_admin_id.as_deref(),
             Some("adminA")
         );
+        assert_eq!(devices[0].processes[0].owner_type, "admin");
+        assert_eq!(
+            devices[0].processes[0].owner_name.as_deref(),
+            Some("adminA")
+        );
+        assert_eq!(devices[0].processes[0].display_name, "llama-server");
         assert_eq!(devices[0].processes[1].owner_model, None);
+        assert_eq!(devices[0].processes[1].owner_type, "user");
         assert!(devices[1].processes.is_empty());
     }
 
