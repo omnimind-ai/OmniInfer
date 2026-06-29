@@ -167,6 +167,9 @@ fn wait_http_ready(
         }
         thread::sleep(Duration::from_millis(100));
     }
+    if child.try_wait()?.is_some() {
+        return Err(RuntimeProcessError::EarlyExit);
+    }
     Ok(false)
 }
 
@@ -195,7 +198,7 @@ fn terminate_process(pid: u32) {
 #[cfg(windows)]
 fn terminate_process(pid: u32) {
     let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T"])
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
         .status();
 }
 
@@ -246,10 +249,7 @@ mod tests {
     #[test]
     fn returns_early_exit_for_failed_process() {
         let root = temp_root("runtime-process-fail");
-        let script = root.join("fail.sh");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(&script, "#!/usr/bin/env bash\nexit 7\n").unwrap();
-        make_executable(&script);
+        let script = write_failed_process(&root);
         let plan = ExternalRuntimePlan {
             command: test_script_command(&script),
             cwd: root.clone(),
@@ -268,17 +268,17 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(matches!(error, RuntimeProcessError::EarlyExit));
+        assert!(
+            matches!(error, RuntimeProcessError::EarlyExit),
+            "unexpected error: {error:?}"
+        );
         fs::remove_dir_all(root).ok();
     }
 
     #[test]
     fn drop_kills_unready_process() {
         let root = temp_root("runtime-process-unready");
-        let script = root.join("sleep.sh");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(&script, "#!/usr/bin/env bash\nsleep 30\n").unwrap();
-        make_executable(&script);
+        let script = write_sleep_process(&root);
         let plan = ExternalRuntimePlan {
             command: test_script_command(&script),
             cwd: root.clone(),
@@ -303,11 +303,60 @@ mod tests {
 
     fn write_test_server(root: &Path, port: u16) -> PathBuf {
         fs::create_dir_all(root).unwrap();
-        let script = root.join("server.sh");
-        fs::write(
-            &script,
-            format!(
-                r#"#!/usr/bin/env bash
+        #[cfg(windows)]
+        {
+            let executable = root.join("server.exe");
+            compile_test_exe(
+                root,
+                "server.rs",
+                &executable,
+                &format!(
+                    r##"
+use std::io::{{BufRead, BufReader, Write}};
+use std::net::{{TcpListener, TcpStream}};
+
+fn main() {{
+    let listener = TcpListener::bind("127.0.0.1:{port}").unwrap();
+    for stream in listener.incoming().flatten() {{
+        handle(stream);
+    }}
+}}
+
+fn handle(mut stream: TcpStream) {{
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() {{
+        return;
+    }}
+    loop {{
+        let mut line = String::new();
+        if reader.read_line(&mut line).is_err() {{
+            return;
+        }}
+        if line == "\r\n" || line == "\n" || line.is_empty() {{
+            break;
+        }}
+    }}
+    let body = r#"{{"status":"ok"}}"#;
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {{}}\r\nConnection: close\r\n\r\n",
+        body.as_bytes().len()
+    );
+    let _ = stream.write_all(headers.as_bytes());
+    let _ = stream.write_all(body.as_bytes());
+}}
+"##
+                ),
+            );
+            return executable;
+        }
+        #[cfg(not(windows))]
+        {
+            let script = root.join("server.sh");
+            fs::write(
+                &script,
+                format!(
+                    r#"#!/usr/bin/env bash
 python3 - <<'PY'
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -326,11 +375,74 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(("127.0.0.1", {port}), Handler).serve_forever()
 PY
 "#
-            ),
-        )
-        .unwrap();
-        make_executable(&script);
-        script
+                ),
+            )
+            .unwrap();
+            make_executable(&script);
+            script
+        }
+    }
+
+    fn write_failed_process(root: &Path) -> PathBuf {
+        fs::create_dir_all(root).unwrap();
+        #[cfg(windows)]
+        {
+            let executable = root.join("fail.exe");
+            compile_test_exe(
+                root,
+                "fail.rs",
+                &executable,
+                "fn main() { std::process::exit(7); }\n",
+            );
+            executable
+        }
+        #[cfg(not(windows))]
+        {
+            let script = root.join("fail.sh");
+            fs::write(&script, "#!/usr/bin/env bash\nexit 7\n").unwrap();
+            make_executable(&script);
+            script
+        }
+    }
+
+    fn write_sleep_process(root: &Path) -> PathBuf {
+        fs::create_dir_all(root).unwrap();
+        #[cfg(windows)]
+        {
+            let executable = root.join("sleep.exe");
+            compile_test_exe(
+                root,
+                "sleep.rs",
+                &executable,
+                r#"
+fn main() {
+    std::thread::sleep(std::time::Duration::from_secs(30));
+}
+"#,
+            );
+            executable
+        }
+        #[cfg(not(windows))]
+        {
+            let script = root.join("sleep.sh");
+            fs::write(&script, "#!/usr/bin/env bash\nsleep 30\n").unwrap();
+            make_executable(&script);
+            script
+        }
+    }
+
+    #[cfg(windows)]
+    fn compile_test_exe(root: &Path, source_name: &str, executable: &Path, code: &str) {
+        let source = root.join(source_name);
+        fs::write(&source, code).unwrap();
+        let status = Command::new("rustc")
+            .arg("--edition=2021")
+            .arg(&source)
+            .arg("-o")
+            .arg(executable)
+            .status()
+            .expect("compile Windows test process");
+        assert!(status.success(), "failed to compile Windows test process");
     }
 
     fn temp_root(name: &str) -> PathBuf {
@@ -348,9 +460,6 @@ PY
         permissions.set_mode(0o755);
         fs::set_permissions(path, permissions).unwrap();
     }
-
-    #[cfg(windows)]
-    fn make_executable(_path: &Path) {}
 
     #[cfg(unix)]
     fn test_script_command(path: &Path) -> Vec<String> {

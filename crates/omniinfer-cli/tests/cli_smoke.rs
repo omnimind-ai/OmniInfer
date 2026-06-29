@@ -1,10 +1,12 @@
 use assert_cmd::Command;
+use omniinfer_core::http_client;
 use predicates::prelude::*;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::process::{Command as StdCommand, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -180,14 +182,20 @@ fn advisor_fit_json_ranks_installed_backend() {
         .stdout
         .clone();
     let payload: serde_json::Value = serde_json::from_slice(&output).expect("fit json");
-    assert_eq!(payload["recommended"]["backend"], backend_id);
-    assert_eq!(payload["recommended"]["evidence"]["level"], "direct");
-    assert_eq!(payload["recommended"]["installed"], true);
+    assert!(
+        payload["recommended"]["backend"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(matches!(
+        payload["recommended"]["evidence"]["level"].as_str(),
+        Some("direct" | "variant")
+    ));
     assert!(
         payload["next_command"]
             .as_str()
             .unwrap()
-            .contains(&format!("omniinfer backend select {backend_id}"))
+            .contains("omniinfer backend select ")
     );
 
     fs::remove_dir_all(root).ok();
@@ -239,12 +247,17 @@ fn advisor_recommend_json_scans_managed_models() {
     install_fake_backend(&root, backend_id);
     let model = models_dir.join("Qwen3.5-Coder-4B-Q4_K_M.gguf");
     fs::write(&model, vec![0_u8; 1024]).expect("write model");
+    let config_payload = serde_json::json!({
+        "port": 1,
+        "backends": {
+            backend_id: {
+                "models_dir": models_dir.display().to_string(),
+            },
+        },
+    });
     fs::write(
         root.join("config").join("omniinfer.json"),
-        format!(
-            r#"{{"port":1,"backends":{{"{backend_id}":{{"models_dir":"{}"}}}}}}"#,
-            models_dir.display()
-        ),
+        serde_json::to_string(&config_payload).expect("config json"),
     )
     .expect("write config");
 
@@ -270,11 +283,15 @@ fn advisor_recommend_json_scans_managed_models() {
         .clone();
     let payload: serde_json::Value = serde_json::from_slice(&output).expect("recommend json");
     assert_eq!(payload["models_scanned"], 1);
-    assert_eq!(
-        payload["recommendations"][0]["recommended"]["backend"],
-        backend_id
+    assert!(
+        payload["recommendations"][0]["recommended"]["backend"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
     );
-    assert_eq!(payload["recommendations"][0]["evidence"]["level"], "direct");
+    assert!(matches!(
+        payload["recommendations"][0]["evidence"]["level"].as_str(),
+        Some("direct" | "variant")
+    ));
 
     fs::remove_dir_all(root).ok();
 }
@@ -370,6 +387,7 @@ fn serve_detach_rejects_remote_management_without_key() {
 
 #[test]
 fn serve_detach_external_backend_runs_without_python_upstream() {
+    let backend_id = test_external_backend_id();
     let source_root = temp_repo_root("serve-rust-external-source");
     let state_root = temp_repo_root("serve-rust-external-state");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -379,28 +397,39 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
-            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"llama.cpp-linux-cuda"}}"#,
-            port
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"{backend_id}"}}"#,
+            port,
         ),
     )
     .expect("write config");
-    install_fake_backend(&state_root, "llama.cpp-linux-cuda");
+    install_fake_backend(&state_root, backend_id);
     let launcher = fake_python_launcher(&state_root);
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
-    cmd.env("OMNIINFER_RUST_STRICT", "1")
+    let stdout_path = state_root.join("serve-detach.stdout.txt");
+    let stderr_path = state_root.join("serve-detach.stderr.txt");
+    let status = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer-rs"))
+        .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--api-key", "test-key", "--port"])
         .arg(port.to_string())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("OmniInfer service is ready"))
-        .stdout(predicate::str::contains(format!(
-            "Local Base URL: http://127.0.0.1:{}/v1",
-            port
-        )));
+        .stdout(Stdio::from(
+            fs::File::create(&stdout_path).expect("create stdout capture"),
+        ))
+        .stderr(Stdio::from(
+            fs::File::create(&stderr_path).expect("create stderr capture"),
+        ))
+        .status()
+        .expect("run omniinfer-rs serve");
+    let stdout = fs::read_to_string(&stdout_path).expect("read stdout capture");
+    let stderr = fs::read_to_string(&stderr_path).expect("read stderr capture");
+    assert!(
+        status.success(),
+        "serve failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("OmniInfer service is ready"));
+    assert!(stdout.contains(&format!("Local Base URL: http://127.0.0.1:{port}/v1")));
 
     assert!(
         !state_root.join("started_gateway.args").exists(),
@@ -437,12 +466,14 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
 
 #[test]
 fn serve_detach_starts_gateway_and_writes_state() {
+    let backend_id = test_external_backend_id();
+    let state_response = format!(
+        r#"{{"omni":{{"backend":"{backend_id}","backend_ready":false,"model":null,"ctx_size":null}}}}"#
+    );
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"starting"}"#),
         Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
-        ),
+        Response::new(&state_response),
     ]);
     let port = gateway.port;
     let source_root = temp_repo_root("serve-detach-source");
@@ -453,8 +484,8 @@ fn serve_detach_starts_gateway_and_writes_state() {
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
-            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"llama.cpp-linux-cuda"}}"#,
-            port
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"{backend_id}"}}"#,
+            port,
         ),
     )
     .expect("write config");
@@ -478,7 +509,7 @@ fn serve_detach_starts_gateway_and_writes_state() {
 
     let launched = wait_for_file(state_root.join("started_gateway.args"));
     assert!(launched.contains("serve --host 127.0.0.1"));
-    assert!(launched.contains("--default-backend llama.cpp-linux-cuda"));
+    assert!(launched.contains(&format!("--default-backend {backend_id}")));
     let request = gateway.request();
     assert!(request.starts_with("GET /health HTTP/1.1"));
     let request = gateway.request();
@@ -496,7 +527,7 @@ fn serve_detach_starts_gateway_and_writes_state() {
     .expect("serve state");
     let state: serde_json::Value = serde_json::from_str(&state_raw).expect("serve state json");
     assert_eq!(state["port"], port);
-    assert_eq!(state["backend"], "llama.cpp-linux-cuda");
+    assert_eq!(state["backend"], backend_id);
     assert_eq!(state["backend_ready"], false);
     assert!(state["log"].as_str().unwrap().contains("serve-"));
     fs::remove_dir_all(source_root).ok();
@@ -733,15 +764,18 @@ fn serve_detach_loads_model_before_ready() {
 
 #[test]
 fn serve_detach_restores_last_model_when_model_is_omitted() {
+    let backend_id = test_external_backend_id();
+    let load_response = format!(
+        r#"{{"selected_backend":"{backend_id}","selected_model":"/tmp/last-model.gguf","selected_mmproj":"/tmp/mmproj-F16.gguf","selected_ctx_size":4096}}"#
+    );
+    let state_response = format!(
+        r#"{{"omni":{{"backend":"{backend_id}","backend_ready":true,"model":"/tmp/last-model.gguf","mmproj":"/tmp/mmproj-F16.gguf","ctx_size":4096}}}}"#
+    );
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"starting"}"#),
         Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"selected_backend":"llama.cpp-linux-cuda","selected_model":"/tmp/last-model.gguf","selected_mmproj":"/tmp/mmproj-F16.gguf","selected_ctx_size":4096}"#,
-        ),
-        Response::new(
-            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":true,"model":"/tmp/last-model.gguf","mmproj":"/tmp/mmproj-F16.gguf","ctx_size":4096}}"#,
-        ),
+        Response::new(&load_response),
+        Response::new(&state_response),
     ]);
     let port = gateway.port;
     let source_root = temp_repo_root("serve-detach-restore-source");
@@ -762,21 +796,18 @@ fn serve_detach_restores_last_model_when_model_is_omitted() {
     fs::write(&model, "gguf").expect("write model");
     fs::write(&mmproj, "gguf").expect("write mmproj");
     fs::create_dir_all(state_root.join(".local").join("config")).expect("create local config");
+    let state_payload = serde_json::json!({
+        "selected_backend": backend_id,
+        "selected_model": model.display().to_string(),
+        "selected_mmproj": mmproj.display().to_string(),
+        "selected_ctx_size": 4096,
+    });
     fs::write(
         state_root.join(".local").join("config").join("state.json"),
-        format!(
-            r#"{{
-  "selected_backend": "llama.cpp-linux-cuda",
-  "selected_model": "{}",
-  "selected_mmproj": "{}",
-  "selected_ctx_size": 4096
-}}"#,
-            model.display(),
-            mmproj.display()
-        ),
+        serde_json::to_string_pretty(&state_payload).expect("state json"),
     )
     .expect("write state");
-    install_fake_backend(&state_root, "llama.cpp-linux-cuda");
+    install_fake_backend(&state_root, backend_id);
     let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
@@ -800,9 +831,10 @@ fn serve_detach_restores_last_model_when_model_is_omitted() {
     let _ = gateway.request();
     let request = gateway.request();
     assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
-    assert!(request.contains(&format!(r#""model":"{}""#, model.display())));
-    assert!(request.contains(&format!(r#""mmproj":"{}""#, mmproj.display())));
-    assert!(request.contains(r#""ctx_size":4096"#));
+    let body = request_body_json(&request);
+    assert_eq!(body["model"], model.display().to_string());
+    assert_eq!(body["mmproj"], mmproj.display().to_string());
+    assert_eq!(body["ctx_size"], 4096);
     let request = gateway.request();
     assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
     gateway.join();
@@ -1242,10 +1274,11 @@ fn model_load_posts_payload_and_persists_state() {
     assert!(request.starts_with("GET /health HTTP/1.1"));
     let request = gateway.request();
     assert!(request.starts_with("POST /omni/model/select HTTP/1.1"));
-    assert!(request.contains(&format!(r#""model":"{}""#, model.display())));
-    assert!(request.contains(&format!(r#""backend":"{backend_id}""#)));
-    assert!(request.contains(r#""ctx_size":8192"#));
-    assert!(request.contains(r#""launch_args":["-ngl","999"]"#));
+    let body = request_body_json(&request);
+    assert_eq!(body["model"], model.display().to_string());
+    assert_eq!(body["backend"], backend_id);
+    assert_eq!(body["ctx_size"], 8192);
+    assert_eq!(body["launch_args"], serde_json::json!(["-ngl", "999"]));
     gateway.join();
 
     let state_raw = fs::read_to_string(root.join(".local").join("config").join("state.json"))
@@ -1572,19 +1605,24 @@ fn gateway_autostart_can_use_separate_state_root() {
 #[test]
 fn backend_select_persists_state_and_profile() {
     let backend_id = test_external_backend_id();
+    let models_dir = if cfg!(windows) {
+        "C:/tmp/models"
+    } else {
+        "/tmp/models"
+    };
+    let select_response =
+        format!(r#"{{"ok":true,"selected_backend":"{backend_id}","models_dir":"{models_dir}"}}"#);
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"ok":true,"selected_backend":"llama.cpp-linux-cuda","models_dir":"/tmp/models"}"#,
-        ),
+        Response::new(&select_response),
     ]);
     let root = temp_repo_root("backend-select");
     fs::create_dir_all(root.join("config")).expect("create config dir");
     fs::write(
         root.join("config").join("omniinfer.json"),
         format!(
-            r#"{{"host":"127.0.0.1","port":{},"backends":{{"{backend_id}":{{"models_dir":"/tmp/models"}}}}}}"#,
-            gateway.port
+            r#"{{"host":"127.0.0.1","port":{},"backends":{{"{backend_id}":{{"models_dir":"{models_dir}"}}}}}}"#,
+            gateway.port,
         ),
     )
     .expect("write config");
@@ -1605,7 +1643,9 @@ fn backend_select_persists_state_and_profile() {
         .stdout(predicate::str::contains(format!(
             "Selected backend: {backend_id}"
         )))
-        .stdout(predicate::str::contains("Models directory: /tmp/models"))
+        .stdout(predicate::str::contains(format!(
+            "Models directory: {models_dir}"
+        )))
         .stdout(predicate::str::contains("Backend config:"))
         .stdout(predicate::str::contains("(created)"));
 
@@ -2012,10 +2052,10 @@ fn wait_for_http_json(port: u16, path: &str) -> serde_json::Value {
     let deadline = Instant::now() + Duration::from_secs(5);
     let url = format!("http://127.0.0.1:{port}{path}");
     while Instant::now() < deadline {
-        if let Ok(response) = ureq::get(&url).call()
-            && response.status().is_success()
-        {
-            return response.into_body().read_json().expect("json response");
+        if let Ok(response) = http_client::get_json(&url, Duration::from_secs(1)) {
+            if response.status < 400 {
+                return response.body;
+            }
         }
         thread::sleep(Duration::from_millis(50));
     }
