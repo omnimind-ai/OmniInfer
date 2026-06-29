@@ -3339,7 +3339,13 @@ GPU-a, 5151, python, 256
             .join("bin")
             .join(launcher_name);
         std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
-        let script = r#"#!/usr/bin/env bash
+        #[cfg(windows)]
+        {
+            install_fake_llama_server_windows(&launcher);
+        }
+        #[cfg(not(windows))]
+        {
+            let script = r#"#!/usr/bin/env bash
 port=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -3418,14 +3424,148 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(("127.0.0.1", port), Handler).serve_forever()
 PY
 "#;
-        std::fs::write(&launcher, script).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = std::fs::metadata(&launcher).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&launcher, permissions).unwrap();
+            std::fs::write(&launcher, script).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut permissions = std::fs::metadata(&launcher).unwrap().permissions();
+                permissions.set_mode(0o755);
+                std::fs::set_permissions(&launcher, permissions).unwrap();
+            }
         }
+    }
+
+    #[cfg(windows)]
+    fn install_fake_llama_server_windows(launcher: &std::path::Path) {
+        let source = launcher.with_file_name("fake-llama-server.rs");
+        let code = r##"
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
+
+fn main() {
+    let mut port = String::new();
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--port" {
+            port = args.next().unwrap_or_default();
+        }
+    }
+    let listener = TcpListener::bind(format!("127.0.0.1:{port}")).unwrap();
+    for stream in listener.incoming().flatten() {
+        handle(stream);
+    }
+}
+
+fn handle(mut stream: TcpStream) {
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() {
+        return;
+    }
+    let mut content_length = 0usize;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).is_err() {
+            return;
+        }
+        if line == "\r\n" || line == "\n" || line.is_empty() {
+            break;
+        }
+        let lower = line.to_ascii_lowercase();
+        if let Some(value) = lower.strip_prefix("content-length:") {
+            content_length = value.trim().parse().unwrap_or(0);
+        }
+    }
+    let mut body = vec![0u8; content_length];
+    if content_length > 0 && reader.read_exact(&mut body).is_err() {
+        return;
+    }
+    let body = String::from_utf8_lossy(&body);
+    let payload = response_payload(&request_line, &body);
+    write_response(&mut stream, &payload.0, payload.1);
+}
+
+fn response_payload(request_line: &str, body: &str) -> (String, &'static str) {
+    if request_line.starts_with("GET /health") {
+        return (r#"{"status":"ok"}"#.to_string(), "application/json");
+    }
+    if request_line.starts_with("GET /props") {
+        return (r#"{"n_ctx":512,"slots":1}"#.to_string(), "application/json");
+    }
+    if request_line.starts_with("POST /tokenize") {
+        return (
+            r#"{"tokens":[1,2,3],"echo":{"content":"hello"}}"#.to_string(),
+            "application/json",
+        );
+    }
+    if request_line.starts_with("POST /detokenize") {
+        return (
+            r#"{"content":"hello","echo":{"tokens":[1,2,3]}}"#.to_string(),
+            "application/json",
+        );
+    }
+    if request_line.starts_with("POST /slots/0") {
+        return (r#"{"ok":true}"#.to_string(), "application/json");
+    }
+    if request_line.starts_with("POST /v1/chat/completions") && wants_stream(body) {
+        return (
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"fake\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\" backend\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n",
+                "data: [DONE]\n\n"
+            )
+            .to_string(),
+            "text/event-stream",
+        );
+    }
+    if request_line.starts_with("POST /v1/chat/completions") {
+        let model = extract_json_string(body, "model")
+            .map(|value| format!(r#""{value}""#))
+            .unwrap_or_else(|| "null".to_string());
+        return (
+            format!(
+                r#"{{"choices":[{{"message":{{"content":"fake backend"}},"finish_reason":"stop"}}],"model_echo":{model},"usage":{{"prompt_tokens":3,"completion_tokens":2}}}}"#
+            ),
+            "application/json",
+        );
+    }
+    (r#"{"ok":true}"#.to_string(), "application/json")
+}
+
+fn wants_stream(body: &str) -> bool {
+    let compact: String = body.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact.contains(r#""stream":true"#)
+}
+
+fn extract_json_string(body: &str, key: &str) -> Option<String> {
+    let needle = format!(r#""{key}""#);
+    let start = body.find(&needle)?;
+    let after_key = &body[start + needle.len()..];
+    let colon = after_key.find(':')?;
+    let after_colon = after_key[colon + 1..].trim_start();
+    let value = after_colon.strip_prefix('"')?;
+    let end = value.find('"')?;
+    Some(value[..end].to_string())
+}
+
+fn write_response(stream: &mut TcpStream, body: &str, content_type: &str) {
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.as_bytes().len()
+    );
+    let _ = stream.write_all(headers.as_bytes());
+    let _ = stream.write_all(body.as_bytes());
+}
+"##;
+        std::fs::write(&source, code).unwrap();
+        let status = std::process::Command::new("rustc")
+            .arg("--edition=2021")
+            .arg(&source)
+            .arg("-o")
+            .arg(launcher)
+            .status()
+            .expect("compile fake llama-server.exe");
+        assert!(status.success(), "failed to compile fake llama-server.exe");
     }
 
     struct EnvGuard {

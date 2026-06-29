@@ -9,6 +9,7 @@ use std::env;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
+use std::net::TcpStream;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -954,11 +955,17 @@ fn print_thinking_show() {
 
 fn print_thinking_set(mode: ThinkingMode) -> Result<()> {
     let enabled = matches!(mode, ThinkingMode::On);
-    let payload = post_local_json(
+    let payload = match post_local_json(
         "/omni/thinking/select",
         &serde_json::json!({ "enabled": enabled }),
         Duration::from_secs(10),
-    )?;
+    ) {
+        Ok(payload) => payload,
+        Err(_) => {
+            local_state::save_default_thinking(enabled)?;
+            serde_json::json!({ "default_enabled": enabled })
+        }
+    };
     println!(
         "Default thinking set to: {}",
         if json_bool(&payload, "default_enabled").unwrap_or(false) {
@@ -1005,6 +1012,12 @@ fn stop_serve(port: u16) -> Result<()> {
             Ok(response) => response.status < 400,
             Err(_) => false,
         };
+    if stopped && !wait_for_local_port_closed(port, Duration::from_secs(3)) {
+        if let Some(pid) = info.as_ref().and_then(|info| info.pid) {
+            stop_process(pid);
+            let _ = wait_for_local_port_closed(port, Duration::from_secs(3));
+        }
+    }
     if let Some(pid) = info.and_then(|info| info.cloudflared_pid) {
         stop_process(pid);
     }
@@ -1015,6 +1028,17 @@ fn stop_serve(port: u16) -> Result<()> {
         println!("OmniInfer service is not running on port {port}");
     }
     Ok(())
+}
+
+fn wait_for_local_port_closed(port: u16, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if TcpStream::connect(("127.0.0.1", port)).is_err() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    TcpStream::connect(("127.0.0.1", port)).is_err()
 }
 
 fn stop_process(pid: u32) {
@@ -1725,7 +1749,7 @@ fn resolve_cloudflared(explicit_path: Option<&str>) -> Result<PathBuf> {
         return Ok(managed);
     }
 
-    let mut command = ProcessCommand::new(python_executable());
+    let mut command = python_command();
     pass_rust_path_overrides(&mut command);
     let output = command
         .arg("-c")
@@ -1776,6 +1800,7 @@ fn start_cloudflare_quick_tunnel(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    hide_child_window(&mut command);
     if detach {
         detach_child_process(&mut command);
     }
@@ -1872,7 +1897,7 @@ fn start_serve_child(
         .append(true)
         .open(log_path)?;
     let stderr = stdout.try_clone()?;
-    let mut command = ProcessCommand::new(python_executable());
+    let mut command = python_command();
     pass_rust_path_overrides(&mut command);
     command
         .arg(paths::repo_root().join("omniinfer.py"))
@@ -1938,6 +1963,7 @@ fn start_serve_child(
     if args.debug_body {
         command.arg("--debug-body");
     }
+    hide_child_window(&mut command);
     if args.detach {
         detach_child_process(&mut command);
     }
@@ -2007,6 +2033,7 @@ fn start_rust_gateway_child(
     if args.cloudflare || args.behind_proxy {
         command.arg("--trust-proxy-headers");
     }
+    hide_child_window(&mut command);
     if args.detach {
         detach_child_process(&mut command);
     }
@@ -2022,8 +2049,23 @@ fn detach_child_process(command: &mut ProcessCommand) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+}
+
+fn hide_child_window(command: &mut ProcessCommand) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
     }
 }
 
@@ -2205,6 +2247,9 @@ fn is_transient_public_smoke_error(error: &anyhow::Error) -> bool {
     let text = error.to_string().to_ascii_lowercase();
     text.contains("failed to lookup address")
         || text.contains("name or service not known")
+        || text.contains("unknown host")
+        || text.contains("no such host")
+        || text.contains("os error 11001")
         || text.contains("temporary failure in name resolution")
         || text.contains("connection refused")
         || text.contains("connection reset")
@@ -2631,7 +2676,7 @@ fn start_gateway_background(config: &config::AppConfig) -> Result<()> {
         .append(true)
         .open(&log_path)?;
     let stderr = stdout.try_clone()?;
-    let mut command = ProcessCommand::new(python_executable());
+    let mut command = python_command();
     pass_rust_path_overrides(&mut command);
     command
         .arg(paths::repo_root().join("omniinfer.py"))
@@ -2655,6 +2700,7 @@ fn start_gateway_background(config: &config::AppConfig) -> Result<()> {
             .arg("--default-backend")
             .arg(&config.default_backend);
     }
+    hide_child_window(&mut command);
     command.spawn()?;
     Ok(())
 }
@@ -2731,17 +2777,24 @@ where
     I::Item: AsRef<std::ffi::OsStr>,
 {
     let script = paths::repo_root().join("omniinfer.py");
-    let status = ProcessCommand::new(python_executable())
-        .arg(script)
-        .args(args)
-        .status()?;
+    let status = python_command().arg(script).args(args).status()?;
     std::process::exit(status.code().unwrap_or(1));
 }
 
-fn python_executable() -> std::ffi::OsString {
-    env::var_os("OMNIINFER_PYTHON")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "python3".into())
+fn python_command() -> ProcessCommand {
+    if let Some(value) = env::var_os("OMNIINFER_PYTHON").filter(|value| !value.is_empty()) {
+        return ProcessCommand::new(value);
+    }
+    #[cfg(windows)]
+    {
+        let mut command = ProcessCommand::new("py");
+        command.arg("-3");
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        ProcessCommand::new("python3")
+    }
 }
 
 #[cfg(test)]
@@ -2751,6 +2804,12 @@ mod tests {
     #[test]
     fn cloudflare_edge_530_is_transient_public_smoke_error() {
         let error = anyhow::anyhow!("HTTPS request failed: http status: 530");
+        assert!(is_transient_public_smoke_error(&error));
+    }
+
+    #[test]
+    fn windows_dns_lookup_failure_is_transient_public_smoke_error() {
+        let error = anyhow::anyhow!("HTTPS request failed: io: unknown host (os error 11001)");
         assert!(is_transient_public_smoke_error(&error));
     }
 

@@ -282,27 +282,31 @@ mod tests {
             launch_args: None,
         })
         .unwrap();
+        let log_dir = PathBuf::from("/runtime/llama.cpp-linux-cuda")
+            .join("logs")
+            .display()
+            .to_string();
         assert_eq!(plan.ctx_size, Some(8192));
         assert_eq!(plan.cwd, PathBuf::from("/runtime/llama.cpp-linux-cuda/bin"));
         assert_eq!(
             plan.command,
             vec![
-                "/runtime/llama.cpp-linux-cuda/bin/llama-server",
-                "-m",
-                "/models/qwen.gguf",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "12345",
-                "--no-webui",
-                "--slot-save-path",
-                "/runtime/llama.cpp-linux-cuda/logs",
-                "-ngl",
-                "999",
-                "-c",
-                "8192",
-                "--mmproj",
-                "/models/mmproj.gguf"
+                "/runtime/llama.cpp-linux-cuda/bin/llama-server".to_string(),
+                "-m".to_string(),
+                "/models/qwen.gguf".to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                "12345".to_string(),
+                "--no-webui".to_string(),
+                "--slot-save-path".to_string(),
+                log_dir,
+                "-ngl".to_string(),
+                "999".to_string(),
+                "-c".to_string(),
+                "8192".to_string(),
+                "--mmproj".to_string(),
+                "/models/mmproj.gguf".to_string()
             ]
         );
     }

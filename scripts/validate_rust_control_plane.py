@@ -16,7 +16,8 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "tmp" / "test_results"
-RUST_BINARY = REPO_ROOT / "target" / "debug" / "omniinfer-rs"
+SOURCE_LAUNCHER = REPO_ROOT / ("omniinfer.cmd" if os.name == "nt" else "omniinfer")
+RUST_BINARY = REPO_ROOT / "target" / "debug" / ("omniinfer-rs.exe" if os.name == "nt" else "omniinfer-rs")
 
 
 @dataclass(frozen=True)
@@ -152,7 +153,7 @@ def _base_steps(output_dir: Path, state_root: Path, runs: int) -> list[Step]:
                 _python(),
                 "scripts/capture_cli_contracts.py",
                 "--binary",
-                "./omniinfer",
+                str(SOURCE_LAUNCHER),
                 "--state-root",
                 str(state_root / "python-contracts"),
                 "--output-dir",
@@ -199,7 +200,7 @@ def _base_steps(output_dir: Path, state_root: Path, runs: int) -> list[Step]:
                 "--runs",
                 str(runs),
                 "--binary",
-                "./omniinfer",
+                str(SOURCE_LAUNCHER),
                 "--force-python",
                 "--state-root",
                 str(state_root / "python-profile"),
