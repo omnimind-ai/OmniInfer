@@ -20,6 +20,8 @@ class ServePlanTests(unittest.TestCase):
                 "llama.cpp-linux-cuda",
                 "--model",
                 "/models/qwen.gguf",
+                "--admin-api-key",
+                "admin-secret",
                 "--ctx-size",
                 "8192",
                 "--api-key",
@@ -39,6 +41,24 @@ class ServePlanTests(unittest.TestCase):
         self.assertTrue(plan.api_key_generated)
         self.assertIsNotNone(plan.api_key)
         self.assertTrue(str(plan.api_key).startswith("oi_"))
+
+    def test_direct_foreground_preserves_api_key_and_strips_admin_keys(self) -> None:
+        with patch("service_core.cli.serve_interactive_or_foreground", return_value=0) as foreground:
+            result = cli.serve_command(
+                [
+                    "--port",
+                    "19189",
+                    "--api-key",
+                    "public-secret",
+                    "--admin-api-key",
+                    "admin-secret",
+                    "--admin-api-keys",
+                    "ops:admin-secret",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        foreground.assert_called_once_with(["--port", "19189", "--api-key", "public-secret"])
 
     def test_parse_serve_plan_supports_status_action(self) -> None:
         plan = cli._parse_serve_plan(["status", "--port", "19189"])
