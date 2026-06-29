@@ -10,7 +10,7 @@ trap 'rm -rf "${TMP_ROOT}"' EXIT
 run_detect() {
   local root="$1"
   local require_lt="$2"
-  OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${root}" bash -c \
+  OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${root}" CUDA_HOME="" CUDA_PATH="" PATH="/usr/bin:/bin" bash -c \
     "source '${HELPER}'; omni_cuda_detect '${require_lt}' || exit \$?; printf '%s|%s|%s|%s\n' \"\${OMNI_CUDA_TOOLKIT_ROOT}\" \"\${OMNI_CUDA_NVCC}\" \"\${OMNI_CUDA_CUBLAS_LIB}\" \"\${OMNI_CUDA_CUBLASLT_LIB}\""
 }
 
@@ -32,7 +32,7 @@ touch "${split_root}/lib64/libcublas.so"
 printf '#!/usr/bin/env bash\nexit 0\n' > "${split_path}/bin/nvcc"
 chmod +x "${split_path}/bin/nvcc"
 
-if OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${split_root}" PATH="${split_path}/bin:${PATH}" bash -c \
+if OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${split_root}" CUDA_HOME="" CUDA_PATH="" PATH="${split_path}/bin:/usr/bin:/bin" bash -c \
   "source '${HELPER}'; omni_cuda_detect 0" >"${TMP_ROOT}/cuda-detect-split.out" 2>"${TMP_ROOT}/cuda-detect-split.err"; then
   echo "expected CUDA detection to reject split nvcc/header/lib roots" >&2
   exit 1
@@ -53,10 +53,33 @@ IFS='|' read -r detected_root detected_nvcc detected_cublas detected_cublaslt <<
 [[ "${detected_cublas}" == "${complete}/lib64/libcublas.so" ]]
 [[ "${detected_cublaslt}" == "${complete}/lib64/libcublasLt.so" ]]
 
-env_output="$(OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${complete}" bash -c \
+env_output="$(OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${complete}" CUDA_HOME="" CUDA_PATH="" PATH="/usr/bin:/bin" bash -c \
   "source '${HELPER}'; omni_cuda_require_toolkit 1; printf '%s|%s\n' \"\${LIBRARY_PATH%%:*}\" \"\${LD_LIBRARY_PATH%%:*}\"")"
 IFS='|' read -r library_path_head ld_library_path_head <<< "${env_output}"
 [[ "${library_path_head}" == "${complete}/lib64" ]]
 [[ "${ld_library_path_head}" == "${complete}/lib64" ]]
+
+compile_status="$(OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${complete}" CUDA_HOME="" CUDA_PATH="" PATH="/usr/bin:/bin" bash -c \
+  "source '${HELPER}'; omni_cuda_print_compile_dep_status 1")"
+[[ "${compile_status}" == ok\|cuda-compile\|* ]]
+
+bad_compile="${TMP_ROOT}/cuda-bad-compile"
+mkdir -p "${bad_compile}/bin" "${bad_compile}/include" "${bad_compile}/lib64"
+cat > "${bad_compile}/bin/nvcc" <<'EOF'
+#!/usr/bin/env bash
+echo 'math_functions.h: error: exception specification is incompatible with previous function "rsqrt"' >&2
+exit 1
+EOF
+chmod +x "${bad_compile}/bin/nvcc"
+touch "${bad_compile}/include/cublas_v2.h"
+touch "${bad_compile}/lib64/libcublas.so"
+
+if OMNI_CUDA_DETECT_SKIP_DEFAULT_ROOTS=1 CUDAToolkit_ROOT="${bad_compile}" CUDA_HOME="" CUDA_PATH="" PATH="/usr/bin:/bin" bash -c \
+  "source '${HELPER}'; omni_cuda_print_compile_dep_status 0" >"${TMP_ROOT}/cuda-compile-bad.out"; then
+  echo "expected CUDA compiler sanity check to fail" >&2
+  exit 1
+fi
+grep -q '^missing|cuda-compile|' "${TMP_ROOT}/cuda-compile-bad.out"
+grep -q 'rsqrt' "${TMP_ROOT}/cuda-compile-bad.out"
 
 echo "cuda-detect tests passed"

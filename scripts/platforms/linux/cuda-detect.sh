@@ -223,6 +223,66 @@ omni_cuda_print_nvcc_dep_status() {
   return 1
 }
 
+omni_cuda_probe_compile() {
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  cat > "${tmpdir}/omni-cuda-probe.cu" <<'EOF'
+#include <cuda_runtime.h>
+int main() { return 0; }
+EOF
+
+  local log="${tmpdir}/nvcc.log"
+  if "${OMNI_CUDA_NVCC}" -std=c++17 -c "${tmpdir}/omni-cuda-probe.cu" -o "${tmpdir}/omni-cuda-probe.o" >"${log}" 2>&1; then
+    rm -rf "${tmpdir}"
+    return 0
+  fi
+
+  OMNI_CUDA_COMPILE_REASON="$(tr '\n' ' ' < "${log}" | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
+  rm -rf "${tmpdir}"
+  return 1
+}
+
+omni_cuda_compile_hint() {
+  cat <<'EOF'
+CUDA compiler sanity check failed. This usually means the CUDA toolkit is incompatible with the host compiler or system headers. Try a newer CUDA toolkit for this OS/compiler combination, or use a CUDA-supported host compiler.
+EOF
+}
+
+omni_cuda_print_compile_dep_status() {
+  local require_cublaslt="${1:-0}"
+  if ! omni_cuda_detect "${require_cublaslt}"; then
+    printf 'missing|cuda-compile|CUDA compiler sanity check|%s %s|%s\n' \
+      "${OMNI_CUDA_DETECT_REASON}" "$(omni_cuda_install_hint)" "cuda-toolkit"
+    return 1
+  fi
+  if omni_cuda_probe_compile; then
+    printf 'ok|cuda-compile|CUDA compiler sanity check|Using %s|%s\n' "${OMNI_CUDA_NVCC}" ""
+    return 0
+  fi
+  printf 'missing|cuda-compile|CUDA compiler sanity check|%s Detail: %s|%s\n' \
+    "$(omni_cuda_compile_hint)" "${OMNI_CUDA_COMPILE_REASON:-unknown nvcc error}" "cuda-toolkit"
+  return 1
+}
+
+omni_cuda_require_compile() {
+  local require_cublaslt="${1:-0}"
+  if ! omni_cuda_detect "${require_cublaslt}"; then
+    omni_cuda_require_toolkit "${require_cublaslt}"
+    return $?
+  fi
+  if omni_cuda_probe_compile; then
+    return 0
+  fi
+
+  {
+    echo "$(omni_cuda_compile_hint)"
+    echo "CUDA toolkit root: ${OMNI_CUDA_TOOLKIT_ROOT}"
+    echo "CUDA compiler: ${OMNI_CUDA_NVCC}"
+    echo "Detail: ${OMNI_CUDA_COMPILE_REASON:-unknown nvcc error}"
+  } >&2
+  return 1
+}
+
 omni_cuda_require_toolkit() {
   local require_cublaslt="${1:-0}"
   if omni_cuda_detect "${require_cublaslt}"; then

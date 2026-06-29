@@ -37,6 +37,11 @@ check_deps() {
   else
     rc=1
   fi
+  if omni_cuda_print_compile_dep_status 0; then
+    :
+  else
+    rc=1
+  fi
   return ${rc}
 }
 
@@ -262,6 +267,7 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
   exit 0
 fi
 
+omni_cuda_require_compile 0
 prepare_runtime_dirs
 
 if [[ ${CLEAN_BUILD} -eq 1 ]]; then
