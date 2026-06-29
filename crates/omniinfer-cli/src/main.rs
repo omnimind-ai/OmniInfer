@@ -2780,8 +2780,15 @@ where
     I::Item: AsRef<std::ffi::OsStr>,
 {
     let script = paths::repo_root().join("omniinfer.py");
+    if !script.is_file() {
+        anyhow::bail!("{}", python_fallback_unavailable_message());
+    }
     let status = python_command().arg(script).args(args).status()?;
     std::process::exit(status.code().unwrap_or(1));
+}
+
+fn python_fallback_unavailable_message() -> &'static str {
+    "Python fallback is not available in this OmniInfer package"
 }
 
 fn python_command() -> ProcessCommand {
@@ -2820,5 +2827,13 @@ mod tests {
     fn auth_failures_are_not_transient_public_smoke_errors() {
         let error = anyhow::anyhow!("HTTPS request failed: http status: 401");
         assert!(!is_transient_public_smoke_error(&error));
+    }
+
+    #[test]
+    fn missing_python_fallback_message_is_stable() {
+        assert_eq!(
+            python_fallback_unavailable_message(),
+            "Python fallback is not available in this OmniInfer package"
+        );
     }
 }

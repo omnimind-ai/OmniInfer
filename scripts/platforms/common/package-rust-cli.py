@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the Rust OmniInfer CLI and Python fallback into a portable root."""
+"""Install the Rust OmniInfer CLI into a portable root."""
 
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ def make_executable(path: Path) -> None:
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def install_unix_launcher(target: Path, binary_name: str) -> None:
-    target.write_text(
-        rf"""#!/bin/sh
+def install_unix_launcher(target: Path, binary_name: str, include_python_fallback: bool) -> None:
+    if include_python_fallback:
+        content = rf"""#!/bin/sh
 set -eu
 
 SCRIPT_PATH="$0"
@@ -58,9 +58,21 @@ if [ -z "${{OMNIINFER_PYTHON:-}}" ] && python_works "$ROOT/runtime/mnn-linux/ven
   export OMNIINFER_PYTHON="$ROOT/runtime/mnn-linux/venv/bin/python3"
 fi
 exec "$ROOT/{binary_name}" "$@"
-""",
-        encoding="utf-8",
-    )
+"""
+    else:
+        content = rf"""#!/bin/sh
+set -eu
+
+SCRIPT_PATH="$0"
+case "$SCRIPT_PATH" in
+  /*) ;;
+  *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
+esac
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+exec "$ROOT/{binary_name}" "$@"
+"""
+    target.write_text(content, encoding="utf-8")
     make_executable(target)
 
 
@@ -110,11 +122,14 @@ def install_cli(args: argparse.Namespace) -> None:
     if not args.dry_run and not built_binary.is_file():
         raise SystemExit(f"Rust CLI build did not produce {built_binary}")
 
+    print(f"Python fallback: {'included' if args.include_python_fallback else 'excluded'}")
+
     if args.dry_run:
         print(f"[dry-run] Would copy {built_binary} into {portable_root}")
         return
 
-    install_python_fallback(repo_root, portable_root)
+    if args.include_python_fallback:
+        install_python_fallback(repo_root, portable_root)
 
     if args.platform == "windows":
         shutil.copy2(built_binary, portable_root / "omniinfer.exe")
@@ -123,7 +138,11 @@ def install_cli(args: argparse.Namespace) -> None:
         rust_target = portable_root / "omniinfer-rs"
         shutil.copy2(built_binary, rust_target)
         make_executable(rust_target)
-        install_unix_launcher(portable_root / "omniinfer", "omniinfer-rs")
+        install_unix_launcher(
+            portable_root / "omniinfer",
+            "omniinfer-rs",
+            args.include_python_fallback,
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -132,6 +151,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--portable-root", required=True, type=Path)
     parser.add_argument("--platform", required=True, choices=["linux", "macos", "windows"])
     parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument("--include-python-fallback", action="store_true")
     parser.add_argument("--locked", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()

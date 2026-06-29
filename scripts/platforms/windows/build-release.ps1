@@ -10,6 +10,7 @@ param(
     [string]$BuildType = "Release",
     [string]$CudaArchitectures = "",
     [string]$GpuTargets = "",
+    [switch]$IncludePythonFallback,
     [switch]$DryRun
 )
 
@@ -259,6 +260,7 @@ foreach ($candidate in $preferenceOrder) {
 Write-Host "Packaged $($backends.Count) backend(s): $($backends -join ', ')"
 Write-Host "Default backend: $defaultBackend"
 Write-Host "Package root: $PortableRoot"
+Write-Host "Python fallback: $(if ($IncludePythonFallback) { 'included' } else { 'excluded' })"
 
 if ($DryRun) {
     Write-Host "Dry run enabled. Release packaging was not executed."
@@ -276,10 +278,16 @@ if (-not (Test-Path -LiteralPath $RustCliPackager)) {
 
 Write-Host ""
 Write-Host "Building Rust omniinfer CLI..."
-python $RustCliPackager `
-    --repo-root $RepoRoot `
-    --portable-root $PortableRoot `
-    --platform windows
+$packagerArgs = @(
+    $RustCliPackager,
+    "--repo-root", $RepoRoot,
+    "--portable-root", $PortableRoot,
+    "--platform", "windows"
+)
+if ($IncludePythonFallback) {
+    $packagerArgs += "--include-python-fallback"
+}
+python @packagerArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Rust CLI packaging failed."
 }

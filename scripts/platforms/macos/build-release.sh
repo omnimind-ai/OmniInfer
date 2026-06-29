@@ -22,6 +22,7 @@ PYTHON_INDEX_URL="${PYTHON_INDEX_URL:-}"
 SLIM_RELEASE=1
 DRY_RUN=0
 CREATE_ARCHIVE=0
+INCLUDE_PYTHON_FALLBACK=0
 REQUESTED_BACKENDS=()
 
 SUPPORTED_BACKENDS=(
@@ -50,6 +51,7 @@ Options:
   --mlx-python <path>         Python 3.10+ interpreter used to build mlx-mac
   --python-index-url <url>    Python package index URL for MLX dependency installation
   --no-slim                   Keep test files, bytecode, and build-only Python assets in the release
+  --include-python-fallback   Include omniinfer.py and service_core/ for compatibility fallback
   --archive                   Create a zip archive next to the release directory
   --dry-run                   Print actions without executing packaging steps
   -h, --help                  Show this help message
@@ -362,12 +364,16 @@ copy_backend_runtime() {
 install_rust_cli() {
   require_command python3 "Install Python 3.10+ first."
   [[ -f "${RUST_CLI_PACKAGER}" ]] || die "Rust CLI packager not found: ${RUST_CLI_PACKAGER}"
+  local args=(
+    "${RUST_CLI_PACKAGER}"
+    --repo-root "${REPO_ROOT}"
+    --portable-root "${RELEASE_ROOT}"
+    --platform macos
+  )
+  [[ ${INCLUDE_PYTHON_FALLBACK} -eq 1 ]] && args+=(--include-python-fallback)
   echo
   echo "Building Rust omniinfer CLI..."
-  python3 "${RUST_CLI_PACKAGER}" \
-    --repo-root "${REPO_ROOT}" \
-    --portable-root "${RELEASE_ROOT}" \
-    --platform macos
+  python3 "${args[@]}"
 }
 
 while (($# > 0)); do
@@ -428,6 +434,10 @@ while (($# > 0)); do
       SLIM_RELEASE=0
       shift
       ;;
+    --include-python-fallback)
+      INCLUDE_PYTHON_FALLBACK=1
+      shift
+      ;;
     --archive)
       CREATE_ARCHIVE=1
       shift
@@ -475,6 +485,10 @@ for backend in "${SELECTED_BACKENDS[@]}"; do
   fi
 done
 
+if selected_backends_include_mlx && [[ ${INCLUDE_PYTHON_FALLBACK} -eq 0 ]]; then
+  die "mlx-mac requires --include-python-fallback"
+fi
+
 for backend in "${SELECTED_BACKENDS[@]}"; do
   build_backend_if_missing "${backend}"
 done
@@ -492,6 +506,7 @@ ARCHIVE_PATH="${REPO_ROOT}/release/portable/${PLATFORM_TAG}/${PACKAGE_NAME}-${PL
 echo "Packaged ${#SELECTED_BACKENDS[@]} backend(s): ${SELECTED_BACKENDS[*]}"
 echo "Default backend: ${DEFAULT_BACKEND}"
 echo "Package root: ${RELEASE_ROOT}"
+echo "Python fallback: $([[ ${INCLUDE_PYTHON_FALLBACK} -eq 1 ]] && echo included || echo excluded)"
 if [[ ${CREATE_ARCHIVE} -eq 1 ]]; then
   echo "Archive: ${ARCHIVE_PATH}"
 else
