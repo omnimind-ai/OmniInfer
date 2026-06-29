@@ -19,6 +19,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "tmp" / "test_results"
 STATE_PATH = REPO_ROOT / ".local" / "config" / "state.json"
+DEFAULT_BINARY = REPO_ROOT / ("omniinfer.cmd" if os.name == "nt" else "omniinfer")
 
 
 @dataclass(frozen=True)
@@ -242,7 +243,7 @@ def _write_summary(path: Path, payload: dict[str, Any]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Capture OmniInfer CLI contract snapshots.")
-    parser.add_argument("--binary", default="./omniinfer", help="entrypoint binary or script")
+    parser.add_argument("--binary", default=str(DEFAULT_BINARY), help="entrypoint binary or script")
     parser.add_argument("--output-dir", type=Path, default=None, help="snapshot output directory")
     parser.add_argument("--scenario", action="append", choices=[s.name for s in SCENARIOS])
     parser.add_argument(

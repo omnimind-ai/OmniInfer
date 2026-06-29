@@ -955,11 +955,17 @@ fn print_thinking_show() {
 
 fn print_thinking_set(mode: ThinkingMode) -> Result<()> {
     let enabled = matches!(mode, ThinkingMode::On);
-    let payload = post_local_json(
+    let payload = match post_local_json(
         "/omni/thinking/select",
         &serde_json::json!({ "enabled": enabled }),
         Duration::from_secs(10),
-    )?;
+    ) {
+        Ok(payload) => payload,
+        Err(_) => {
+            local_state::save_default_thinking(enabled)?;
+            serde_json::json!({ "default_enabled": enabled })
+        }
+    };
     println!(
         "Default thinking set to: {}",
         if json_bool(&payload, "default_enabled").unwrap_or(false) {
@@ -1743,7 +1749,7 @@ fn resolve_cloudflared(explicit_path: Option<&str>) -> Result<PathBuf> {
         return Ok(managed);
     }
 
-    let mut command = ProcessCommand::new(python_executable());
+    let mut command = python_command();
     pass_rust_path_overrides(&mut command);
     let output = command
         .arg("-c")
@@ -1890,7 +1896,7 @@ fn start_serve_child(
         .append(true)
         .open(log_path)?;
     let stderr = stdout.try_clone()?;
-    let mut command = ProcessCommand::new(python_executable());
+    let mut command = python_command();
     pass_rust_path_overrides(&mut command);
     command
         .arg(paths::repo_root().join("omniinfer.py"))
@@ -2654,7 +2660,7 @@ fn start_gateway_background(config: &config::AppConfig) -> Result<()> {
         .append(true)
         .open(&log_path)?;
     let stderr = stdout.try_clone()?;
-    let mut command = ProcessCommand::new(python_executable());
+    let mut command = python_command();
     pass_rust_path_overrides(&mut command);
     command
         .arg(paths::repo_root().join("omniinfer.py"))
@@ -2754,17 +2760,24 @@ where
     I::Item: AsRef<std::ffi::OsStr>,
 {
     let script = paths::repo_root().join("omniinfer.py");
-    let status = ProcessCommand::new(python_executable())
-        .arg(script)
-        .args(args)
-        .status()?;
+    let status = python_command().arg(script).args(args).status()?;
     std::process::exit(status.code().unwrap_or(1));
 }
 
-fn python_executable() -> std::ffi::OsString {
-    env::var_os("OMNIINFER_PYTHON")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "python3".into())
+fn python_command() -> ProcessCommand {
+    if let Some(value) = env::var_os("OMNIINFER_PYTHON").filter(|value| !value.is_empty()) {
+        return ProcessCommand::new(value);
+    }
+    #[cfg(windows)]
+    {
+        let mut command = ProcessCommand::new("py");
+        command.arg("-3");
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        ProcessCommand::new("python3")
+    }
 }
 
 #[cfg(test)]

@@ -3,15 +3,16 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
 import json
 import os
 import platform
-import resource
 import signal
 import socket
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,11 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "tmp" / "test_results"
+
+try:
+    import resource
+except ModuleNotFoundError:
+    resource = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)
@@ -74,6 +80,16 @@ def _utc_stamp() -> str:
 
 
 def _resource_snapshot() -> dict[str, Any]:
+    if resource is None:
+        return {
+            "children_user_cpu_s": 0.0,
+            "children_system_cpu_s": 0.0,
+            "children_max_rss_kib": 0,
+            "children_minor_faults": 0,
+            "children_major_faults": 0,
+            "children_voluntary_context_switches": 0,
+            "children_involuntary_context_switches": 0,
+        }
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     return {
         "children_user_cpu_s": usage.ru_utime,
@@ -86,24 +102,44 @@ def _resource_snapshot() -> dict[str, Any]:
     }
 
 
-def _sample_peak_rss_kib(pid: int, proc: subprocess.Popen[bytes]) -> int | None:
-    peak: int | None = None
+def _sample_process_rss_kib(pid: int) -> int | None:
+    if os.name == "nt":
+        return _sample_process_rss_kib_windows(pid)
     status_path = Path("/proc") / str(pid) / "status"
-    while proc.poll() is None:
-        try:
-            raw = status_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            time.sleep(0.01)
-            continue
-        for line in raw.splitlines():
-            if line.startswith("VmHWM:") or line.startswith("VmRSS:"):
-                parts = line.split()
-                if len(parts) >= 2 and parts[1].isdigit():
-                    value = int(parts[1])
-                    peak = value if peak is None else max(peak, value)
-                break
-        time.sleep(0.01)
-    return peak
+    try:
+        raw = status_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in raw.splitlines():
+        if line.startswith("VmHWM:") or line.startswith("VmRSS:"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                return int(parts[1])
+    return None
+
+
+def _sample_process_rss_kib_windows(pid: int) -> int | None:
+    try:
+        completed = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=2.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    text = completed.stdout.decode("utf-8", errors="replace").strip()
+    if not text or "No tasks" in text:
+        return None
+    try:
+        row = next(csv.reader([text]))
+    except (StopIteration, csv.Error):
+        return None
+    if len(row) < 5:
+        return None
+    digits = "".join(ch for ch in row[4] if ch.isdigit())
+    return int(digits) if digits else None
 
 
 def _scenario_for_binary(scenario: Scenario, binary: str) -> Scenario:
@@ -165,27 +201,35 @@ def _run_once(scenario: Scenario, *, env: dict[str, str]) -> dict[str, Any]:
         cwd=REPO_ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        start_new_session=True,
         env=env,
+        **_popen_process_group_kwargs(),
     )
-    sampled_peak = _sample_peak_rss_kib(proc.pid, proc)
+    peak_lock = threading.Lock()
+    sampled_peak: int | None = None
+
+    def sample_until_exit() -> None:
+        nonlocal sampled_peak
+        while proc.poll() is None:
+            value = _sample_process_rss_kib(proc.pid)
+            if value is not None:
+                with peak_lock:
+                    sampled_peak = value if sampled_peak is None else max(sampled_peak, value)
+            time.sleep(0.01)
+
+    sampler = threading.Thread(target=sample_until_exit, daemon=True)
+    sampler.start()
     try:
         stdout, stderr = proc.communicate(timeout=scenario.timeout_s)
         timed_out = False
     except subprocess.TimeoutExpired:
         timed_out = True
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except OSError:
-            pass
+        _terminate_process_group(proc, force=False)
         try:
             stdout, stderr = proc.communicate(timeout=5.0)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
+            _terminate_process_group(proc, force=True)
             stdout, stderr = proc.communicate()
+    sampler.join(timeout=1.0)
     ended = time.perf_counter()
     after = _resource_snapshot()
 
@@ -211,6 +255,23 @@ def _run_once(scenario: Scenario, *, env: dict[str, str]) -> dict[str, Any]:
         "stderr_preview": stderr_text[:2000],
         "_stderr_full": stderr_text,
     }
+
+
+def _popen_process_group_kwargs() -> dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
+
+
+def _terminate_process_group(proc: subprocess.Popen[bytes], *, force: bool) -> None:
+    with contextlib.suppress(OSError):
+        if os.name == "nt":
+            if force:
+                proc.kill()
+            else:
+                proc.terminate()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL if force else signal.SIGTERM)
 
 
 def _python_import_command(command: list[str]) -> list[str] | None:
@@ -355,7 +416,7 @@ def _write_summary(path: Path, payload: dict[str, Any]) -> None:
             "",
             "## Notes",
             "",
-            "- `max_rss_mib` uses `resource.RUSAGE_CHILDREN.ru_maxrss` plus a `/proc/<pid>/status` sampler for the direct child.",
+            "- `max_rss_mib` uses `resource.RUSAGE_CHILDREN.ru_maxrss` where available plus direct-child RSS sampling (`/proc/<pid>/status` on Unix, `tasklist` on Windows).",
             "- Results are intended for before/after comparison with the Rust control-plane prototype, not as absolute benchmark claims.",
             "- Raw per-run data is stored in `raw.json` next to this file.",
             "",

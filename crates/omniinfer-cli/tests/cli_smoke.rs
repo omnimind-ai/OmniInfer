@@ -32,6 +32,24 @@ fn completion_generates_bash_script() {
 }
 
 #[test]
+fn thinking_set_updates_local_state_without_gateway() {
+    let root = temp_repo_root("thinking-set-local");
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_STATE_ROOT", &root)
+        .args(["thinking", "set", "off"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Default thinking set to: off"));
+
+    let raw = fs::read_to_string(root.join(".local").join("config").join("state.json"))
+        .expect("read state");
+    let state: serde_json::Value = serde_json::from_str(&raw).expect("state json");
+    assert_eq!(state["default_thinking"], "off");
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn tui_requires_interactive_terminal_without_python_fallback() {
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
