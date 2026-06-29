@@ -1231,7 +1231,7 @@ impl RustRuntimeManager {
             .map(str::trim)
             .filter(|model| !model.is_empty())
         {
-            Some("omniinfer") => self.default_model_key.clone()?,
+            Some("omniinfer" | "local") => self.default_model_key.clone()?,
             Some(model) => self.resolve_loaded_model_key(model)?,
             None => self.default_model_key.clone()?,
         };
@@ -2459,7 +2459,7 @@ mod tests {
         let chat_response = tokio::task::spawn_blocking(move || {
             ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
                 .send_json(json!({
-                    "model": "omniinfer",
+                    "model": "local",
                     "messages": [{"role": "user", "content": "Hello"}],
                     "stream": false,
                     "think": false
