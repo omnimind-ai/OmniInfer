@@ -77,6 +77,10 @@ pub fn backend_profile_file(backend_id: &str) -> PathBuf {
     backend_profile_dir().join(format!("{backend_id}.json"))
 }
 
+pub fn admin_keys_file() -> PathBuf {
+    local_config_dir().join("admin_keys.json")
+}
+
 pub fn serve_pid_file(port: u16) -> PathBuf {
     local_run_dir().join(format!("serve-{port}.json"))
 }

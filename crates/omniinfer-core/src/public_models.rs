@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ pub struct PublicModelEntry {
     pub directory: PathBuf,
     pub model_path: PathBuf,
     pub mmproj_path: Option<PathBuf>,
+    pub native_ctx_size: Option<u32>,
 }
 
 #[derive(Debug, Error)]
@@ -123,7 +125,9 @@ pub fn public_model_payload(entry: &PublicModelEntry) -> Value {
         "backend": entry.manifest.backend,
         "modalities": entry.manifest.modalities,
         "quant": entry.manifest.quant,
-        "ctx_size": entry.manifest.ctx_size,
+        "ctx_size": entry.native_ctx_size,
+        "native_ctx_size": entry.native_ctx_size,
+        "default_ctx_size": entry.manifest.ctx_size,
         "model": entry.model_path.display().to_string(),
         "mmproj": entry.mmproj_path.as_ref().map(|path| path.display().to_string()),
     })
@@ -168,9 +172,127 @@ fn read_manifest(
     Ok(PublicModelEntry {
         manifest,
         directory: directory.to_path_buf(),
+        native_ctx_size: read_gguf_context_length(&model_path).ok().flatten(),
         model_path,
         mmproj_path,
     })
+}
+
+fn read_gguf_context_length(path: &Path) -> Result<Option<u32>, PublicModelError> {
+    let mut file = fs::File::open(path).map_err(io_error)?;
+    let mut magic = [0_u8; 4];
+    file.read_exact(&mut magic).map_err(io_error)?;
+    if &magic != b"GGUF" {
+        return Ok(None);
+    }
+    let version = read_u32(&mut file)?;
+    if version < 2 {
+        return Ok(None);
+    }
+    let _tensor_count = read_u64(&mut file)?;
+    let metadata_count = read_u64(&mut file)?;
+    for _ in 0..metadata_count {
+        let key = read_string(&mut file)?;
+        let value_type = read_u32(&mut file)?;
+        if key.ends_with(".context_length") {
+            return read_metadata_u32_value(&mut file, value_type);
+        }
+        skip_metadata_value(&mut file, value_type)?;
+    }
+    Ok(None)
+}
+
+fn read_metadata_u32_value<R: Read + Seek>(
+    reader: &mut R,
+    value_type: u32,
+) -> Result<Option<u32>, PublicModelError> {
+    match value_type {
+        0 => read_u8(reader).map(u32::from).map(Some),
+        2 => read_u16(reader).map(u32::from).map(Some),
+        4 => read_u32(reader).map(Some),
+        5 => read_i32(reader).map(|value| u32::try_from(value).ok()),
+        10 => read_u64(reader).map(|value| Some(value.min(u64::from(u32::MAX)) as u32)),
+        11 => read_i64(reader).map(|value| u32::try_from(value).ok()),
+        _ => {
+            skip_metadata_value(reader, value_type)?;
+            Ok(None)
+        }
+    }
+}
+
+fn skip_metadata_value<R: Read + Seek>(
+    reader: &mut R,
+    value_type: u32,
+) -> Result<(), PublicModelError> {
+    match value_type {
+        0 | 1 | 7 => seek_forward(reader, 1),
+        2 | 3 => seek_forward(reader, 2),
+        4 | 5 | 6 => seek_forward(reader, 4),
+        8 => {
+            let len = read_u64(reader)?;
+            seek_forward(reader, len)
+        }
+        9 => {
+            let item_type = read_u32(reader)?;
+            let len = read_u64(reader)?;
+            for _ in 0..len {
+                skip_metadata_value(reader, item_type)?;
+            }
+            Ok(())
+        }
+        10 | 11 | 12 => seek_forward(reader, 8),
+        _ => Ok(()),
+    }
+}
+
+fn read_string<R: Read>(reader: &mut R) -> Result<String, PublicModelError> {
+    let len = read_u64(reader)?;
+    let len = usize::try_from(len).map_err(|error| PublicModelError::Io(error.to_string()))?;
+    let mut bytes = vec![0_u8; len];
+    reader.read_exact(&mut bytes).map_err(io_error)?;
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+fn read_u8<R: Read>(reader: &mut R) -> Result<u8, PublicModelError> {
+    let mut bytes = [0_u8; 1];
+    reader.read_exact(&mut bytes).map_err(io_error)?;
+    Ok(bytes[0])
+}
+
+fn read_u16<R: Read>(reader: &mut R) -> Result<u16, PublicModelError> {
+    let mut bytes = [0_u8; 2];
+    reader.read_exact(&mut bytes).map_err(io_error)?;
+    Ok(u16::from_le_bytes(bytes))
+}
+
+fn read_u32<R: Read>(reader: &mut R) -> Result<u32, PublicModelError> {
+    let mut bytes = [0_u8; 4];
+    reader.read_exact(&mut bytes).map_err(io_error)?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn read_i32<R: Read>(reader: &mut R) -> Result<i32, PublicModelError> {
+    let mut bytes = [0_u8; 4];
+    reader.read_exact(&mut bytes).map_err(io_error)?;
+    Ok(i32::from_le_bytes(bytes))
+}
+
+fn read_u64<R: Read>(reader: &mut R) -> Result<u64, PublicModelError> {
+    let mut bytes = [0_u8; 8];
+    reader.read_exact(&mut bytes).map_err(io_error)?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn read_i64<R: Read>(reader: &mut R) -> Result<i64, PublicModelError> {
+    let mut bytes = [0_u8; 8];
+    reader.read_exact(&mut bytes).map_err(io_error)?;
+    Ok(i64::from_le_bytes(bytes))
+}
+
+fn seek_forward<R: Seek>(reader: &mut R, bytes: u64) -> Result<(), PublicModelError> {
+    let offset = i64::try_from(bytes).map_err(|error| PublicModelError::Io(error.to_string()))?;
+    reader.seek(SeekFrom::Current(offset)).map_err(io_error)?;
+    Ok(())
 }
 
 fn resolve_manifest_file(directory: &Path, value: &str) -> Result<PathBuf, PublicModelError> {
@@ -211,7 +333,7 @@ mod tests {
         let root = temp_root("public-models-list");
         let dir = root.join("qwen3.5-4b-q4_k_m");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("model.gguf"), b"gguf").unwrap();
+        write_test_gguf(&dir.join("model.gguf"), "qwen35.context_length", 131_072);
         fs::write(
             dir.join(MANIFEST_NAME),
             r#"{
@@ -231,13 +353,50 @@ mod tests {
         let entries = list_public_models(Some(&root)).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].manifest.id, "qwen3.5-4b-q4_k_m");
+        assert_eq!(entries[0].manifest.ctx_size, Some(8192));
+        assert_eq!(entries[0].native_ctx_size, Some(131_072));
         assert_eq!(entries[0].model_path, dir.join("model.gguf"));
+        assert_eq!(
+            public_model_payload(&entries[0])["default_ctx_size"],
+            json!(8192)
+        );
+        assert_eq!(public_model_payload(&entries[0])["ctx_size"], json!(131072));
+        assert_eq!(
+            public_model_payload(&entries[0])["native_ctx_size"],
+            json!(131072)
+        );
         assert_eq!(
             resolve_public_model(Some(&root), "qwen35-4b")
                 .unwrap()
                 .manifest
                 .id,
             "qwen3.5-4b-q4_k_m"
+        );
+    }
+
+    #[test]
+    fn tolerates_models_without_gguf_context_metadata() {
+        let root = temp_root("public-models-no-context");
+        let dir = root.join("plain");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("model.gguf"), b"GGUF").unwrap();
+        fs::write(
+            dir.join(MANIFEST_NAME),
+            r#"{
+                "id": "plain",
+                "display_name": "Plain",
+                "model": "model.gguf",
+                "ctx_size": 4096
+            }"#,
+        )
+        .unwrap();
+
+        let entries = list_public_models(Some(&root)).unwrap();
+        assert_eq!(entries[0].native_ctx_size, None);
+        assert_eq!(public_model_payload(&entries[0])["ctx_size"], Value::Null);
+        assert_eq!(
+            public_model_payload(&entries[0])["default_ctx_size"],
+            json!(4096)
         );
     }
 
@@ -297,5 +456,25 @@ mod tests {
         let root = std::env::temp_dir().join(format!("omniinfer-rs-{name}-{nanos}"));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn write_test_gguf(path: &Path, context_key: &str, context_length: u32) {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&3_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u64.to_le_bytes());
+        bytes.extend_from_slice(&2_u64.to_le_bytes());
+        write_gguf_string(&mut bytes, "general.architecture");
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        write_gguf_string(&mut bytes, "qwen35");
+        write_gguf_string(&mut bytes, context_key);
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&context_length.to_le_bytes());
+        fs::write(path, bytes).unwrap();
+    }
+
+    fn write_gguf_string(bytes: &mut Vec<u8>, value: &str) {
+        bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(value.as_bytes());
     }
 }
