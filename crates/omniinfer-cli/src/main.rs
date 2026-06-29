@@ -1800,6 +1800,7 @@ fn start_cloudflare_quick_tunnel(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    hide_child_window(&mut command);
     if detach {
         detach_child_process(&mut command);
     }
@@ -1962,6 +1963,7 @@ fn start_serve_child(
     if args.debug_body {
         command.arg("--debug-body");
     }
+    hide_child_window(&mut command);
     if args.detach {
         detach_child_process(&mut command);
     }
@@ -2031,6 +2033,7 @@ fn start_rust_gateway_child(
     if args.cloudflare || args.behind_proxy {
         command.arg("--trust-proxy-headers");
     }
+    hide_child_window(&mut command);
     if args.detach {
         detach_child_process(&mut command);
     }
@@ -2050,6 +2053,19 @@ fn detach_child_process(command: &mut ProcessCommand) {
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+}
+
+fn hide_child_window(command: &mut ProcessCommand) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
     }
 }
 
@@ -2684,6 +2700,7 @@ fn start_gateway_background(config: &config::AppConfig) -> Result<()> {
             .arg("--default-backend")
             .arg(&config.default_backend);
     }
+    hide_child_window(&mut command);
     command.spawn()?;
     Ok(())
 }

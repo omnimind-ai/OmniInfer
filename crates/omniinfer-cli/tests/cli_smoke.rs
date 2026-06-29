@@ -1999,7 +1999,7 @@ fn fake_cloudflared_launcher_windows(root: &std::path::Path, url: &str) -> std::
     fs::write(
         &launcher,
         format!(
-            "@echo off\r\necho %* > \"{}\"\r\necho Your quick Tunnel has been created! Visit it at {}\r\nping -n 30 127.0.0.1 > nul\r\n",
+            "@echo off\r\necho %* > \"{}\"\r\necho Your quick Tunnel has been created! Visit it at {}\r\npowershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"Start-Sleep -Seconds 30\" > nul\r\n",
             output.display(),
             url
         ),

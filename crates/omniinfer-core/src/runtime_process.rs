@@ -108,6 +108,7 @@ impl RuntimeProcess {
         for (key, value) in &options.env {
             command.env(key, value);
         }
+        hide_child_window(&mut command);
         let mut child = command.spawn()?;
         if !wait_http_ready(
             &options.health_host,
@@ -197,9 +198,24 @@ fn terminate_process(pid: u32) {
 
 #[cfg(windows)]
 fn terminate_process(pid: u32) {
-    let _ = Command::new("taskkill")
+    let mut command = Command::new("taskkill");
+    hide_child_window(&mut command);
+    let _ = command
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .status();
+}
+
+fn hide_child_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+    }
 }
 
 #[allow(dead_code)]
