@@ -1217,7 +1217,7 @@ def _serve_plan_needs_orchestration(plan: _ServePlan) -> bool:
 
 def _foreground_service_args(plan: _ServePlan) -> list[str]:
     args = list(plan.service_args)
-    if plan.api_key:
+    if plan.api_key and not plan.api_key_generated:
         args.extend(["--api-key", plan.api_key])
     return args
 

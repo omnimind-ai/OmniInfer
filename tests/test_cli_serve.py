@@ -60,6 +60,13 @@ class ServePlanTests(unittest.TestCase):
         self.assertEqual(result, 0)
         foreground.assert_called_once_with(["--port", "19189", "--api-key", "public-secret"])
 
+    def test_direct_foreground_does_not_forward_generated_api_key(self) -> None:
+        with patch("service_core.cli.serve_interactive_or_foreground", return_value=0) as foreground:
+            result = cli.serve_command(["--lan", "--port", "19189"])
+
+        self.assertEqual(result, 0)
+        foreground.assert_called_once_with(["--lan", "--port", "19189"])
+
     def test_parse_serve_plan_supports_status_action(self) -> None:
         plan = cli._parse_serve_plan(["status", "--port", "19189"])
 
