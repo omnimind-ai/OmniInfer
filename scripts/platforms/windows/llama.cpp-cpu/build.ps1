@@ -31,6 +31,36 @@ function Require-Command {
 
 Require-Command cmake
 
+function Invoke-Checked {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed with exit code ${LASTEXITCODE}: $FilePath $($Arguments -join ' ')"
+    }
+}
+
+function Reset-BuildRootIfGeneratorChanged {
+    param(
+        [string]$Path,
+        [string]$Generator
+    )
+    $cache = Join-Path $Path "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cache)) {
+        return
+    }
+    $cached = Select-String -LiteralPath $cache -Pattern "^CMAKE_GENERATOR:INTERNAL=(.+)$" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($cached -and $cached.Matches[0].Groups[1].Value -ne $Generator) {
+        Write-Host "Removing stale CMake build directory because generator changed from '$($cached.Matches[0].Groups[1].Value)' to '$Generator'."
+        Remove-Item -Recurse -Force -LiteralPath $Path
+    }
+}
+
 function Find-Msys2Ucrt64Toolchain {
     $candidates = @()
 
@@ -165,14 +195,15 @@ if ((Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command nmake -Erro
     }
 }
 
+Reset-BuildRootIfGeneratorChanged -Path $BuildRoot -Generator $generator
 New-Item -ItemType Directory -Force -Path $BuildRoot, $BinRoot | Out-Null
 $configureArgs += @("-G", $generator)
 
 Write-Host "Configuring llama.cpp CPU build..."
-cmake @configureArgs
+Invoke-Checked cmake @configureArgs
 
 Write-Host "Building llama-server.exe..."
-cmake --build $BuildRoot --target llama-server --config $BuildType @buildArgs
+Invoke-Checked cmake --build $BuildRoot --target llama-server --config $BuildType @buildArgs
 
 Get-ChildItem (Join-Path $BuildRoot "bin") -File | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $BinRoot $_.Name) -Force
