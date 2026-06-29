@@ -34,6 +34,17 @@ fn completion_generates_bash_script() {
 #[test]
 fn thinking_set_updates_local_state_without_gateway() {
     let root = temp_repo_root("thinking-set-local");
+    let port = free_port();
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(
+        root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":1}}"#,
+            port
+        ),
+    )
+    .expect("write isolated config");
+
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_STATE_ROOT", &root)
@@ -888,10 +899,11 @@ fn serve_detach_can_skip_restoring_last_model() {
         state_root.join(".local").join("config").join("state.json"),
         format!(
             r#"{{
-  "selected_backend": "llama.cpp-linux-cuda",
+  "selected_backend": "{}",
   "selected_model": "{}",
   "selected_ctx_size": 4096
 }}"#,
+            test_external_backend_id(),
             model.display()
         ),
     )
@@ -933,8 +945,9 @@ fn serve_detach_restores_last_model_without_python_upstream() {
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
-            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"llama.cpp-linux-cuda"}}"#,
-            port
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"{}"}}"#,
+            port,
+            test_external_backend_id()
         ),
     )
     .expect("write config");
@@ -944,15 +957,16 @@ fn serve_detach_restores_last_model_without_python_upstream() {
         state_root.join(".local").join("config").join("state.json"),
         format!(
             r#"{{
-  "selected_backend": "llama.cpp-linux-cuda",
+  "selected_backend": "{}",
   "selected_model": "{}",
   "selected_ctx_size": 512
 }}"#,
+            test_external_backend_id(),
             model.display()
         ),
     )
     .expect("write state");
-    install_fake_runtime_server(&state_root, "llama.cpp-linux-cuda");
+    install_fake_runtime_server(&state_root, test_external_backend_id());
     let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
@@ -1869,7 +1883,7 @@ fn install_fake_runtime_server(root: &std::path::Path, backend_id: &str) {
     let launcher = root
         .join(".local")
         .join("runtime")
-        .join("linux")
+        .join(test_runtime_platform_dir())
         .join(backend_id)
         .join("bin")
         .join("llama-server");

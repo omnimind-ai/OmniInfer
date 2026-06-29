@@ -151,6 +151,21 @@ prepare_runtime_dirs() {
   mkdir -p "${BUILD_ROOT}" "${BIN_ROOT}" "${LOG_ROOT}" "${MODELS_ROOT}"
 }
 
+reset_stale_cmake_cache() {
+  local cache="${BUILD_ROOT}/CMakeCache.txt"
+  [[ -f "${cache}" ]] || return
+
+  local existing_generator
+  existing_generator="$(awk -F= '/^CMAKE_GENERATOR:INTERNAL=/{print $2}' "${cache}" | tail -n 1)"
+  [[ -n "${existing_generator}" ]] || return
+  if [[ "${existing_generator}" == "${REQUESTED_GENERATOR}" ]]; then
+    return
+  fi
+
+  echo "CMake generator changed from ${existing_generator} to ${REQUESTED_GENERATOR}; cleaning ${BUILD_ROOT}"
+  rm -rf "${BUILD_ROOT}"
+}
+
 ensure_cmake_on_path
 ensure_llama_root
 require_command cmake
@@ -171,8 +186,10 @@ CONFIGURE_ARGS=(
   -DGGML_METAL=ON
 )
 
+REQUESTED_GENERATOR="Unix Makefiles"
 if command -v ninja >/dev/null 2>&1; then
-  CONFIGURE_ARGS+=(-G Ninja)
+  REQUESTED_GENERATOR="Ninja"
+  CONFIGURE_ARGS+=(-G "${REQUESTED_GENERATOR}")
 fi
 
 echo "Configuring llama.cpp macOS Metal build..."
@@ -191,6 +208,8 @@ prepare_runtime_dirs
 
 if [[ ${CLEAN_BUILD} -eq 1 ]]; then
   rm -rf "${BUILD_ROOT}"
+else
+  reset_stale_cmake_cache
 fi
 mkdir -p "${BUILD_ROOT}"
 

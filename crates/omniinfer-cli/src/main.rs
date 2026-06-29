@@ -955,10 +955,13 @@ fn print_thinking_show() {
 
 fn print_thinking_set(mode: ThinkingMode) -> Result<()> {
     let enabled = matches!(mode, ThinkingMode::On);
-    let payload = match post_local_json(
+    let config = config::load_app_config().unwrap_or_default();
+    let payload = match post_local_json_for_config_with_autostart(
         "/omni/thinking/select",
         &serde_json::json!({ "enabled": enabled }),
         Duration::from_secs(10),
+        &config,
+        false,
     ) {
         Ok(payload) => payload,
         Err(_) => {

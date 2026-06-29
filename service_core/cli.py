@@ -1164,6 +1164,8 @@ def _parse_serve_plan(service_args: list[str]) -> _ServePlan:
     args, mmproj = _pop_option(args, {"-mm", "--mmproj"})
     args, ctx_text = _pop_option(args, {"--ctx-size"})
     args, api_key = _pop_option(args, {"--api-key"})
+    args, _admin_api_key = _pop_option(args, {"--admin-api-key"})
+    args, _admin_api_keys = _pop_option(args, {"--admin-api-keys"})
     args, detach = _pop_flag(args, "--detach")
     args, smoke_test = _pop_flag(args, "--smoke-test")
     args, no_smoke_test = _pop_flag(args, "--no-smoke-test")
@@ -1211,6 +1213,13 @@ def _serve_plan_needs_orchestration(plan: _ServePlan) -> bool:
         or plan.detach
         or plan.smoke_test
     )
+
+
+def _foreground_service_args(plan: _ServePlan) -> list[str]:
+    args = list(plan.service_args)
+    if plan.api_key and not plan.api_key_generated:
+        args.extend(["--api-key", plan.api_key])
+    return args
 
 
 def _serve_port(service_args: list[str]) -> int:
@@ -1581,7 +1590,7 @@ def serve_command(service_args: list[str]) -> int:
         return serve_stop(plan.service_args)
     if _serve_plan_needs_orchestration(plan):
         return serve_orchestrated(plan)
-    return serve_interactive_or_foreground(service_args)
+    return serve_interactive_or_foreground(_foreground_service_args(plan))
 
 
 def _requested_window_mode(argv: list[str]) -> str:
