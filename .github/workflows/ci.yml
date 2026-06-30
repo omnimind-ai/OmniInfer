@@ -34,5 +34,6 @@ jobs:
         run: cargo test --workspace
 
       - name: Run Linux release helper tests
+        if: runner.os == 'Linux'
         timeout-minutes: 2
         run: python -m unittest tests.test_linux_release_backends -v
