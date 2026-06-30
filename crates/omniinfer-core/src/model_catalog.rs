@@ -398,6 +398,28 @@ mod tests {
     }
 
     #[test]
+    fn gemma_4_12b_catalog_includes_vision_projector() {
+        let catalog = list_supported_models("linux").unwrap();
+        let model = catalog
+            .get("llama.cpp-linux-cuda")
+            .and_then(|value| value.get("Gemma4"))
+            .and_then(|value| value.get("gemma-4-12B-it"))
+            .unwrap();
+        assert_eq!(
+            model["quantization"]["Q4_K_M"]["download"],
+            json!(
+                "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q4_K_M.gguf"
+            )
+        );
+        assert_eq!(
+            model["vision"]["download"],
+            json!(
+                "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/mmproj-F16.gguf"
+            )
+        );
+    }
+
+    #[test]
     fn rejects_invalid_system() {
         assert!(matches!(
             list_supported_models("android").unwrap_err(),
