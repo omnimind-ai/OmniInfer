@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import stat
 import subprocess
@@ -17,50 +16,13 @@ def run(command: list[str], cwd: Path, dry_run: bool) -> None:
         subprocess.run(command, cwd=cwd, check=True)
 
 
-def copy_tree(source: Path, target: Path) -> None:
-    if target.exists():
-        shutil.rmtree(target)
-    ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
-    shutil.copytree(source, target, ignore=ignore)
-
-
 def make_executable(path: Path) -> None:
     mode = path.stat().st_mode
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def install_unix_launcher(target: Path, binary_name: str, include_python_fallback: bool) -> None:
-    if include_python_fallback:
-        content = rf"""#!/bin/sh
-set -eu
-
-SCRIPT_PATH="$0"
-case "$SCRIPT_PATH" in
-  /*) ;;
-  *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
-esac
-
-ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
-
-python_works() {{
-  [ -x "$1" ] || return 1
-  version_output="$("$1" --version 2>/dev/null)" || return 1
-  case "$version_output" in
-    Python\ *) return 0 ;;
-    *) return 1 ;;
-  esac
-}}
-
-if [ -z "${{OMNIINFER_PYTHON:-}}" ] && python_works "$ROOT/runtime/mlx-mac/venv/bin/python3"; then
-  export OMNIINFER_PYTHON="$ROOT/runtime/mlx-mac/venv/bin/python3"
-fi
-if [ -z "${{OMNIINFER_PYTHON:-}}" ] && python_works "$ROOT/runtime/mnn-linux/venv/bin/python3"; then
-  export OMNIINFER_PYTHON="$ROOT/runtime/mnn-linux/venv/bin/python3"
-fi
-exec "$ROOT/{binary_name}" "$@"
-"""
-    else:
-        content = rf"""#!/bin/sh
+def install_unix_launcher(target: Path, binary_name: str) -> None:
+    content = rf"""#!/bin/sh
 set -eu
 
 SCRIPT_PATH="$0"
@@ -101,11 +63,6 @@ exit $LASTEXITCODE
     )
 
 
-def install_python_fallback(repo_root: Path, portable_root: Path) -> None:
-    shutil.copy2(repo_root / "omniinfer.py", portable_root / "omniinfer.py")
-    copy_tree(repo_root / "service_core", portable_root / "service_core")
-
-
 def install_cli(args: argparse.Namespace) -> None:
     repo_root = args.repo_root.resolve()
     portable_root = args.portable_root.resolve()
@@ -122,14 +79,11 @@ def install_cli(args: argparse.Namespace) -> None:
     if not args.dry_run and not built_binary.is_file():
         raise SystemExit(f"Rust CLI build did not produce {built_binary}")
 
-    print(f"Python fallback: {'included' if args.include_python_fallback else 'excluded'}")
+    print("Python control-plane fallback: removed")
 
     if args.dry_run:
         print(f"[dry-run] Would copy {built_binary} into {portable_root}")
         return
-
-    if args.include_python_fallback:
-        install_python_fallback(repo_root, portable_root)
 
     if args.platform == "windows":
         shutil.copy2(built_binary, portable_root / "omniinfer.exe")
@@ -141,7 +95,6 @@ def install_cli(args: argparse.Namespace) -> None:
         install_unix_launcher(
             portable_root / "omniinfer",
             "omniinfer-rs",
-            args.include_python_fallback,
         )
 
 
@@ -151,7 +104,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--portable-root", required=True, type=Path)
     parser.add_argument("--platform", required=True, choices=["linux", "macos", "windows"])
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument("--include-python-fallback", action="store_true")
     parser.add_argument("--locked", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()

@@ -16,7 +16,6 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "tmp" / "test_results"
-SOURCE_LAUNCHER = REPO_ROOT / ("omniinfer.cmd" if os.name == "nt" else "omniinfer")
 RUST_BINARY = REPO_ROOT / "target" / "debug" / ("omniinfer-rs.exe" if os.name == "nt" else "omniinfer-rs")
 
 
@@ -122,10 +121,7 @@ def _write_summary(path: Path, payload: dict[str, Any]) -> None:
             "## Artifacts",
             "",
             f"- No-Python portable validation: `{payload['artifacts']['no_python_portable']}`",
-            f"- Python contracts: `{payload['artifacts']['python_contracts']}`",
             f"- Rust strict contracts: `{payload['artifacts']['rust_strict_contracts']}`",
-            f"- Forced Python contracts: `{payload['artifacts']['force_python_contracts']}`",
-            f"- Python profile: `{payload['artifacts']['python_profile']}`",
             f"- Rust profile: `{payload['artifacts']['rust_profile']}`",
             "",
             "Raw step logs and metadata are stored next to this file.",
@@ -148,10 +144,7 @@ def _portable_platform() -> str:
 
 
 def _base_steps(output_dir: Path, state_root: Path, runs: int) -> list[Step]:
-    python_contracts = output_dir / "python-contracts"
     rust_contracts = output_dir / "rust-strict-contracts"
-    force_python_contracts = output_dir / "force-python-contracts"
-    python_profile = output_dir / "python-profile"
     rust_profile = output_dir / "rust-profile"
     no_python_portable = output_dir / "no-python-portable"
     return [
@@ -170,21 +163,6 @@ def _base_steps(output_dir: Path, state_root: Path, runs: int) -> list[Step]:
             timeout_s=900.0,
         ),
         Step(
-            "python-contracts",
-            [
-                _python(),
-                "scripts/capture_cli_contracts.py",
-                "--binary",
-                str(SOURCE_LAUNCHER),
-                "--state-root",
-                str(state_root / "python-contracts"),
-                "--output-dir",
-                str(python_contracts),
-            ],
-            timeout_s=600.0,
-            env_overrides={"OMNIINFER_FORCE_PYTHON": "1"},
-        ),
-        Step(
             "rust-strict-contracts",
             [
                 _python(),
@@ -198,38 +176,6 @@ def _base_steps(output_dir: Path, state_root: Path, runs: int) -> list[Step]:
                 str(rust_contracts),
             ],
             timeout_s=600.0,
-        ),
-        Step(
-            "force-python-contracts",
-            [
-                _python(),
-                "scripts/capture_cli_contracts.py",
-                "--binary",
-                str(RUST_BINARY),
-                "--force-python",
-                "--state-root",
-                str(state_root / "force-python-contracts"),
-                "--output-dir",
-                str(force_python_contracts),
-            ],
-            timeout_s=600.0,
-        ),
-        Step(
-            "python-profile",
-            [
-                _python(),
-                "scripts/profile_python_cli.py",
-                "--runs",
-                str(runs),
-                "--binary",
-                str(SOURCE_LAUNCHER),
-                "--force-python",
-                "--state-root",
-                str(state_root / "python-profile"),
-                "--output-dir",
-                str(python_profile),
-            ],
-            timeout_s=900.0,
         ),
         Step(
             "rust-profile",
@@ -286,10 +232,7 @@ def main(argv: list[str] | None = None) -> int:
         "steps": steps,
         "artifacts": {
             "no_python_portable": str(output_dir / "no-python-portable" / "summary.md"),
-            "python_contracts": str(output_dir / "python-contracts" / "summary.md"),
             "rust_strict_contracts": str(output_dir / "rust-strict-contracts" / "summary.md"),
-            "force_python_contracts": str(output_dir / "force-python-contracts" / "summary.md"),
-            "python_profile": str(output_dir / "python-profile" / "summary.md"),
             "rust_profile": str(output_dir / "rust-profile" / "summary.md"),
         },
     }

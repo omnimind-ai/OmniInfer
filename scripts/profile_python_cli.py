@@ -456,11 +456,6 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="skip representative Python -X importtime traces",
     )
-    parser.add_argument(
-        "--force-python",
-        action="store_true",
-        help="set OMNIINFER_FORCE_PYTHON=1 while profiling the selected binary",
-    )
     args = parser.parse_args(argv)
 
     selected = SCENARIOS
@@ -475,8 +470,6 @@ def main(argv: list[str] | None = None) -> int:
 
     env = os.environ.copy()
     env.setdefault("NO_COLOR", "1")
-    if args.force_python:
-        env["OMNIINFER_FORCE_PYTHON"] = "1"
     if args.state_root:
         state_root = args.state_root.resolve()
         state_port = _prepare_state_root(state_root)

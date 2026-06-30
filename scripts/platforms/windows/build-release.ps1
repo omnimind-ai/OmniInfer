@@ -10,7 +10,6 @@ param(
     [string]$BuildType = "Release",
     [string]$CudaArchitectures = "",
     [string]$GpuTargets = "",
-    [switch]$IncludePythonFallback,
     [switch]$DryRun
 )
 
@@ -260,7 +259,7 @@ foreach ($candidate in $preferenceOrder) {
 Write-Host "Packaged $($backends.Count) backend(s): $($backends -join ', ')"
 Write-Host "Default backend: $defaultBackend"
 Write-Host "Package root: $PortableRoot"
-Write-Host "Python fallback: $(if ($IncludePythonFallback) { 'included' } else { 'excluded' })"
+Write-Host "Python control-plane fallback: removed"
 
 if ($DryRun) {
     Write-Host "Dry run enabled. Release packaging was not executed."
@@ -284,9 +283,6 @@ $packagerArgs = @(
     "--portable-root", $PortableRoot,
     "--platform", "windows"
 )
-if ($IncludePythonFallback) {
-    $packagerArgs += "--include-python-fallback"
-}
 python @packagerArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Rust CLI packaging failed."

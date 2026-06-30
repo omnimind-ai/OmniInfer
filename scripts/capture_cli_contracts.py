@@ -252,9 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="isolate OmniInfer .local/config/log/run state under this root",
     )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--rust-strict", action="store_true", help="set OMNIINFER_RUST_STRICT=1 for the snapshot")
-    mode.add_argument("--force-python", action="store_true", help="set OMNIINFER_FORCE_PYTHON=1 for the snapshot")
+    parser.add_argument("--rust-strict", action="store_true", help="set OMNIINFER_RUST_STRICT=1 for the snapshot")
     args = parser.parse_args(argv)
 
     selected = SCENARIOS
@@ -269,8 +267,6 @@ def main(argv: list[str] | None = None) -> int:
     extra_env: dict[str, str] = {}
     if args.rust_strict:
         extra_env["OMNIINFER_RUST_STRICT"] = "1"
-    if args.force_python:
-        extra_env["OMNIINFER_FORCE_PYTHON"] = "1"
     if args.state_root:
         state_root = args.state_root.resolve()
         state_port = _prepare_state_root(state_root)

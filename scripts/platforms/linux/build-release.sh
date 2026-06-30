@@ -25,7 +25,6 @@ GPU_TARGETS=""
 ROCM_PATH_OVERRIDE=""
 OPENVINO_ROOT_OVERRIDE=""
 DRY_RUN=0
-INCLUDE_PYTHON_FALLBACK=0
 
 usage() {
   cat <<'EOF'
@@ -44,7 +43,6 @@ Options:
   --rocm-path <path>        Override ROCm installation root for the ROCm build
   --openvino-root <path>    Override OpenVINO installation root for the OpenVINO build
   --dry-run                 Print actions without executing packaging steps
-  --include-python-fallback Copy omniinfer.py/service_core for legacy or embedded Python backend paths
   -h, --help                Show this help message
 EOF
 }
@@ -97,10 +95,6 @@ while (($# > 0)); do
       ;;
     --dry-run)
       DRY_RUN=1
-      shift
-      ;;
-    --include-python-fallback)
-      INCLUDE_PYTHON_FALLBACK=1
       shift
       ;;
     -h|--help)
@@ -206,9 +200,9 @@ echo "Default backend: ${DEFAULT_BACKEND}"
 printf '%s\n' "${RUNTIME_BACKENDS_JSON}" | python3 -c 'import json, sys; [print("  - {id}: {copy_mode} from {source_dir}".format(**item)) for item in json.load(sys.stdin)]'
 
 embedded_backends="$(printf '%s\n' "${RUNTIME_BACKENDS_JSON}" | python3 -c 'import json, sys; print(",".join(item["id"] for item in json.load(sys.stdin) if item.get("runtime_mode") == "embedded"))')"
-if [[ -n "${embedded_backends}" && ${INCLUDE_PYTHON_FALLBACK} -eq 0 ]]; then
-  echo "ERROR: Embedded Python backend(s) require --include-python-fallback: ${embedded_backends}" >&2
-  echo "Build a no-Python package with external-server backends only, or pass --include-python-fallback explicitly." >&2
+if [[ -n "${embedded_backends}" ]]; then
+  echo "ERROR: Embedded backend(s) are not supported by the Rust control plane: ${embedded_backends}" >&2
+  echo "Package external-server backends only, or provide an adapter service for embedded backends." >&2
   exit 1
 fi
 
@@ -234,7 +228,6 @@ PACKAGER_ARGS=(
   --portable-root "${RELEASE_ROOT}" \
   --platform linux
 )
-[[ ${INCLUDE_PYTHON_FALLBACK} -eq 1 ]] && PACKAGER_ARGS+=(--include-python-fallback)
 python3 "${RUST_CLI_PACKAGER}" "${PACKAGER_ARGS[@]}"
 
 # --- config ---
@@ -273,7 +266,7 @@ echo "  Location:  ${RELEASE_ROOT}"
 echo "  Platform:  ${PLATFORM_TAG}"
 echo "  Backends:  ${backends[*]}"
 echo "  Default:   ${DEFAULT_BACKEND}"
-echo "  Python fallback: $([[ ${INCLUDE_PYTHON_FALLBACK} -eq 1 ]] && echo included || echo excluded)"
+echo "  Python control-plane fallback: removed"
 echo "============================================"
 echo ""
 echo "Run with:"
