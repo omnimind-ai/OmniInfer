@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "omniinfer-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "omniinfer-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "rand",
  "serde",
