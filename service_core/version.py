@@ -8,7 +8,7 @@ import sys
 from importlib import metadata
 from pathlib import Path
 
-_FALLBACK_VERSION = "0.2.1"
+_FALLBACK_VERSION = "0.3.0"
 
 
 def _version_from_pyproject() -> str | None:
