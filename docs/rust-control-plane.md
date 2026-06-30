@@ -269,5 +269,4 @@ Remaining work:
 - Keep cross-platform launcher/package validation current on Linux, macOS, and
   Windows.
 - Decide whether embedded MLX/MNN in-process drivers should become adapter
-  services or Rust-native runtime-driver projects. This is tracked in
-  [TODO](TODO.md).
+  services or Rust-native runtime-driver projects.
