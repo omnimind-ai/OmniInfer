@@ -741,7 +741,7 @@ if ($Model) {
         0 {
             Write-Info "Reading bundled model catalog ..."
             try {
-                $catalogPath = Join-Path $InstallDir "service_core\model_catalogs\windows.json"
+                $catalogPath = Join-Path $InstallDir "crates\omniinfer-core\model_catalogs\windows.json"
                 if (-not (Test-Path -LiteralPath $catalogPath)) {
                     throw "Bundled model catalog not found: $catalogPath"
                 }

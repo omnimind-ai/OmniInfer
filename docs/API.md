@@ -361,7 +361,7 @@ If no external backend is loaded, or the backend does not expose `/props`, OmniI
 
 Returns the backend-grouped supported model catalog for a target system.
 
-The catalog is bundled with OmniInfer under `service_core/model_catalogs`; this endpoint does not fetch catalog JSON from a remote service at runtime.
+The catalog is bundled with OmniInfer under `crates/omniinfer-core/model_catalogs`; this endpoint does not fetch catalog JSON from a remote service at runtime.
 
 Example:
 

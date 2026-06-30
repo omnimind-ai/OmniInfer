@@ -861,7 +861,7 @@ else
                 CATALOG_SYSTEM="linux"
             fi
 
-            CATALOG_PATH="${INSTALL_DIR}/service_core/model_catalogs/${CATALOG_SYSTEM}.json"
+            CATALOG_PATH="${INSTALL_DIR}/crates/omniinfer-core/model_catalogs/${CATALOG_SYSTEM}.json"
 
             # Use embedded Python to parse catalog and present choices
             MODEL_INFO=$(

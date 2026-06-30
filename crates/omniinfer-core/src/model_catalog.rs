@@ -8,9 +8,9 @@ use crate::backend_registry::{
     BackendRegistry, BackendScope, HostInfo, HostSystem, backend_priority,
 };
 
-const LINUX_CATALOG: &str = include_str!("../../../service_core/model_catalogs/linux.json");
-const MAC_CATALOG: &str = include_str!("../../../service_core/model_catalogs/mac.json");
-const WINDOWS_CATALOG: &str = include_str!("../../../service_core/model_catalogs/windows.json");
+const LINUX_CATALOG: &str = include_str!("../model_catalogs/linux.json");
+const MAC_CATALOG: &str = include_str!("../model_catalogs/mac.json");
+const WINDOWS_CATALOG: &str = include_str!("../model_catalogs/windows.json");
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ModelCatalogError {
