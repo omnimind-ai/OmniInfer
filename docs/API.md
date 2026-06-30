@@ -21,7 +21,7 @@ All request and response bodies are JSON unless an endpoint explicitly uses Serv
 Windows note: direct gateway processes hide their console window by default. To force a visible direct gateway window, use:
 
 ```powershell
-python omniinfer.py serve --window-mode visible
+.\omniinfer.ps1 serve --window-mode visible
 ```
 
 ## Local Network Access
@@ -959,6 +959,6 @@ The Anthropic-compatible endpoint may return Anthropic-style error objects:
 
 ## Desktop Versus Mobile
 
-This document covers the desktop gateway implemented in `service_core/service.py`.
+This document covers the desktop gateway exposed by the Rust control plane.
 
 Android and iOS clients expose a smaller OpenAI-compatible subset from the mobile app process. See the OmniStudio API service documents for mobile-specific behavior.

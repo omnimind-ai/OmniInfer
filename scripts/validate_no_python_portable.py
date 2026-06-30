@@ -16,8 +16,13 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGER = REPO_ROOT / "scripts" / "platforms" / "common" / "package-rust-cli.py"
-UNAVAILABLE_MESSAGE = "Python fallback is not available in this OmniInfer package"
-FORBIDDEN_LAUNCHER_TEXT = ("OMNIINFER_PYTHON", "omniinfer.py", "python_works")
+REMOVED_FALLBACK_MESSAGE = "Python control-plane fallback has been removed"
+FORBIDDEN_LAUNCHER_TEXT = (
+    "OMNIINFER_FORCE_PYTHON",
+    "OMNIINFER_PYTHON",
+    "omniinfer.py",
+    "python_works",
+)
 
 
 @dataclass
@@ -166,18 +171,15 @@ def validate_portable(platform: str, portable_root: Path, output_dir: Path) -> t
         checks.append(launcher_has_no_forbidden_text(path))
 
     (portable_root / "runtime").mkdir(exist_ok=True)
-    env = os.environ.copy()
-    env["OMNIINFER_FORCE_PYTHON"] = "1"
     probe = run_command(
         [str(packaged_binary(platform, portable_root)), *unported_probe_args(platform)],
-        env=env,
         timeout_s=60.0,
     )
     probe_text = f"{probe['stdout']}\n{probe['stderr']}"
     checks.append(
         CheckResult(
             name="unported-command-probe",
-            ok=probe["returncode"] not in (0, None) and UNAVAILABLE_MESSAGE in probe_text,
+            ok=probe["returncode"] not in (0, None) and REMOVED_FALLBACK_MESSAGE in probe_text,
             detail=f"exit={probe['returncode']}",
         )
     )

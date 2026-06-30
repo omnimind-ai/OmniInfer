@@ -9,15 +9,15 @@ Current scope:
 
 - `omniinfer-core`: shared local paths, config compatibility, state parsing, and
   minimal local HTTP helpers.
-- `omniinfer-cli`: experimental `omniinfer-rs` binary with the target command
-  surface, migrated low-risk commands, Python fallback, and shell completion
-  generation.
+- `omniinfer-cli`: Rust control-plane binary with the target command surface,
+  gateway orchestration, runtime management, and shell completion generation.
 
-The production entrypoint remains `./omniinfer` until the Rust implementation
-covers the required behavior and passes compatibility checks.
+The production entrypoint is `./omniinfer`, which starts the Rust control
+plane. Python control-plane fallback has been removed; unsupported commands
+return explicit Rust errors.
 
 See [`docs/rust-control-plane.md`](../docs/rust-control-plane.md) for the
-switching checklist, fallback controls, and profiling commands.
+runtime controls, validation commands, and remaining embedded-backend strategy.
 
 ## Local Development
 
@@ -33,15 +33,7 @@ Rust control-plane commit.
 
 ## Profiling
 
-Capture the Python baseline:
-
-```bash
-python3 scripts/profile_python_cli.py \
-  --runs 7 \
-  --output-dir tmp/test_results/20260622-rust-control-plane-python-profile
-```
-
-Capture the Rust prototype for migrated commands:
+Capture Rust command profiles:
 
 ```bash
 python3 scripts/profile_python_cli.py \

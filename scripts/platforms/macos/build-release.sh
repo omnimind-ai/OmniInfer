@@ -22,7 +22,6 @@ PYTHON_INDEX_URL="${PYTHON_INDEX_URL:-}"
 SLIM_RELEASE=1
 DRY_RUN=0
 CREATE_ARCHIVE=0
-INCLUDE_PYTHON_FALLBACK=0
 REQUESTED_BACKENDS=()
 
 SUPPORTED_BACKENDS=(
@@ -51,7 +50,6 @@ Options:
   --mlx-python <path>         Python 3.10+ interpreter used to build mlx-mac
   --python-index-url <url>    Python package index URL for MLX dependency installation
   --no-slim                   Keep test files, bytecode, and build-only Python assets in the release
-  --include-python-fallback   Include omniinfer.py and service_core/ for compatibility fallback
   --archive                   Create a zip archive next to the release directory
   --dry-run                   Print actions without executing packaging steps
   -h, --help                  Show this help message
@@ -370,7 +368,6 @@ install_rust_cli() {
     --portable-root "${RELEASE_ROOT}"
     --platform macos
   )
-  [[ ${INCLUDE_PYTHON_FALLBACK} -eq 1 ]] && args+=(--include-python-fallback)
   echo
   echo "Building Rust omniinfer CLI..."
   python3 "${args[@]}"
@@ -434,10 +431,6 @@ while (($# > 0)); do
       SLIM_RELEASE=0
       shift
       ;;
-    --include-python-fallback)
-      INCLUDE_PYTHON_FALLBACK=1
-      shift
-      ;;
     --archive)
       CREATE_ARCHIVE=1
       shift
@@ -485,8 +478,8 @@ for backend in "${SELECTED_BACKENDS[@]}"; do
   fi
 done
 
-if selected_backends_include_mlx && [[ ${INCLUDE_PYTHON_FALLBACK} -eq 0 ]]; then
-  die "mlx-mac requires --include-python-fallback"
+if selected_backends_include_mlx; then
+  die "mlx-mac is an embedded backend and is not supported by the Rust control plane package yet; use an adapter service before packaging it."
 fi
 
 for backend in "${SELECTED_BACKENDS[@]}"; do
@@ -506,19 +499,13 @@ ARCHIVE_PATH="${REPO_ROOT}/release/portable/${PLATFORM_TAG}/${PACKAGE_NAME}-${PL
 echo "Packaged ${#SELECTED_BACKENDS[@]} backend(s): ${SELECTED_BACKENDS[*]}"
 echo "Default backend: ${DEFAULT_BACKEND}"
 echo "Package root: ${RELEASE_ROOT}"
-echo "Python fallback: $([[ ${INCLUDE_PYTHON_FALLBACK} -eq 1 ]] && echo included || echo excluded)"
+echo "Python control-plane fallback: removed"
 if [[ ${CREATE_ARCHIVE} -eq 1 ]]; then
   echo "Archive: ${ARCHIVE_PATH}"
 else
   echo "Archive: disabled"
 fi
-if selected_backends_include_mlx; then
-  echo "CLI mode: Rust binary with mlx-mac Python fallback"
-  echo "MLX env manager: uv"
-  echo "Slim release: $([[ ${SLIM_RELEASE} -eq 1 ]] && echo yes || echo no)"
-else
-  echo "CLI mode: Rust binary"
-fi
+echo "CLI mode: Rust binary"
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "Dry run enabled. Release packaging was not executed."

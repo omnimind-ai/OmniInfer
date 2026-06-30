@@ -20,9 +20,7 @@ fn executable_root() -> Option<PathBuf> {
 }
 
 fn looks_like_omniinfer_root(root: &Path) -> bool {
-    root.join("omniinfer.py").is_file()
-        || root.join("service_core").is_dir()
-        || root.join("runtime").is_dir()
+    root.join("Cargo.toml").is_file() || root.join("runtime").is_dir()
 }
 
 fn manifest_repo_root() -> PathBuf {

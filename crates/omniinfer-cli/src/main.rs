@@ -8,7 +8,6 @@ use rand::distr::Alphanumeric;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
 use std::net::TcpStream;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
@@ -302,12 +301,6 @@ struct GatewayArgs {
     #[arg(long)]
     port: u16,
     #[arg(long)]
-    upstream_host: String,
-    #[arg(long)]
-    upstream_port: u16,
-    #[arg(long, hide = true)]
-    no_compat_upstream: bool,
-    #[arg(long)]
     api_key: Option<String>,
     #[arg(long)]
     admin_api_key: Option<String>,
@@ -357,23 +350,13 @@ enum LogLevel {
 }
 
 fn main() -> Result<()> {
-    if should_force_python() {
-        return exec_python(env::args().skip(1));
-    }
     let cli = Cli::parse();
     match cli.command.as_ref() {
         None => tui::run()?,
         Some(Command::Status) => print_status(),
         Some(Command::Completion { shell }) => print_completion(shell.clone()),
         Some(Command::Gateway(args)) => run_gateway_command(args)?,
-        Some(command) => {
-            if let Err(error) = run_ported_command(command) {
-                if should_strict_rust() {
-                    return Err(error);
-                }
-                return exec_python(env::args().skip(1));
-            }
-        }
+        Some(command) => run_ported_command(command)?,
     }
     Ok(())
 }
@@ -480,7 +463,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
         }
         Command::Serve(args) if can_serve_locally(args) => serve_orchestrated(args),
         Command::Gateway(args) => run_gateway_command(args),
-        other => fallback_to_python(other),
+        other => unsupported_rust_command(other),
     }
 }
 
@@ -488,9 +471,6 @@ fn run_gateway_command(args: &GatewayArgs) -> Result<()> {
     gateway::run_gateway_blocking(gateway::GatewayConfig {
         listen_host: args.host.clone(),
         listen_port: args.port,
-        upstream_host: args.upstream_host.clone(),
-        upstream_port: args.upstream_port,
-        compat_upstream: !args.no_compat_upstream,
         access_policy: gateway_auth::GatewayAccessPolicy {
             api_key: args.api_key.clone().unwrap_or_default(),
             admin_api_key: args.admin_api_key.clone().unwrap_or_default(),
@@ -1216,46 +1196,21 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     {
         anyhow::bail!("public model root does not exist: {}", root.display());
     }
-    let use_rust_gateway = env::var("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY")
-        .map(|value| value.trim() != "1")
-        .unwrap_or(true);
-    let use_python_compat_upstream = use_rust_gateway && should_use_python_compat_upstream(args)?;
+    reject_embedded_serve_backend(args)?;
     let public_config = config.clone();
-    let mut upstream_config = config.clone();
-    if use_rust_gateway {
-        // Keep fallback proxy traffic off the public listener. In pure Rust mode no
-        // upstream is started, but the address must still be distinct to avoid
-        // accidental self-proxy recursion for unhandled endpoints.
-        upstream_config.host = "127.0.0.1".to_string();
-        upstream_config.port = choose_upstream_port(&public_config)?;
-    }
     let log_path = paths::local_logs_dir().join(format!("serve-{}.log", public_config.port));
     println!("Starting OmniInfer service on port {}...", config.port);
     println!("Log: {}", log_path.display());
-    let upstream_child = if use_python_compat_upstream || !use_rust_gateway {
-        let child = start_serve_child(&upstream_config, args, &log_path, api_key.as_deref())?;
-        wait_for_gateway_ready(&upstream_config)?;
-        Some(child)
-    } else {
-        None
-    };
-    let rust_gateway = if use_rust_gateway {
-        let child = start_rust_gateway_child(
-            &public_config,
-            &upstream_config,
-            args,
-            &log_path,
-            api_key.as_deref(),
-            admin_api_key.as_deref(),
-            &admin_api_keys,
-            public_model_root.as_deref(),
-            use_python_compat_upstream,
-        )?;
-        wait_for_gateway_ready(&public_config)?;
-        Some(child)
-    } else {
-        None
-    };
+    let rust_gateway = start_rust_gateway_child(
+        &public_config,
+        args,
+        &log_path,
+        api_key.as_deref(),
+        admin_api_key.as_deref(),
+        &admin_api_keys,
+        public_model_root.as_deref(),
+    )?;
+    wait_for_gateway_ready(&public_config)?;
     let mut cloudflared_child = None;
     let mut public_url = None;
     if args.cloudflare {
@@ -1318,16 +1273,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
                 let _ = child.kill();
                 let _ = child.wait();
             }
-            if let Some(rust_gateway) = &rust_gateway {
-                stop_process(rust_gateway.id());
-            }
-            if upstream_child.is_some() {
-                let _ = http_client::post_json(
-                    &format!("{}/omni/shutdown", upstream_config.service_base_url()),
-                    &serde_json::json!({}),
-                    Duration::from_secs(10),
-                );
-            }
+            stop_process(rust_gateway.id());
             return Err(error);
         }
     }
@@ -1367,13 +1313,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         }
     }
     serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
-        pid: Some(
-            rust_gateway
-                .as_ref()
-                .map(std::process::Child::id)
-                .or_else(|| upstream_child.as_ref().map(std::process::Child::id))
-                .ok_or_else(|| anyhow::anyhow!("serve has no process pid to record"))?,
-        ),
+        pid: Some(rust_gateway.id()),
         cloudflared_pid: cloudflared_child.as_ref().map(std::process::Child::id),
         port: Some(public_config.port),
         log: Some(log_path.display().to_string()),
@@ -1407,12 +1347,8 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     }
     if !args.detach {
         println!("Press Ctrl+C to stop.");
-        let status = wait_for_foreground_service(
-            rust_gateway,
-            upstream_child,
-            cloudflared_child,
-            public_config.port,
-        )?;
+        let status =
+            wait_for_foreground_service(rust_gateway, cloudflared_child, public_config.port)?;
         if !status.success() {
             anyhow::bail!("OmniInfer service exited with status {status}");
         }
@@ -1474,24 +1410,11 @@ fn resolve_serve_restore_model(args: &ServeArgs) -> Option<ServeModelRequest> {
 }
 
 fn wait_for_foreground_service(
-    rust_gateway: Option<std::process::Child>,
-    mut upstream_child: Option<std::process::Child>,
+    mut rust_gateway: std::process::Child,
     cloudflared_child: Option<std::process::Child>,
     port: u16,
 ) -> Result<std::process::ExitStatus> {
-    let status = if let Some(mut rust_gateway) = rust_gateway {
-        let status = rust_gateway.wait()?;
-        if let Some(upstream_child) = upstream_child.as_mut() {
-            let _ = upstream_child.kill();
-            let _ = upstream_child.wait();
-        }
-        status
-    } else {
-        upstream_child
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("serve has no foreground process to wait for"))?
-            .wait()?
-    };
+    let status = rust_gateway.wait()?;
     if let Some(mut tunnel) = cloudflared_child {
         let _ = tunnel.kill();
         let _ = tunnel.wait();
@@ -1500,21 +1423,21 @@ fn wait_for_foreground_service(
     Ok(status)
 }
 
-fn should_use_python_compat_upstream(args: &ServeArgs) -> Result<bool> {
-    if env::var("OMNIINFER_RUST_FORCE_PYTHON_UPSTREAM")
-        .map(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
-    {
-        return Ok(true);
-    }
+fn reject_embedded_serve_backend(args: &ServeArgs) -> Result<()> {
     let Some(backend_id) = resolve_serve_start_backend(args)? else {
-        return Ok(false);
+        return Ok(());
     };
     let registry = backend_registry::BackendRegistry::load_current();
     let Some(backend) = registry.get(&backend_id) else {
-        return Ok(false);
+        return Ok(());
     };
-    Ok(backend.runtime_mode == "embedded")
+    if backend.runtime_mode == "embedded" {
+        anyhow::bail!(
+            "{} is an embedded backend. Python control-plane fallback has been removed; use an external-server backend or a backend adapter service.",
+            backend.id
+        );
+    }
+    Ok(())
 }
 
 fn resolve_serve_start_backend(args: &ServeArgs) -> Result<Option<String>> {
@@ -1545,19 +1468,6 @@ fn resolve_serve_start_backend(args: &ServeArgs) -> Result<Option<String>> {
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string))
-}
-
-fn choose_upstream_port(public_config: &config::AppConfig) -> Result<u16> {
-    if public_config.port != 0 {
-        for _ in 0..20 {
-            let listener = TcpListener::bind("127.0.0.1:0")?;
-            let port = listener.local_addr()?.port();
-            if port != public_config.port {
-                return Ok(port);
-            }
-        }
-    }
-    Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
 fn validate_serve_remote_access_args(args: &ServeArgs) -> Result<()> {
@@ -1752,35 +1662,37 @@ fn resolve_cloudflared(explicit_path: Option<&str>) -> Result<PathBuf> {
         return Ok(managed);
     }
 
-    let mut command = python_command();
-    pass_rust_path_overrides(&mut command);
-    let output = command
-        .arg("-c")
-        .arg("from service_core.remote_access import find_cloudflared; print(find_cloudflared())")
-        .current_dir(paths::repo_root())
-        .env("PYTHONPATH", paths::repo_root())
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        anyhow::bail!("failed to resolve cloudflared: {stderr}");
+    if let Some(path) = find_executable_in_path(cloudflared_executable_name()) {
+        return Ok(path);
     }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        anyhow::bail!("cloudflared resolver returned an empty path");
-    }
-    Ok(PathBuf::from(path))
+
+    anyhow::bail!("cloudflared was not found. Install it in PATH or pass --cloudflared-path.")
 }
 
 fn managed_cloudflared_path() -> PathBuf {
-    let exe = if cfg!(windows) {
-        "cloudflared.exe"
-    } else {
-        "cloudflared"
-    };
     paths::local_dir()
         .join("tools")
         .join("cloudflared")
-        .join(exe)
+        .join(cloudflared_executable_name())
+}
+
+fn cloudflared_executable_name() -> &'static str {
+    if cfg!(windows) {
+        "cloudflared.exe"
+    } else {
+        "cloudflared"
+    }
+}
+
+fn find_executable_in_path(name: &str) -> Option<PathBuf> {
+    let candidate = Path::new(name);
+    if candidate.components().count() > 1 && candidate.is_file() {
+        return Some(candidate.to_path_buf());
+    }
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
 }
 
 fn start_cloudflare_quick_tunnel(
@@ -1886,103 +1798,14 @@ fn format_log_tail(lines: &[String]) -> String {
     }
 }
 
-fn start_serve_child(
-    config: &config::AppConfig,
-    args: &ServeArgs,
-    log_path: &std::path::Path,
-    resolved_api_key: Option<&str>,
-) -> Result<std::process::Child> {
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let stdout = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)?;
-    let stderr = stdout.try_clone()?;
-    let mut command = python_command();
-    pass_rust_path_overrides(&mut command);
-    command
-        .arg(paths::repo_root().join("omniinfer.py"))
-        .arg("serve")
-        .arg("--host")
-        .arg(&config.host)
-        .arg("--port")
-        .arg(config.port.to_string())
-        .arg("--startup-timeout")
-        .arg(format!("{:.0}", config.startup_timeout))
-        .arg("--window-mode")
-        .arg(&config.window_mode)
-        .arg("--default-thinking")
-        .arg(&config.default_thinking)
-        .current_dir(paths::repo_root())
-        .env("OMNIINFER_SERVE_DIRECT", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
-    if !config.default_backend.trim().is_empty() {
-        command
-            .arg("--default-backend")
-            .arg(&config.default_backend);
-    }
-    if let Some(api_key) = resolved_api_key.filter(|value| !value.trim().is_empty()) {
-        command.arg("--api-key").arg(api_key);
-        command.env("OMNIINFER_API_KEY", api_key);
-    }
-    if args.allow_insecure_lan {
-        command.arg("--allow-insecure-lan");
-    }
-    if args.allow_remote_management {
-        command.arg("--allow-remote-management");
-    }
-    if let Some(backend_host) = args
-        .backend_host
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        command.arg("--backend-host").arg(backend_host);
-    }
-    if let Some(backend_port) = args.backend_port {
-        command.arg("--backend-port").arg(backend_port.to_string());
-    }
-    if let Some(force_backend) = args
-        .force_backend
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        command.arg("--force-backend").arg(force_backend);
-    }
-    if let Some(log_level) = &args.log_level {
-        command.arg("--log-level").arg(match log_level {
-            LogLevel::Debug => "DEBUG",
-            LogLevel::Info => "INFO",
-            LogLevel::Warning => "WARNING",
-            LogLevel::Error => "ERROR",
-        });
-    }
-    if args.verbose {
-        command.arg("--verbose");
-    }
-    if args.debug_body {
-        command.arg("--debug-body");
-    }
-    hide_child_window(&mut command);
-    if args.detach {
-        detach_child_process(&mut command);
-    }
-    Ok(command.spawn()?)
-}
-
 fn start_rust_gateway_child(
     public_config: &config::AppConfig,
-    upstream_config: &config::AppConfig,
     args: &ServeArgs,
     log_path: &std::path::Path,
     api_key: Option<&str>,
     admin_api_key: Option<&str>,
     admin_api_keys: &[gateway_auth::GatewayAdminApiKey],
     public_model_root: Option<&std::path::Path>,
-    compat_upstream: bool,
 ) -> Result<std::process::Child> {
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -1999,17 +1822,10 @@ fn start_rust_gateway_child(
         .arg(&public_config.host)
         .arg("--port")
         .arg(public_config.port.to_string())
-        .arg("--upstream-host")
-        .arg(upstream_config.service_host())
-        .arg("--upstream-port")
-        .arg(upstream_config.port.to_string())
         .current_dir(paths::repo_root())
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
-    if !compat_upstream {
-        command.arg("--no-compat-upstream");
-    }
     if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
         command.arg("--api-key").arg(api_key);
     }
@@ -2652,8 +2468,10 @@ fn ensure_local_gateway_running(config: &config::AppConfig) -> Result<()> {
     if is_gateway_running(config) {
         return Ok(());
     }
-    start_gateway_background(config)?;
-    wait_for_gateway_ready(config)
+    anyhow::bail!(
+        "local OmniInfer service is not running at {}. Start it with `omniinfer serve`.",
+        config.service_base_url()
+    )
 }
 
 fn is_gateway_running(config: &config::AppConfig) -> bool {
@@ -2667,52 +2485,6 @@ fn is_gateway_running(config: &config::AppConfig) -> bool {
                 == Some("ok")
         }
         _ => false,
-    }
-}
-
-fn start_gateway_background(config: &config::AppConfig) -> Result<()> {
-    let log_dir = paths::local_logs_dir();
-    std::fs::create_dir_all(&log_dir)?;
-    let log_path = log_dir.join("gateway.log");
-    let stdout = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)?;
-    let stderr = stdout.try_clone()?;
-    let mut command = python_command();
-    pass_rust_path_overrides(&mut command);
-    command
-        .arg(paths::repo_root().join("omniinfer.py"))
-        .arg("serve")
-        .arg("--host")
-        .arg(&config.host)
-        .arg("--port")
-        .arg(config.port.to_string())
-        .arg("--startup-timeout")
-        .arg(format!("{:.0}", config.startup_timeout))
-        .arg("--window-mode")
-        .arg(&config.window_mode)
-        .arg("--default-thinking")
-        .arg(&config.default_thinking)
-        .current_dir(paths::repo_root())
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
-    if !config.default_backend.trim().is_empty() {
-        command
-            .arg("--default-backend")
-            .arg(&config.default_backend);
-    }
-    hide_child_window(&mut command);
-    command.spawn()?;
-    Ok(())
-}
-
-fn pass_rust_path_overrides(command: &mut ProcessCommand) {
-    for key in ["OMNIINFER_RUST_REPO_ROOT", "OMNIINFER_RUST_STATE_ROOT"] {
-        if let Some(value) = std::env::var_os(key).filter(|value| !value.is_empty()) {
-            command.env(key, value);
-        }
     }
 }
 
@@ -2746,21 +2518,10 @@ fn current_system_name() -> &'static str {
     }
 }
 
-fn fallback_to_python(command: &Command) -> Result<()> {
-    if should_strict_rust() {
-        println!("omniinfer-rs command parsed: {command:?}");
-        println!("implementation pending; unset OMNIINFER_RUST_STRICT to fallback to Python");
-        return Ok(());
-    }
-    exec_python(env::args().skip(1))
-}
-
-fn should_force_python() -> bool {
-    env_flag("OMNIINFER_FORCE_PYTHON")
-}
-
-fn should_strict_rust() -> bool {
-    env_flag("OMNIINFER_RUST_STRICT")
+fn unsupported_rust_command(command: &Command) -> Result<()> {
+    anyhow::bail!(
+        "command is not available in the Rust control plane: {command:?}. Python control-plane fallback has been removed."
+    )
 }
 
 fn env_flag(name: &str) -> bool {
@@ -2772,39 +2533,6 @@ fn env_flag(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
-}
-
-fn exec_python<I>(args: I) -> Result<()>
-where
-    I: IntoIterator,
-    I::Item: AsRef<std::ffi::OsStr>,
-{
-    let script = paths::repo_root().join("omniinfer.py");
-    if !script.is_file() {
-        anyhow::bail!("{}", python_fallback_unavailable_message());
-    }
-    let status = python_command().arg(script).args(args).status()?;
-    std::process::exit(status.code().unwrap_or(1));
-}
-
-fn python_fallback_unavailable_message() -> &'static str {
-    "Python fallback is not available in this OmniInfer package"
-}
-
-fn python_command() -> ProcessCommand {
-    if let Some(value) = env::var_os("OMNIINFER_PYTHON").filter(|value| !value.is_empty()) {
-        return ProcessCommand::new(value);
-    }
-    #[cfg(windows)]
-    {
-        let mut command = ProcessCommand::new("py");
-        command.arg("-3");
-        command
-    }
-    #[cfg(not(windows))]
-    {
-        ProcessCommand::new("python3")
-    }
 }
 
 #[cfg(test)]
@@ -2827,13 +2555,5 @@ mod tests {
     fn auth_failures_are_not_transient_public_smoke_errors() {
         let error = anyhow::anyhow!("HTTPS request failed: http status: 401");
         assert!(!is_transient_public_smoke_error(&error));
-    }
-
-    #[test]
-    fn missing_python_fallback_message_is_stable() {
-        assert_eq!(
-            python_fallback_unavailable_message(),
-            "Python fallback is not available in this OmniInfer package"
-        );
     }
 }

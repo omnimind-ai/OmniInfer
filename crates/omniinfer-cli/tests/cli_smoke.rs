@@ -77,8 +77,10 @@ fn strict_mode_reports_unported_commands_without_fallback() {
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .args(["build", "llama.cpp-linux"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("implementation pending"));
+        .failure()
+        .stderr(predicate::str::contains(
+            "Python control-plane fallback has been removed",
+        ));
 }
 
 #[test]
@@ -88,7 +90,6 @@ fn advisor_system_json_uses_rust_path() {
     let state_root = temp_repo_root("advisor-system-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     install_fake_backend(&state_root, backend_id);
     fs::write(
         state_root.join("config").join("omniinfer.json"),
@@ -129,7 +130,6 @@ fn advisor_system_text_prints_usable_backends() {
     let state_root = temp_repo_root("advisor-system-text-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     install_fake_backend(&state_root, backend_id);
     fs::write(
         state_root.join("config").join("omniinfer.json"),
@@ -327,19 +327,11 @@ fn advisor_recommend_json_scans_managed_models() {
 
 #[test]
 fn serve_detach_starts_lan_gateway_with_api_key() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
-        ),
-    ]);
-    let port = gateway.port;
+    let port = free_port();
     let source_root = temp_repo_root("serve-lan-source");
     let state_root = temp_repo_root("serve-lan-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -348,14 +340,11 @@ fn serve_detach_starts_lan_gateway_with_api_key() {
         ),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args([
             "serve",
             "--detach",
@@ -371,14 +360,9 @@ fn serve_detach_starts_lan_gateway_with_api_key() {
         .stdout(predicate::str::contains("API Key: lan-key"))
         .stdout(predicate::str::contains("Curl:"));
 
-    let launched = wait_for_file(state_root.join("started_gateway.args"));
-    assert!(launched.contains("serve --host 0.0.0.0"));
-    assert!(launched.contains("--api-key lan-key"));
-    let _ = gateway.request();
-    let _ = gateway.request();
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
-    gateway.join();
+    let health = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(health["status"], "ok");
+    stop_rust_serve(&source_root, &state_root, port);
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
@@ -390,7 +374,6 @@ fn serve_detach_rejects_remote_management_without_key() {
     let public_root = state_root.join("public-models");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(&public_root).expect("create public root");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
@@ -421,7 +404,6 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     let state_root = temp_repo_root("serve-rust-external-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     let port = free_port();
     fs::write(
         state_root.join("config").join("omniinfer.json"),
@@ -432,7 +414,6 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     )
     .expect("write config");
     install_fake_backend(&state_root, backend_id);
-    let launcher = fake_python_launcher(&state_root);
 
     let stdout_path = state_root.join("serve-detach.stdout.txt");
     let stderr_path = state_root.join("serve-detach.stderr.txt");
@@ -440,7 +421,6 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
         .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--api-key", "test-key", "--port"])
         .arg(port.to_string())
         .stdout(Stdio::from(
@@ -460,10 +440,6 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     assert!(stdout.contains("OmniInfer service is ready"));
     assert!(stdout.contains(&format!("Local Base URL: http://127.0.0.1:{port}/v1")));
 
-    assert!(
-        !state_root.join("started_gateway.args").exists(),
-        "external-server serve should not start the Python compatibility upstream"
-    );
     let health = wait_for_http_json(port, "/health");
     assert_eq!(health["status"], "ok");
     let state_raw = fs::read_to_string(
@@ -496,20 +472,11 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
 #[test]
 fn serve_detach_starts_gateway_and_writes_state() {
     let backend_id = test_external_backend_id();
-    let state_response = format!(
-        r#"{{"omni":{{"backend":"{backend_id}","backend_ready":false,"model":null,"ctx_size":null}}}}"#
-    );
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(&state_response),
-    ]);
-    let port = gateway.port;
+    let port = free_port();
     let source_root = temp_repo_root("serve-detach-source");
     let state_root = temp_repo_root("serve-detach-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -518,14 +485,11 @@ fn serve_detach_starts_gateway_and_writes_state() {
         ),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--port"])
         .arg(port.to_string())
         .assert()
@@ -536,16 +500,8 @@ fn serve_detach_starts_gateway_and_writes_state() {
             port
         )));
 
-    let launched = wait_for_file(state_root.join("started_gateway.args"));
-    assert!(launched.contains("serve --host 127.0.0.1"));
-    assert!(launched.contains(&format!("--default-backend {backend_id}")));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
-    gateway.join();
+    let health = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(health["status"], "ok");
 
     let state_raw = fs::read_to_string(
         state_root
@@ -556,28 +512,19 @@ fn serve_detach_starts_gateway_and_writes_state() {
     .expect("serve state");
     let state: serde_json::Value = serde_json::from_str(&state_raw).expect("serve state json");
     assert_eq!(state["port"], port);
-    assert_eq!(state["backend"], backend_id);
-    assert_eq!(state["backend_ready"], false);
     assert!(state["log"].as_str().unwrap().contains("serve-"));
+    stop_rust_serve(&source_root, &state_root, port);
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
 
 #[test]
 fn serve_detach_ignores_config_host_by_default() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
-        ),
-    ]);
-    let port = gateway.port;
+    let port = free_port();
     let source_root = temp_repo_root("serve-ignore-config-host-source");
     let state_root = temp_repo_root("serve-ignore-config-host-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -586,14 +533,11 @@ fn serve_detach_ignores_config_host_by_default() {
         ),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--port"])
         .arg(port.to_string())
         .assert()
@@ -602,32 +546,20 @@ fn serve_detach_ignores_config_host_by_default() {
             "Local Base URL: http://127.0.0.1:{port}/v1"
         )));
 
-    let launched = wait_for_file(state_root.join("started_gateway.args"));
-    assert!(launched.contains("serve --host 127.0.0.1"));
-    let _ = gateway.request();
-    let _ = gateway.request();
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
-    gateway.join();
+    let health = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(health["status"], "ok");
+    stop_rust_serve(&source_root, &state_root, port);
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
 
 #[test]
 fn serve_detach_respects_explicit_host() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
-        ),
-    ]);
-    let port = gateway.port;
+    let port = free_port();
     let source_root = temp_repo_root("serve-explicit-host-source");
     let state_root = temp_repo_root("serve-explicit-host-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -636,14 +568,11 @@ fn serve_detach_respects_explicit_host() {
         ),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args([
             "serve",
             "--detach",
@@ -658,33 +587,21 @@ fn serve_detach_respects_explicit_host() {
         .success()
         .stdout(predicate::str::contains("API Key: host-key"));
 
-    let launched = wait_for_file(state_root.join("started_gateway.args"));
-    assert!(launched.contains("serve --host 0.0.0.0"));
-    assert!(launched.contains("--api-key host-key"));
-    let _ = gateway.request();
-    let _ = gateway.request();
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
-    gateway.join();
+    let health = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(health["status"], "ok");
+    stop_rust_serve(&source_root, &state_root, port);
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
 
 #[test]
-fn serve_foreground_waits_and_cleans_state() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
-        ),
-    ]);
-    let port = gateway.port;
+fn gateway_foreground_serves_health_and_shutdown() {
+    let port = free_port();
     let source_root = temp_repo_root("serve-foreground-source");
     let state_root = temp_repo_root("serve-foreground-state");
     fs::create_dir_all(&source_root).expect("create source root");
+    fs::write(source_root.join("Cargo.toml"), "[workspace]\n").expect("write source manifest");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -693,28 +610,40 @@ fn serve_foreground_waits_and_cleans_state() {
         ),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&state_root);
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
-    cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
+    let stdout_path = state_root.join("serve-foreground.stdout.txt");
+    let stderr_path = state_root.join("serve-foreground.stderr.txt");
+    let mut child = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer-rs"))
+        .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
-        .args(["serve", "--port"])
+        .args(["gateway", "--host", "127.0.0.1", "--port"])
         .arg(port.to_string())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("OmniInfer service is ready"))
-        .stdout(predicate::str::contains("Press Ctrl+C to stop."));
+        .stdout(Stdio::from(
+            fs::File::create(&stdout_path).expect("create stdout capture"),
+        ))
+        .stderr(Stdio::from(
+            fs::File::create(&stderr_path).expect("create stderr capture"),
+        ))
+        .spawn()
+        .expect("spawn foreground serve");
 
-    let launched = wait_for_file(state_root.join("started_gateway.args"));
-    assert!(launched.contains("serve --host 127.0.0.1"));
-    let _ = gateway.request();
-    let _ = gateway.request();
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
-    gateway.join();
+    let health = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(health["status"], "ok");
+    let _ = http_client::post_json(
+        &format!("http://127.0.0.1:{port}/omni/shutdown"),
+        &serde_json::json!({}),
+        Duration::from_secs(2),
+    );
+    let status = child.wait().expect("wait foreground serve");
+    let stdout = fs::read_to_string(&stdout_path).expect("read stdout capture");
+    let stderr = fs::read_to_string(&stderr_path).expect("read stderr capture");
+    assert!(
+        status.success(),
+        "foreground gateway failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
     assert!(
         !state_root
             .join(".local")
@@ -745,7 +674,6 @@ fn serve_detach_loads_model_before_ready() {
     let state_root = temp_repo_root("serve-detach-load-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -757,14 +685,11 @@ fn serve_detach_loads_model_before_ready() {
     install_fake_backend(&state_root, backend_id);
     let model = state_root.join("model.gguf");
     fs::write(&model, "").expect("write model");
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--port"])
         .arg(port.to_string())
         .arg("--backend-port")
@@ -811,7 +736,6 @@ fn serve_detach_restores_last_model_when_model_is_omitted() {
     let state_root = temp_repo_root("serve-detach-restore-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -837,14 +761,11 @@ fn serve_detach_restores_last_model_when_model_is_omitted() {
     )
     .expect("write state");
     install_fake_backend(&state_root, backend_id);
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--port"])
         .arg(port.to_string())
         .assert()
@@ -883,7 +804,6 @@ fn serve_detach_can_skip_restoring_last_model() {
     let state_root = temp_repo_root("serve-detach-no-restore-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -908,14 +828,11 @@ fn serve_detach_can_skip_restoring_last_model() {
         ),
     )
     .expect("write state");
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--no-restore-model", "--port"])
         .arg(port.to_string())
         .assert()
@@ -940,7 +857,6 @@ fn serve_detach_restores_last_model_without_python_upstream() {
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
     fs::create_dir_all(state_root.join(".local").join("config")).expect("create local config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     let port = free_port();
     fs::write(
         state_root.join("config").join("omniinfer.json"),
@@ -967,13 +883,11 @@ fn serve_detach_restores_last_model_without_python_upstream() {
     )
     .expect("write state");
     install_fake_runtime_server(&state_root, test_external_backend_id());
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--api-key", "test-key", "--port"])
         .arg(port.to_string())
         .assert()
@@ -985,10 +899,6 @@ fn serve_detach_restores_last_model_without_python_upstream() {
         .stdout(predicate::str::contains("Backend ready: yes"))
         .stdout(predicate::str::contains("ctx-size: 512"));
 
-    assert!(
-        !state_root.join("started_gateway.args").exists(),
-        "serve restore should use the Rust gateway/runtime path, not Python fallback"
-    );
     let health = wait_for_http_json(port, "/health?deep=true");
     assert_eq!(health["status"], "ok");
     assert_eq!(
@@ -1028,7 +938,6 @@ fn serve_detach_runs_smoke_test() {
     let state_root = temp_repo_root("serve-detach-smoke-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -1040,14 +949,11 @@ fn serve_detach_runs_smoke_test() {
     install_fake_backend(&state_root, backend_id);
     let model = state_root.join("model.gguf");
     fs::write(&model, "").expect("write model");
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--smoke-test", "--port"])
         .arg(port.to_string())
         .arg("--model")
@@ -1072,19 +978,11 @@ fn serve_detach_runs_smoke_test() {
 
 #[test]
 fn serve_detach_starts_cloudflare_tunnel() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(
-            r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":false,"model":null,"ctx_size":null}}"#,
-        ),
-    ]);
-    let port = gateway.port;
+    let port = free_port();
     let source_root = temp_repo_root("serve-cloudflare-source");
     let state_root = temp_repo_root("serve-cloudflare-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -1093,15 +991,12 @@ fn serve_detach_starts_cloudflare_tunnel() {
         ),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&state_root);
     let cloudflared = fake_cloudflared_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["serve", "--detach", "--cloudflare", "--cloudflared-path"])
         .arg(&cloudflared)
         .args(["--api-key", "test-key", "--port"])
@@ -1114,16 +1009,10 @@ fn serve_detach_starts_cloudflare_tunnel() {
         .stdout(predicate::str::contains("API Key: test-key"))
         .stdout(predicate::str::contains("Curl:"));
 
-    let launched = wait_for_file(state_root.join("started_gateway.args"));
-    assert!(launched.contains("serve --host 127.0.0.1"));
-    assert!(launched.contains("--api-key test-key"));
+    let health = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(health["status"], "ok");
     let tunnel_args = wait_for_file(state_root.join("cloudflared.args"));
     assert!(tunnel_args.contains(&format!("tunnel --url http://127.0.0.1:{port}")));
-    let _ = gateway.request();
-    let _ = gateway.request();
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health?deep=true HTTP/1.1"));
-    gateway.join();
 
     let state_raw = fs::read_to_string(
         state_root
@@ -1142,6 +1031,7 @@ fn serve_detach_starts_cloudflare_tunnel() {
         "https://example-test.trycloudflare.com/v1"
     );
     assert!(state["cloudflared_pid"].as_u64().unwrap() > 0);
+    stop_rust_serve(&source_root, &state_root, port);
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
@@ -1163,7 +1053,6 @@ fn serve_detach_warns_on_transient_public_smoke_failure() {
     let state_root = temp_repo_root("serve-cloudflare-smoke-warning-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -1172,7 +1061,6 @@ fn serve_detach_warns_on_transient_public_smoke_failure() {
         ),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&state_root);
     let cloudflared = fake_cloudflared_launcher_with_url(
         &state_root,
         "https://definitely-missing.invalid.trycloudflare.com",
@@ -1180,11 +1068,9 @@ fn serve_detach_warns_on_transient_public_smoke_failure() {
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .env("OMNIINFER_RUST_DISABLE_GATEWAY_PROXY", "1")
         .env("OMNIINFER_RUST_PUBLIC_SMOKE_RETRY_SECONDS", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args([
             "serve",
             "--detach",
@@ -1539,85 +1425,48 @@ fn shutdown_posts_to_local_gateway() {
 
 #[test]
 fn backend_stop_starts_gateway_when_needed() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(r#"{"stopped":true}"#),
-    ]);
     let root = temp_repo_root("backend-stop-autostart");
     fs::create_dir_all(root.join("config")).expect("create config dir");
     fs::write(
         root.join("config").join("omniinfer.json"),
         format!(
             r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10}}"#,
-            gateway.port
+            free_port()
         ),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["backend", "stop"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Current backend process stopped"));
-
-    let launched = wait_for_file(root.join("started_gateway.args"));
-    assert!(launched.contains("omniinfer.py"));
-    assert!(launched.contains("serve --host 127.0.0.1"));
-    assert!(launched.contains(&format!("--port {}", gateway.port)));
-    assert!(launched.contains("--startup-timeout 10"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("GET /health HTTP/1.1"));
-    let request = gateway.request();
-    assert!(request.starts_with("POST /omni/backend/stop HTTP/1.1"));
-    gateway.join();
+        .failure()
+        .stderr(predicate::str::contains("Start it with `omniinfer serve`"));
     fs::remove_dir_all(root).ok();
 }
 
 #[test]
 fn gateway_autostart_can_use_separate_state_root() {
-    let gateway = TestGateway::start(vec![
-        Response::new(r#"{"status":"starting"}"#),
-        Response::new(r#"{"status":"ok"}"#),
-        Response::new(r#"{"stopped":true}"#),
-    ]);
     let source_root = temp_repo_root("source-root");
     let state_root = temp_repo_root("state-root");
     fs::create_dir_all(source_root.join(".local").join("logs")).expect("create source logs");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
-        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, free_port()),
     )
     .expect("write config");
-    let launcher = fake_python_launcher(&state_root);
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
-        .env("OMNIINFER_PYTHON", &launcher)
         .args(["backend", "stop"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Current backend process stopped"));
+        .failure()
+        .stderr(predicate::str::contains("Start it with `omniinfer serve`"));
 
-    let launched = wait_for_file(state_root.join("started_gateway.args"));
-    assert!(launched.contains(&source_root.join("omniinfer.py").display().to_string()));
-    assert!(
-        state_root
-            .join(".local")
-            .join("logs")
-            .join("gateway.log")
-            .is_file()
-    );
     assert!(
         !source_root
             .join(".local")
@@ -1625,11 +1474,6 @@ fn gateway_autostart_can_use_separate_state_root() {
             .join("gateway.log")
             .exists()
     );
-    let _ = gateway.request();
-    let _ = gateway.request();
-    let request = gateway.request();
-    assert!(request.starts_with("POST /omni/backend/stop HTTP/1.1"));
-    gateway.join();
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
@@ -1812,17 +1656,6 @@ fn temp_repo_root(test_name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("omniinfer-rs-{test_name}-{nanos}"))
 }
 
-fn fake_python_launcher(root: &std::path::Path) -> std::path::PathBuf {
-    #[cfg(unix)]
-    {
-        fake_python_launcher_unix(root)
-    }
-    #[cfg(windows)]
-    {
-        fake_python_launcher_windows(root)
-    }
-}
-
 fn install_fake_backend(root: &std::path::Path, backend_id: &str) {
     let binary_name = if cfg!(windows) {
         "llama-server.exe"
@@ -1936,38 +1769,6 @@ PY
         .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&launcher, permissions).expect("chmod fake runtime");
-}
-
-#[cfg(unix)]
-fn fake_python_launcher_unix(root: &std::path::Path) -> std::path::PathBuf {
-    let launcher = root.join("fake-python.sh");
-    let output = root.join("started_gateway.args");
-    fs::write(
-        &launcher,
-        format!(
-            "#!/usr/bin/env bash\nprintf '%s ' \"$@\" > '{}'\n",
-            output.display()
-        ),
-    )
-    .expect("write fake launcher");
-    let mut permissions = fs::metadata(&launcher)
-        .expect("launcher metadata")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&launcher, permissions).expect("chmod launcher");
-    launcher
-}
-
-#[cfg(windows)]
-fn fake_python_launcher_windows(root: &std::path::Path) -> std::path::PathBuf {
-    let launcher = root.join("fake-python.cmd");
-    let output = root.join("started_gateway.args");
-    fs::write(
-        &launcher,
-        format!("@echo off\r\necho %* > \"{}\"\r\n", output.display()),
-    )
-    .expect("write fake launcher");
-    launcher
 }
 
 fn fake_cloudflared_launcher(root: &std::path::Path) -> std::path::PathBuf {
@@ -2092,6 +1893,18 @@ fn wait_for_http_json(port: u16, path: &str) -> serde_json::Value {
         thread::sleep(Duration::from_millis(50));
     }
     panic!("timed out waiting for {url}");
+}
+
+fn stop_rust_serve(source_root: &std::path::Path, state_root: &std::path::Path, port: u16) {
+    let mut stop = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    stop.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", state_root)
+        .args(["serve", "stop", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .success();
+    assert!(wait_for_port_closed(port));
 }
 
 fn wait_for_port_closed(port: u16) -> bool {

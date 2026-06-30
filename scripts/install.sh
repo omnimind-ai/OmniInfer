@@ -371,8 +371,8 @@ else
         git -C "${INSTALL_DIR}" config --local url."https://github.com/".insteadOf "git@github.com:"
     fi
 fi
-if [[ ! -f "${INSTALL_DIR}/omniinfer.py" ]]; then
-    fatal "Repository clone appears incomplete — omniinfer.py not found in ${INSTALL_DIR}"
+if [[ ! -f "${INSTALL_DIR}/omniinfer" ]]; then
+    fatal "Repository clone appears incomplete — omniinfer launcher not found in ${INSTALL_DIR}"
 fi
 ok "Repository ready at ${INSTALL_DIR}"
 

@@ -9,7 +9,7 @@ use axum::body::Body;
 use axum::extract::{ConnectInfo, State};
 use axum::http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-    CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderMap, HeaderName, HeaderValue,
+    CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue,
     TRANSFER_ENCODING,
 };
 use axum::http::{Method, Request, Response, StatusCode, Uri};
@@ -46,17 +46,12 @@ use tokio_stream::wrappers::ReceiverStream;
 pub struct GatewayConfig {
     pub listen_host: String,
     pub listen_port: u16,
-    pub upstream_host: String,
-    pub upstream_port: u16,
-    pub compat_upstream: bool,
     pub access_policy: GatewayAccessPolicy,
     pub public_model_root: Option<PathBuf>,
 }
 
 #[derive(Clone)]
 struct GatewayState {
-    upstream_base: String,
-    compat_upstream: bool,
     backend_host: String,
     access_policy: Arc<tokio::sync::Mutex<DynamicAccessPolicy>>,
     public_model_root: Option<PathBuf>,
@@ -75,8 +70,6 @@ pub fn run_gateway_blocking(config: GatewayConfig) -> Result<()> {
 pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let state = GatewayState {
-        upstream_base: format!("http://{}:{}", config.upstream_host, config.upstream_port),
-        compat_upstream: config.compat_upstream,
         backend_host: "127.0.0.1".to_string(),
         access_policy: Arc::new(tokio::sync::Mutex::new(DynamicAccessPolicy::new(
             config.access_policy,
@@ -252,49 +245,10 @@ async fn proxy_request_inner(
         return Ok(response);
     }
 
-    let upstream = upstream_uri(&state.upstream_base, request.uri())?;
-    let (parts, body) = request.into_parts();
-    let mut body = body.collect().await?.to_bytes();
-    if parts.method == Method::POST && path == "/v1/chat/completions" {
-        body = normalize_chat_body(body, false)?;
-    }
-    let mut builder = Request::builder().method(parts.method).uri(upstream);
-    for (name, value) in parts.headers.iter() {
-        if should_forward_header(name) {
-            builder = builder.header(name, value);
-        }
-    }
-    let upstream_request = builder.body(Full::new(body))?;
-    let response = state.client.request(upstream_request).await?;
-    let status = response.status();
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let streaming = content_type.contains("text/event-stream");
-    let mut builder = Response::builder().status(status);
-    for (name, value) in response.headers().iter() {
-        if should_forward_response_header(name) {
-            builder = builder.header(name, value);
-        }
-    }
-    let mut response = if streaming {
-        builder.body(Body::new(response.into_body()))?
-    } else {
-        let body = response.into_body().collect().await?.to_bytes();
-        builder = builder.header(CONTENT_LENGTH, body.len().to_string());
-        builder.body(Body::from(body))?
-    };
-    add_cors_headers(response.headers_mut());
-
-    if should_shutdown && status.is_success() {
-        if let Some(sender) = state.shutdown.lock().await.take() {
-            let _ = sender.send(());
-        }
-    }
-    Ok(response)
+    Ok(json_response(
+        StatusCode::NOT_FOUND,
+        json!({"error": {"message": format!("endpoint is not implemented by the Rust gateway: {} {}", request.method(), path)}}),
+    ))
 }
 
 async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path: &str) -> bool {
@@ -324,9 +278,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
             | "/omni/model/unload",
         ) => true,
         (&Method::POST, "/omni/thinking/select") => true,
-        (&Method::POST, "/v1/chat/completions" | "/v1/messages") => {
-            state.runtime.lock().await.has_loaded_runtime() || !state.compat_upstream
-        }
+        (&Method::POST, "/v1/chat/completions" | "/v1/messages") => true,
         (
             &Method::POST,
             "/tokenize" | "/detokenize" | "/omni/tokenize" | "/omni/detokenize"
@@ -557,8 +509,7 @@ async fn try_handle_rust_endpoint(
             )))
         }
         (&Method::POST, "/omni/model/select" | "/omni/model/load") => {
-            let (parts, body) = request.into_parts();
-            let body = body.collect().await?.to_bytes();
+            let body = request.into_body().collect().await?.to_bytes();
             let mut payload: Value = serde_json::from_slice(&body)?;
             if let Err(error) = normalize_public_model_select(&mut payload, state, auth.remote) {
                 return Ok(Some(json_response(
@@ -566,34 +517,20 @@ async fn try_handle_rust_endpoint(
                     json!({"error": {"message": error.to_string()}}),
                 )));
             }
-            let requested_backend = {
-                let mut runtime = state.runtime.lock().await;
+            {
+                let runtime = state.runtime.lock().await;
                 let requested_backend = runtime.resolve_requested_backend(&payload)?;
                 let registry = BackendRegistry::load_current();
                 let backend = registry
                     .get(&requested_backend)
                     .ok_or_else(|| anyhow::anyhow!("unsupported backend: {requested_backend}"))?;
                 if backend.runtime_mode == "embedded" {
-                    runtime.stop_runtime()?;
-                    runtime.selected_backend = Some(backend.id.clone());
-                    local_state::save_selected_backend(&backend.id)?;
-                    Some(backend.id.clone())
-                } else {
-                    None
+                    return Ok(Some(json_response(
+                        StatusCode::BAD_REQUEST,
+                        json!({"error": {"message": format!("{} is an embedded backend. Python control-plane fallback has been removed; use an external-server backend or a backend adapter service.", backend.id)}}),
+                    )));
                 }
             };
-            if requested_backend.is_some() {
-                let response = proxy_collected_body_to_upstream(
-                    &state.client,
-                    &state.upstream_base,
-                    &parts.method,
-                    &parts.uri,
-                    &parts.headers,
-                    body,
-                )
-                .await?;
-                return Ok(Some(response));
-            }
             let backend_host = state.backend_host.clone();
             let runtime = Arc::clone(&state.runtime);
             let result = tokio::task::spawn_blocking(move || {
@@ -752,25 +689,6 @@ async fn proxy_get_to_runtime(
         .body(Full::new(HyperBytes::new()))?;
     let response = client.request(request).await?;
     response_from_upstream(response).await
-}
-
-async fn proxy_collected_body_to_upstream(
-    client: &Client<HttpConnector, Full<HyperBytes>>,
-    upstream_base: &str,
-    method: &Method,
-    uri: &Uri,
-    headers: &HeaderMap,
-    body: HyperBytes,
-) -> Result<Response<Body>> {
-    let upstream = upstream_uri(upstream_base, uri)?;
-    let mut builder = Request::builder().method(method).uri(upstream);
-    for (name, value) in headers.iter() {
-        if should_forward_header(name) {
-            builder = builder.header(name, value);
-        }
-    }
-    let upstream_request = builder.body(Full::new(body))?;
-    response_from_upstream(client.request(upstream_request).await?).await
 }
 
 async fn proxy_body_to_runtime(
@@ -949,12 +867,6 @@ async fn response_from_upstream(
     Ok(response)
 }
 
-fn normalize_chat_body(body: HyperBytes, default_thinking: bool) -> Result<HyperBytes> {
-    let payload: serde_json::Value = serde_json::from_slice(&body)?;
-    let normalized = normalize_chat_request(payload, default_thinking)?;
-    Ok(HyperBytes::from(serde_json::to_vec(&normalized.payload)?))
-}
-
 fn default_thinking_enabled() -> bool {
     local_state::load_state()
         .ok()
@@ -1050,7 +962,7 @@ impl RustRuntimeManager {
             .ok_or_else(|| anyhow::anyhow!("unsupported backend: {requested_backend}"))?;
         if backend.runtime_mode != "external_server" {
             anyhow::bail!(
-                "{} is an embedded backend; Rust gateway runtime manager currently supports external server backends only",
+                "{} is an embedded backend. Python control-plane fallback has been removed; use an external-server backend or a backend adapter service.",
                 backend.id
             );
         }
@@ -1979,14 +1891,6 @@ fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn upstream_uri(base: &str, uri: &Uri) -> Result<Uri> {
-    let path = uri
-        .path_and_query()
-        .map(|value| value.as_str())
-        .unwrap_or("/");
-    Ok(format!("{}{}", base.trim_end_matches('/'), path).parse()?)
-}
-
 fn query_value(uri: &Uri, key: &str) -> Option<String> {
     uri.query()?.split('&').find_map(|part| {
         let (name, value) = part.split_once('=')?;
@@ -2000,10 +1904,6 @@ fn current_system_name() -> String {
         "windows" => "windows".to_string(),
         _ => "linux".to_string(),
     }
-}
-
-fn should_forward_header(name: &HeaderName) -> bool {
-    !is_hop_by_hop_header(name) && *name != HOST && *name != CONTENT_LENGTH
 }
 
 fn should_forward_response_header(name: &HeaderName) -> bool {
@@ -2069,17 +1969,6 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
-    #[test]
-    fn builds_upstream_uri_with_query() {
-        let uri: Uri = "/v1/models?foo=bar".parse().unwrap();
-        assert_eq!(
-            upstream_uri("http://127.0.0.1:9001", &uri)
-                .unwrap()
-                .to_string(),
-            "http://127.0.0.1:9001/v1/models?foo=bar"
-        );
-    }
-
     #[tokio::test]
     async fn proxy_forwards_public_request_with_auth() {
         let upstream = spawn_test_upstream().await;
@@ -2137,7 +2026,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_forwards_openai_body_and_query() {
+    async fn chat_without_loaded_model_returns_rust_error() {
         let upstream = spawn_test_upstream().await;
         let gateway = spawn_test_gateway(
             upstream.port,
@@ -2153,6 +2042,9 @@ mod tests {
             ureq::post(format!(
                 "http://127.0.0.1:{port}/v1/chat/completions?trace=1"
             ))
+            .config()
+            .http_status_as_error(false)
+            .build()
             .header("CF-Connecting-IP", "203.0.113.10")
             .header("Authorization", "Bearer secret")
             .send_json(serde_json::json!({
@@ -2163,47 +2055,35 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(response.status().as_u16(), 200);
-        let value: serde_json::Value = response.into_body().read_json().unwrap();
-        assert_eq!(value["trace"], "1");
-        assert_eq!(value["body"]["model"], "omniinfer");
-        assert_eq!(value["auth"], "Bearer secret");
+        assert_eq!(response.status().as_u16(), 404);
+        let body: Value = response.into_body().read_json().unwrap();
+        assert_eq!(body["error"]["message"], "model is not loaded: omniinfer");
         gateway.stop().await;
         upstream.stop().await;
     }
 
     #[tokio::test]
-    async fn proxy_normalizes_chat_request_before_upstream() {
+    async fn unknown_endpoint_returns_rust_gateway_error() {
         let upstream = spawn_test_upstream().await;
         let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
         let port = gateway.port;
         let response = tokio::task::spawn_blocking(move || {
-            ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-                .send_json(serde_json::json!({
-                    "model": "omniinfer",
-                    "messages": [{"role": "user", "content": "Hello"}],
-                    "think": false,
-                    "reasoning": {"effort": "high"},
-                    "request_defaults": {"temperature": 0.2},
-                    "functions": [{"name": "context_time_now", "parameters": {"type": "object"}}],
-                    "function_call": {"name": "context_time_now"}
-                }))
+            ureq::post(format!("http://127.0.0.1:{port}/v1/unknown"))
+                .config()
+                .http_status_as_error(false)
+                .build()
+                .send_json(serde_json::json!({}))
                 .unwrap()
         })
         .await
         .unwrap();
-        assert_eq!(response.status().as_u16(), 200);
-        let value: serde_json::Value = response.into_body().read_json().unwrap();
-        let body = &value["body"];
-        assert!(body.get("think").is_none());
-        assert!(body.get("reasoning").is_none());
-        assert!(body.get("request_defaults").is_none());
-        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
-        assert_eq!(body["reasoning_format"], "none");
-        assert_eq!(body["tools"][0]["function"]["name"], "context_time_now");
-        assert_eq!(
-            body["tool_choice"],
-            json!({"type": "function", "function": {"name": "context_time_now"}})
+        assert_eq!(response.status().as_u16(), 404);
+        let body: Value = response.into_body().read_json().unwrap();
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("endpoint is not implemented")
         );
         gateway.stop().await;
         upstream.stop().await;
@@ -2277,13 +2157,7 @@ mod tests {
     #[tokio::test]
     async fn pure_rust_gateway_rejects_chat_without_loaded_runtime() {
         let upstream = spawn_test_upstream().await;
-        let gateway = spawn_test_gateway_with_options(
-            upstream.port,
-            GatewayAccessPolicy::default(),
-            None,
-            false,
-        )
-        .await;
+        let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
         let port = gateway.port;
         let response = tokio::task::spawn_blocking(move || {
             ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
@@ -2309,13 +2183,7 @@ mod tests {
     #[tokio::test]
     async fn pure_rust_gateway_rejects_unloaded_chat_model() {
         let upstream = spawn_test_upstream().await;
-        let gateway = spawn_test_gateway_with_options(
-            upstream.port,
-            GatewayAccessPolicy::default(),
-            None,
-            false,
-        )
-        .await;
+        let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
         let port = gateway.port;
         let response = tokio::task::spawn_blocking(move || {
             ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
@@ -2686,7 +2554,7 @@ GPU-a, 5151, python, 256
     }
 
     #[tokio::test]
-    async fn rust_gateway_delegates_embedded_model_loads_to_upstream() {
+    async fn rust_gateway_rejects_embedded_model_loads() {
         let Some(backend_id) = embedded_test_backend_id() else {
             return;
         };
@@ -2701,6 +2569,9 @@ GPU-a, 5151, python, 256
 
         let load_response = tokio::task::spawn_blocking(move || {
             ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                .config()
+                .http_status_as_error(false)
+                .build()
                 .send_json(json!({
                     "backend": backend_id,
                     "model": "embedded-demo",
@@ -2710,25 +2581,20 @@ GPU-a, 5151, python, 256
         })
         .await
         .unwrap();
-        assert_eq!(load_response.status().as_u16(), 200);
+        assert_eq!(load_response.status().as_u16(), 400);
         let load_body: Value = load_response.into_body().read_json().unwrap();
-        assert_eq!(load_body["selected_backend"], backend_id);
-        assert_eq!(load_body["delegated"], true);
-        assert_eq!(load_body["body"]["model"], "embedded-demo");
-
-        let chat_response = tokio::task::spawn_blocking(move || {
-            ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-                .send_json(json!({
-                    "model": "omniinfer",
-                    "messages": [{"role": "user", "content": "Hello"}],
-                    "stream": false
-                }))
+        assert!(
+            load_body["error"]["message"]
+                .as_str()
                 .unwrap()
-        })
-        .await
-        .unwrap();
-        let chat_body: Value = chat_response.into_body().read_json().unwrap();
-        assert_eq!(chat_body["body"]["model"], "omniinfer");
+                .contains("embedded backend")
+        );
+        assert!(
+            load_body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Python control-plane fallback has been removed")
+        );
 
         gateway.stop().await;
         upstream.stop().await;
@@ -2830,7 +2696,6 @@ GPU-a, 5151, python, 256
         write_public_model_manifest(&root, "qwen3.5-4b-q4_k_m");
         let upstream = spawn_test_upstream().await;
         let gateway = spawn_test_gateway_with_public_root(
-            upstream.port,
             GatewayAccessPolicy {
                 api_key: "inference".to_string(),
                 admin_api_key: "admin".to_string(),
@@ -2883,7 +2748,6 @@ GPU-a, 5151, python, 256
 
         let upstream = spawn_test_upstream().await;
         let gateway = spawn_test_gateway_with_public_root(
-            upstream.port,
             GatewayAccessPolicy {
                 api_key: "inference".to_string(),
                 admin_api_key: "admin".to_string(),
@@ -2928,7 +2792,6 @@ GPU-a, 5151, python, 256
 
         let upstream = spawn_test_upstream().await;
         let gateway = spawn_test_gateway_with_public_root(
-            upstream.port,
             GatewayAccessPolicy {
                 api_key: "inference".to_string(),
                 admin_api_keys: vec![
@@ -3032,7 +2895,6 @@ GPU-a, 5151, python, 256
 
         let upstream = spawn_test_upstream().await;
         let gateway = spawn_test_gateway_with_public_root(
-            upstream.port,
             GatewayAccessPolicy {
                 api_key: "inference".to_string(),
                 admin_api_key: "old-admin".to_string(),
@@ -3160,25 +3022,22 @@ GPU-a, 5151, python, 256
     }
 
     async fn spawn_test_gateway(
-        upstream_port: u16,
+        _unused_port: u16,
         access_policy: GatewayAccessPolicy,
     ) -> TestServer {
-        spawn_test_gateway_with_public_root(upstream_port, access_policy, None).await
+        spawn_test_gateway_with_public_root(access_policy, None).await
     }
 
     async fn spawn_test_gateway_with_public_root(
-        upstream_port: u16,
         access_policy: GatewayAccessPolicy,
         public_model_root: Option<PathBuf>,
     ) -> TestServer {
-        spawn_test_gateway_with_options(upstream_port, access_policy, public_model_root, true).await
+        spawn_test_gateway_with_options(access_policy, public_model_root).await
     }
 
     async fn spawn_test_gateway_with_options(
-        upstream_port: u16,
         access_policy: GatewayAccessPolicy,
         public_model_root: Option<PathBuf>,
-        compat_upstream: bool,
     ) -> TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -3191,9 +3050,6 @@ GPU-a, 5151, python, 256
                 result = run_gateway(GatewayConfig {
                     listen_host: "127.0.0.1".to_string(),
                     listen_port: port,
-                    upstream_host: "127.0.0.1".to_string(),
-                    upstream_port,
-                    compat_upstream,
                     access_policy,
                     public_model_root,
                 }) => {
