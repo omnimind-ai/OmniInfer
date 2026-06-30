@@ -27,8 +27,9 @@ Run the smallest relevant test set for your change, then broaden coverage when t
 Common checks:
 
 ```bash
-python3 -m unittest tests.test_runtime tests.test_http_handler tests.test_anthropic_adapter
-python3 -m py_compile service_core/runtime.py service_core/service.py
+cargo fmt --all -- --check
+cargo test --workspace
+python3 -m unittest tests.test_linux_release_backends
 bash -n scripts/install.sh
 git diff --check
 ```

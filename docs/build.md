@@ -215,7 +215,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 - It can prebuild any of the Windows runtimes above before packaging
 - It packages only the requested backends when `-Backends` is provided; otherwise it packages every built backend under `.local/runtime/windows`
 - It builds the Rust control-plane CLI with `cargo build --release -p omniinfer-cli` and installs it as `omniinfer.exe`
-- It does not copy `omniinfer.py` or `service_core/`; Python control-plane fallback is not packaged
+- It packages the Rust control-plane launcher only; Python control-plane fallback is not packaged
 - It writes PowerShell and cmd.exe launchers; use `omniinfer.ps1` from PowerShell and keep `omniinfer.cmd` for cmd.exe compatibility
 
 ## Linux
@@ -359,10 +359,9 @@ the runtime environment needed by their launcher.
 
 The portable package exposes `omniinfer` as the user-facing launcher and
 `omniinfer-rs` as the Rust control-plane binary. Packaging builds the CLI with
-`cargo build --release -p omniinfer-cli`. Default packages do not copy
-`omniinfer.py` or `service_core/`. Embedded backend paths that still need an
-in-process Python control plane, such as `mnn-linux`, are rejected until they
-have an adapter service or Rust-native driver.
+`cargo build --release -p omniinfer-cli`. Embedded backend paths that still
+need an in-process Python control plane, such as `mnn-linux`, are rejected
+until they have an adapter service or Rust-native driver.
 
 Optional prebuild examples:
 
@@ -442,8 +441,6 @@ MLX can still be built as a backend environment, but it is not exposed through
 Rust-only release packages until the embedded driver is replaced by an adapter
 service or Rust-native driver.
 
-On macOS source checkouts, `./omniinfer` also auto-prefers `.local/runtime/macos/mlx-mac/venv/bin/python3` when that runtime venv exists.
-
 ### macOS Portable Packaging
 
 `scripts/platforms/macos/build-release.sh` packages a macOS portable release under:
@@ -462,7 +459,6 @@ present, and missing requested backends are built through their normal backend b
 scripts before packaging:
 
 ```bash
-bash ./scripts/platforms/macos/build-release.sh --backends llama.cpp-mac,mlx-mac
 bash ./scripts/platforms/macos/build-release.sh --backend llama.cpp-mac --backend turboquant-mac
 ```
 
@@ -482,31 +478,13 @@ Use strict mode when you want packaging to fail instead of building missing runt
 bash ./scripts/platforms/macos/build-release.sh --backends llama.cpp-mac --no-build-missing
 ```
 
-To build and package every supported macOS backend:
-
-```bash
-bash ./scripts/platforms/macos/build-release.sh --all-supported
-```
+`--all-supported` and any explicit `mlx-mac` selection currently fail because
+embedded backends are not supported by the Rust-only portable package.
 
 The release exposes `omniinfer` as the user-facing launcher and `omniinfer-rs`
 as the Rust control-plane binary. Packaging builds the CLI with
-`cargo build --release -p omniinfer-cli`. Default packages do not copy
-`omniinfer.py` or `service_core/`. `mlx-mac` is rejected by release packaging
-until it is served through an adapter service or Rust-native driver.
-
-For `mlx-mac` releases, the packaging script creates a fresh venv inside the
-release package and installs `scripts/platforms/macos/mlx-mac/requirements.txt`.
-The release venv is always created with copied Python binaries and populated
-with `uv pip install`, which is the supported packaging path for smaller and
-faster macOS portable releases. Use `--mlx-python <path>` when you need to
-choose a specific Python 3.10 through 3.13 interpreter for the release
-environment version. Use `--python-index-url <url>` when a regional PyPI mirror
-is needed for MLX dependency downloads.
-
-By default, `mlx-mac` release environments are slimmed after dependency
-installation: Python bytecode caches, test trees, pip/wheel, and build-only
-Torch headers are removed from the packaged venv. Pass `--no-slim` when you
-need an unmodified Python environment for debugging.
+`cargo build --release -p omniinfer-cli`. `mlx-mac` is rejected by release
+packaging until it is served through an adapter service or Rust-native driver.
 
 ## Android
 
