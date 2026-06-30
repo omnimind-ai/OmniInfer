@@ -111,7 +111,7 @@ Recommended docs:
 
 ## Architecture
 
-![omni_studio_architecture](./docs/architecture.drawio.svg)
+![omni_studio_architecture](./docs/assets/architecture.drawio.svg)
 
 ## Citation
 
