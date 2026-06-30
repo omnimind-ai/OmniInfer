@@ -325,6 +325,7 @@ fn advisor_recommend_json_scans_managed_models() {
     fs::remove_dir_all(root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_starts_lan_gateway_with_api_key() {
     let port = free_port();
