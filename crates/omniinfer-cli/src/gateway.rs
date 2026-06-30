@@ -2,16 +2,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use anyhow::Result;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, State};
-use axum::http::header::{
-    ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-    CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue,
-    TRANSFER_ENCODING,
-};
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMap};
 use axum::http::{Method, Request, Response, StatusCode, Uri};
 use axum::response::IntoResponse;
 use bytes::Bytes as HyperBytes;
@@ -41,6 +37,12 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
+
+mod access_policy;
+mod response;
+
+use access_policy::DynamicAccessPolicy;
+use response::{add_cors_headers, cors_response, json_response, should_forward_response_header};
 
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
@@ -94,103 +96,6 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
     })
     .await?;
     Ok(())
-}
-
-struct DynamicAccessPolicy {
-    base: GatewayAccessPolicy,
-    path: PathBuf,
-    loaded_mtime: Option<SystemTime>,
-    file_admin_keys: Vec<omniinfer_core::gateway_auth::GatewayAdminApiKey>,
-}
-
-impl DynamicAccessPolicy {
-    fn new(base: GatewayAccessPolicy, path: PathBuf) -> Self {
-        Self {
-            base,
-            path,
-            loaded_mtime: None,
-            file_admin_keys: Vec::new(),
-        }
-    }
-
-    fn effective_policy(&mut self) -> GatewayAccessPolicy {
-        self.reload_if_changed();
-        let mut policy = self.base.clone();
-        policy
-            .admin_api_keys
-            .extend(self.file_admin_keys.iter().cloned());
-        policy
-    }
-
-    fn reload_if_changed(&mut self) {
-        let Ok(metadata) = std::fs::metadata(&self.path) else {
-            if self.loaded_mtime.is_some() || !self.file_admin_keys.is_empty() {
-                self.loaded_mtime = None;
-                self.file_admin_keys.clear();
-            }
-            return;
-        };
-        let modified = metadata.modified().ok();
-        if modified.is_some() && modified == self.loaded_mtime {
-            return;
-        }
-        let Ok(raw) = std::fs::read_to_string(&self.path) else {
-            return;
-        };
-        let Ok(keys) = parse_admin_keys_file(&raw) else {
-            return;
-        };
-        self.loaded_mtime = modified;
-        self.file_admin_keys = keys;
-    }
-}
-
-fn parse_admin_keys_file(
-    raw: &str,
-) -> Result<Vec<omniinfer_core::gateway_auth::GatewayAdminApiKey>> {
-    let value: Value = serde_json::from_str(raw)?;
-    let source = value.get("keys").unwrap_or(&value);
-    let mut keys = Vec::new();
-    match source {
-        Value::Object(map) => {
-            for (id, key) in map {
-                let Some(key) = key.as_str().map(str::trim).filter(|key| !key.is_empty()) else {
-                    continue;
-                };
-                keys.push(omniinfer_core::gateway_auth::GatewayAdminApiKey {
-                    id: id.trim().to_string(),
-                    key: key.to_string(),
-                });
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                let Some(id) = item
-                    .get("id")
-                    .or_else(|| item.get("name"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|id| !id.is_empty())
-                else {
-                    continue;
-                };
-                let Some(key) = item
-                    .get("key")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|key| !key.is_empty())
-                else {
-                    continue;
-                };
-                keys.push(omniinfer_core::gateway_auth::GatewayAdminApiKey {
-                    id: id.to_string(),
-                    key: key.to_string(),
-                });
-            }
-        }
-        _ => {}
-    }
-    Ok(keys)
 }
 
 async fn proxy_request(
@@ -1905,57 +1810,6 @@ fn current_system_name() -> String {
         "windows" => "windows".to_string(),
         _ => "linux".to_string(),
     }
-}
-
-fn should_forward_response_header(name: &HeaderName) -> bool {
-    !is_hop_by_hop_header(name) && *name != CONTENT_LENGTH
-}
-
-fn is_hop_by_hop_header(name: &HeaderName) -> bool {
-    matches!(
-        name.as_str(),
-        "connection"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-    ) || *name == CONNECTION
-        || *name == TRANSFER_ENCODING
-}
-
-fn json_response(status: StatusCode, payload: serde_json::Value) -> Response<Body> {
-    let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{}".to_vec());
-    let mut response = Response::builder()
-        .status(status)
-        .header("content-type", "application/json; charset=utf-8")
-        .body(Body::from(body))
-        .expect("response should build");
-    add_cors_headers(response.headers_mut());
-    response
-}
-
-fn cors_response(status: StatusCode) -> Response<Body> {
-    let mut response = Response::builder()
-        .status(status)
-        .body(Body::empty())
-        .expect("response should build");
-    add_cors_headers(response.headers_mut());
-    response
-}
-
-fn add_cors_headers(headers: &mut HeaderMap) {
-    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Content-Type, Authorization, anthropic-version, x-api-key"),
-    );
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST, OPTIONS"),
-    );
 }
 
 #[cfg(test)]
