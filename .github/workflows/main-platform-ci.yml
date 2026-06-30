@@ -1,7 +1,7 @@
-name: CI
+name: Main Platform CI
 
 on:
-  pull_request:
+  push:
     branches: [main]
 
 concurrency:
@@ -12,10 +12,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  pr-fast-check:
-    name: PR Fast Check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  main-platform-check:
+    name: Main Platform Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -32,5 +36,5 @@ jobs:
       - name: Run core unit tests
         run: cargo test -p omniinfer-core
 
-      - name: Run gateway unit tests
-        run: "cargo test -p omniinfer-cli --bin omniinfer-rs gateway::tests::"
+      - name: Run CLI binary unit tests
+        run: cargo test -p omniinfer-cli --bin omniinfer-rs
