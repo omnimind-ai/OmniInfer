@@ -469,6 +469,7 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_starts_gateway_and_writes_state() {
     let backend_id = test_external_backend_id();
@@ -518,6 +519,7 @@ fn serve_detach_starts_gateway_and_writes_state() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_ignores_config_host_by_default() {
     let port = free_port();
@@ -553,6 +555,7 @@ fn serve_detach_ignores_config_host_by_default() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_respects_explicit_host() {
     let port = free_port();
@@ -976,6 +979,7 @@ fn serve_detach_runs_smoke_test() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_starts_cloudflare_tunnel() {
     let port = free_port();
