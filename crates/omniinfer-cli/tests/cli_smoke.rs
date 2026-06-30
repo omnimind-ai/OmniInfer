@@ -1687,7 +1687,7 @@ fn test_external_backend_id() -> &'static str {
     } else if cfg!(target_os = "windows") {
         "llama.cpp-cpu"
     } else {
-        "llama.cpp-linux-cuda"
+        "llama.cpp-linux"
     }
 }
 
