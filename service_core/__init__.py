@@ -1,2 +1,0 @@
-"""OmniInfer service package."""
-

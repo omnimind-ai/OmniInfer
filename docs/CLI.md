@@ -308,7 +308,7 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 
 - The CLI uses the Rust control-plane entrypoint. Python control-plane fallback
   has been removed; unsupported commands return a clear Rust error instead of
-  running [omniinfer.py](../omniinfer.py).
+  running a legacy Python entrypoint.
 - The desktop CLI auto-starts the local OmniInfer gateway when required.
 - CUDA desktop backends default to one GPU. If `CUDA_VISIBLE_DEVICES` is unset, OmniInfer picks the visible GPU with the most free memory and lowest utilization before launching the backend. Set `CUDA_VISIBLE_DEVICES` or `OMNIINFER_CUDA_VISIBLE_DEVICES` to override this.
 - If you want to launch the gateway from an interactive terminal, use:

@@ -8,16 +8,15 @@ OmniInfer release script calls them directly.
 
 ## Target
 
-The default user-facing CLI and portable packages should run through the Rust
-control plane without requiring `omniinfer.py` or `service_core/`.
+The default user-facing CLI and portable packages run through the Rust control
+plane. The legacy Python control-plane entrypoint and `service_core/` package
+have been removed from the repository.
 
 Python may remain in explicitly declared places:
 
 - Development, packaging, and validation tooling.
 - Backend-specific runtimes where the backend itself is distributed as Python
   packages, such as MLX, MNN, or vLLM.
-- Legacy source files and service-core tests while they are still useful for
-  reference and parity audits. They are not part of the default user runtime.
 
 ## User Runtime Surface
 
@@ -26,7 +25,7 @@ Python may remain in explicitly declared places:
 | `omniinfer` / `omniinfer.cmd` / `omniinfer.ps1` repo launchers | Rust entrypoints | Start the Rust control plane directly. They no longer honor legacy Python control-plane environment variables. |
 | `crates/omniinfer-cli` default CLI path | Rust runtime | Primary user runtime. Unsupported commands return a clear Rust error instead of delegating to Python. |
 | `crates/omniinfer-cli` embedded backend handling | Rust runtime policy | Embedded backends are rejected until they are exposed through an external adapter service or Rust-native driver. |
-| `omniinfer.py` and `service_core/` | Legacy Python control plane source | Kept in the repository for reference/tests, but excluded from portable packages and not used as fallback. |
+| `omniinfer.py` and `service_core/` | Removed legacy Python control plane | Deleted from the repository after the Rust-only control plane became the supported path. |
 
 ## Backend Runtime Surface
 
@@ -45,12 +44,11 @@ Python may remain in explicitly declared places:
 | `scripts/platforms/linux/release_runtime_backends.py` | Packaging tool | Uses Python to discover/copy Linux runtime packages. It is not copied into the release as user runtime. |
 | `scripts/platforms/*/build-release.*` | Packaging tool | May require host Python to build or assemble packages. This is acceptable for release builders. |
 | `scripts/validate_rust_control_plane.py`, `scripts/capture_cli_contracts.py`, `scripts/profile_python_cli.py` | Validation tooling | Not part of user runtime. `profile_python_cli.py` is still used for process profiling despite its historical name. |
-| `tests/*.py` | Test tooling | Kept for legacy service-core coverage and parity reference. |
-| `pyproject.toml` | Development package metadata | Tracks legacy Python package/test dependencies only. |
+| `tests/test_linux_release_backends.py` | Test tooling | Covers the retained Linux release packaging helper. |
 
 ## No-Python Release Rules
 
-1. Default portable packaging must not copy `omniinfer.py` or `service_core/`.
+1. Portable packaging must not copy `omniinfer.py` or `service_core/`.
 2. Portable packages must contain only Rust-compatible external-server
    backends.
 3. Embedded Python backends must fail package assembly until they have an

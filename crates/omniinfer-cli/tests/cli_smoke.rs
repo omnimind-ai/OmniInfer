@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use omniinfer_core::http_client;
 use predicates::prelude::*;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -325,6 +325,7 @@ fn advisor_recommend_json_scans_managed_models() {
     fs::remove_dir_all(root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_starts_lan_gateway_with_api_key() {
     let port = free_port();
@@ -469,6 +470,7 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_starts_gateway_and_writes_state() {
     let backend_id = test_external_backend_id();
@@ -518,6 +520,7 @@ fn serve_detach_starts_gateway_and_writes_state() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_ignores_config_host_by_default() {
     let port = free_port();
@@ -553,6 +556,7 @@ fn serve_detach_ignores_config_host_by_default() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_respects_explicit_host() {
     let port = free_port();
@@ -976,6 +980,7 @@ fn serve_detach_runs_smoke_test() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[cfg(unix)]
 #[test]
 fn serve_detach_starts_cloudflare_tunnel() {
     let port = free_port();
@@ -1563,11 +1568,17 @@ struct TestGateway {
 impl TestGateway {
     fn start(responses: Vec<Response>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test gateway");
+        listener
+            .set_nonblocking(true)
+            .expect("set nonblocking test gateway");
         let port = listener.local_addr().expect("local addr").port();
         let (request_tx, request_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
             for response_body in responses {
-                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut stream = accept_test_request(&listener);
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("set request read timeout");
                 let request = read_http_request(&mut stream);
                 request_tx.send(request).expect("send request");
                 let response = format!(
@@ -1588,11 +1599,29 @@ impl TestGateway {
     }
 
     fn request(&self) -> String {
-        self.request_rx.recv().expect("receive request")
+        self.request_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("receive request")
     }
 
     fn join(self) {
         self.handle.join().expect("server thread");
+    }
+}
+
+fn accept_test_request(listener: &TcpListener) -> std::net::TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return stream,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    panic!("timed out waiting for test gateway request");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("accept request: {error}"),
+        }
     }
 }
 
@@ -1687,7 +1716,7 @@ fn test_external_backend_id() -> &'static str {
     } else if cfg!(target_os = "windows") {
         "llama.cpp-cpu"
     } else {
-        "llama.cpp-linux-cuda"
+        "llama.cpp-linux"
     }
 }
 

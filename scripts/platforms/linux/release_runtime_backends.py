@@ -6,17 +6,8 @@ import fnmatch
 import json
 import shutil
 import stat
-import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from service_core.backends import BACKEND_PRIORITY, BackendTemplate  # noqa: E402
-from service_core.platforms.linux import LinuxPlatform  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -28,6 +19,52 @@ class RuntimePackage:
     launcher_name: str | None
     runtime_mode: str
     priority: int
+
+
+@dataclass(frozen=True)
+class BackendTemplate:
+    id: str
+    family: str
+    runtime_dir_name: str
+    fallback_runtime_dir_names: tuple[str, ...]
+    launcher_name: str | None
+    runtime_mode: str
+    python_modules: tuple[str, ...] = ()
+
+
+BACKEND_PRIORITY = {
+    "llama.cpp-linux-cuda": 0,
+    "llama.cpp-linux-rocm": 0,
+    "llama.cpp-linux-vulkan": 0,
+    "omniinfer-native-linux": 0,
+    "llama.cpp-linux-openvino": 0,
+    "ik_llama.cpp-linux-cuda": 0,
+    "llama.cpp-linux": 1,
+    "llama.cpp-linux-s390x": 1,
+    "ik_llama.cpp-linux": 1,
+    "vllm-linux-cuda": 2,
+}
+
+LINUX_TEMPLATES = (
+    BackendTemplate("llama.cpp-linux", "llama.cpp", "llama.cpp-linux", (), "llama-server", "external_server"),
+    BackendTemplate("llama.cpp-linux-cuda", "llama.cpp", "llama.cpp-linux-cuda", (), "llama-server", "external_server"),
+    BackendTemplate(
+        "llama.cpp-linux-rocm",
+        "llama.cpp",
+        "llama.cpp-linux-rocm",
+        ("llama.cpp-linux-ROCm",),
+        "llama-server",
+        "external_server",
+    ),
+    BackendTemplate("llama.cpp-linux-vulkan", "llama.cpp", "llama.cpp-linux-vulkan", (), "llama-server", "external_server"),
+    BackendTemplate("llama.cpp-linux-s390x", "llama.cpp", "llama.cpp-linux-s390x", (), "llama-server", "external_server"),
+    BackendTemplate("omniinfer-native-linux", "llama.cpp", "omniinfer-native-linux", (), "llama-server", "external_server"),
+    BackendTemplate("llama.cpp-linux-openvino", "llama.cpp", "llama.cpp-linux-openvino", (), "llama-server", "external_server"),
+    BackendTemplate("ik_llama.cpp-linux", "llama.cpp", "ik_llama.cpp-linux", (), "llama-server", "external_server"),
+    BackendTemplate("ik_llama.cpp-linux-cuda", "llama.cpp", "ik_llama.cpp-linux-cuda", (), "llama-server", "external_server"),
+    BackendTemplate("mnn-linux", "mnn", "mnn-linux", (), None, "embedded", ("MNN", "MNN.llm", "MNN.cv")),
+    BackendTemplate("vllm-linux-cuda", "vllm", "vllm-linux-cuda", (), "vllm", "external_server"),
+)
 
 
 def _candidate_runtime_dirs(runtime_root: Path, template: BackendTemplate) -> list[Path]:
@@ -57,7 +94,7 @@ def _copy_mode(template: BackendTemplate) -> str:
 
 def discover_runtime_packages(runtime_root: Path) -> list[RuntimePackage]:
     packages: list[RuntimePackage] = []
-    for template in LinuxPlatform().backend_templates:
+    for template in LINUX_TEMPLATES:
         for runtime_dir in _candidate_runtime_dirs(runtime_root, template):
             if not runtime_dir.is_dir():
                 continue
