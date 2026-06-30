@@ -16,8 +16,9 @@ The production entrypoint is `./omniinfer`, which starts the Rust control
 plane. Python control-plane fallback has been removed; unsupported commands
 return explicit Rust errors.
 
-See [`docs/rust-control-plane.md`](../docs/rust-control-plane.md) for the
-runtime controls, validation commands, and remaining embedded-backend strategy.
+Use `OMNIINFER_RUST_STATE_ROOT=/tmp/omniinfer-state` when running isolated
+integration checks so test state, logs, and backend profiles do not mutate the
+real checkout.
 
 ## Local Development
 
