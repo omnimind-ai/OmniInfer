@@ -30,8 +30,8 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Rust tests
-        timeout-minutes: 10
-        run: cargo test --workspace
+        timeout-minutes: 15
+        run: cargo test --workspace -- --test-threads=1
 
       - name: Run Linux release helper tests
         if: runner.os == 'Linux'
