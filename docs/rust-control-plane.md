@@ -309,7 +309,8 @@ Remaining work after the current Linux switch:
   PowerShell/cmd wrappers and packaged source-checkout behavior.
 - Keep `OMNIINFER_FORCE_PYTHON=1` available for at least one release cycle and
   monitor real user paths before removing the fallback.
-- Packaging/release scripts now build and package the Rust control-plane CLI by
-  default; validate those packages on Windows and macOS before release.
+- Packaging/release scripts now build no-Python portable packages by default.
+  Use `--include-python-fallback` only for legacy compatibility packages or
+  backend-specific embedded Python runtime packages.
 - Decide whether embedded MLX/MNN in-process drivers should remain delegated to
   Python or become a separate Rust-native runtime-driver project.

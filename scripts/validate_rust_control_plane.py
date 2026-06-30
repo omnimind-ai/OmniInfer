@@ -121,6 +121,7 @@ def _write_summary(path: Path, payload: dict[str, Any]) -> None:
             "",
             "## Artifacts",
             "",
+            f"- No-Python portable validation: `{payload['artifacts']['no_python_portable']}`",
             f"- Python contracts: `{payload['artifacts']['python_contracts']}`",
             f"- Rust strict contracts: `{payload['artifacts']['rust_strict_contracts']}`",
             f"- Forced Python contracts: `{payload['artifacts']['force_python_contracts']}`",
@@ -138,15 +139,36 @@ def _python() -> str:
     return sys.executable
 
 
+def _portable_platform() -> str:
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform == "win32":
+        return "windows"
+    return "linux"
+
+
 def _base_steps(output_dir: Path, state_root: Path, runs: int) -> list[Step]:
     python_contracts = output_dir / "python-contracts"
     rust_contracts = output_dir / "rust-strict-contracts"
     force_python_contracts = output_dir / "force-python-contracts"
     python_profile = output_dir / "python-profile"
     rust_profile = output_dir / "rust-profile"
+    no_python_portable = output_dir / "no-python-portable"
     return [
         Step("cargo-fmt", ["cargo", "fmt", "--all", "--", "--check"], timeout_s=120.0),
         Step("cargo-test", ["cargo", "test", "--workspace"], timeout_s=300.0),
+        Step(
+            "no-python-portable",
+            [
+                _python(),
+                "scripts/validate_no_python_portable.py",
+                "--platform",
+                _portable_platform(),
+                "--output-dir",
+                str(no_python_portable),
+            ],
+            timeout_s=900.0,
+        ),
         Step(
             "python-contracts",
             [
@@ -263,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         "rust_binary": str(RUST_BINARY),
         "steps": steps,
         "artifacts": {
+            "no_python_portable": str(output_dir / "no-python-portable" / "summary.md"),
             "python_contracts": str(output_dir / "python-contracts" / "summary.md"),
             "rust_strict_contracts": str(output_dir / "rust-strict-contracts" / "summary.md"),
             "force_python_contracts": str(output_dir / "force-python-contracts" / "summary.md"),
