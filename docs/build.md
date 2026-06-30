@@ -215,7 +215,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\platforms\windows\
 - It can prebuild any of the Windows runtimes above before packaging
 - It packages only the requested backends when `-Backends` is provided; otherwise it packages every built backend under `.local/runtime/windows`
 - It builds the Rust control-plane CLI with `cargo build --release -p omniinfer-cli` and installs it as `omniinfer.exe`
-- It does not copy `omniinfer.py` or `service_core/` by default; pass `-IncludePythonFallback` only when building an explicit legacy compatibility package
+- It does not copy `omniinfer.py` or `service_core/`; Python control-plane fallback is not packaged
 - It writes PowerShell and cmd.exe launchers; use `omniinfer.ps1` from PowerShell and keep `omniinfer.cmd` for cmd.exe compatibility
 
 ## Linux
@@ -350,18 +350,19 @@ bash ./scripts/platforms/linux/vllm-linux-cuda/build.sh --package 'vllm==0.9.2'
 
 Runtime discovery is driven by the Linux backend registry rather than a
 hard-coded `llama-server` filename check. External server backends are packaged
-when their registered launcher exists under `bin/`; embedded Python runtimes
-such as `mnn-linux` are packaged when their runtime Python entrypoint exists.
+when their registered launcher exists under `bin/`. Embedded Python runtimes
+such as `mnn-linux` are rejected until they are exposed through an adapter
+service or Rust-native driver.
 `llama.cpp` and `ik_llama.cpp` backends copy the minimal binary `bin/` payload,
-while Python runtime backends such as `vllm-linux-cuda` and `mnn-linux` copy the
-runtime environment needed by their launcher or embedded driver.
+while external-server Python runtime backends such as `vllm-linux-cuda` copy
+the runtime environment needed by their launcher.
 
 The portable package exposes `omniinfer` as the user-facing launcher and
 `omniinfer-rs` as the Rust control-plane binary. Packaging builds the CLI with
 `cargo build --release -p omniinfer-cli`. Default packages do not copy
-`omniinfer.py` or `service_core/`; pass `--include-python-fallback` only when
-building an explicit legacy compatibility package or packaging backend paths
-that still need the Python compatibility control plane, such as `mnn-linux`.
+`omniinfer.py` or `service_core/`. Embedded backend paths that still need an
+in-process Python control plane, such as `mnn-linux`, are rejected until they
+have an adapter service or Rust-native driver.
 
 Optional prebuild examples:
 
@@ -403,11 +404,13 @@ bash ./scripts/platforms/linux/build-release.sh --build-openvino-backend --openv
 - Target: macOS Apple Silicon
 - Embedded backend
 - Requires Python packages rather than a compiled `llama-server`
+- Not supported by Rust-only portable packaging until an adapter service or
+  Rust-native driver exists
 - Use Python `3.10+`
-- The Python interpreter that launches OmniInfer must be able to import `mlx`, `mlx_lm`, `mlx_vlm`, `torch`, and `torchvision`
+- The MLX backend environment must be able to import `mlx`, `mlx_lm`,
+  `mlx_vlm`, `torch`, and `torchvision`
 - Runtime dependencies are listed in [`scripts/platforms/macos/mlx-mac/requirements.txt`](../scripts/platforms/macos/mlx-mac/requirements.txt)
 - A dedicated `conda` environment such as `mlx` is recommended
-- If you use a custom interpreter, set `OMNIINFER_PYTHON` so the CLI and auto-started gateway use the same Python
 
 ### Build Commands
 
@@ -435,12 +438,9 @@ MLX:
 bash ./scripts/platforms/macos/build-mlx-mac.sh
 ```
 
-Example custom Python environment:
-
-```bash
-export OMNIINFER_PYTHON="$HOME/miniconda3/envs/mlx/bin/python"
-./omniinfer backend list
-```
+MLX can still be built as a backend environment, but it is not exposed through
+Rust-only release packages until the embedded driver is replaced by an adapter
+service or Rust-native driver.
 
 On macOS source checkouts, `./omniinfer` also auto-prefers `.local/runtime/macos/mlx-mac/venv/bin/python3` when that runtime venv exists.
 
@@ -491,10 +491,8 @@ bash ./scripts/platforms/macos/build-release.sh --all-supported
 The release exposes `omniinfer` as the user-facing launcher and `omniinfer-rs`
 as the Rust control-plane binary. Packaging builds the CLI with
 `cargo build --release -p omniinfer-cli`. Default packages do not copy
-`omniinfer.py` or `service_core/`. Pass `--include-python-fallback` only when
-building an explicit legacy compatibility package. `mlx-mac` currently requires
-that flag because its embedded MLX paths still use the Python compatibility
-runtime.
+`omniinfer.py` or `service_core/`. `mlx-mac` is rejected by release packaging
+until it is served through an adapter service or Rust-native driver.
 
 For `mlx-mac` releases, the packaging script creates a fresh venv inside the
 release package and installs `scripts/platforms/macos/mlx-mac/requirements.txt`.

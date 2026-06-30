@@ -408,8 +408,8 @@ if (Test-Path "$InstallDir\.git") {
         $clonedViaHttps = $true
     }
 }
-if (-not (Test-Path (Join-Path $InstallDir "omniinfer.py"))) {
-    Stop-Fatal "Repository clone appears incomplete — omniinfer.py not found in $InstallDir"
+if (-not (Test-Path (Join-Path $InstallDir "omniinfer.ps1"))) {
+    Stop-Fatal "Repository clone appears incomplete — omniinfer.ps1 not found in $InstallDir"
 }
 Write-Ok "Repository ready at $InstallDir"
 
@@ -487,15 +487,11 @@ Write-Host ""
 
 Write-Info "Step 3/6: Detecting platform and hardware ..."
 
-$pyScript = Join-Path $InstallDir "omniinfer.py"
+$omniinferScript = Join-Path $InstallDir "omniinfer.ps1"
 
-# Helper: invoke omniinfer CLI via the detected python
+# Helper: invoke the Rust control-plane launcher.
 function Invoke-OmniInfer {
-    if ($script:PythonCmd -eq "__uv__") {
-        & uv run python $pyScript @args
-    } else {
-        & $script:PythonCmd $pyScript @args
-    }
+    & $omniinferScript --port $OmniPort @args
 }
 
 # Cleanup: shut down any gateway service started by the CLI on script exit

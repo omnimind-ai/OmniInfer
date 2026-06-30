@@ -276,11 +276,7 @@ def _terminate_process_group(proc: subprocess.Popen[bytes], *, force: bool) -> N
 
 def _python_import_command(command: list[str]) -> list[str] | None:
     script = command[0]
-    if script == "./omniinfer":
-        script = "omniinfer.py"
-    elif script.endswith("omniinfer.py"):
-        pass
-    else:
+    if not script.endswith(".py"):
         return None
     return [sys.executable, "-X", "importtime", script, *command[1:]]
 

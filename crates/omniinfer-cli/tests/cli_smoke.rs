@@ -90,7 +90,6 @@ fn advisor_system_json_uses_rust_path() {
     let state_root = temp_repo_root("advisor-system-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     install_fake_backend(&state_root, backend_id);
     fs::write(
         state_root.join("config").join("omniinfer.json"),
@@ -131,7 +130,6 @@ fn advisor_system_text_prints_usable_backends() {
     let state_root = temp_repo_root("advisor-system-text-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     install_fake_backend(&state_root, backend_id);
     fs::write(
         state_root.join("config").join("omniinfer.json"),
@@ -376,7 +374,6 @@ fn serve_detach_rejects_remote_management_without_key() {
     let public_root = state_root.join("public-models");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(&public_root).expect("create public root");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
 
     let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
@@ -407,7 +404,6 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     let state_root = temp_repo_root("serve-rust-external-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     let port = free_port();
     fs::write(
         state_root.join("config").join("omniinfer.json"),
@@ -678,7 +674,6 @@ fn serve_detach_loads_model_before_ready() {
     let state_root = temp_repo_root("serve-detach-load-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -741,7 +736,6 @@ fn serve_detach_restores_last_model_when_model_is_omitted() {
     let state_root = temp_repo_root("serve-detach-restore-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -810,7 +804,6 @@ fn serve_detach_can_skip_restoring_last_model() {
     let state_root = temp_repo_root("serve-detach-no-restore-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -864,7 +857,6 @@ fn serve_detach_restores_last_model_without_python_upstream() {
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
     fs::create_dir_all(state_root.join(".local").join("config")).expect("create local config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     let port = free_port();
     fs::write(
         state_root.join("config").join("omniinfer.json"),
@@ -946,7 +938,6 @@ fn serve_detach_runs_smoke_test() {
     let state_root = temp_repo_root("serve-detach-smoke-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
@@ -1062,7 +1053,6 @@ fn serve_detach_warns_on_transient_public_smoke_failure() {
     let state_root = temp_repo_root("serve-cloudflare-smoke-warning-state");
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(state_root.join("config")).expect("create state config");
-    fs::write(source_root.join("omniinfer.py"), "").expect("write source script");
     fs::write(
         state_root.join("config").join("omniinfer.json"),
         format!(
