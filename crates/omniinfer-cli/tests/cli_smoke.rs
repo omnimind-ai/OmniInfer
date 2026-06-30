@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use omniinfer_core::http_client;
 use predicates::prelude::*;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -1563,11 +1563,17 @@ struct TestGateway {
 impl TestGateway {
     fn start(responses: Vec<Response>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test gateway");
+        listener
+            .set_nonblocking(true)
+            .expect("set nonblocking test gateway");
         let port = listener.local_addr().expect("local addr").port();
         let (request_tx, request_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
             for response_body in responses {
-                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut stream = accept_test_request(&listener);
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("set request read timeout");
                 let request = read_http_request(&mut stream);
                 request_tx.send(request).expect("send request");
                 let response = format!(
@@ -1588,11 +1594,29 @@ impl TestGateway {
     }
 
     fn request(&self) -> String {
-        self.request_rx.recv().expect("receive request")
+        self.request_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("receive request")
     }
 
     fn join(self) {
         self.handle.join().expect("server thread");
+    }
+}
+
+fn accept_test_request(listener: &TcpListener) -> std::net::TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return stream,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    panic!("timed out waiting for test gateway request");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("accept request: {error}"),
+        }
     }
 }
 

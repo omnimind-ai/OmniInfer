@@ -30,7 +30,9 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Rust tests
+        timeout-minutes: 10
         run: cargo test --workspace
 
       - name: Run Linux release helper tests
+        timeout-minutes: 2
         run: python -m unittest tests.test_linux_release_backends -v
