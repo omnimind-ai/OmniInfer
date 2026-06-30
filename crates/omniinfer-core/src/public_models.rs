@@ -60,6 +60,8 @@ pub enum PublicModelError {
     ModelFileMissing(String),
     #[error("public mmproj file not found: {0}")]
     MmprojFileMissing(String),
+    #[error("public model declares vision modality but does not set mmproj: {0}")]
+    VisionMmprojMissing(String),
     #[error("{0}")]
     Io(String),
 }
@@ -162,6 +164,16 @@ fn read_manifest(
         .as_deref()
         .map(|path| resolve_manifest_file(directory, path))
         .transpose()?;
+    if manifest
+        .modalities
+        .iter()
+        .any(|modality| modality.eq_ignore_ascii_case("vision"))
+        && mmproj_path.is_none()
+    {
+        return Err(PublicModelError::VisionMmprojMissing(
+            manifest.id.to_string(),
+        ));
+    }
     if let Some(mmproj) = mmproj_path.as_ref()
         && !mmproj.is_file()
     {
@@ -445,6 +457,29 @@ mod tests {
         assert!(matches!(
             list_public_models(Some(&root)).unwrap_err(),
             PublicModelError::DuplicateId(id) if id == "same"
+        ));
+    }
+
+    #[test]
+    fn rejects_vision_manifest_without_mmproj() {
+        let root = temp_root("public-models-vision-without-mmproj");
+        let dir = root.join("gemma-4-12b-it-q4_k_m");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("model.gguf"), b"gguf").unwrap();
+        fs::write(
+            dir.join(MANIFEST_NAME),
+            r#"{
+                "id": "gemma-4-12b-it-q4_k_m",
+                "display_name": "Gemma 4 12B Q4_K_M",
+                "model": "model.gguf",
+                "modalities": ["text", "vision"]
+            }"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            list_public_models(Some(&root)).unwrap_err(),
+            PublicModelError::VisionMmprojMissing(id) if id == "gemma-4-12b-it-q4_k_m"
         ));
     }
 

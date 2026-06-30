@@ -1417,7 +1417,8 @@ fn public_model_error_status(error: &public_models::PublicModelError) -> StatusC
         | public_models::PublicModelError::ManifestParse { .. }
         | public_models::PublicModelError::DuplicateId(_)
         | public_models::PublicModelError::ModelFileMissing(_)
-        | public_models::PublicModelError::MmprojFileMissing(_) => StatusCode::BAD_REQUEST,
+        | public_models::PublicModelError::MmprojFileMissing(_)
+        | public_models::PublicModelError::VisionMmprojMissing(_) => StatusCode::BAD_REQUEST,
         public_models::PublicModelError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
