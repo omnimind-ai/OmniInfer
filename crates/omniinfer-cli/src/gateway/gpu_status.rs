@@ -5,7 +5,7 @@ use anyhow::Result;
 use omniinfer_core::backend_registry;
 use serde_json::{Value, json};
 
-use super::LoadedRuntimeSummary;
+use super::runtime_manager::LoadedRuntimeSummary;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RuntimeCudaSelection {
