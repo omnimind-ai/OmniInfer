@@ -728,6 +728,30 @@
                     "size": 1.2
                 }
             },
+            "gemma-4-12B-it": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q4_K_M.gguf",
+                        "size": 7.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q6_K.gguf",
+                        "size": 9.79
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q8_0.gguf",
+                        "size": 12.67
+                    }
+                },
+                "README": "readme/gemma-4-12B-it.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.18
+                }
+            },
             "gemma-4-26B-A4B-it": {
                 "tag": [],
                 "quantization": {
@@ -1481,6 +1505,30 @@
                     "size": 1.2
                 }
             },
+            "gemma-4-12B-it": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q4_K_M.gguf",
+                        "size": 7.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q6_K.gguf",
+                        "size": 9.79
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q8_0.gguf",
+                        "size": 12.67
+                    }
+                },
+                "README": "readme/gemma-4-12B-it.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.18
+                }
+            },
             "gemma-4-26B-A4B-it": {
                 "tag": [],
                 "quantization": {
@@ -2222,6 +2270,30 @@
                 "vision": {
                     "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/mmproj-F16.gguf",
                     "size": 0.92
+                }
+            },
+            "gemma-4-12B-it": {
+                "tag": [
+                    "视觉模型"
+                ],
+                "quantization": {
+                    "Q4_K_M": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q4_K_M.gguf",
+                        "size": 7.12
+                    },
+                    "Q6_K": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q6_K.gguf",
+                        "size": 9.79
+                    },
+                    "Q8_0": {
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q8_0.gguf",
+                        "size": 12.67
+                    }
+                },
+                "README": "readme/gemma-4-12B-it.md",
+                "vision": {
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/mmproj-F16.gguf",
+                    "size": 0.18
                 }
             },
             "gemma-4-26B-A4B-it": {
