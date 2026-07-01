@@ -29,8 +29,8 @@ use models::{
     model_provider_label, model_quant_label, model_size_label, prompt_model_path, same_path,
 };
 use render::{
-    BackendStatus, ModelMenuContext, ModelMenuItem, NoticeKind, clear_screen, is_interactive,
-    notice, print_chat_header, print_header, print_help, print_kv, print_section, prompt_default,
+    ModelMenuContext, ModelMenuItem, NoticeKind, clear_screen, is_interactive, notice,
+    print_chat_header, print_header, print_help, print_kv, print_section, prompt_default,
     select_menu, select_model_menu,
 };
 
@@ -451,22 +451,33 @@ fn model_menu_context(backends_payload: &Value) -> ModelMenuContext {
     ));
     hardware_lines.push(gpu_summary_line(cuda));
 
-    let backends = backends_payload
+    ModelMenuContext {
+        hardware_lines,
+        backend_line: selected_backend_line(backends_payload),
+    }
+}
+
+fn selected_backend_line(backends_payload: &Value) -> String {
+    let selected = backends_payload
         .get("data")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(|row| BackendStatus {
-            label: json_str(row, "id").unwrap_or("-").to_string(),
-            installed: json_bool(row, "installed").unwrap_or(false),
-            compatible: json_bool(row, "hardware_compatible").unwrap_or(false),
-            selected: json_bool(row, "selected").unwrap_or(false),
-        })
-        .collect::<Vec<_>>();
-    ModelMenuContext {
-        hardware_lines,
-        backends,
-    }
+        .find(|row| json_bool(row, "selected").unwrap_or(false));
+    let Some(row) = selected else {
+        return "Backend: none selected".to_string();
+    };
+    let id = json_str(row, "id").unwrap_or("-");
+    let state = if json_bool(row, "installed").unwrap_or(false)
+        && json_bool(row, "hardware_compatible").unwrap_or(false)
+    {
+        "installed, compatible"
+    } else if json_bool(row, "installed").unwrap_or(false) {
+        "installed, hardware unavailable"
+    } else {
+        "not installed"
+    };
+    format!("Backend: {id} ({state})")
 }
 
 fn gpu_summary_line(cuda: &Value) -> String {
@@ -478,25 +489,31 @@ fn gpu_summary_line(cuda: &Value) -> String {
     let Some(devices) = devices.filter(|items| !items.is_empty()) else {
         return "GPU: none detected".to_string();
     };
-    let best = cuda
-        .get("best_free_device")
-        .filter(|value| value.is_object())
-        .unwrap_or(&devices[0]);
-    let index = json_str(best, "index").unwrap_or("-");
-    let name = json_str(best, "name").unwrap_or("GPU");
-    let free = json_f64(best, "free_gib")
-        .map(format_one_decimal)
-        .unwrap_or_else(|| "-".to_string());
-    let total = json_f64(best, "total_gib")
-        .map(format_one_decimal)
-        .unwrap_or_else(|| "-".to_string());
-    let util = json_u64(best, "utilization_pct")
-        .map(|value| format!("{value}%"))
-        .unwrap_or_else(|| "-".to_string());
-    format!(
-        "GPU: {} device(s) | best free GPU {index}: {name} | {free} GiB free / {total} GiB total | util {util}",
-        devices.len()
-    )
+    let primary = &devices[0];
+    let name = json_str(primary, "name").unwrap_or("GPU");
+    let matching = devices
+        .iter()
+        .filter(|device| {
+            json_str(device, "name") == Some(name)
+                && json_f64(device, "total_gib") == json_f64(primary, "total_gib")
+        })
+        .count();
+    let count = matching.max(1);
+    let single = json_f64(primary, "total_gib");
+    let other = devices.len().saturating_sub(count);
+    let mut line = if let Some(single) = single {
+        format!(
+            "GPU: {name} x{count} (total VRAM = {} GiB x {count} = {} GiB)",
+            format_one_decimal(single),
+            format_one_decimal(single * count as f64)
+        )
+    } else {
+        format!("GPU: {name} x{count}")
+    };
+    if other > 0 {
+        line.push_str(&format!(" + {other} other"));
+    }
+    line
 }
 
 fn json_f64<'a>(value: &'a Value, key: &str) -> Option<f64> {

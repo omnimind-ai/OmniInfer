@@ -84,15 +84,7 @@ pub(super) struct ModelMenuItem {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ModelMenuContext {
     pub(super) hardware_lines: Vec<String>,
-    pub(super) backends: Vec<BackendStatus>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct BackendStatus {
-    pub(super) label: String,
-    pub(super) installed: bool,
-    pub(super) compatible: bool,
-    pub(super) selected: bool,
+    pub(super) backend_line: String,
 }
 
 pub(super) fn select_model_menu(
@@ -264,7 +256,7 @@ fn format_model_menu_screen_for_width(
     let mut output = String::new();
     output.push_str(&accent_line(&format_panel(
         "OmniInfer",
-        "System overview and backend availability",
+        "",
         &model_context_lines(context, terminal_width),
         terminal_width,
         PanelBodyMode::Wrapped,
@@ -357,50 +349,16 @@ fn redraw_model_menu(
     Ok(())
 }
 
-fn model_context_lines(context: &ModelMenuContext, terminal_width: usize) -> Vec<String> {
-    let content_width = panel_content_width(terminal_width);
+fn model_context_lines(context: &ModelMenuContext, _terminal_width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     lines.extend(context.hardware_lines.iter().cloned());
-    if !context.backends.is_empty() {
-        lines.extend(wrap_backend_statuses(&context.backends, content_width));
+    if !context.backend_line.is_empty() {
+        lines.push(context.backend_line.clone());
     }
     if lines.is_empty() {
         lines.push("System details unavailable".to_string());
     }
     lines
-}
-
-fn wrap_backend_statuses(backends: &[BackendStatus], width: usize) -> Vec<String> {
-    let tokens = backends
-        .iter()
-        .map(backend_status_token)
-        .collect::<Vec<_>>();
-    let mut lines = Vec::new();
-    let mut current = "Backends:".to_string();
-    for token in tokens {
-        let separator = if current.ends_with(':') { " " } else { "  " };
-        if current.len() + separator.len() + token.len() > width && current != "Backends:" {
-            lines.push(current);
-            current = format!("          {token}");
-        } else {
-            current.push_str(separator);
-            current.push_str(&token);
-        }
-    }
-    lines.push(current);
-    lines
-}
-
-fn backend_status_token(status: &BackendStatus) -> String {
-    let state = if status.installed && status.compatible {
-        "ok"
-    } else if status.installed {
-        "nohw"
-    } else {
-        "--"
-    };
-    let selected = if status.selected { "*" } else { "" };
-    format!("[{state}]{selected} {}", status.label)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -673,20 +631,7 @@ mod tests {
                 "GPU: NVIDIA RTX 3090 x8 | best free GPU 0: 23.0 GiB free / 24.0 GiB total"
                     .to_string(),
             ],
-            backends: vec![
-                BackendStatus {
-                    label: "llama.cpp-linux-cuda".to_string(),
-                    installed: true,
-                    compatible: true,
-                    selected: true,
-                },
-                BackendStatus {
-                    label: "vllm-linux-cuda".to_string(),
-                    installed: false,
-                    compatible: true,
-                    selected: false,
-                },
-            ],
+            backend_line: "Backend: llama.cpp-linux-cuda (installed, compatible)".to_string(),
         };
         let items = [ModelMenuItem {
             label: "qwen/model.gguf".to_string(),
@@ -709,8 +654,7 @@ mod tests {
             120,
         );
         assert!(screen.contains("Host: linux"));
-        assert!(screen.contains("[ok]* llama.cpp-linux-cuda"));
-        assert!(screen.contains("[--] vllm-linux-cuda"));
+        assert!(screen.contains("Backend: llama.cpp-linux-cuda"));
         assert!(screen.contains("Provider"));
     }
 
