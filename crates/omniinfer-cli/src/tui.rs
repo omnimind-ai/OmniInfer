@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -15,7 +19,7 @@ mod render;
 use crate::{
     BackendScope, ServeArgs, advisor, get_local_json_for_config, json_bool, json_str, json_u64,
     load_model_with_request_for_config, post_local_json_for_config, print_chat_performance,
-    rust_backend_payload, select_backend_for_config, serve_orchestrated, shutdown_service,
+    rust_backend_payload, select_backend_for_config, serve_orchestrated,
 };
 
 use models::{
@@ -47,6 +51,7 @@ pub fn run() -> Result<()> {
     if !is_interactive() {
         anyhow::bail!("OmniInfer TUI requires an interactive terminal.");
     }
+    let shutdown_guard = TuiShutdownGuard::install();
     clear_screen();
     print_header("OmniInfer", "Local inference console");
     let config = config::load_app_config().unwrap_or_default();
@@ -66,9 +71,58 @@ pub fn run() -> Result<()> {
         }
         _ => setup_model_flow(&config)?,
     };
-    chat_loop(&config, backend)?;
-    let _ = shutdown_service();
+    let result = chat_loop(&config, backend);
+    shutdown_guard.shutdown_now();
+    result?;
     Ok(())
+}
+
+#[derive(Clone)]
+struct TuiShutdownGuard {
+    done: Arc<AtomicBool>,
+}
+
+impl TuiShutdownGuard {
+    fn install() -> Self {
+        let guard = Self {
+            done: Arc::new(AtomicBool::new(false)),
+        };
+        let signal_guard = guard.clone();
+        std::thread::spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            runtime.block_on(async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    signal_guard.shutdown_now();
+                    std::process::exit(130);
+                }
+            });
+        });
+        guard
+    }
+
+    fn shutdown_now(&self) {
+        if self.done.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        shutdown_service_quietly();
+    }
+}
+
+impl Drop for TuiShutdownGuard {
+    fn drop(&mut self) {
+        self.shutdown_now();
+    }
+}
+
+fn shutdown_service_quietly() {
+    let config = config::load_app_config().unwrap_or_default();
+    let url = format!("{}/omni/shutdown", config.service_base_url());
+    let _ = http_client::post_json(&url, &serde_json::json!({}), Duration::from_secs(10));
 }
 
 pub fn run_server(args: &ServeArgs) -> Result<()> {
@@ -111,7 +165,25 @@ fn load_remembered_model(
         config: None,
         backend_extra_args: Vec::new(),
     };
-    let (response, plan) = load_model_with_request_for_config(&request, false, config)?;
+    if let Some(backend) = reuse_loaded_remembered_model(config, model) {
+        notice("Reusing already loaded model", NoticeKind::Success);
+        print_kv("Model loaded", &model.model);
+        println!();
+        return Ok(backend);
+    }
+    let (response, plan) = match load_model_with_request_for_config(&request, false, config) {
+        Ok(result) => result,
+        Err(error) if error.to_string().contains("model is already loaded") => {
+            if let Some(backend) = reuse_loaded_remembered_model(config, model) {
+                notice("Reusing already loaded model", NoticeKind::Success);
+                print_kv("Model loaded", &model.model);
+                println!();
+                return Ok(backend);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     let backend = json_str(&response, "selected_backend").unwrap_or(&plan.backend);
     notice("Backend ready", NoticeKind::Success);
     print_kv(
@@ -120,6 +192,53 @@ fn load_remembered_model(
     );
     println!();
     Ok(backend.to_string())
+}
+
+fn reuse_loaded_remembered_model(
+    config: &config::AppConfig,
+    model: &local_state::SelectedModel,
+) -> Option<String> {
+    let state = get_running_state(config)?;
+    if !json_bool(&state, "backend_ready").unwrap_or(false) {
+        return None;
+    }
+    let backend = json_str(&state, "backend")?.to_string();
+    if state_matches_model(&state, &model.model) {
+        return Some(backend);
+    }
+    for row in state
+        .get("loaded_models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if state_matches_model(row, &model.model) {
+            return Some(backend);
+        }
+    }
+    None
+}
+
+fn get_running_state(config: &config::AppConfig) -> Option<Value> {
+    let url = format!("{}/omni/state", config.service_base_url());
+    let response = http_client::get_json(&url, Duration::from_secs(2)).ok()?;
+    (response.status == 200).then_some(response.body)
+}
+
+fn state_matches_model(state: &Value, requested: &str) -> bool {
+    ["model_path", "model", "selected_model"]
+        .iter()
+        .filter_map(|key| json_str(state, key))
+        .any(|candidate| model_reference_matches(candidate, requested))
+}
+
+fn model_reference_matches(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let left_path = Path::new(left);
+    let right_path = Path::new(right);
+    left_path.exists() && right_path.exists() && same_path(left_path, right_path)
 }
 
 fn choose_backend(config: &config::AppConfig) -> Result<Option<String>> {
@@ -442,8 +561,6 @@ fn send_chat_message(
     session: &mut ChatSession,
     message: &str,
 ) -> Result<()> {
-    println!("You:");
-    println!("  {message}");
     let state = get_local_json_for_config("/omni/state", Duration::from_secs(10), config)?;
     if json_str(&state, "model").is_none() {
         anyhow::bail!("No model is currently loaded. Use /model first.");
@@ -467,6 +584,7 @@ fn send_chat_message(
     payload
         .entry("max_tokens")
         .or_insert(serde_json::json!(2048));
+    println!();
     println!("Assistant:");
     let assistant_text = stream_chat_response(config, &Value::Object(payload), session)?;
     if !assistant_text.trim().is_empty() {
