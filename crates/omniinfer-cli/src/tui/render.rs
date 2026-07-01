@@ -3,7 +3,7 @@ use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{self, ClearType},
+    terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
 pub(super) fn print_warnings(payload: &Value) {
@@ -95,14 +95,11 @@ pub(super) fn select_model_menu(
     if items.is_empty() {
         return Ok(None);
     }
-    print_section(title, subtitle);
-    let _raw_mode = RawModeGuard::enter()?;
+    let _terminal_mode = ModelPickerTerminalMode::enter()?;
     let mut selected = default_index.min(items.len().saturating_sub(1));
     let mut number_buffer = String::new();
-    let mut rendered_lines = 0_usize;
     loop {
-        redraw_model_menu(items, selected, &number_buffer, rendered_lines)?;
-        rendered_lines = model_menu_rendered_lines(items);
+        redraw_model_menu(title, subtitle, items, selected, &number_buffer)?;
         let Event::Key(key) = event::read()? else {
             continue;
         };
@@ -272,30 +269,33 @@ fn model_menu_columns(terminal_width: usize) -> ModelMenuColumns {
 }
 
 fn redraw_model_menu(
+    title: &str,
+    subtitle: &str,
     items: &[ModelMenuItem],
     selected: usize,
     number_buffer: &str,
-    previous_lines: usize,
 ) -> Result<()> {
-    if previous_lines > 0 {
-        let mut stdout = io::stdout();
-        execute!(
-            stdout,
-            cursor::MoveUp(previous_lines as u16),
-            terminal::Clear(ClearType::FromCursorDown)
-        )?;
+    let mut stdout = io::stdout();
+    execute!(
+        stdout,
+        cursor::MoveTo(0, 0),
+        terminal::Clear(ClearType::All)
+    )?;
+    let mut screen = String::new();
+    screen.push_str(title);
+    screen.push_str("\r\n");
+    if !subtitle.is_empty() {
+        screen.push_str(subtitle);
+        screen.push_str("\r\n");
     }
-    print!(
-        "{}",
-        format_model_menu_with_cursor(items, Some(selected), number_buffer)
+    screen.push_str(&"-".repeat(title.len().max(24)));
+    screen.push_str("\r\n");
+    screen.push_str(
+        &format_model_menu_with_cursor(items, Some(selected), number_buffer).replace('\n', "\r\n"),
     );
+    print!("{screen}");
     io::stdout().flush()?;
     Ok(())
-}
-
-fn model_menu_rendered_lines(items: &[ModelMenuItem]) -> usize {
-    // Header + separator + rows + blank line + hint + prompt.
-    4 + items.len()
 }
 
 fn buffered_model_index(number_buffer: &str, item_count: usize) -> Option<usize> {
@@ -307,17 +307,27 @@ fn buffered_model_index(number_buffer: &str, item_count: usize) -> Option<usize>
     }
 }
 
-struct RawModeGuard;
+struct ModelPickerTerminalMode;
 
-impl RawModeGuard {
+impl ModelPickerTerminalMode {
     fn enter() -> Result<Self> {
+        let mut stdout = io::stdout();
         terminal::enable_raw_mode()?;
+        execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
         Ok(Self)
     }
 }
 
-impl Drop for RawModeGuard {
+impl Drop for ModelPickerTerminalMode {
     fn drop(&mut self) {
+        let mut stdout = io::stdout();
+        let _ = execute!(
+            stdout,
+            terminal::Clear(ClearType::All),
+            cursor::MoveTo(0, 0),
+            cursor::Show,
+            LeaveAlternateScreen
+        );
         let _ = terminal::disable_raw_mode();
     }
 }
