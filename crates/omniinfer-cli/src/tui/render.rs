@@ -69,6 +69,107 @@ pub(super) fn select_menu(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ModelMenuItem {
+    pub(super) label: String,
+    pub(super) quant: String,
+    pub(super) size: String,
+    pub(super) fit: String,
+    pub(super) backend: String,
+    pub(super) evidence: String,
+    pub(super) selected: bool,
+}
+
+pub(super) fn select_model_menu(
+    title: &str,
+    subtitle: &str,
+    items: &[ModelMenuItem],
+    default_index: usize,
+) -> Result<Option<usize>> {
+    if items.is_empty() {
+        return Ok(None);
+    }
+    print_section(title, subtitle);
+    print!("{}", format_model_menu(items));
+    println!("Press Enter to keep the default, type a number, or type q to cancel.");
+    loop {
+        let choice = prompt_default("Select", &(default_index + 1).to_string())?;
+        if matches!(
+            choice.trim().to_ascii_lowercase().as_str(),
+            "q" | "quit" | "cancel" | "esc"
+        ) {
+            return Ok(None);
+        }
+        if let Ok(index) = choice.trim().parse::<usize>()
+            && (1..=items.len()).contains(&index)
+        {
+            return Ok(Some(index - 1));
+        }
+        notice("Invalid selection.", NoticeKind::Warning);
+    }
+}
+
+pub(super) fn format_model_menu(items: &[ModelMenuItem]) -> String {
+    let mut output = String::new();
+    output.push_str(&format!(
+        "{:>3}  {:<3} {:<44} {:<9} {:>8} {:<8} {:<22} {:<14}\n",
+        "#", "Sel", "Model", "Quant", "Size", "Fit", "Backend", "Evidence"
+    ));
+    output.push_str(&format!(
+        "{:>3}  {:<3} {:<44} {:<9} {:>8} {:<8} {:<22} {:<14}\n",
+        "---",
+        "---",
+        "-".repeat(44),
+        "-".repeat(9),
+        "-".repeat(8),
+        "-".repeat(8),
+        "-".repeat(22),
+        "-".repeat(14)
+    ));
+    for (index, item) in items.iter().enumerate() {
+        output.push_str(&format!(
+            "{:>3}  {:<3} {:<44} {:<9} {:>8} {:<8} {:<22} {:<14}\n",
+            index + 1,
+            if item.selected { "*" } else { "" },
+            truncate_cell(&item.label, 44),
+            truncate_cell(&fallback_dash(&item.quant), 9),
+            truncate_cell(&fallback_dash(&item.size), 8),
+            truncate_cell(&fallback_dash(&item.fit), 8),
+            truncate_cell(&fallback_dash(&item.backend), 22),
+            truncate_cell(&fallback_dash(&item.evidence), 14),
+        ));
+    }
+    output
+}
+
+fn fallback_dash(value: &str) -> String {
+    if value.trim().is_empty() {
+        "-".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn truncate_cell(value: &str, width: usize) -> String {
+    let mut chars = value.chars();
+    let mut text = String::new();
+    for _ in 0..width {
+        let Some(ch) = chars.next() else {
+            return text;
+        };
+        text.push(ch);
+    }
+    if chars.next().is_none() || width <= 3 {
+        return text;
+    }
+    let mut truncated = text
+        .chars()
+        .take(width.saturating_sub(3))
+        .collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
 pub(super) fn prompt_default(label: &str, default: &str) -> Result<String> {
     if default.is_empty() {
         print!("{label}: ");
@@ -177,5 +278,30 @@ mod tests {
             memory_breakdown_text(&breakdown).as_deref(),
             Some("weights 2.55 GiB | kv 0.25 GiB | runtime 0.50 GiB")
         );
+    }
+
+    #[test]
+    fn format_model_menu_renders_core_columns() {
+        let items = [ModelMenuItem {
+            label: "qwen/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
+            quant: "Q4_K_M".to_string(),
+            size: "2.31 GiB".to_string(),
+            fit: "good".to_string(),
+            backend: "llama.cpp-linux-cuda".to_string(),
+            evidence: "direct/high".to_string(),
+            selected: true,
+        }];
+        let table = format_model_menu(&items);
+        assert!(table.contains("Model"));
+        assert!(table.contains("Q4_K_M"));
+        assert!(table.contains("llama.cpp-linux-cuda"));
+        assert!(table.contains("direct/high"));
+        assert!(table.contains("*"));
+    }
+
+    #[test]
+    fn truncate_cell_marks_long_values() {
+        assert_eq!(truncate_cell("abcdefg", 6), "abc...");
+        assert_eq!(truncate_cell("abc", 4), "abc");
     }
 }

@@ -6,6 +6,14 @@ pub(super) struct LocalModel {
     pub(super) label: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct AdvisorModelSummary {
+    pub(super) fit: Option<String>,
+    pub(super) backend: Option<String>,
+    pub(super) evidence: Option<String>,
+    pub(super) confidence: Option<String>,
+}
+
 pub(super) fn discover_local_models(config: &config::AppConfig) -> Result<Vec<LocalModel>> {
     let _ = config;
     let payload = rust_backend_payload(BackendScope::All);
@@ -204,32 +212,60 @@ pub(super) fn advisor_recommendation_map(
     result
 }
 
-pub(super) fn advisor_model_details(
+pub(super) fn advisor_model_summary(
     model_path: &Path,
     recommendations: &BTreeMap<String, Value>,
-) -> Vec<String> {
-    let Some(row) = recommendations.get(&advisor_path_key(&model_path.display().to_string()))
-    else {
-        return Vec::new();
-    };
+) -> Option<AdvisorModelSummary> {
+    let row = recommendations.get(&advisor_path_key(&model_path.display().to_string()))?;
     let recommended = row.get("recommended").unwrap_or(&Value::Null);
-    let mut details = Vec::new();
-    if let Some(fit) = json_str(recommended, "fit") {
-        details.push(format!("advisor {fit}"));
-    }
-    if let Some(backend) = json_str(recommended, "backend") {
-        details.push(backend.to_string());
-    }
     let evidence = recommended.get("evidence").unwrap_or(&Value::Null);
-    if let Some(level) = json_str(evidence, "level") {
-        details.push(level.to_string());
+    Some(AdvisorModelSummary {
+        fit: json_str(recommended, "fit").map(str::to_string),
+        backend: json_str(recommended, "backend").map(str::to_string),
+        evidence: json_str(evidence, "level").map(str::to_string),
+        confidence: json_str(recommended, "recommendation_confidence")
+            .or_else(|| json_str(evidence, "confidence"))
+            .map(str::to_string),
+    })
+}
+
+pub(super) fn model_quant_label(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    [
+        "q4_k_m", "q4_k_s", "q5_k_m", "q5_k_s", "q6_k", "q8_0", "q4_0", "q3_k_m", "q3_k_s", "q2_k",
+        "bf16", "f16", "f32",
+    ]
+    .iter()
+    .find(|quant| name.contains(**quant))
+    .map(|quant| quant.to_ascii_uppercase())
+    .unwrap_or_else(|| "-".to_string())
+}
+
+pub(super) fn model_size_label(path: &Path) -> String {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return "-".to_string();
+    };
+    format_bytes(metadata.len())
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let value = bytes as f64;
+    if value >= GIB {
+        format!("{:.2} GiB", value / GIB)
+    } else if value >= MIB {
+        format!("{:.1} MiB", value / MIB)
+    } else if value >= KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{bytes} B")
     }
-    if let Some(confidence) = json_str(recommended, "recommendation_confidence")
-        .or_else(|| json_str(evidence, "confidence"))
-    {
-        details.push(confidence.to_string());
-    }
-    details
 }
 
 fn is_model_file(path: &Path) -> bool {
@@ -397,8 +433,13 @@ mod tests {
             }),
         );
         assert_eq!(
-            advisor_model_details(&model, &rows),
-            vec!["advisor good", "llama.cpp-linux-cuda", "direct", "high"]
+            advisor_model_summary(&model, &rows),
+            Some(AdvisorModelSummary {
+                fit: Some("good".to_string()),
+                backend: Some("llama.cpp-linux-cuda".to_string()),
+                evidence: Some("direct".to_string()),
+                confidence: Some("high".to_string()),
+            })
         );
     }
 
@@ -411,6 +452,18 @@ mod tests {
             managed_model_target(&source, &target_root, Some(&model_root)),
             PathBuf::from("/repo/.local/models/qwen/Qwen3.5-4B-Q4_K_M.gguf")
         );
+    }
+
+    #[test]
+    fn model_labels_include_quant_and_size() {
+        let root = std::env::temp_dir().join(unique_name("tui-model-labels"));
+        std::fs::create_dir_all(&root).expect("create model dir");
+        let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
+        std::fs::write(&model, vec![0_u8; 2048]).expect("write model");
+
+        assert_eq!(model_quant_label(&model), "Q4_K_M");
+        assert_eq!(model_size_label(&model), "2.0 KiB");
+        std::fs::remove_dir_all(root).ok();
     }
 
     fn unique_name(prefix: &str) -> String {

@@ -23,13 +23,13 @@ use crate::{
 };
 
 use models::{
-    advisor_model_details, advisor_recommendation_map, discover_local_models, prompt_model_path,
-    same_path,
+    advisor_model_summary, advisor_recommendation_map, discover_local_models, model_quant_label,
+    model_size_label, prompt_model_path, same_path,
 };
 use render::{
-    NoticeKind, clear_screen, format_gib, is_interactive, memory_breakdown_text, notice,
-    print_chat_header, print_header, print_help, print_kv, print_section, print_warnings,
-    prompt_default, select_menu,
+    ModelMenuItem, NoticeKind, clear_screen, format_gib, is_interactive, memory_breakdown_text,
+    notice, print_chat_header, print_header, print_help, print_kv, print_section, print_warnings,
+    prompt_default, select_menu, select_model_menu,
 };
 
 #[derive(Debug, Clone)]
@@ -311,22 +311,24 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         None
     };
     let remembered_path = remembered.as_ref().map(|model| PathBuf::from(&model.model));
-    let mut items = Vec::new();
+    let mut items = Vec::<ModelMenuItem>::new();
     let mut choices = Vec::<Option<PathBuf>>::new();
     let mut default = 0;
     for model in &models {
-        let mut details = Vec::new();
         let selected = remembered_path
             .as_ref()
             .is_some_and(|path| same_path(path, &model.path));
         if selected {
-            details.push("last selected".to_string());
             default = items.len();
         }
-        details.extend(advisor_model_details(&model.path, &recommendations));
-        items.push(MenuItem {
+        let summary = advisor_model_summary(&model.path, &recommendations).unwrap_or_default();
+        items.push(ModelMenuItem {
             label: model.label.clone(),
-            details,
+            quant: model_quant_label(&model.path),
+            size: model_size_label(&model.path),
+            fit: summary.fit.unwrap_or_else(|| "-".to_string()),
+            backend: summary.backend.unwrap_or_else(|| "-".to_string()),
+            evidence: evidence_label(summary.evidence, summary.confidence),
             selected,
         });
         choices.push(Some(model.path.clone()));
@@ -335,20 +337,28 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         && !models.iter().any(|model| same_path(&model.path, &path))
     {
         default = items.len();
-        items.push(MenuItem {
+        items.push(ModelMenuItem {
             label: path.display().to_string(),
-            details: vec!["last selected".to_string()],
+            quant: model_quant_label(&path),
+            size: model_size_label(&path),
+            fit: "-".to_string(),
+            backend: "-".to_string(),
+            evidence: "last selected".to_string(),
             selected: true,
         });
         choices.push(Some(path));
     }
-    items.push(MenuItem {
+    items.push(ModelMenuItem {
         label: "Enter path manually".to_string(),
-        details: vec!["link into .local/models".to_string()],
+        quant: "-".to_string(),
+        size: "-".to_string(),
+        fit: "manual".to_string(),
+        backend: "-".to_string(),
+        evidence: "link local file".to_string(),
         selected: false,
     });
     choices.push(None);
-    let Some(index) = select_menu(
+    let Some(index) = select_model_menu(
         "Models",
         "Pick a managed model or link a new local file",
         &items,
@@ -361,6 +371,15 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         return Ok(Some(path.clone()));
     }
     prompt_model_path()
+}
+
+fn evidence_label(evidence: Option<String>, confidence: Option<String>) -> String {
+    match (evidence, confidence) {
+        (Some(evidence), Some(confidence)) => format!("{evidence}/{confidence}"),
+        (Some(evidence), None) => evidence,
+        (None, Some(confidence)) => confidence,
+        (None, None) => "-".to_string(),
+    }
 }
 
 fn load_model_interactive(
