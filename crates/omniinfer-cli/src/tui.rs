@@ -352,6 +352,7 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
     let backends_payload = rust_backend_payload(BackendScope::All);
     let menu_context = model_menu_context(&backends_payload);
     let models = discover_local_models(config)?;
+    let selected_backend = selected_backend_info(&backends_payload);
     let recommendations = advisor_recommendation_map(config, &models);
     let remembered = if mark_last_selected {
         local_state::load_state()
@@ -364,7 +365,10 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
     let mut items = Vec::<ModelMenuItem>::new();
     let mut choices = Vec::<Option<PathBuf>>::new();
     let mut default = 0;
-    for model in &models {
+    for model in models
+        .iter()
+        .filter(|model| model_supported_by_backend(&model.path, selected_backend.as_ref()))
+    {
         let selected = remembered_path
             .as_ref()
             .is_some_and(|path| same_path(path, &model.path));
@@ -430,15 +434,52 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
     prompt_model_path()
 }
 
+#[derive(Debug, Clone)]
+struct SelectedBackendInfo {
+    family: String,
+    model_artifact: String,
+}
+
+fn selected_backend_info(backends_payload: &Value) -> Option<SelectedBackendInfo> {
+    let row = backends_payload
+        .get("data")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|row| json_bool(row, "selected").unwrap_or(false))?;
+    Some(SelectedBackendInfo {
+        family: json_str(row, "family").unwrap_or("").to_string(),
+        model_artifact: json_str(row, "model_artifact").unwrap_or("").to_string(),
+    })
+}
+
+fn model_supported_by_backend(path: &Path, backend: Option<&SelectedBackendInfo>) -> bool {
+    let Some(backend) = backend else {
+        return true;
+    };
+    if path.is_dir() {
+        return backend.model_artifact == "directory"
+            || matches!(backend.family.as_str(), "mnn" | "mlx" | "vllm");
+    }
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "gguf" => matches!(backend.family.as_str(), "llama.cpp" | "turboquant"),
+        "mnn" => backend.family == "mnn",
+        "safetensors" | "bin" => backend.model_artifact == "file",
+        _ => backend.model_artifact == "file",
+    }
+}
+
 fn model_menu_context(backends_payload: &Value) -> ModelMenuContext {
     let system = advisor::system_payload(backends_payload.clone());
     let host = system.get("host").unwrap_or(&Value::Null);
     let cuda = system.get("cuda").unwrap_or(&Value::Null);
     let mut hardware_lines = Vec::new();
     hardware_lines.push(format!(
-        "Host: {} {} | CPU: {} threads | RAM: {} GiB free / {} GiB total",
-        json_str(host, "system").unwrap_or("-"),
-        json_str(host, "machine").unwrap_or("-"),
+        "CPU: {} threads | RAM: {} / {} GiB",
         json_u64(host, "cpu_cores")
             .map(|value| value.to_string())
             .unwrap_or_else(|| "-".to_string()),

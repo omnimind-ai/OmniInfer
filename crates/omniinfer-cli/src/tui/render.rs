@@ -172,64 +172,38 @@ fn format_model_menu_for_width(
 ) -> String {
     let columns = model_menu_columns(terminal_width);
     let mut output = String::new();
-    output.push_str(&format!(
-        "{:<2} {:>3}  {:<3} {:<model_width$} {:<provider_width$} {:<quant_width$} {:>8} {:>6} {:<6} {:<backend_width$} {:<evidence_width$}\n",
+    output.push_str(&model_menu_row(
         "",
         "#",
         "Sel",
         "Model",
-        "Provider",
-        "Quant",
-        "Disk",
-        "Ctx",
-        "Fit",
-        "Backend",
-        "Evidence",
-        model_width = columns.model,
-        provider_width = columns.provider,
-        quant_width = columns.quant,
-        backend_width = columns.backend,
-        evidence_width = columns.evidence,
+        &columns.header_values(),
+        &columns,
     ));
-    output.push_str(&format!(
-        "{:<2} {:>3}  {:<3} {:<model_width$} {:<provider_width$} {:<quant_width$} {:>8} {:>6} {:<6} {:<backend_width$} {:<evidence_width$}\n",
+    output.push('\n');
+    output.push_str(&model_menu_row(
         "",
         "---",
         "---",
-        "-".repeat(columns.model),
-        "-".repeat(columns.provider),
-        "-".repeat(columns.quant),
-        "-".repeat(8),
-        "-".repeat(6),
-        "-".repeat(6),
-        "-".repeat(columns.backend),
-        "-".repeat(columns.evidence),
-        model_width = columns.model,
-        provider_width = columns.provider,
-        quant_width = columns.quant,
-        backend_width = columns.backend,
-        evidence_width = columns.evidence,
+        &"-".repeat(columns.model),
+        &columns.separator_values(),
+        &columns,
     ));
+    output.push('\n');
     for (index, item) in items.iter().enumerate() {
-        output.push_str(&format!(
-            "{:<2} {:>3}  {:<3} {:<model_width$} {:<provider_width$} {:<quant_width$} {:>8} {:>6} {:<6} {:<backend_width$} {:<evidence_width$}\n",
-            if selected_index == Some(index) { ">" } else { "" },
-            index + 1,
+        output.push_str(&model_menu_row(
+            if selected_index == Some(index) {
+                ">"
+            } else {
+                ""
+            },
+            &(index + 1).to_string(),
             if item.selected { "*" } else { "" },
-            truncate_cell(&item.label, columns.model),
-            truncate_cell(&fallback_dash(&item.provider), columns.provider),
-            truncate_cell(&fallback_dash(&item.quant), columns.quant),
-            truncate_cell(&fallback_dash(&item.disk), 8),
-            truncate_cell(&fallback_dash(&item.ctx), 6),
-            truncate_cell(&fallback_dash(&item.fit), 6),
-            truncate_cell(&fallback_dash(&item.backend), columns.backend),
-            truncate_cell(&fallback_dash(&item.evidence), columns.evidence),
-            model_width = columns.model,
-            provider_width = columns.provider,
-            quant_width = columns.quant,
-            backend_width = columns.backend,
-            evidence_width = columns.evidence,
+            &item.label,
+            &columns.item_values(item),
+            &columns,
         ));
+        output.push('\n');
     }
     output.push('\n');
     output.push_str(
@@ -278,42 +252,169 @@ fn format_model_menu_screen_for_width(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ModelMenuColumns {
     model: usize,
-    provider: usize,
-    quant: usize,
-    backend: usize,
-    evidence: usize,
+    optional: &'static [ModelMenuColumn],
 }
 
-fn model_menu_columns(terminal_width: usize) -> ModelMenuColumns {
-    // Fixed separators plus non-flex columns consume 39 cells.
-    let available = terminal_width.saturating_sub(39);
-    let mut model = 14;
-    let mut provider = 5;
-    let mut quant = 5;
-    let mut backend = 6;
-    let mut evidence = 5;
-    let mut remaining = available.saturating_sub(model + provider + quant + backend + evidence);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModelMenuColumn {
+    kind: ModelMenuColumnKind,
+    label: &'static str,
+    width: usize,
+    align: CellAlign,
+}
 
-    grow_column(&mut model, 36, &mut remaining);
-    grow_column(&mut backend, 18, &mut remaining);
-    grow_column(&mut provider, 12, &mut remaining);
-    grow_column(&mut evidence, 14, &mut remaining);
-    grow_column(&mut quant, 8, &mut remaining);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelMenuColumnKind {
+    Provider,
+    Quant,
+    Disk,
+    Ctx,
+    Fit,
+    Backend,
+    Evidence,
+}
 
-    ModelMenuColumns {
-        model,
-        provider,
-        quant,
-        backend,
-        evidence,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CellAlign {
+    Left,
+    Right,
+}
+
+const MENU_COLUMNS_FULL: &[ModelMenuColumn] = &[
+    ModelMenuColumn {
+        kind: ModelMenuColumnKind::Provider,
+        label: "Provider",
+        width: 12,
+        align: CellAlign::Left,
+    },
+    ModelMenuColumn {
+        kind: ModelMenuColumnKind::Quant,
+        label: "Quant",
+        width: 8,
+        align: CellAlign::Left,
+    },
+    ModelMenuColumn {
+        kind: ModelMenuColumnKind::Disk,
+        label: "Disk",
+        width: 8,
+        align: CellAlign::Right,
+    },
+    ModelMenuColumn {
+        kind: ModelMenuColumnKind::Ctx,
+        label: "Ctx",
+        width: 6,
+        align: CellAlign::Right,
+    },
+    ModelMenuColumn {
+        kind: ModelMenuColumnKind::Fit,
+        label: "Fit",
+        width: 6,
+        align: CellAlign::Left,
+    },
+    ModelMenuColumn {
+        kind: ModelMenuColumnKind::Backend,
+        label: "Backend",
+        width: 18,
+        align: CellAlign::Left,
+    },
+    ModelMenuColumn {
+        kind: ModelMenuColumnKind::Evidence,
+        label: "Evidence",
+        width: 14,
+        align: CellAlign::Left,
+    },
+];
+
+impl ModelMenuColumns {
+    fn header_values(&self) -> Vec<String> {
+        self.optional
+            .iter()
+            .map(|column| column.label.to_string())
+            .collect()
+    }
+
+    fn separator_values(&self) -> Vec<String> {
+        self.optional
+            .iter()
+            .map(|column| "-".repeat(column.width))
+            .collect()
+    }
+
+    fn item_values(&self, item: &ModelMenuItem) -> Vec<String> {
+        self.optional
+            .iter()
+            .map(|column| match column.kind {
+                ModelMenuColumnKind::Provider => fallback_dash(&item.provider),
+                ModelMenuColumnKind::Quant => fallback_dash(&item.quant),
+                ModelMenuColumnKind::Disk => fallback_dash(&item.disk),
+                ModelMenuColumnKind::Ctx => fallback_dash(&item.ctx),
+                ModelMenuColumnKind::Fit => fallback_dash(&item.fit),
+                ModelMenuColumnKind::Backend => fallback_dash(&item.backend),
+                ModelMenuColumnKind::Evidence => fallback_dash(&item.evidence),
+            })
+            .collect()
     }
 }
 
-fn grow_column(width: &mut usize, max_width: usize, remaining: &mut usize) {
-    let room = max_width.saturating_sub(*width);
-    let delta = room.min(*remaining);
-    *width += delta;
-    *remaining -= delta;
+fn model_menu_columns(terminal_width: usize) -> ModelMenuColumns {
+    let optional = match terminal_width {
+        0..=34 => &MENU_COLUMNS_FULL[..0],
+        35..=47 => &MENU_COLUMNS_FULL[..1],
+        48..=57 => &MENU_COLUMNS_FULL[..2],
+        58..=65 => &MENU_COLUMNS_FULL[..3],
+        66..=73 => &MENU_COLUMNS_FULL[..4],
+        74..=91 => &MENU_COLUMNS_FULL[..5],
+        92..=113 => &MENU_COLUMNS_FULL[..6],
+        _ => MENU_COLUMNS_FULL,
+    };
+    let mut visible = optional;
+    while terminal_width.saturating_sub(model_menu_fixed_width(visible)) < 8 && !visible.is_empty()
+    {
+        visible = &visible[..visible.len() - 1];
+    }
+    let model = terminal_width
+        .saturating_sub(model_menu_fixed_width(visible))
+        .max(4);
+    ModelMenuColumns {
+        model,
+        optional: visible,
+    }
+}
+
+fn model_menu_fixed_width(optional: &[ModelMenuColumn]) -> usize {
+    let prefix = 12;
+    prefix
+        + optional
+            .iter()
+            .map(|column| 1 + column.width)
+            .sum::<usize>()
+}
+
+fn model_menu_row(
+    cursor: &str,
+    number: &str,
+    selected: &str,
+    model: &str,
+    values: &[String],
+    columns: &ModelMenuColumns,
+) -> String {
+    let mut row = format!(
+        "{:<2} {:>3}  {:<3} {:<model_width$}",
+        truncate_cell_plain(cursor, 2),
+        truncate_cell_plain(number, 3),
+        truncate_cell_plain(selected, 3),
+        truncate_cell_plain(model, columns.model),
+        model_width = columns.model,
+    );
+    for (column, value) in columns.optional.iter().zip(values.iter()) {
+        row.push(' ');
+        let value = truncate_cell_plain(value, column.width);
+        match column.align {
+            CellAlign::Left => row.push_str(&format!("{value:<width$}", width = column.width)),
+            CellAlign::Right => row.push_str(&format!("{value:>width$}", width = column.width)),
+        }
+    }
+    row
 }
 
 fn redraw_model_menu(
@@ -397,7 +498,7 @@ fn format_panel(
             PanelBodyMode::Preformatted => {
                 output.push_str(&format!(
                     "| {:<content_width$} |\n",
-                    truncate_cell(line, content_width)
+                    truncate_cell_plain(line, content_width)
                 ));
             }
         }
@@ -414,7 +515,7 @@ fn panel_top(title: &str, panel_width: usize) -> String {
 }
 
 fn panel_content_width(terminal_width: usize) -> usize {
-    terminal_width.saturating_sub(4).clamp(48, 140)
+    terminal_width.saturating_sub(4).clamp(12, 220)
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
@@ -527,6 +628,10 @@ fn truncate_cell(value: &str, width: usize) -> String {
         .collect::<String>();
     truncated.push_str("...");
     truncated
+}
+
+fn truncate_cell_plain(value: &str, width: usize) -> String {
+    value.chars().take(width).collect()
 }
 
 pub(super) fn prompt_default(label: &str, default: &str) -> Result<String> {
@@ -700,22 +805,34 @@ mod tests {
 
     #[test]
     fn model_menu_columns_fit_narrow_terminals() {
-        let terminal_width = 76;
-        let columns = model_menu_columns(terminal_width);
-        assert!(columns.model >= 14);
-        assert!(columns.provider >= 5);
-        assert!(columns.quant >= 5);
-        assert!(columns.backend >= 6);
-        assert!(columns.evidence >= 5);
+        let narrow = model_menu_columns(34);
+        assert!(narrow.optional.is_empty());
+        assert!(narrow.model >= 8);
+
+        let medium = model_menu_columns(76);
         assert!(
-            columns.model + columns.provider + columns.quant + columns.backend + columns.evidence
-                <= terminal_width.saturating_sub(39)
+            medium
+                .optional
+                .iter()
+                .any(|column| column.kind == ModelMenuColumnKind::Fit)
         );
+        assert!(
+            !medium
+                .optional
+                .iter()
+                .any(|column| column.kind == ModelMenuColumnKind::Backend)
+        );
+
+        let wide = model_menu_columns(160);
+        assert_eq!(wide.optional.len(), MENU_COLUMNS_FULL.len());
+        let row = model_menu_row("", "1", "", "model", &wide.header_values(), &wide);
+        assert!(row.len() <= 160);
     }
 
     #[test]
     fn truncate_cell_marks_long_values() {
         assert_eq!(truncate_cell("abcdefg", 6), "abc...");
         assert_eq!(truncate_cell("abc", 4), "abc");
+        assert_eq!(truncate_cell_plain("abcdefg", 6), "abcdef");
     }
 }
