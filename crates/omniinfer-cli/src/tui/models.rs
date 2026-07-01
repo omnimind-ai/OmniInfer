@@ -407,13 +407,22 @@ mod tests {
         std::fs::create_dir_all(&family).expect("create model dir");
         let model = family.join("Qwen3.5-4B-Q4_K_M.gguf");
         let mmproj = family.join("mmproj-Qwen3.5-4B.gguf");
+        let pytorch_weights = family.join("pytorch_model.bin");
         std::fs::write(&model, "").expect("write model");
         std::fs::write(mmproj, "").expect("write mmproj");
+        std::fs::write(pytorch_weights, "").expect("write bin");
 
         let rows = discover_models_in_roots(std::slice::from_ref(&root));
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].path, model);
-        assert_eq!(rows[0].label, "Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf");
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .any(|row| row.path == model && row.label == "Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf")
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.path == family.join("pytorch_model.bin")
+                    && row.label == "Qwen3.5-4B/pytorch_model.bin")
+        );
         std::fs::remove_dir_all(root).ok();
     }
 

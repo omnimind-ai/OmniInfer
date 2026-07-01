@@ -29,9 +29,9 @@ use models::{
     model_size_label, prompt_model_path, same_path,
 };
 use render::{
-    ModelMenuItem, NoticeKind, clear_screen, format_gib, is_interactive, memory_breakdown_text,
-    notice, print_chat_header, print_header, print_help, print_kv, print_section, print_warnings,
-    prompt_default, select_menu, select_model_menu,
+    ModelMenuItem, NoticeKind, clear_screen, is_interactive, notice, print_chat_header,
+    print_header, print_help, print_kv, print_section, prompt_default, select_menu,
+    select_model_menu,
 };
 
 #[derive(Debug, Clone)]
@@ -181,12 +181,22 @@ pub fn run_server(args: &ServeArgs) -> Result<()> {
 }
 
 fn setup_model_flow(config: &config::AppConfig) -> Result<String> {
-    let backend = choose_backend(config)?.ok_or_else(|| anyhow::anyhow!("No backend selected."))?;
-    let model =
-        choose_model(config, false)?.ok_or_else(|| anyhow::anyhow!("No model selected."))?;
-    let loaded =
-        load_model_interactive(config, model.to_string_lossy().as_ref(), true)?.unwrap_or(backend);
-    Ok(loaded)
+    choose_backend(config)?.ok_or_else(|| anyhow::anyhow!("No backend selected."))?;
+    loop {
+        let model =
+            choose_model(config, false)?.ok_or_else(|| anyhow::anyhow!("No model selected."))?;
+        match load_model_interactive(config, model.to_string_lossy().as_ref()) {
+            Ok(loaded) => return Ok(loaded),
+            Err(error) => {
+                notice(&format!("Model load failed: {error}"), NoticeKind::Warning);
+                notice(
+                    "Choose another model or cancel with q/Esc.",
+                    NoticeKind::Warning,
+                );
+                println!();
+            }
+        }
+    }
 }
 
 fn load_remembered_model(
@@ -420,14 +430,7 @@ fn evidence_label(evidence: Option<String>, confidence: Option<String>) -> Strin
     }
 }
 
-fn load_model_interactive(
-    config: &config::AppConfig,
-    model: &str,
-    advisor_preflight: bool,
-) -> Result<Option<String>> {
-    if advisor_preflight && !advisor_preflight_flow(config, model)? {
-        return Ok(None);
-    }
+fn load_model_interactive(config: &config::AppConfig, model: &str) -> Result<String> {
     println!();
     print_kv("Model", model);
     let request = model_load::ModelLoadRequest {
@@ -453,102 +456,8 @@ fn load_model_interactive(
     println!();
     Ok(json_str(&response, "selected_backend")
         .or(Some(&plan.backend))
-        .map(str::to_string))
-}
-
-fn advisor_preflight_flow(config: &config::AppConfig, model: &str) -> Result<bool> {
-    let _ = config;
-    let backends = rust_backend_payload(BackendScope::All);
-    let payload = advisor::fit_payload(model, None, None, None, backends)?;
-    let recommended = payload.get("recommended").filter(|value| value.is_object());
-    let Some(recommended) = recommended else {
-        print_warnings(&payload);
-        return Ok(true);
-    };
-    print_advisor_preflight_summary(&payload);
-    loop {
-        let choice = prompt_default("Advisor", "")?;
-        match choice.trim().to_ascii_lowercase().as_str() {
-            "" | "y" | "yes" | "load" => {
-                apply_advisor_backend(config, recommended)?;
-                return Ok(true);
-            }
-            "a" | "advisor" | "details" => {
-                advisor::print_fit(&payload, false)?;
-            }
-            "b" | "backend" => {
-                let _ = choose_backend(config)?;
-                return Ok(true);
-            }
-            "s" | "skip" | "current" => return Ok(true),
-            "q" | "quit" | "cancel" => return Ok(false),
-            _ => notice(
-                "Use Enter to load, A for details, B to change backend, or S to keep current.",
-                NoticeKind::Warning,
-            ),
-        }
-    }
-}
-
-fn apply_advisor_backend(config: &config::AppConfig, recommended: &Value) -> Result<()> {
-    let Some(backend) = json_str(recommended, "backend") else {
-        return Ok(());
-    };
-    if !json_bool(recommended, "installed").unwrap_or(false) {
-        notice(
-            &format!("Advisor recommended {backend}, but it is not installed."),
-            NoticeKind::Warning,
-        );
-        return Ok(());
-    }
-    select_backend_for_config(backend, config)?;
-    notice(
-        &format!("Advisor selected backend: {backend}"),
-        NoticeKind::Success,
-    );
-    Ok(())
-}
-
-fn print_advisor_preflight_summary(payload: &Value) {
-    let recommended = payload.get("recommended").unwrap_or(&Value::Null);
-    print_section("Advisor", "Load preflight");
-    print_kv(
-        "Recommended",
-        &format!(
-            "{} ({})",
-            json_str(recommended, "backend").unwrap_or("-"),
-            json_str(recommended, "fit").unwrap_or("unknown")
-        ),
-    );
-    let evidence = recommended.get("evidence").unwrap_or(&Value::Null);
-    print_kv(
-        "Evidence",
-        &format!(
-            "{} / {}",
-            json_str(evidence, "level").unwrap_or("-"),
-            json_str(recommended, "recommendation_confidence")
-                .or_else(|| json_str(evidence, "confidence"))
-                .unwrap_or("-")
-        ),
-    );
-    print_kv(
-        "Memory",
-        &format!(
-            "{} required / {} available",
-            format_gib(recommended.get("memory_required_gib")),
-            format_gib(recommended.get("memory_available_gib"))
-        ),
-    );
-    if let Some(text) =
-        memory_breakdown_text(recommended.get("memory_breakdown").unwrap_or(&Value::Null))
-    {
-        print_kv("Breakdown", &text);
-    }
-    print_kv(
-        "Action",
-        "Enter load recommendation | A details | B backend | S keep current",
-    );
-    print_warnings(payload);
+        .unwrap_or(&plan.backend)
+        .to_string())
 }
 
 fn chat_loop(config: &config::AppConfig, backend: String) -> Result<()> {
@@ -571,26 +480,22 @@ fn chat_loop(config: &config::AppConfig, backend: String) -> Result<()> {
             "/exit" => return Ok(()),
             "/backend" => {
                 if let Some(backend) = choose_backend(config)? {
-                    session.backend = backend;
                     session.messages.clear();
                     if let Some(model) = choose_model(config, true)? {
-                        if let Some(loaded) =
-                            load_model_interactive(config, model.to_string_lossy().as_ref(), true)?
-                        {
-                            session.backend = loaded;
-                        }
+                        load_model_for_chat(
+                            config,
+                            &mut session,
+                            model.to_string_lossy().as_ref(),
+                        )?;
+                    } else {
+                        session.backend = backend;
+                        print_chat_header(&session);
                     }
-                    print_chat_header(&session);
                 }
             }
             "/model" => {
-                if let Some(model) = choose_model(config, true)?
-                    && let Some(loaded) =
-                        load_model_interactive(config, model.to_string_lossy().as_ref(), true)?
-                {
-                    session.backend = loaded;
-                    session.messages.clear();
-                    print_chat_header(&session);
+                if let Some(model) = choose_model(config, true)? {
+                    load_model_for_chat(config, &mut session, model.to_string_lossy().as_ref())?;
                 }
             }
             "/clear" => {
@@ -611,6 +516,28 @@ fn chat_loop(config: &config::AppConfig, backend: String) -> Result<()> {
             _ => send_chat_message(config, &mut session, message)?,
         }
     }
+}
+
+fn load_model_for_chat(
+    config: &config::AppConfig,
+    session: &mut ChatSession,
+    model: &str,
+) -> Result<()> {
+    match load_model_interactive(config, model) {
+        Ok(loaded) => {
+            session.backend = loaded;
+            session.messages.clear();
+        }
+        Err(error) => {
+            notice(&format!("Model load failed: {error}"), NoticeKind::Warning);
+            notice(
+                "Still in chat. Use /model to pick another model.",
+                NoticeKind::Warning,
+            );
+        }
+    }
+    print_chat_header(session);
+    Ok(())
 }
 
 fn send_chat_message(

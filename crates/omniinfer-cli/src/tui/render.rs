@@ -6,14 +6,6 @@ use crossterm::{
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
-pub(super) fn print_warnings(payload: &Value) {
-    if let Some(warnings) = payload.get("warnings").and_then(Value::as_array) {
-        for warning in warnings.iter().filter_map(Value::as_str).take(2) {
-            notice(&format!("Advisor: {warning}"), NoticeKind::Warning);
-        }
-    }
-}
-
 pub(super) fn print_help() {
     print_section("Help", "Conversation commands");
     let rows = [
@@ -426,49 +418,9 @@ pub(super) fn is_interactive() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal()
 }
 
-pub(super) fn format_gib(value: Option<&Value>) -> String {
-    value
-        .and_then(Value::as_f64)
-        .map(|value| format!("{value:.2} GiB"))
-        .unwrap_or_else(|| "-".to_string())
-}
-
-pub(super) fn memory_breakdown_text(breakdown: &Value) -> Option<String> {
-    let fields = [
-        ("weights", "weights_gib"),
-        ("mmproj", "mmproj_gib"),
-        ("kv", "kv_cache_gib"),
-        ("act", "activation_gib"),
-        ("runtime", "runtime_overhead_gib"),
-    ];
-    let parts = fields
-        .iter()
-        .filter_map(|(label, key)| {
-            breakdown
-                .get(*key)
-                .and_then(Value::as_f64)
-                .map(|value| format!("{label} {value:.2} GiB"))
-        })
-        .collect::<Vec<_>>();
-    (!parts.is_empty()).then(|| parts.join(" | "))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn memory_breakdown_text_uses_expected_labels() {
-        let breakdown = serde_json::json!({
-            "weights_gib": 2.55,
-            "kv_cache_gib": 0.25,
-            "runtime_overhead_gib": 0.5
-        });
-        assert_eq!(
-            memory_breakdown_text(&breakdown).as_deref(),
-            Some("weights 2.55 GiB | kv 0.25 GiB | runtime 0.50 GiB")
-        );
-    }
 
     #[test]
     fn format_model_menu_renders_core_columns() {
