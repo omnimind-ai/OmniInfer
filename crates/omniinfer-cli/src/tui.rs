@@ -25,8 +25,8 @@ use crate::{
 };
 
 use models::{
-    advisor_model_summary, advisor_recommendation_map, discover_local_models, model_quant_label,
-    model_size_label, prompt_model_path, same_path,
+    advisor_model_summary, advisor_recommendation_map, discover_local_models, model_context_label,
+    model_provider_label, model_quant_label, model_size_label, prompt_model_path, same_path,
 };
 use render::{
     ModelMenuItem, NoticeKind, clear_screen, is_interactive, notice, print_chat_header,
@@ -372,8 +372,10 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         let summary = advisor_model_summary(&model.path, &recommendations).unwrap_or_default();
         items.push(ModelMenuItem {
             label: model.label.clone(),
+            provider: model_provider_label(&model.path),
             quant: model_quant_label(&model.path),
-            size: model_size_label(&model.path),
+            disk: model_size_label(&model.path),
+            ctx: model_context_label(&model.path),
             fit: summary.fit.unwrap_or_else(|| "-".to_string()),
             backend: summary.backend.unwrap_or_else(|| "-".to_string()),
             evidence: evidence_label(summary.evidence, summary.confidence),
@@ -387,8 +389,10 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         default = items.len();
         items.push(ModelMenuItem {
             label: path.display().to_string(),
+            provider: model_provider_label(&path),
             quant: model_quant_label(&path),
-            size: model_size_label(&path),
+            disk: model_size_label(&path),
+            ctx: model_context_label(&path),
             fit: "-".to_string(),
             backend: "-".to_string(),
             evidence: "last selected".to_string(),
@@ -398,8 +402,10 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
     }
     items.push(ModelMenuItem {
         label: "Enter path manually".to_string(),
+        provider: "manual".to_string(),
         quant: "-".to_string(),
-        size: "-".to_string(),
+        disk: "-".to_string(),
+        ctx: "-".to_string(),
         fit: "manual".to_string(),
         backend: "-".to_string(),
         evidence: "link local file".to_string(),

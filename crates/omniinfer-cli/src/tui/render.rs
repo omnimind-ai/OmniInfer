@@ -70,8 +70,10 @@ pub(super) fn select_menu(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ModelMenuItem {
     pub(super) label: String,
+    pub(super) provider: String,
     pub(super) quant: String,
-    pub(super) size: String,
+    pub(super) disk: String,
+    pub(super) ctx: String,
     pub(super) fit: String,
     pub(super) backend: String,
     pub(super) evidence: String,
@@ -175,50 +177,59 @@ fn format_model_menu_for_width(
     let columns = model_menu_columns(terminal_width);
     let mut output = String::new();
     output.push_str(&format!(
-        "{:<2} {:>3}  {:<3} {:<model_width$} {:<quant_width$} {:>8} {:<6} {:<backend_width$} {:<evidence_width$}\n",
+        "{:<2} {:>3}  {:<3} {:<model_width$} {:<provider_width$} {:<quant_width$} {:>8} {:>6} {:<6} {:<backend_width$} {:<evidence_width$}\n",
         "",
         "#",
         "Sel",
         "Model",
+        "Provider",
         "Quant",
-        "Size",
+        "Disk",
+        "Ctx",
         "Fit",
         "Backend",
         "Evidence",
         model_width = columns.model,
+        provider_width = columns.provider,
         quant_width = columns.quant,
         backend_width = columns.backend,
         evidence_width = columns.evidence,
     ));
     output.push_str(&format!(
-        "{:<2} {:>3}  {:<3} {:<model_width$} {:<quant_width$} {:>8} {:<6} {:<backend_width$} {:<evidence_width$}\n",
+        "{:<2} {:>3}  {:<3} {:<model_width$} {:<provider_width$} {:<quant_width$} {:>8} {:>6} {:<6} {:<backend_width$} {:<evidence_width$}\n",
         "",
         "---",
         "---",
         "-".repeat(columns.model),
+        "-".repeat(columns.provider),
         "-".repeat(columns.quant),
         "-".repeat(8),
+        "-".repeat(6),
         "-".repeat(6),
         "-".repeat(columns.backend),
         "-".repeat(columns.evidence),
         model_width = columns.model,
+        provider_width = columns.provider,
         quant_width = columns.quant,
         backend_width = columns.backend,
         evidence_width = columns.evidence,
     ));
     for (index, item) in items.iter().enumerate() {
         output.push_str(&format!(
-            "{:<2} {:>3}  {:<3} {:<model_width$} {:<quant_width$} {:>8} {:<6} {:<backend_width$} {:<evidence_width$}\n",
+            "{:<2} {:>3}  {:<3} {:<model_width$} {:<provider_width$} {:<quant_width$} {:>8} {:>6} {:<6} {:<backend_width$} {:<evidence_width$}\n",
             if selected_index == Some(index) { ">" } else { "" },
             index + 1,
             if item.selected { "*" } else { "" },
             truncate_cell(&item.label, columns.model),
+            truncate_cell(&fallback_dash(&item.provider), columns.provider),
             truncate_cell(&fallback_dash(&item.quant), columns.quant),
-            truncate_cell(&fallback_dash(&item.size), 8),
+            truncate_cell(&fallback_dash(&item.disk), 8),
+            truncate_cell(&fallback_dash(&item.ctx), 6),
             truncate_cell(&fallback_dash(&item.fit), 6),
             truncate_cell(&fallback_dash(&item.backend), columns.backend),
             truncate_cell(&fallback_dash(&item.evidence), columns.evidence),
             model_width = columns.model,
+            provider_width = columns.provider,
             quant_width = columns.quant,
             backend_width = columns.backend,
             evidence_width = columns.evidence,
@@ -239,21 +250,26 @@ fn format_model_menu_for_width(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ModelMenuColumns {
     model: usize,
+    provider: usize,
     quant: usize,
     backend: usize,
     evidence: usize,
 }
 
 fn model_menu_columns(terminal_width: usize) -> ModelMenuColumns {
-    // Fixed columns and separators consume 47 cells:
-    // cursor, number, selected marker, size, fit, and inter-column spaces.
-    let available = terminal_width.saturating_sub(47);
-    let evidence = 11.min(available.saturating_sub(18));
-    let backend = 18.min(available.saturating_sub(evidence + 14));
-    let quant = 7.min(available.saturating_sub(evidence + backend + 8));
-    let model = available.saturating_sub(evidence + backend + quant).max(16);
+    // Fixed columns and separators consume 62 cells:
+    // cursor, number, selected marker, disk, ctx, fit, and inter-column spaces.
+    let available = terminal_width.saturating_sub(62);
+    let evidence = 10.min(available.saturating_sub(36));
+    let backend = 16.min(available.saturating_sub(evidence + 24));
+    let provider = 12.min(available.saturating_sub(evidence + backend + 12));
+    let quant = 7.min(available.saturating_sub(evidence + backend + provider + 6));
+    let model = available
+        .saturating_sub(evidence + backend + provider + quant)
+        .max(16);
     ModelMenuColumns {
         model,
+        provider: provider.max(6),
         quant: quant.max(5),
         backend: backend.max(8),
         evidence: evidence.max(6),
@@ -426,8 +442,10 @@ mod tests {
     fn format_model_menu_renders_core_columns() {
         let items = [ModelMenuItem {
             label: "qwen/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
+            provider: "qwen".to_string(),
             quant: "Q4_K_M".to_string(),
-            size: "2.31 GiB".to_string(),
+            disk: "2.31 GiB".to_string(),
+            ctx: "32k".to_string(),
             fit: "good".to_string(),
             backend: "llama.cpp-linux-cuda".to_string(),
             evidence: "direct/high".to_string(),
@@ -435,9 +453,11 @@ mod tests {
         }];
         let table = format_model_menu_for_width(&items, None, "", 140);
         assert!(table.contains("Model"));
+        assert!(table.contains("Provider"));
         assert!(table.contains("Q4_K_M"));
+        assert!(table.contains("32k"));
         assert!(table.contains("llama.cpp"));
-        assert!(table.contains("direct/high"));
+        assert!(table.contains("direct"));
         assert!(table.contains("*"));
     }
 
@@ -446,8 +466,10 @@ mod tests {
         let items = [
             ModelMenuItem {
                 label: "first.gguf".to_string(),
+                provider: "local".to_string(),
                 quant: "Q4_K_M".to_string(),
-                size: "2 GiB".to_string(),
+                disk: "2 GiB".to_string(),
+                ctx: "32k".to_string(),
                 fit: "good".to_string(),
                 backend: "llama.cpp-linux-cuda".to_string(),
                 evidence: "direct/high".to_string(),
@@ -455,8 +477,10 @@ mod tests {
             },
             ModelMenuItem {
                 label: "second.gguf".to_string(),
+                provider: "local".to_string(),
                 quant: "Q8_0".to_string(),
-                size: "4 GiB".to_string(),
+                disk: "4 GiB".to_string(),
+                ctx: "128k".to_string(),
                 fit: "good".to_string(),
                 backend: "llama.cpp-linux-cuda".to_string(),
                 evidence: "direct/high".to_string(),
@@ -481,10 +505,14 @@ mod tests {
     fn model_menu_columns_fit_narrow_terminals() {
         let columns = model_menu_columns(100);
         assert!(columns.model >= 16);
+        assert!(columns.provider >= 6);
         assert!(columns.quant >= 5);
         assert!(columns.backend >= 8);
         assert!(columns.evidence >= 6);
-        assert!(columns.model + columns.quant + columns.backend + columns.evidence <= 53);
+        assert!(
+            columns.model + columns.provider + columns.quant + columns.backend + columns.evidence
+                <= 60
+        );
     }
 
     #[test]

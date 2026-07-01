@@ -190,7 +190,7 @@ fn read_manifest(
     })
 }
 
-fn read_gguf_context_length(path: &Path) -> Result<Option<u32>, PublicModelError> {
+pub fn read_gguf_context_length(path: &Path) -> Result<Option<u32>, PublicModelError> {
     let mut file = fs::File::open(path).map_err(io_error)?;
     let mut magic = [0_u8; 4];
     file.read_exact(&mut magic).map_err(io_error)?;

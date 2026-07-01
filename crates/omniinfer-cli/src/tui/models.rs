@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Component;
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalModel {
@@ -245,11 +246,41 @@ pub(super) fn model_quant_label(path: &Path) -> String {
     .unwrap_or_else(|| "-".to_string())
 }
 
+pub(super) fn model_provider_label(path: &Path) -> String {
+    let local_models = paths::local_dir().join("models");
+    if let Ok(relative) = path.strip_prefix(&local_models)
+        && let Some(provider) = relative.components().next().and_then(component_text)
+    {
+        return provider.to_string();
+    }
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("local")
+        .to_string()
+}
+
 pub(super) fn model_size_label(path: &Path) -> String {
     let Ok(metadata) = std::fs::metadata(path) else {
         return "-".to_string();
     };
     format_bytes(metadata.len())
+}
+
+pub(super) fn model_context_label(path: &Path) -> String {
+    omniinfer_core::public_models::read_gguf_context_length(path)
+        .ok()
+        .flatten()
+        .map(format_context_size)
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn component_text(component: Component<'_>) -> Option<&str> {
+    match component {
+        Component::Normal(value) => value.to_str(),
+        _ => None,
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -265,6 +296,14 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KiB", value / KIB)
     } else {
         format!("{bytes} B")
+    }
+}
+
+fn format_context_size(ctx_size: u32) -> String {
+    if ctx_size >= 1024 && ctx_size % 1024 == 0 {
+        format!("{}k", ctx_size / 1024)
+    } else {
+        ctx_size.to_string()
     }
 }
 
@@ -475,11 +514,44 @@ mod tests {
         std::fs::remove_dir_all(root).ok();
     }
 
+    #[test]
+    fn model_labels_include_provider_and_context() {
+        let root = std::env::temp_dir().join(unique_name("tui-model-context"));
+        let family = root.join("qwen");
+        std::fs::create_dir_all(&family).expect("create model dir");
+        let model = family.join("model.gguf");
+        write_test_gguf(&model, "qwen.context_length", 32768);
+
+        assert_eq!(model_provider_label(&model), "qwen");
+        assert_eq!(model_context_label(&model), "32k");
+        std::fs::remove_dir_all(root).ok();
+    }
+
     fn unique_name(prefix: &str) -> String {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time")
             .as_nanos();
         format!("omniinfer-rs-{prefix}-{nanos}")
+    }
+
+    fn write_test_gguf(path: &Path, context_key: &str, context_length: u32) {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&3_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u64.to_le_bytes());
+        bytes.extend_from_slice(&2_u64.to_le_bytes());
+        write_gguf_string(&mut bytes, "general.architecture");
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        write_gguf_string(&mut bytes, "qwen");
+        write_gguf_string(&mut bytes, context_key);
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&context_length.to_le_bytes());
+        std::fs::write(path, bytes).expect("write gguf");
+    }
+
+    fn write_gguf_string(bytes: &mut Vec<u8>, value: &str) {
+        bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(value.as_bytes());
     }
 }
