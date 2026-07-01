@@ -16,6 +16,7 @@ base64.workspace = true
 bytes.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
+crossterm.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true

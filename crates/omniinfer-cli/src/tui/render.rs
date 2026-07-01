@@ -1,4 +1,10 @@
 use super::*;
+use crossterm::{
+    cursor,
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{self, ClearType},
+};
 
 pub(super) fn print_warnings(payload: &Value) {
     if let Some(warnings) = payload.get("warnings").and_then(Value::as_array) {
@@ -90,56 +96,230 @@ pub(super) fn select_model_menu(
         return Ok(None);
     }
     print_section(title, subtitle);
-    print!("{}", format_model_menu(items));
-    println!("Press Enter to keep the default, type a number, or type q to cancel.");
+    let _raw_mode = RawModeGuard::enter()?;
+    let mut selected = default_index.min(items.len().saturating_sub(1));
+    let mut number_buffer = String::new();
+    let mut rendered_lines = 0_usize;
     loop {
-        let choice = prompt_default("Select", &(default_index + 1).to_string())?;
-        if matches!(
-            choice.trim().to_ascii_lowercase().as_str(),
-            "q" | "quit" | "cancel" | "esc"
-        ) {
-            return Ok(None);
+        redraw_model_menu(items, selected, &number_buffer, rendered_lines)?;
+        rendered_lines = model_menu_rendered_lines(items);
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
         }
-        if let Ok(index) = choice.trim().parse::<usize>()
-            && (1..=items.len()).contains(&index)
-        {
-            return Ok(Some(index - 1));
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                selected = selected.saturating_sub(1);
+                number_buffer.clear();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                selected = (selected + 1).min(items.len().saturating_sub(1));
+                number_buffer.clear();
+            }
+            KeyCode::PageUp => {
+                selected = selected.saturating_sub(10);
+                number_buffer.clear();
+            }
+            KeyCode::PageDown => {
+                selected = (selected + 10).min(items.len().saturating_sub(1));
+                number_buffer.clear();
+            }
+            KeyCode::Home => {
+                selected = 0;
+                number_buffer.clear();
+            }
+            KeyCode::End => {
+                selected = items.len().saturating_sub(1);
+                number_buffer.clear();
+            }
+            KeyCode::Enter => {
+                if let Some(index) = buffered_model_index(&number_buffer, items.len()) {
+                    println!();
+                    return Ok(Some(index));
+                }
+                println!();
+                return Ok(Some(selected));
+            }
+            KeyCode::Backspace => {
+                number_buffer.pop();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                println!();
+                return Ok(None);
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                anyhow::bail!("Interrupted.");
+            }
+            KeyCode::Char(ch)
+                if key.modifiers.is_empty() && ch.is_ascii_digit() && number_buffer.len() < 4 =>
+            {
+                number_buffer.push(ch);
+                if let Some(index) = buffered_model_index(&number_buffer, items.len()) {
+                    selected = index;
+                }
+            }
+            _ => {}
         }
-        notice("Invalid selection.", NoticeKind::Warning);
     }
 }
 
-pub(super) fn format_model_menu(items: &[ModelMenuItem]) -> String {
+pub(super) fn format_model_menu_with_cursor(
+    items: &[ModelMenuItem],
+    selected_index: Option<usize>,
+    number_buffer: &str,
+) -> String {
+    let width = terminal::size()
+        .ok()
+        .map(|(width, _)| width as usize)
+        .unwrap_or(120);
+    format_model_menu_for_width(items, selected_index, number_buffer, width)
+}
+
+fn format_model_menu_for_width(
+    items: &[ModelMenuItem],
+    selected_index: Option<usize>,
+    number_buffer: &str,
+    terminal_width: usize,
+) -> String {
+    let columns = model_menu_columns(terminal_width);
     let mut output = String::new();
     output.push_str(&format!(
-        "{:>3}  {:<3} {:<44} {:<9} {:>8} {:<8} {:<22} {:<14}\n",
-        "#", "Sel", "Model", "Quant", "Size", "Fit", "Backend", "Evidence"
+        "{:<2} {:>3}  {:<3} {:<model_width$} {:<quant_width$} {:>8} {:<6} {:<backend_width$} {:<evidence_width$}\n",
+        "",
+        "#",
+        "Sel",
+        "Model",
+        "Quant",
+        "Size",
+        "Fit",
+        "Backend",
+        "Evidence",
+        model_width = columns.model,
+        quant_width = columns.quant,
+        backend_width = columns.backend,
+        evidence_width = columns.evidence,
     ));
     output.push_str(&format!(
-        "{:>3}  {:<3} {:<44} {:<9} {:>8} {:<8} {:<22} {:<14}\n",
+        "{:<2} {:>3}  {:<3} {:<model_width$} {:<quant_width$} {:>8} {:<6} {:<backend_width$} {:<evidence_width$}\n",
+        "",
         "---",
         "---",
-        "-".repeat(44),
-        "-".repeat(9),
+        "-".repeat(columns.model),
+        "-".repeat(columns.quant),
         "-".repeat(8),
-        "-".repeat(8),
-        "-".repeat(22),
-        "-".repeat(14)
+        "-".repeat(6),
+        "-".repeat(columns.backend),
+        "-".repeat(columns.evidence),
+        model_width = columns.model,
+        quant_width = columns.quant,
+        backend_width = columns.backend,
+        evidence_width = columns.evidence,
     ));
     for (index, item) in items.iter().enumerate() {
         output.push_str(&format!(
-            "{:>3}  {:<3} {:<44} {:<9} {:>8} {:<8} {:<22} {:<14}\n",
+            "{:<2} {:>3}  {:<3} {:<model_width$} {:<quant_width$} {:>8} {:<6} {:<backend_width$} {:<evidence_width$}\n",
+            if selected_index == Some(index) { ">" } else { "" },
             index + 1,
             if item.selected { "*" } else { "" },
-            truncate_cell(&item.label, 44),
-            truncate_cell(&fallback_dash(&item.quant), 9),
+            truncate_cell(&item.label, columns.model),
+            truncate_cell(&fallback_dash(&item.quant), columns.quant),
             truncate_cell(&fallback_dash(&item.size), 8),
-            truncate_cell(&fallback_dash(&item.fit), 8),
-            truncate_cell(&fallback_dash(&item.backend), 22),
-            truncate_cell(&fallback_dash(&item.evidence), 14),
+            truncate_cell(&fallback_dash(&item.fit), 6),
+            truncate_cell(&fallback_dash(&item.backend), columns.backend),
+            truncate_cell(&fallback_dash(&item.evidence), columns.evidence),
+            model_width = columns.model,
+            quant_width = columns.quant,
+            backend_width = columns.backend,
+            evidence_width = columns.evidence,
         ));
     }
+    output.push('\n');
+    output.push_str(
+        "Use Up/Down or j/k to move, PgUp/PgDn to jump, Enter to load, q/Esc to cancel.\n",
+    );
+    if number_buffer.is_empty() {
+        output.push_str("Select: ");
+    } else {
+        output.push_str(&format!("Select: {number_buffer}"));
+    }
     output
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModelMenuColumns {
+    model: usize,
+    quant: usize,
+    backend: usize,
+    evidence: usize,
+}
+
+fn model_menu_columns(terminal_width: usize) -> ModelMenuColumns {
+    // Fixed columns and separators consume 47 cells:
+    // cursor, number, selected marker, size, fit, and inter-column spaces.
+    let available = terminal_width.saturating_sub(47);
+    let evidence = 11.min(available.saturating_sub(18));
+    let backend = 18.min(available.saturating_sub(evidence + 14));
+    let quant = 7.min(available.saturating_sub(evidence + backend + 8));
+    let model = available.saturating_sub(evidence + backend + quant).max(16);
+    ModelMenuColumns {
+        model,
+        quant: quant.max(5),
+        backend: backend.max(8),
+        evidence: evidence.max(6),
+    }
+}
+
+fn redraw_model_menu(
+    items: &[ModelMenuItem],
+    selected: usize,
+    number_buffer: &str,
+    previous_lines: usize,
+) -> Result<()> {
+    if previous_lines > 0 {
+        let mut stdout = io::stdout();
+        execute!(
+            stdout,
+            cursor::MoveUp(previous_lines as u16),
+            terminal::Clear(ClearType::FromCursorDown)
+        )?;
+    }
+    print!(
+        "{}",
+        format_model_menu_with_cursor(items, Some(selected), number_buffer)
+    );
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn model_menu_rendered_lines(items: &[ModelMenuItem]) -> usize {
+    // Header + separator + rows + blank line + hint + prompt.
+    4 + items.len()
+}
+
+fn buffered_model_index(number_buffer: &str, item_count: usize) -> Option<usize> {
+    let raw = number_buffer.parse::<usize>().ok()?;
+    if (1..=item_count).contains(&raw) {
+        Some(raw - 1)
+    } else {
+        None
+    }
+}
+
+struct RawModeGuard;
+
+impl RawModeGuard {
+    fn enter() -> Result<Self> {
+        terminal::enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
+    }
 }
 
 fn fallback_dash(value: &str) -> String {
@@ -291,12 +471,58 @@ mod tests {
             evidence: "direct/high".to_string(),
             selected: true,
         }];
-        let table = format_model_menu(&items);
+        let table = format_model_menu_for_width(&items, None, "", 140);
         assert!(table.contains("Model"));
         assert!(table.contains("Q4_K_M"));
-        assert!(table.contains("llama.cpp-linux-cuda"));
+        assert!(table.contains("llama.cpp"));
         assert!(table.contains("direct/high"));
         assert!(table.contains("*"));
+    }
+
+    #[test]
+    fn format_model_menu_marks_cursor_and_prompt_buffer() {
+        let items = [
+            ModelMenuItem {
+                label: "first.gguf".to_string(),
+                quant: "Q4_K_M".to_string(),
+                size: "2 GiB".to_string(),
+                fit: "good".to_string(),
+                backend: "llama.cpp-linux-cuda".to_string(),
+                evidence: "direct/high".to_string(),
+                selected: false,
+            },
+            ModelMenuItem {
+                label: "second.gguf".to_string(),
+                quant: "Q8_0".to_string(),
+                size: "4 GiB".to_string(),
+                fit: "good".to_string(),
+                backend: "llama.cpp-linux-cuda".to_string(),
+                evidence: "direct/high".to_string(),
+                selected: true,
+            },
+        ];
+        let table = format_model_menu_for_width(&items, Some(1), "2", 120);
+        assert!(table.contains(">    2  *"));
+        assert!(table.contains("Select: 2"));
+        assert!(table.contains("Up/Down"));
+    }
+
+    #[test]
+    fn buffered_model_index_uses_one_based_numbers() {
+        assert_eq!(buffered_model_index("1", 3), Some(0));
+        assert_eq!(buffered_model_index("3", 3), Some(2));
+        assert_eq!(buffered_model_index("0", 3), None);
+        assert_eq!(buffered_model_index("4", 3), None);
+    }
+
+    #[test]
+    fn model_menu_columns_fit_narrow_terminals() {
+        let columns = model_menu_columns(100);
+        assert!(columns.model >= 16);
+        assert!(columns.quant >= 5);
+        assert!(columns.backend >= 8);
+        assert!(columns.evidence >= 6);
+        assert!(columns.model + columns.quant + columns.backend + columns.evidence <= 53);
     }
 
     #[test]
