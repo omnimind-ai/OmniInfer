@@ -1,10 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -51,7 +47,6 @@ pub fn run() -> Result<()> {
     if !is_interactive() {
         anyhow::bail!("OmniInfer TUI requires an interactive terminal.");
     }
-    let shutdown_guard = TuiShutdownGuard::install();
     clear_screen();
     print_header("OmniInfer", "Local inference console");
     let config = config::load_app_config().unwrap_or_default();
@@ -71,58 +66,8 @@ pub fn run() -> Result<()> {
         }
         _ => setup_model_flow(&config)?,
     };
-    let result = chat_loop(&config, backend);
-    shutdown_guard.shutdown_now();
-    result?;
+    chat_loop(&config, backend)?;
     Ok(())
-}
-
-#[derive(Clone)]
-struct TuiShutdownGuard {
-    done: Arc<AtomicBool>,
-}
-
-impl TuiShutdownGuard {
-    fn install() -> Self {
-        let guard = Self {
-            done: Arc::new(AtomicBool::new(false)),
-        };
-        let signal_guard = guard.clone();
-        std::thread::spawn(move || {
-            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            else {
-                return;
-            };
-            runtime.block_on(async move {
-                if tokio::signal::ctrl_c().await.is_ok() {
-                    signal_guard.shutdown_now();
-                    std::process::exit(130);
-                }
-            });
-        });
-        guard
-    }
-
-    fn shutdown_now(&self) {
-        if self.done.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        shutdown_service_quietly();
-    }
-}
-
-impl Drop for TuiShutdownGuard {
-    fn drop(&mut self) {
-        self.shutdown_now();
-    }
-}
-
-fn shutdown_service_quietly() {
-    let config = config::load_app_config().unwrap_or_default();
-    let url = format!("{}/omni/shutdown", config.service_base_url());
-    let _ = http_client::post_json(&url, &serde_json::json!({}), Duration::from_secs(10));
 }
 
 pub fn run_server(args: &ServeArgs) -> Result<()> {
