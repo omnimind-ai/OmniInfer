@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -15,7 +20,8 @@ mod render;
 use crate::{
     BackendScope, ServeArgs, advisor, get_local_json_for_config, json_bool, json_str, json_u64,
     load_model_with_request_for_config, post_local_json_for_config, print_chat_performance,
-    rust_backend_payload, select_backend_for_config, serve_orchestrated,
+    rust_backend_payload, select_backend_for_config, serve_orchestrated, stop_serve,
+    wait_for_gateway_ready,
 };
 
 use models::{
@@ -50,6 +56,7 @@ pub fn run() -> Result<()> {
     clear_screen();
     print_header("OmniInfer", "Local inference console");
     let config = config::load_app_config().unwrap_or_default();
+    let _gateway = TuiGatewayGuard::ensure(&config)?;
     let state = local_state::load_state().unwrap_or_default();
     let backend = match state.selected_model.clone() {
         Some(model) if Path::new(&model.model).exists() => {
@@ -68,6 +75,92 @@ pub fn run() -> Result<()> {
     };
     chat_loop(&config, backend)?;
     Ok(())
+}
+
+struct TuiGatewayGuard {
+    port: u16,
+    owned: bool,
+    child: Option<Child>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl TuiGatewayGuard {
+    fn ensure(config: &config::AppConfig) -> Result<Self> {
+        if get_running_state(config).is_some() {
+            return Ok(Self {
+                port: config.port,
+                owned: false,
+                child: None,
+                stopped: Arc::new(AtomicBool::new(false)),
+            });
+        }
+        print_section("Service", "Starting local OmniInfer gateway");
+        print_kv("Port", &config.port.to_string());
+        let mut command = ProcessCommand::new(std::env::current_exe()?);
+        command
+            .arg("gateway")
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(config.port.to_string())
+            .current_dir(paths::repo_root())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn()?;
+        let guard = Self {
+            port: config.port,
+            owned: true,
+            child: Some(child),
+            stopped: Arc::new(AtomicBool::new(false)),
+        };
+        wait_for_gateway_ready(config)?;
+        guard.install_ctrl_c_handler();
+        notice("Local gateway ready", NoticeKind::Success);
+        println!();
+        Ok(guard)
+    }
+
+    fn install_ctrl_c_handler(&self) {
+        if !self.owned {
+            return;
+        }
+        let port = self.port;
+        let stopped = Arc::clone(&self.stopped);
+        std::thread::spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            runtime.block_on(async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    stop_tui_owned_gateway(port, &stopped);
+                    std::process::exit(130);
+                }
+            });
+        });
+    }
+}
+
+impl Drop for TuiGatewayGuard {
+    fn drop(&mut self) {
+        if !self.owned {
+            return;
+        }
+        stop_tui_owned_gateway(self.port, &self.stopped);
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.try_wait();
+        }
+    }
+}
+
+fn stop_tui_owned_gateway(port: u16, stopped: &AtomicBool) {
+    if stopped.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = stop_serve(port);
 }
 
 pub fn run_server(args: &ServeArgs) -> Result<()> {
