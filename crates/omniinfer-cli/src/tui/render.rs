@@ -3,6 +3,7 @@ use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
+    style::{Color, Stylize, style},
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
@@ -80,11 +81,26 @@ pub(super) struct ModelMenuItem {
     pub(super) selected: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct ModelMenuContext {
+    pub(super) hardware_lines: Vec<String>,
+    pub(super) backends: Vec<BackendStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BackendStatus {
+    pub(super) label: String,
+    pub(super) installed: bool,
+    pub(super) compatible: bool,
+    pub(super) selected: bool,
+}
+
 pub(super) fn select_model_menu(
     title: &str,
     subtitle: &str,
     items: &[ModelMenuItem],
     default_index: usize,
+    context: &ModelMenuContext,
 ) -> Result<Option<usize>> {
     if items.is_empty() {
         return Ok(None);
@@ -93,7 +109,7 @@ pub(super) fn select_model_menu(
     let mut selected = default_index.min(items.len().saturating_sub(1));
     let mut number_buffer = String::new();
     loop {
-        redraw_model_menu(title, subtitle, items, selected, &number_buffer)?;
+        redraw_model_menu(title, subtitle, context, items, selected, &number_buffer)?;
         let Event::Key(key) = event::read()? else {
             continue;
         };
@@ -154,18 +170,6 @@ pub(super) fn select_model_menu(
             _ => {}
         }
     }
-}
-
-pub(super) fn format_model_menu_with_cursor(
-    items: &[ModelMenuItem],
-    selected_index: Option<usize>,
-    number_buffer: &str,
-) -> String {
-    let width = terminal::size()
-        .ok()
-        .map(|(width, _)| width as usize)
-        .unwrap_or(120);
-    format_model_menu_for_width(items, selected_index, number_buffer, width)
 }
 
 fn format_model_menu_for_width(
@@ -247,6 +251,38 @@ fn format_model_menu_for_width(
     output
 }
 
+fn format_model_menu_screen_for_width(
+    title: &str,
+    subtitle: &str,
+    context: &ModelMenuContext,
+    items: &[ModelMenuItem],
+    selected_index: Option<usize>,
+    number_buffer: &str,
+    terminal_width: usize,
+) -> String {
+    let content_width = panel_content_width(terminal_width);
+    let mut output = String::new();
+    output.push_str(&accent_line(&format_panel(
+        "OmniInfer",
+        "System overview and backend availability",
+        &model_context_lines(context, terminal_width),
+        terminal_width,
+        PanelBodyMode::Wrapped,
+    )));
+    output.push('\n');
+    output.push_str(&accent_line(&format_panel(
+        title,
+        subtitle,
+        &format_model_menu_for_width(items, selected_index, number_buffer, content_width)
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+        terminal_width,
+        PanelBodyMode::Preformatted,
+    )));
+    output
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ModelMenuColumns {
     model: usize,
@@ -257,28 +293,41 @@ struct ModelMenuColumns {
 }
 
 fn model_menu_columns(terminal_width: usize) -> ModelMenuColumns {
-    // Fixed columns and separators consume 62 cells:
-    // cursor, number, selected marker, disk, ctx, fit, and inter-column spaces.
-    let available = terminal_width.saturating_sub(62);
-    let evidence = 10.min(available.saturating_sub(36));
-    let backend = 16.min(available.saturating_sub(evidence + 24));
-    let provider = 12.min(available.saturating_sub(evidence + backend + 12));
-    let quant = 7.min(available.saturating_sub(evidence + backend + provider + 6));
-    let model = available
-        .saturating_sub(evidence + backend + provider + quant)
-        .max(16);
+    // Fixed separators plus non-flex columns consume 39 cells.
+    let available = terminal_width.saturating_sub(39);
+    let mut model = 14;
+    let mut provider = 5;
+    let mut quant = 5;
+    let mut backend = 6;
+    let mut evidence = 5;
+    let mut remaining = available.saturating_sub(model + provider + quant + backend + evidence);
+
+    grow_column(&mut model, 36, &mut remaining);
+    grow_column(&mut backend, 18, &mut remaining);
+    grow_column(&mut provider, 12, &mut remaining);
+    grow_column(&mut evidence, 14, &mut remaining);
+    grow_column(&mut quant, 8, &mut remaining);
+
     ModelMenuColumns {
         model,
-        provider: provider.max(6),
-        quant: quant.max(5),
-        backend: backend.max(8),
-        evidence: evidence.max(6),
+        provider,
+        quant,
+        backend,
+        evidence,
     }
+}
+
+fn grow_column(width: &mut usize, max_width: usize, remaining: &mut usize) {
+    let room = max_width.saturating_sub(*width);
+    let delta = room.min(*remaining);
+    *width += delta;
+    *remaining -= delta;
 }
 
 fn redraw_model_menu(
     title: &str,
     subtitle: &str,
+    context: &ModelMenuContext,
     items: &[ModelMenuItem],
     selected: usize,
     number_buffer: &str,
@@ -289,21 +338,175 @@ fn redraw_model_menu(
         cursor::MoveTo(0, 0),
         terminal::Clear(ClearType::All)
     )?;
-    let mut screen = String::new();
-    screen.push_str(title);
-    screen.push_str("\r\n");
-    if !subtitle.is_empty() {
-        screen.push_str(subtitle);
-        screen.push_str("\r\n");
-    }
-    screen.push_str(&"-".repeat(title.len().max(24)));
-    screen.push_str("\r\n");
-    screen.push_str(
-        &format_model_menu_with_cursor(items, Some(selected), number_buffer).replace('\n', "\r\n"),
-    );
+    let width = terminal::size()
+        .ok()
+        .map(|(width, _)| width as usize)
+        .unwrap_or(120);
+    let screen = format_model_menu_screen_for_width(
+        title,
+        subtitle,
+        context,
+        items,
+        Some(selected),
+        number_buffer,
+        width,
+    )
+    .replace('\n', "\r\n");
     print!("{screen}");
     io::stdout().flush()?;
     Ok(())
+}
+
+fn model_context_lines(context: &ModelMenuContext, terminal_width: usize) -> Vec<String> {
+    let content_width = panel_content_width(terminal_width);
+    let mut lines = Vec::new();
+    lines.extend(context.hardware_lines.iter().cloned());
+    if !context.backends.is_empty() {
+        lines.extend(wrap_backend_statuses(&context.backends, content_width));
+    }
+    if lines.is_empty() {
+        lines.push("System details unavailable".to_string());
+    }
+    lines
+}
+
+fn wrap_backend_statuses(backends: &[BackendStatus], width: usize) -> Vec<String> {
+    let tokens = backends
+        .iter()
+        .map(backend_status_token)
+        .collect::<Vec<_>>();
+    let mut lines = Vec::new();
+    let mut current = "Backends:".to_string();
+    for token in tokens {
+        let separator = if current.ends_with(':') { " " } else { "  " };
+        if current.len() + separator.len() + token.len() > width && current != "Backends:" {
+            lines.push(current);
+            current = format!("          {token}");
+        } else {
+            current.push_str(separator);
+            current.push_str(&token);
+        }
+    }
+    lines.push(current);
+    lines
+}
+
+fn backend_status_token(status: &BackendStatus) -> String {
+    let state = if status.installed && status.compatible {
+        "ok"
+    } else if status.installed {
+        "nohw"
+    } else {
+        "--"
+    };
+    let selected = if status.selected { "*" } else { "" };
+    format!("[{state}]{selected} {}", status.label)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelBodyMode {
+    Wrapped,
+    Preformatted,
+}
+
+fn format_panel(
+    title: &str,
+    subtitle: &str,
+    lines: &[String],
+    terminal_width: usize,
+    body_mode: PanelBodyMode,
+) -> String {
+    let content_width = panel_content_width(terminal_width);
+    let panel_width = content_width + 4;
+    let top = panel_top(title, panel_width);
+    let bottom = format!("+{}+", "-".repeat(panel_width.saturating_sub(2)));
+    let mut output = String::new();
+    output.push_str(&top);
+    output.push('\n');
+    if !subtitle.is_empty() {
+        for line in wrap_text(subtitle, content_width) {
+            output.push_str(&format!("| {:<content_width$} |\n", line));
+        }
+        output.push_str(&format!("| {:<content_width$} |\n", ""));
+    }
+    for line in lines {
+        match body_mode {
+            PanelBodyMode::Wrapped => {
+                for wrapped in wrap_text(line, content_width) {
+                    output.push_str(&format!("| {:<content_width$} |\n", wrapped));
+                }
+            }
+            PanelBodyMode::Preformatted => {
+                output.push_str(&format!(
+                    "| {:<content_width$} |\n",
+                    truncate_cell(line, content_width)
+                ));
+            }
+        }
+    }
+    output.push_str(&bottom);
+    output
+}
+
+fn panel_top(title: &str, panel_width: usize) -> String {
+    let content = format!(" {} ", truncate_cell(title, panel_width.saturating_sub(8)));
+    let left = 2;
+    let right = panel_width.saturating_sub(content.len() + left + 2);
+    format!("+{}{}{}+", "-".repeat(left), content, "-".repeat(right))
+}
+
+fn panel_content_width(terminal_width: usize) -> usize {
+    terminal_width.saturating_sub(4).clamp(48, 140)
+}
+
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    if text.len() <= width {
+        return vec![text.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if word.len() > width {
+            if !current.is_empty() {
+                lines.push(current);
+                current = String::new();
+            }
+            lines.push(truncate_cell(word, width));
+        } else if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(current);
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn accent_line(text: &str) -> String {
+    let accent = Color::Rgb {
+        r: 139,
+        g: 92,
+        b: 246,
+    };
+    text.lines()
+        .map(|line| {
+            if line.starts_with('+') {
+                style(line).with(accent).to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn buffered_model_index(number_buffer: &str, item_count: usize) -> Option<usize> {
@@ -462,6 +665,56 @@ mod tests {
     }
 
     #[test]
+    fn model_menu_screen_renders_context_panels() {
+        let context = ModelMenuContext {
+            hardware_lines: vec![
+                "Host: linux x86_64 | CPU: 24 threads | RAM: 80.0 GiB free / 125.0 GiB total"
+                    .to_string(),
+                "GPU: NVIDIA RTX 3090 x8 | best free GPU 0: 23.0 GiB free / 24.0 GiB total"
+                    .to_string(),
+            ],
+            backends: vec![
+                BackendStatus {
+                    label: "llama.cpp-linux-cuda".to_string(),
+                    installed: true,
+                    compatible: true,
+                    selected: true,
+                },
+                BackendStatus {
+                    label: "vllm-linux-cuda".to_string(),
+                    installed: false,
+                    compatible: true,
+                    selected: false,
+                },
+            ],
+        };
+        let items = [ModelMenuItem {
+            label: "qwen/model.gguf".to_string(),
+            provider: "qwen".to_string(),
+            quant: "Q4_K_M".to_string(),
+            disk: "2 GiB".to_string(),
+            ctx: "32k".to_string(),
+            fit: "good".to_string(),
+            backend: "llama.cpp-linux-cuda".to_string(),
+            evidence: "direct/high".to_string(),
+            selected: true,
+        }];
+        let screen = format_model_menu_screen_for_width(
+            "OmniInfer",
+            "Local model picker",
+            &context,
+            &items,
+            Some(0),
+            "",
+            120,
+        );
+        assert!(screen.contains("Host: linux"));
+        assert!(screen.contains("[ok]* llama.cpp-linux-cuda"));
+        assert!(screen.contains("[--] vllm-linux-cuda"));
+        assert!(screen.contains("Provider"));
+    }
+
+    #[test]
     fn format_model_menu_marks_cursor_and_prompt_buffer() {
         let items = [
             ModelMenuItem {
@@ -503,15 +756,16 @@ mod tests {
 
     #[test]
     fn model_menu_columns_fit_narrow_terminals() {
-        let columns = model_menu_columns(100);
-        assert!(columns.model >= 16);
-        assert!(columns.provider >= 6);
+        let terminal_width = 76;
+        let columns = model_menu_columns(terminal_width);
+        assert!(columns.model >= 14);
+        assert!(columns.provider >= 5);
         assert!(columns.quant >= 5);
-        assert!(columns.backend >= 8);
-        assert!(columns.evidence >= 6);
+        assert!(columns.backend >= 6);
+        assert!(columns.evidence >= 5);
         assert!(
             columns.model + columns.provider + columns.quant + columns.backend + columns.evidence
-                <= 60
+                <= terminal_width.saturating_sub(39)
         );
     }
 

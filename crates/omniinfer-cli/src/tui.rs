@@ -29,9 +29,9 @@ use models::{
     model_provider_label, model_quant_label, model_size_label, prompt_model_path, same_path,
 };
 use render::{
-    ModelMenuItem, NoticeKind, clear_screen, is_interactive, notice, print_chat_header,
-    print_header, print_help, print_kv, print_section, prompt_default, select_menu,
-    select_model_menu,
+    BackendStatus, ModelMenuContext, ModelMenuItem, NoticeKind, clear_screen, is_interactive,
+    notice, print_chat_header, print_header, print_help, print_kv, print_section, prompt_default,
+    select_menu, select_model_menu,
 };
 
 #[derive(Debug, Clone)]
@@ -349,6 +349,8 @@ fn choose_backend(config: &config::AppConfig) -> Result<Option<String>> {
 }
 
 fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<Option<PathBuf>> {
+    let backends_payload = rust_backend_payload(BackendScope::All);
+    let menu_context = model_menu_context(&backends_payload);
     let models = discover_local_models(config)?;
     let recommendations = advisor_recommendation_map(config, &models);
     let remembered = if mark_last_selected {
@@ -417,6 +419,7 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         "Pick a managed model or link a new local file",
         &items,
         default,
+        &menu_context,
     )?
     else {
         return Ok(None);
@@ -425,6 +428,83 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         return Ok(Some(path.clone()));
     }
     prompt_model_path()
+}
+
+fn model_menu_context(backends_payload: &Value) -> ModelMenuContext {
+    let system = advisor::system_payload(backends_payload.clone());
+    let host = system.get("host").unwrap_or(&Value::Null);
+    let cuda = system.get("cuda").unwrap_or(&Value::Null);
+    let mut hardware_lines = Vec::new();
+    hardware_lines.push(format!(
+        "Host: {} {} | CPU: {} threads | RAM: {} GiB free / {} GiB total",
+        json_str(host, "system").unwrap_or("-"),
+        json_str(host, "machine").unwrap_or("-"),
+        json_u64(host, "cpu_cores")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        json_f64(host, "available_ram_gib")
+            .map(format_one_decimal)
+            .unwrap_or_else(|| "-".to_string()),
+        json_f64(host, "total_ram_gib")
+            .map(format_one_decimal)
+            .unwrap_or_else(|| "-".to_string())
+    ));
+    hardware_lines.push(gpu_summary_line(cuda));
+
+    let backends = backends_payload
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|row| BackendStatus {
+            label: json_str(row, "id").unwrap_or("-").to_string(),
+            installed: json_bool(row, "installed").unwrap_or(false),
+            compatible: json_bool(row, "hardware_compatible").unwrap_or(false),
+            selected: json_bool(row, "selected").unwrap_or(false),
+        })
+        .collect::<Vec<_>>();
+    ModelMenuContext {
+        hardware_lines,
+        backends,
+    }
+}
+
+fn gpu_summary_line(cuda: &Value) -> String {
+    let devices = cuda
+        .get("visible_devices")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .or_else(|| cuda.get("devices").and_then(Value::as_array));
+    let Some(devices) = devices.filter(|items| !items.is_empty()) else {
+        return "GPU: none detected".to_string();
+    };
+    let best = cuda
+        .get("best_free_device")
+        .filter(|value| value.is_object())
+        .unwrap_or(&devices[0]);
+    let index = json_str(best, "index").unwrap_or("-");
+    let name = json_str(best, "name").unwrap_or("GPU");
+    let free = json_f64(best, "free_gib")
+        .map(format_one_decimal)
+        .unwrap_or_else(|| "-".to_string());
+    let total = json_f64(best, "total_gib")
+        .map(format_one_decimal)
+        .unwrap_or_else(|| "-".to_string());
+    let util = json_u64(best, "utilization_pct")
+        .map(|value| format!("{value}%"))
+        .unwrap_or_else(|| "-".to_string());
+    format!(
+        "GPU: {} device(s) | best free GPU {index}: {name} | {free} GiB free / {total} GiB total | util {util}",
+        devices.len()
+    )
+}
+
+fn json_f64<'a>(value: &'a Value, key: &str) -> Option<f64> {
+    value.get(key).and_then(Value::as_f64)
+}
+
+fn format_one_decimal(value: f64) -> String {
+    format!("{value:.1}")
 }
 
 fn evidence_label(evidence: Option<String>, confidence: Option<String>) -> String {
