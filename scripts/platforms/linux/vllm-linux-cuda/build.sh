@@ -12,6 +12,7 @@ INDEX_URL="${OMNIINFER_VLLM_INDEX_URL:-}"
 EXTRA_INDEX_URL="${OMNIINFER_VLLM_EXTRA_INDEX_URL:-}"
 PYTORCH_INDEX_URL="${OMNIINFER_VLLM_PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 UV_INDEX_STRATEGY="${OMNIINFER_VLLM_UV_INDEX_STRATEGY:-unsafe-best-match}"
+UV_TORCH_BACKEND="${OMNIINFER_VLLM_UV_TORCH_BACKEND:-auto}"
 USE_PRECOMPILED="${OMNIINFER_VLLM_USE_PRECOMPILED:-1}"
 PRECOMPILED_WHEEL_COMMIT="${OMNIINFER_VLLM_PRECOMPILED_WHEEL_COMMIT:-nightly}"
 PIP_EXTRA_ARGS=()
@@ -35,7 +36,7 @@ Options:
   --build-type <type>        Accepted for CLI consistency; vLLM is installed from Python wheels
   --python <path>            Python interpreter used to create the local venv
   --package <spec>           Override the default pip package set
-                             Example: 'vllm==0.9.2'
+                             Defaults to 'vllm==0.24.0'
   --index-url <url>          pip index URL
   --extra-index-url <url>    extra pip index URL
   --pip-extra-arg <arg>      pass one extra argument to pip/uv pip
@@ -57,6 +58,7 @@ Environment:
   OMNIINFER_VLLM_EXTRA_INDEX_URL Default extra pip index URL
   OMNIINFER_VLLM_PYTORCH_INDEX_URL Default PyTorch CUDA wheel index for the pinned install
   OMNIINFER_VLLM_UV_INDEX_STRATEGY uv index strategy for the pinned install
+  OMNIINFER_VLLM_UV_TORCH_BACKEND uv torch backend selector, defaults to auto
   OMNIINFER_VLLM_SOURCE_DIR      Local vLLM source checkout to install from
   OMNIINFER_VLLM_SOURCE_REF      Git ref for the managed source checkout
   OMNIINFER_VLLM_SOURCE_URL      Git URL for the managed source checkout
@@ -189,10 +191,8 @@ create_venv() {
   run_cmd uv venv --python "${resolved_python}" "${PACKAGE_ROOT}"
 }
 
-require_command "${PYTHON_BIN}"
-
 if [[ -z "${PIP_PACKAGE}" && -z "${SOURCE_DIR}" ]]; then
-  SOURCE_DIR="${SOURCE_ROOT}"
+  PIP_PACKAGE="vllm==0.24.0"
 fi
 
 if [[ -n "${SOURCE_DIR}" && -n "${PIP_PACKAGE}" ]]; then
@@ -206,13 +206,7 @@ if [[ -n "${SOURCE_DIR}" ]]; then
 elif [[ -n "${PIP_PACKAGE}" ]]; then
   PIP_PACKAGES+=("${PIP_PACKAGE}")
 else
-  PIP_PACKAGES+=(
-    "torch==2.5.1+cu121"
-    "torchvision==0.20.1+cu121"
-    "transformers==4.46.3"
-    "setuptools"
-    "vllm==0.6.6"
-  )
+  PIP_PACKAGES+=("vllm==0.24.0")
   if [[ -z "${EXTRA_INDEX_URL}" ]]; then
     EXTRA_INDEX_URL="${PYTORCH_INDEX_URL}"
   fi
@@ -231,6 +225,9 @@ PIP_ARGS+=("${PIP_PACKAGES[@]}")
 UV_PIP_ARGS=()
 if [[ -z "${PIP_PACKAGE}" && -n "${UV_INDEX_STRATEGY}" ]]; then
   UV_PIP_ARGS+=(--index-strategy "${UV_INDEX_STRATEGY}")
+fi
+if [[ -n "${UV_TORCH_BACKEND}" ]]; then
+  UV_PIP_ARGS+=(--torch-backend "${UV_TORCH_BACKEND}")
 fi
 UV_PIP_ARGS+=("${PIP_ARGS[@]}")
 
@@ -257,9 +254,9 @@ install_source_runtime() {
     run_cmd env \
       VLLM_USE_PRECOMPILED=1 \
       VLLM_PRECOMPILED_WHEEL_COMMIT="${PRECOMPILED_WHEEL_COMMIT}" \
-      uv pip install --python "${BIN_ROOT}/python" --editable "${SOURCE_DIR}" --torch-backend=auto
+      uv pip install --python "${BIN_ROOT}/python" --editable "${SOURCE_DIR}" --torch-backend="${UV_TORCH_BACKEND:-auto}"
   else
-    run_cmd uv pip install --python "${BIN_ROOT}/python" --editable "${SOURCE_DIR}" --torch-backend=auto
+    run_cmd uv pip install --python "${BIN_ROOT}/python" --editable "${SOURCE_DIR}" --torch-backend="${UV_TORCH_BACKEND:-auto}"
   fi
 }
 
@@ -286,7 +283,7 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
   fi
   echo "+ ${PYTHON_BIN} -m venv ${PACKAGE_ROOT}"
   if [[ -n "${SOURCE_DIR}" ]]; then
-    echo "+ VLLM_USE_PRECOMPILED=${USE_PRECOMPILED} VLLM_PRECOMPILED_WHEEL_COMMIT=${PRECOMPILED_WHEEL_COMMIT} uv pip install --python ${BIN_ROOT}/python --editable ${SOURCE_DIR} --torch-backend=auto"
+    echo "+ VLLM_USE_PRECOMPILED=${USE_PRECOMPILED} VLLM_PRECOMPILED_WHEEL_COMMIT=${PRECOMPILED_WHEEL_COMMIT} uv pip install --python ${BIN_ROOT}/python --editable ${SOURCE_DIR} --torch-backend=${UV_TORCH_BACKEND:-auto}"
   elif command -v uv >/dev/null 2>&1; then
     echo "+ uv pip install --python ${BIN_ROOT}/python ${UV_PIP_ARGS[*]}"
   else
@@ -311,6 +308,7 @@ fi
 ensure_source_checkout
 
 if [[ ! -x "${BIN_ROOT}/python" ]]; then
+  require_command "${PYTHON_BIN}"
   create_venv
 fi
 
