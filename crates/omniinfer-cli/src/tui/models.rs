@@ -1,9 +1,18 @@
 use super::*;
+use std::path::Component;
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalModel {
     pub(super) path: PathBuf,
     pub(super) label: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct AdvisorModelSummary {
+    pub(super) fit: Option<String>,
+    pub(super) backend: Option<String>,
+    pub(super) evidence: Option<String>,
+    pub(super) confidence: Option<String>,
 }
 
 pub(super) fn discover_local_models(config: &config::AppConfig) -> Result<Vec<LocalModel>> {
@@ -204,32 +213,98 @@ pub(super) fn advisor_recommendation_map(
     result
 }
 
-pub(super) fn advisor_model_details(
+pub(super) fn advisor_model_summary(
     model_path: &Path,
     recommendations: &BTreeMap<String, Value>,
-) -> Vec<String> {
-    let Some(row) = recommendations.get(&advisor_path_key(&model_path.display().to_string()))
-    else {
-        return Vec::new();
-    };
+) -> Option<AdvisorModelSummary> {
+    let row = recommendations.get(&advisor_path_key(&model_path.display().to_string()))?;
     let recommended = row.get("recommended").unwrap_or(&Value::Null);
-    let mut details = Vec::new();
-    if let Some(fit) = json_str(recommended, "fit") {
-        details.push(format!("advisor {fit}"));
-    }
-    if let Some(backend) = json_str(recommended, "backend") {
-        details.push(backend.to_string());
-    }
     let evidence = recommended.get("evidence").unwrap_or(&Value::Null);
-    if let Some(level) = json_str(evidence, "level") {
-        details.push(level.to_string());
-    }
-    if let Some(confidence) = json_str(recommended, "recommendation_confidence")
-        .or_else(|| json_str(evidence, "confidence"))
+    Some(AdvisorModelSummary {
+        fit: json_str(recommended, "fit").map(str::to_string),
+        backend: json_str(recommended, "backend").map(str::to_string),
+        evidence: json_str(evidence, "level").map(str::to_string),
+        confidence: json_str(recommended, "recommendation_confidence")
+            .or_else(|| json_str(evidence, "confidence"))
+            .map(str::to_string),
+    })
+}
+
+pub(super) fn model_quant_label(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    [
+        "q4_k_m", "q4_k_s", "q5_k_m", "q5_k_s", "q6_k", "q8_0", "q4_0", "q3_k_m", "q3_k_s", "q2_k",
+        "bf16", "f16", "f32",
+    ]
+    .iter()
+    .find(|quant| name.contains(**quant))
+    .map(|quant| quant.to_ascii_uppercase())
+    .unwrap_or_else(|| "-".to_string())
+}
+
+pub(super) fn model_provider_label(path: &Path) -> String {
+    let local_models = paths::local_dir().join("models");
+    if let Ok(relative) = path.strip_prefix(&local_models)
+        && let Some(provider) = relative.components().next().and_then(component_text)
     {
-        details.push(confidence.to_string());
+        return provider.to_string();
     }
-    details
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("local")
+        .to_string()
+}
+
+pub(super) fn model_size_label(path: &Path) -> String {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return "-".to_string();
+    };
+    format_bytes(metadata.len())
+}
+
+pub(super) fn model_context_label(path: &Path) -> String {
+    omniinfer_core::public_models::read_gguf_context_length(path)
+        .ok()
+        .flatten()
+        .map(format_context_size)
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn component_text(component: Component<'_>) -> Option<&str> {
+    match component {
+        Component::Normal(value) => value.to_str(),
+        _ => None,
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let value = bytes as f64;
+    if value >= GIB {
+        format!("{:.2} GiB", value / GIB)
+    } else if value >= MIB {
+        format!("{:.1} MiB", value / MIB)
+    } else if value >= KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn format_context_size(ctx_size: u32) -> String {
+    if ctx_size >= 1024 && ctx_size % 1024 == 0 {
+        format!("{}k", ctx_size / 1024)
+    } else {
+        ctx_size.to_string()
+    }
 }
 
 fn is_model_file(path: &Path) -> bool {
@@ -371,13 +446,22 @@ mod tests {
         std::fs::create_dir_all(&family).expect("create model dir");
         let model = family.join("Qwen3.5-4B-Q4_K_M.gguf");
         let mmproj = family.join("mmproj-Qwen3.5-4B.gguf");
+        let pytorch_weights = family.join("pytorch_model.bin");
         std::fs::write(&model, "").expect("write model");
         std::fs::write(mmproj, "").expect("write mmproj");
+        std::fs::write(pytorch_weights, "").expect("write bin");
 
         let rows = discover_models_in_roots(std::slice::from_ref(&root));
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].path, model);
-        assert_eq!(rows[0].label, "Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf");
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .any(|row| row.path == model && row.label == "Qwen3.5-4B/Qwen3.5-4B-Q4_K_M.gguf")
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.path == family.join("pytorch_model.bin")
+                    && row.label == "Qwen3.5-4B/pytorch_model.bin")
+        );
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -397,8 +481,13 @@ mod tests {
             }),
         );
         assert_eq!(
-            advisor_model_details(&model, &rows),
-            vec!["advisor good", "llama.cpp-linux-cuda", "direct", "high"]
+            advisor_model_summary(&model, &rows),
+            Some(AdvisorModelSummary {
+                fit: Some("good".to_string()),
+                backend: Some("llama.cpp-linux-cuda".to_string()),
+                evidence: Some("direct".to_string()),
+                confidence: Some("high".to_string()),
+            })
         );
     }
 
@@ -413,11 +502,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn model_labels_include_quant_and_size() {
+        let root = std::env::temp_dir().join(unique_name("tui-model-labels"));
+        std::fs::create_dir_all(&root).expect("create model dir");
+        let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
+        std::fs::write(&model, vec![0_u8; 2048]).expect("write model");
+
+        assert_eq!(model_quant_label(&model), "Q4_K_M");
+        assert_eq!(model_size_label(&model), "2.0 KiB");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn model_labels_include_provider_and_context() {
+        let root = std::env::temp_dir().join(unique_name("tui-model-context"));
+        let family = root.join("qwen");
+        std::fs::create_dir_all(&family).expect("create model dir");
+        let model = family.join("model.gguf");
+        write_test_gguf(&model, "qwen.context_length", 32768);
+
+        assert_eq!(model_provider_label(&model), "qwen");
+        assert_eq!(model_context_label(&model), "32k");
+        std::fs::remove_dir_all(root).ok();
+    }
+
     fn unique_name(prefix: &str) -> String {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time")
             .as_nanos();
         format!("omniinfer-rs-{prefix}-{nanos}")
+    }
+
+    fn write_test_gguf(path: &Path, context_key: &str, context_length: u32) {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&3_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u64.to_le_bytes());
+        bytes.extend_from_slice(&2_u64.to_le_bytes());
+        write_gguf_string(&mut bytes, "general.architecture");
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        write_gguf_string(&mut bytes, "qwen");
+        write_gguf_string(&mut bytes, context_key);
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&context_length.to_le_bytes());
+        std::fs::write(path, bytes).expect("write gguf");
+    }
+
+    fn write_gguf_string(bytes: &mut Vec<u8>, value: &str) {
+        bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(value.as_bytes());
     }
 }

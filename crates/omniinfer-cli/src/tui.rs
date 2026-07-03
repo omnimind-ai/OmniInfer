@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -15,17 +20,18 @@ mod render;
 use crate::{
     BackendScope, ServeArgs, advisor, get_local_json_for_config, json_bool, json_str, json_u64,
     load_model_with_request_for_config, post_local_json_for_config, print_chat_performance,
-    rust_backend_payload, select_backend_for_config, serve_orchestrated, shutdown_service,
+    rust_backend_payload, select_backend_for_config, serve_orchestrated, stop_serve,
+    wait_for_gateway_ready,
 };
 
 use models::{
-    advisor_model_details, advisor_recommendation_map, discover_local_models, prompt_model_path,
-    same_path,
+    advisor_model_summary, advisor_recommendation_map, discover_local_models, model_context_label,
+    model_provider_label, model_quant_label, model_size_label, prompt_model_path, same_path,
 };
 use render::{
-    NoticeKind, clear_screen, format_gib, is_interactive, memory_breakdown_text, notice,
-    print_chat_header, print_header, print_help, print_kv, print_section, print_warnings,
-    prompt_default, select_menu,
+    ModelMenuContext, ModelMenuItem, NoticeKind, clear_screen, is_interactive, notice,
+    print_chat_header, print_header, print_help, print_kv, print_section, prompt_default,
+    select_menu, select_model_menu,
 };
 
 #[derive(Debug, Clone)]
@@ -50,6 +56,7 @@ pub fn run() -> Result<()> {
     clear_screen();
     print_header("OmniInfer", "Local inference console");
     let config = config::load_app_config().unwrap_or_default();
+    let _gateway = TuiGatewayGuard::ensure(&config)?;
     let state = local_state::load_state().unwrap_or_default();
     let backend = match state.selected_model.clone() {
         Some(model) if Path::new(&model.model).exists() => {
@@ -67,8 +74,93 @@ pub fn run() -> Result<()> {
         _ => setup_model_flow(&config)?,
     };
     chat_loop(&config, backend)?;
-    let _ = shutdown_service();
     Ok(())
+}
+
+struct TuiGatewayGuard {
+    port: u16,
+    owned: bool,
+    child: Option<Child>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl TuiGatewayGuard {
+    fn ensure(config: &config::AppConfig) -> Result<Self> {
+        if get_running_state(config).is_some() {
+            return Ok(Self {
+                port: config.port,
+                owned: false,
+                child: None,
+                stopped: Arc::new(AtomicBool::new(false)),
+            });
+        }
+        print_section("Service", "Starting local OmniInfer gateway");
+        print_kv("Port", &config.port.to_string());
+        let mut command = ProcessCommand::new(std::env::current_exe()?);
+        command
+            .arg("gateway")
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(config.port.to_string())
+            .current_dir(paths::repo_root())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn()?;
+        let guard = Self {
+            port: config.port,
+            owned: true,
+            child: Some(child),
+            stopped: Arc::new(AtomicBool::new(false)),
+        };
+        wait_for_gateway_ready(config)?;
+        guard.install_ctrl_c_handler();
+        notice("Local gateway ready", NoticeKind::Success);
+        println!();
+        Ok(guard)
+    }
+
+    fn install_ctrl_c_handler(&self) {
+        if !self.owned {
+            return;
+        }
+        let port = self.port;
+        let stopped = Arc::clone(&self.stopped);
+        std::thread::spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            runtime.block_on(async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    stop_tui_owned_gateway(port, &stopped);
+                    std::process::exit(130);
+                }
+            });
+        });
+    }
+}
+
+impl Drop for TuiGatewayGuard {
+    fn drop(&mut self) {
+        if !self.owned {
+            return;
+        }
+        stop_tui_owned_gateway(self.port, &self.stopped);
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.try_wait();
+        }
+    }
+}
+
+fn stop_tui_owned_gateway(port: u16, stopped: &AtomicBool) {
+    if stopped.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = stop_serve(port);
 }
 
 pub fn run_server(args: &ServeArgs) -> Result<()> {
@@ -89,12 +181,22 @@ pub fn run_server(args: &ServeArgs) -> Result<()> {
 }
 
 fn setup_model_flow(config: &config::AppConfig) -> Result<String> {
-    let backend = choose_backend(config)?.ok_or_else(|| anyhow::anyhow!("No backend selected."))?;
-    let model =
-        choose_model(config, false)?.ok_or_else(|| anyhow::anyhow!("No model selected."))?;
-    let loaded =
-        load_model_interactive(config, model.to_string_lossy().as_ref(), true)?.unwrap_or(backend);
-    Ok(loaded)
+    choose_backend(config)?.ok_or_else(|| anyhow::anyhow!("No backend selected."))?;
+    loop {
+        let model =
+            choose_model(config, false)?.ok_or_else(|| anyhow::anyhow!("No model selected."))?;
+        match load_model_interactive(config, model.to_string_lossy().as_ref()) {
+            Ok(loaded) => return Ok(loaded),
+            Err(error) => {
+                notice(&format!("Model load failed: {error}"), NoticeKind::Warning);
+                notice(
+                    "Choose another model or cancel with q/Esc.",
+                    NoticeKind::Warning,
+                );
+                println!();
+            }
+        }
+    }
 }
 
 fn load_remembered_model(
@@ -111,7 +213,25 @@ fn load_remembered_model(
         config: None,
         backend_extra_args: Vec::new(),
     };
-    let (response, plan) = load_model_with_request_for_config(&request, false, config)?;
+    if let Some(backend) = reuse_loaded_remembered_model(config, model) {
+        notice("Reusing already loaded model", NoticeKind::Success);
+        print_kv("Model loaded", &model.model);
+        println!();
+        return Ok(backend);
+    }
+    let (response, plan) = match load_model_with_request_for_config(&request, false, config) {
+        Ok(result) => result,
+        Err(error) if error.to_string().contains("model is already loaded") => {
+            if let Some(backend) = reuse_loaded_remembered_model(config, model) {
+                notice("Reusing already loaded model", NoticeKind::Success);
+                print_kv("Model loaded", &model.model);
+                println!();
+                return Ok(backend);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     let backend = json_str(&response, "selected_backend").unwrap_or(&plan.backend);
     notice("Backend ready", NoticeKind::Success);
     print_kv(
@@ -120,6 +240,53 @@ fn load_remembered_model(
     );
     println!();
     Ok(backend.to_string())
+}
+
+fn reuse_loaded_remembered_model(
+    config: &config::AppConfig,
+    model: &local_state::SelectedModel,
+) -> Option<String> {
+    let state = get_running_state(config)?;
+    if !json_bool(&state, "backend_ready").unwrap_or(false) {
+        return None;
+    }
+    let backend = json_str(&state, "backend")?.to_string();
+    if state_matches_model(&state, &model.model) {
+        return Some(backend);
+    }
+    for row in state
+        .get("loaded_models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if state_matches_model(row, &model.model) {
+            return Some(backend);
+        }
+    }
+    None
+}
+
+fn get_running_state(config: &config::AppConfig) -> Option<Value> {
+    let url = format!("{}/omni/state", config.service_base_url());
+    let response = http_client::get_json(&url, Duration::from_secs(2)).ok()?;
+    (response.status == 200).then_some(response.body)
+}
+
+fn state_matches_model(state: &Value, requested: &str) -> bool {
+    ["model_path", "model", "selected_model"]
+        .iter()
+        .filter_map(|key| json_str(state, key))
+        .any(|candidate| model_reference_matches(candidate, requested))
+}
+
+fn model_reference_matches(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let left_path = Path::new(left);
+    let right_path = Path::new(right);
+    left_path.exists() && right_path.exists() && same_path(left_path, right_path)
 }
 
 fn choose_backend(config: &config::AppConfig) -> Result<Option<String>> {
@@ -182,7 +349,10 @@ fn choose_backend(config: &config::AppConfig) -> Result<Option<String>> {
 }
 
 fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<Option<PathBuf>> {
+    let backends_payload = rust_backend_payload(BackendScope::All);
+    let menu_context = model_menu_context(&backends_payload);
     let models = discover_local_models(config)?;
+    let selected_backend = selected_backend_info(&backends_payload);
     let recommendations = advisor_recommendation_map(config, &models);
     let remembered = if mark_last_selected {
         local_state::load_state()
@@ -192,22 +362,29 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         None
     };
     let remembered_path = remembered.as_ref().map(|model| PathBuf::from(&model.model));
-    let mut items = Vec::new();
+    let mut items = Vec::<ModelMenuItem>::new();
     let mut choices = Vec::<Option<PathBuf>>::new();
     let mut default = 0;
-    for model in &models {
-        let mut details = Vec::new();
+    for model in models
+        .iter()
+        .filter(|model| model_supported_by_backend(&model.path, selected_backend.as_ref()))
+    {
         let selected = remembered_path
             .as_ref()
             .is_some_and(|path| same_path(path, &model.path));
         if selected {
-            details.push("last selected".to_string());
             default = items.len();
         }
-        details.extend(advisor_model_details(&model.path, &recommendations));
-        items.push(MenuItem {
+        let summary = advisor_model_summary(&model.path, &recommendations).unwrap_or_default();
+        items.push(ModelMenuItem {
             label: model.label.clone(),
-            details,
+            provider: model_provider_label(&model.path),
+            quant: model_quant_label(&model.path),
+            disk: model_size_label(&model.path),
+            ctx: model_context_label(&model.path),
+            fit: summary.fit.unwrap_or_else(|| "-".to_string()),
+            backend: summary.backend.unwrap_or_else(|| "-".to_string()),
+            evidence: evidence_label(summary.evidence, summary.confidence),
             selected,
         });
         choices.push(Some(model.path.clone()));
@@ -216,24 +393,37 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         && !models.iter().any(|model| same_path(&model.path, &path))
     {
         default = items.len();
-        items.push(MenuItem {
+        items.push(ModelMenuItem {
             label: path.display().to_string(),
-            details: vec!["last selected".to_string()],
+            provider: model_provider_label(&path),
+            quant: model_quant_label(&path),
+            disk: model_size_label(&path),
+            ctx: model_context_label(&path),
+            fit: "-".to_string(),
+            backend: "-".to_string(),
+            evidence: "last selected".to_string(),
             selected: true,
         });
         choices.push(Some(path));
     }
-    items.push(MenuItem {
+    items.push(ModelMenuItem {
         label: "Enter path manually".to_string(),
-        details: vec!["link into .local/models".to_string()],
+        provider: "manual".to_string(),
+        quant: "-".to_string(),
+        disk: "-".to_string(),
+        ctx: "-".to_string(),
+        fit: "manual".to_string(),
+        backend: "-".to_string(),
+        evidence: "link local file".to_string(),
         selected: false,
     });
     choices.push(None);
-    let Some(index) = select_menu(
+    let Some(index) = select_model_menu(
         "Models",
         "Pick a managed model or link a new local file",
         &items,
         default,
+        &menu_context,
     )?
     else {
         return Ok(None);
@@ -244,14 +434,147 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
     prompt_model_path()
 }
 
-fn load_model_interactive(
-    config: &config::AppConfig,
-    model: &str,
-    advisor_preflight: bool,
-) -> Result<Option<String>> {
-    if advisor_preflight && !advisor_preflight_flow(config, model)? {
-        return Ok(None);
+#[derive(Debug, Clone)]
+struct SelectedBackendInfo {
+    family: String,
+    model_artifact: String,
+}
+
+fn selected_backend_info(backends_payload: &Value) -> Option<SelectedBackendInfo> {
+    let row = backends_payload
+        .get("data")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|row| json_bool(row, "selected").unwrap_or(false))?;
+    Some(SelectedBackendInfo {
+        family: json_str(row, "family").unwrap_or("").to_string(),
+        model_artifact: json_str(row, "model_artifact").unwrap_or("").to_string(),
+    })
+}
+
+fn model_supported_by_backend(path: &Path, backend: Option<&SelectedBackendInfo>) -> bool {
+    let Some(backend) = backend else {
+        return true;
+    };
+    if path.is_dir() {
+        return backend.model_artifact == "directory"
+            || matches!(backend.family.as_str(), "mnn" | "mlx" | "vllm");
     }
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "gguf" => matches!(backend.family.as_str(), "llama.cpp" | "turboquant"),
+        "mnn" => backend.family == "mnn",
+        "safetensors" | "bin" => backend.model_artifact == "file",
+        _ => backend.model_artifact == "file",
+    }
+}
+
+fn model_menu_context(backends_payload: &Value) -> ModelMenuContext {
+    let system = advisor::system_payload(backends_payload.clone());
+    let host = system.get("host").unwrap_or(&Value::Null);
+    let cuda = system.get("cuda").unwrap_or(&Value::Null);
+    let mut hardware_lines = Vec::new();
+    hardware_lines.push(format!(
+        "CPU: {} threads | RAM: {} / {} GiB",
+        json_u64(host, "cpu_cores")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        json_f64(host, "available_ram_gib")
+            .map(format_one_decimal)
+            .unwrap_or_else(|| "-".to_string()),
+        json_f64(host, "total_ram_gib")
+            .map(format_one_decimal)
+            .unwrap_or_else(|| "-".to_string())
+    ));
+    hardware_lines.push(gpu_summary_line(cuda));
+
+    ModelMenuContext {
+        hardware_lines,
+        backend_line: selected_backend_line(backends_payload),
+    }
+}
+
+fn selected_backend_line(backends_payload: &Value) -> String {
+    let selected = backends_payload
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|row| json_bool(row, "selected").unwrap_or(false));
+    let Some(row) = selected else {
+        return "Backend: none selected".to_string();
+    };
+    let id = json_str(row, "id").unwrap_or("-");
+    let state = if json_bool(row, "installed").unwrap_or(false)
+        && json_bool(row, "hardware_compatible").unwrap_or(false)
+    {
+        "installed, compatible"
+    } else if json_bool(row, "installed").unwrap_or(false) {
+        "installed, hardware unavailable"
+    } else {
+        "not installed"
+    };
+    format!("Backend: {id} ({state})")
+}
+
+fn gpu_summary_line(cuda: &Value) -> String {
+    let devices = cuda
+        .get("visible_devices")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .or_else(|| cuda.get("devices").and_then(Value::as_array));
+    let Some(devices) = devices.filter(|items| !items.is_empty()) else {
+        return "GPU: none detected".to_string();
+    };
+    let primary = &devices[0];
+    let name = json_str(primary, "name").unwrap_or("GPU");
+    let matching = devices
+        .iter()
+        .filter(|device| {
+            json_str(device, "name") == Some(name)
+                && json_f64(device, "total_gib") == json_f64(primary, "total_gib")
+        })
+        .count();
+    let count = matching.max(1);
+    let single = json_f64(primary, "total_gib");
+    let other = devices.len().saturating_sub(count);
+    let mut line = if let Some(single) = single {
+        format!(
+            "GPU: {name} x{count} (total VRAM = {} GiB x {count} = {} GiB)",
+            format_one_decimal(single),
+            format_one_decimal(single * count as f64)
+        )
+    } else {
+        format!("GPU: {name} x{count}")
+    };
+    if other > 0 {
+        line.push_str(&format!(" + {other} other"));
+    }
+    line
+}
+
+fn json_f64<'a>(value: &'a Value, key: &str) -> Option<f64> {
+    value.get(key).and_then(Value::as_f64)
+}
+
+fn format_one_decimal(value: f64) -> String {
+    format!("{value:.1}")
+}
+
+fn evidence_label(evidence: Option<String>, confidence: Option<String>) -> String {
+    match (evidence, confidence) {
+        (Some(evidence), Some(confidence)) => format!("{evidence}/{confidence}"),
+        (Some(evidence), None) => evidence,
+        (None, Some(confidence)) => confidence,
+        (None, None) => "-".to_string(),
+    }
+}
+
+fn load_model_interactive(config: &config::AppConfig, model: &str) -> Result<String> {
     println!();
     print_kv("Model", model);
     let request = model_load::ModelLoadRequest {
@@ -277,102 +600,8 @@ fn load_model_interactive(
     println!();
     Ok(json_str(&response, "selected_backend")
         .or(Some(&plan.backend))
-        .map(str::to_string))
-}
-
-fn advisor_preflight_flow(config: &config::AppConfig, model: &str) -> Result<bool> {
-    let _ = config;
-    let backends = rust_backend_payload(BackendScope::All);
-    let payload = advisor::fit_payload(model, None, None, None, backends)?;
-    let recommended = payload.get("recommended").filter(|value| value.is_object());
-    let Some(recommended) = recommended else {
-        print_warnings(&payload);
-        return Ok(true);
-    };
-    print_advisor_preflight_summary(&payload);
-    loop {
-        let choice = prompt_default("Advisor", "")?;
-        match choice.trim().to_ascii_lowercase().as_str() {
-            "" | "y" | "yes" | "load" => {
-                apply_advisor_backend(config, recommended)?;
-                return Ok(true);
-            }
-            "a" | "advisor" | "details" => {
-                advisor::print_fit(&payload, false)?;
-            }
-            "b" | "backend" => {
-                let _ = choose_backend(config)?;
-                return Ok(true);
-            }
-            "s" | "skip" | "current" => return Ok(true),
-            "q" | "quit" | "cancel" => return Ok(false),
-            _ => notice(
-                "Use Enter to load, A for details, B to change backend, or S to keep current.",
-                NoticeKind::Warning,
-            ),
-        }
-    }
-}
-
-fn apply_advisor_backend(config: &config::AppConfig, recommended: &Value) -> Result<()> {
-    let Some(backend) = json_str(recommended, "backend") else {
-        return Ok(());
-    };
-    if !json_bool(recommended, "installed").unwrap_or(false) {
-        notice(
-            &format!("Advisor recommended {backend}, but it is not installed."),
-            NoticeKind::Warning,
-        );
-        return Ok(());
-    }
-    select_backend_for_config(backend, config)?;
-    notice(
-        &format!("Advisor selected backend: {backend}"),
-        NoticeKind::Success,
-    );
-    Ok(())
-}
-
-fn print_advisor_preflight_summary(payload: &Value) {
-    let recommended = payload.get("recommended").unwrap_or(&Value::Null);
-    print_section("Advisor", "Load preflight");
-    print_kv(
-        "Recommended",
-        &format!(
-            "{} ({})",
-            json_str(recommended, "backend").unwrap_or("-"),
-            json_str(recommended, "fit").unwrap_or("unknown")
-        ),
-    );
-    let evidence = recommended.get("evidence").unwrap_or(&Value::Null);
-    print_kv(
-        "Evidence",
-        &format!(
-            "{} / {}",
-            json_str(evidence, "level").unwrap_or("-"),
-            json_str(recommended, "recommendation_confidence")
-                .or_else(|| json_str(evidence, "confidence"))
-                .unwrap_or("-")
-        ),
-    );
-    print_kv(
-        "Memory",
-        &format!(
-            "{} required / {} available",
-            format_gib(recommended.get("memory_required_gib")),
-            format_gib(recommended.get("memory_available_gib"))
-        ),
-    );
-    if let Some(text) =
-        memory_breakdown_text(recommended.get("memory_breakdown").unwrap_or(&Value::Null))
-    {
-        print_kv("Breakdown", &text);
-    }
-    print_kv(
-        "Action",
-        "Enter load recommendation | A details | B backend | S keep current",
-    );
-    print_warnings(payload);
+        .unwrap_or(&plan.backend)
+        .to_string())
 }
 
 fn chat_loop(config: &config::AppConfig, backend: String) -> Result<()> {
@@ -395,26 +624,22 @@ fn chat_loop(config: &config::AppConfig, backend: String) -> Result<()> {
             "/exit" => return Ok(()),
             "/backend" => {
                 if let Some(backend) = choose_backend(config)? {
-                    session.backend = backend;
                     session.messages.clear();
                     if let Some(model) = choose_model(config, true)? {
-                        if let Some(loaded) =
-                            load_model_interactive(config, model.to_string_lossy().as_ref(), true)?
-                        {
-                            session.backend = loaded;
-                        }
+                        load_model_for_chat(
+                            config,
+                            &mut session,
+                            model.to_string_lossy().as_ref(),
+                        )?;
+                    } else {
+                        session.backend = backend;
+                        print_chat_header(&session);
                     }
-                    print_chat_header(&session);
                 }
             }
             "/model" => {
-                if let Some(model) = choose_model(config, true)?
-                    && let Some(loaded) =
-                        load_model_interactive(config, model.to_string_lossy().as_ref(), true)?
-                {
-                    session.backend = loaded;
-                    session.messages.clear();
-                    print_chat_header(&session);
+                if let Some(model) = choose_model(config, true)? {
+                    load_model_for_chat(config, &mut session, model.to_string_lossy().as_ref())?;
                 }
             }
             "/clear" => {
@@ -437,13 +662,33 @@ fn chat_loop(config: &config::AppConfig, backend: String) -> Result<()> {
     }
 }
 
+fn load_model_for_chat(
+    config: &config::AppConfig,
+    session: &mut ChatSession,
+    model: &str,
+) -> Result<()> {
+    match load_model_interactive(config, model) {
+        Ok(loaded) => {
+            session.backend = loaded;
+            session.messages.clear();
+        }
+        Err(error) => {
+            notice(&format!("Model load failed: {error}"), NoticeKind::Warning);
+            notice(
+                "Still in chat. Use /model to pick another model.",
+                NoticeKind::Warning,
+            );
+        }
+    }
+    print_chat_header(session);
+    Ok(())
+}
+
 fn send_chat_message(
     config: &config::AppConfig,
     session: &mut ChatSession,
     message: &str,
 ) -> Result<()> {
-    println!("You:");
-    println!("  {message}");
     let state = get_local_json_for_config("/omni/state", Duration::from_secs(10), config)?;
     if json_str(&state, "model").is_none() {
         anyhow::bail!("No model is currently loaded. Use /model first.");
@@ -467,6 +712,7 @@ fn send_chat_message(
     payload
         .entry("max_tokens")
         .or_insert(serde_json::json!(2048));
+    println!();
     println!("Assistant:");
     let assistant_text = stream_chat_response(config, &Value::Object(payload), session)?;
     if !assistant_text.trim().is_empty() {

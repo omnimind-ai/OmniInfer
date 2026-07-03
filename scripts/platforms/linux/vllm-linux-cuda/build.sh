@@ -12,6 +12,8 @@ INDEX_URL="${OMNIINFER_VLLM_INDEX_URL:-}"
 EXTRA_INDEX_URL="${OMNIINFER_VLLM_EXTRA_INDEX_URL:-}"
 PYTORCH_INDEX_URL="${OMNIINFER_VLLM_PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 UV_INDEX_STRATEGY="${OMNIINFER_VLLM_UV_INDEX_STRATEGY:-unsafe-best-match}"
+USE_PRECOMPILED="${OMNIINFER_VLLM_USE_PRECOMPILED:-1}"
+PRECOMPILED_WHEEL_COMMIT="${OMNIINFER_VLLM_PRECOMPILED_WHEEL_COMMIT:-nightly}"
 PIP_EXTRA_ARGS=()
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +22,10 @@ PACKAGE_ROOT="${REPO_ROOT}/.local/runtime/linux/vllm-linux-cuda"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
 MODELS_ROOT="${REPO_ROOT}/.local/models"
+SOURCE_DIR="${OMNIINFER_VLLM_SOURCE_DIR:-}"
+SOURCE_REF="${OMNIINFER_VLLM_SOURCE_REF:-main}"
+SOURCE_URL="${OMNIINFER_VLLM_SOURCE_URL:-https://github.com/vllm-project/vllm.git}"
+SOURCE_ROOT="${OMNIINFER_VLLM_SOURCE_ROOT:-${REPO_ROOT}/.local/source/vllm}"
 
 usage() {
   cat <<'EOF'
@@ -33,6 +39,12 @@ Options:
   --index-url <url>          pip index URL
   --extra-index-url <url>    extra pip index URL
   --pip-extra-arg <arg>      pass one extra argument to pip/uv pip
+  --source <path>            Install vLLM from a local source checkout
+  --source-ref <ref>         Git ref used when cloning/updating the default source checkout
+                             Defaults to main
+  --source-url <url>         Git URL for the default source checkout
+  --source-root <path>       Default source checkout path
+  --no-precompiled           Do not request vLLM precompiled extension wheels for source installs
   --clean                    Remove the previous vLLM runtime venv first
   --smoke-test               Run 'vllm --help' after installation
   --dry-run                  Print actions without executing them
@@ -45,6 +57,12 @@ Environment:
   OMNIINFER_VLLM_EXTRA_INDEX_URL Default extra pip index URL
   OMNIINFER_VLLM_PYTORCH_INDEX_URL Default PyTorch CUDA wheel index for the pinned install
   OMNIINFER_VLLM_UV_INDEX_STRATEGY uv index strategy for the pinned install
+  OMNIINFER_VLLM_SOURCE_DIR      Local vLLM source checkout to install from
+  OMNIINFER_VLLM_SOURCE_REF      Git ref for the managed source checkout
+  OMNIINFER_VLLM_SOURCE_URL      Git URL for the managed source checkout
+  OMNIINFER_VLLM_SOURCE_ROOT     Managed source checkout path
+  OMNIINFER_VLLM_USE_PRECOMPILED Set to 0 to disable precompiled source install wheels
+  OMNIINFER_VLLM_PRECOMPILED_WHEEL_COMMIT Precompiled wheel commit selector
 EOF
 }
 
@@ -88,6 +106,26 @@ while (($# > 0)); do
     --pip-extra-arg)
       PIP_EXTRA_ARGS+=("${2:?missing value for --pip-extra-arg}")
       shift 2
+      ;;
+    --source)
+      SOURCE_DIR="${2:?missing value for --source}"
+      shift 2
+      ;;
+    --source-ref)
+      SOURCE_REF="${2:?missing value for --source-ref}"
+      shift 2
+      ;;
+    --source-url)
+      SOURCE_URL="${2:?missing value for --source-url}"
+      shift 2
+      ;;
+    --source-root)
+      SOURCE_ROOT="${2:?missing value for --source-root}"
+      shift 2
+      ;;
+    --no-precompiled)
+      USE_PRECOMPILED=0
+      shift
       ;;
     --clean)
       CLEAN_BUILD=1
@@ -153,8 +191,19 @@ create_venv() {
 
 require_command "${PYTHON_BIN}"
 
+if [[ -z "${PIP_PACKAGE}" && -z "${SOURCE_DIR}" ]]; then
+  SOURCE_DIR="${SOURCE_ROOT}"
+fi
+
+if [[ -n "${SOURCE_DIR}" && -n "${PIP_PACKAGE}" ]]; then
+  echo "Use either --source/OMNIINFER_VLLM_SOURCE_DIR or --package/OMNIINFER_VLLM_PIP_PACKAGE, not both." >&2
+  exit 1
+fi
+
 PIP_PACKAGES=()
-if [[ -n "${PIP_PACKAGE}" ]]; then
+if [[ -n "${SOURCE_DIR}" ]]; then
+  PIP_PACKAGES+=("${SOURCE_DIR}")
+elif [[ -n "${PIP_PACKAGE}" ]]; then
   PIP_PACKAGES+=("${PIP_PACKAGE}")
 else
   PIP_PACKAGES+=(
@@ -185,10 +234,44 @@ if [[ -z "${PIP_PACKAGE}" && -n "${UV_INDEX_STRATEGY}" ]]; then
 fi
 UV_PIP_ARGS+=("${PIP_ARGS[@]}")
 
+ensure_source_checkout() {
+  if [[ -z "${SOURCE_DIR}" ]]; then
+    return
+  fi
+  if [[ -d "${SOURCE_DIR}/.git" ]]; then
+    run_cmd git -C "${SOURCE_DIR}" fetch origin "${SOURCE_REF}"
+    run_cmd git -C "${SOURCE_DIR}" checkout "${SOURCE_REF}"
+    run_cmd git -C "${SOURCE_DIR}" pull --ff-only origin "${SOURCE_REF}"
+    return
+  fi
+  if [[ -e "${SOURCE_DIR}" ]]; then
+    echo "vLLM source path exists but is not a Git checkout: ${SOURCE_DIR}" >&2
+    exit 1
+  fi
+  run_cmd mkdir -p "$(dirname "${SOURCE_DIR}")"
+  run_cmd git clone --depth 1 --branch "${SOURCE_REF}" "${SOURCE_URL}" "${SOURCE_DIR}"
+}
+
+install_source_runtime() {
+  if [[ ${USE_PRECOMPILED} -eq 1 ]]; then
+    run_cmd env \
+      VLLM_USE_PRECOMPILED=1 \
+      VLLM_PRECOMPILED_WHEEL_COMMIT="${PRECOMPILED_WHEEL_COMMIT}" \
+      uv pip install --python "${BIN_ROOT}/python" --editable "${SOURCE_DIR}" --torch-backend=auto
+  else
+    run_cmd uv pip install --python "${BIN_ROOT}/python" --editable "${SOURCE_DIR}" --torch-backend=auto
+  fi
+}
+
 echo "Preparing vLLM Linux CUDA runtime..."
 echo "  runtime: ${PACKAGE_ROOT}"
 echo "  python: ${PYTHON_BIN}"
-echo "  packages: ${PIP_PACKAGES[*]}"
+if [[ -n "${SOURCE_DIR}" ]]; then
+  echo "  source: ${SOURCE_DIR} (${SOURCE_REF})"
+  echo "  precompiled: ${USE_PRECOMPILED}"
+else
+  echo "  packages: ${PIP_PACKAGES[*]}"
+fi
 echo "  build type: ${BUILD_TYPE} (accepted for CLI consistency)"
 
 if [[ ${CLEAN_BUILD} -eq 1 ]]; then
@@ -198,8 +281,13 @@ fi
 if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "+ mkdir -p ${LOG_ROOT} ${MODELS_ROOT}"
   [[ ${CLEAN_BUILD} -eq 1 ]] && echo "+ rm -rf ${PACKAGE_ROOT}"
+  if [[ -n "${SOURCE_DIR}" ]]; then
+    echo "+ git clone/fetch ${SOURCE_URL} ${SOURCE_DIR} (${SOURCE_REF})"
+  fi
   echo "+ ${PYTHON_BIN} -m venv ${PACKAGE_ROOT}"
-  if command -v uv >/dev/null 2>&1; then
+  if [[ -n "${SOURCE_DIR}" ]]; then
+    echo "+ VLLM_USE_PRECOMPILED=${USE_PRECOMPILED} VLLM_PRECOMPILED_WHEEL_COMMIT=${PRECOMPILED_WHEEL_COMMIT} uv pip install --python ${BIN_ROOT}/python --editable ${SOURCE_DIR} --torch-backend=auto"
+  elif command -v uv >/dev/null 2>&1; then
     echo "+ uv pip install --python ${BIN_ROOT}/python ${UV_PIP_ARGS[*]}"
   else
     echo "+ ${BIN_ROOT}/python -m pip install --upgrade pip"
@@ -215,6 +303,13 @@ fi
 
 mkdir -p "${LOG_ROOT}" "${MODELS_ROOT}"
 
+if [[ -n "${SOURCE_DIR}" ]]; then
+  require_command git
+  require_command uv
+fi
+
+ensure_source_checkout
+
 if [[ ! -x "${BIN_ROOT}/python" ]]; then
   create_venv
 fi
@@ -225,7 +320,9 @@ if [[ ! -x "${BIN_ROOT}/python" ]]; then
   exit 1
 fi
 
-if command -v uv >/dev/null 2>&1; then
+if [[ -n "${SOURCE_DIR}" ]]; then
+  install_source_runtime
+elif command -v uv >/dev/null 2>&1; then
   run_cmd uv pip install --python "${BIN_ROOT}/python" "${UV_PIP_ARGS[@]}"
 else
   run_cmd "${BIN_ROOT}/python" -m ensurepip --upgrade
