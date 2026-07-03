@@ -778,12 +778,42 @@ async fn response_from_upstream(
     let mut response = if streaming {
         builder.body(Body::new(response.into_body()))?
     } else {
-        let body = response.into_body().collect().await?.to_bytes();
+        let mut body = response.into_body().collect().await?.to_bytes();
+        if content_type.contains("application/json") {
+            body = normalize_upstream_json_body(body)?;
+        }
         builder = builder.header(CONTENT_LENGTH, body.len().to_string());
         builder.body(Body::from(body))?
     };
     add_cors_headers(response.headers_mut());
     Ok(response)
+}
+
+fn normalize_upstream_json_body(body: HyperBytes) -> Result<HyperBytes> {
+    let Ok(mut payload) = serde_json::from_slice::<Value>(&body) else {
+        return Ok(body);
+    };
+    normalize_openai_usage(&mut payload);
+    Ok(HyperBytes::from(serde_json::to_vec(&payload)?))
+}
+
+fn normalize_openai_usage(payload: &mut Value) {
+    let Some(usage) = payload.get_mut("usage").and_then(Value::as_object_mut) else {
+        return;
+    };
+    if usage.get("total_tokens").and_then(Value::as_u64).is_some() {
+        return;
+    }
+    let Some(prompt_tokens) = usage.get("prompt_tokens").and_then(Value::as_u64) else {
+        return;
+    };
+    let Some(completion_tokens) = usage.get("completion_tokens").and_then(Value::as_u64) else {
+        return;
+    };
+    usage.insert(
+        "total_tokens".to_string(),
+        json!(prompt_tokens.saturating_add(completion_tokens)),
+    );
 }
 
 fn default_thinking_enabled() -> bool {

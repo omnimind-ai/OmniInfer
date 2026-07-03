@@ -856,10 +856,32 @@ async fn vllm_public_model_rewrites_to_served_model_name() {
 
     let chat = remote_chat(port, "inference", "gelab-zero-4b-preview").await;
     assert_eq!(chat["model_echo"], "local");
+    assert_eq!(chat["usage"]["prompt_tokens"], 3);
+    assert_eq!(chat["usage"]["completion_tokens"], 2);
+    assert_eq!(chat["usage"]["total_tokens"], 5);
 
     gateway.stop().await;
     upstream.stop().await;
     std::fs::remove_dir_all(temp).ok();
+}
+
+#[test]
+fn normalizes_openai_usage_total_tokens() {
+    let mut payload = json!({
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7}
+    });
+    normalize_openai_usage(&mut payload);
+    assert_eq!(payload["usage"]["total_tokens"], 18);
+}
+
+#[test]
+fn keeps_existing_openai_usage_total_tokens() {
+    let mut payload = json!({
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 99}
+    });
+    normalize_openai_usage(&mut payload);
+    assert_eq!(payload["usage"]["total_tokens"], 99);
 }
 
 #[tokio::test]
