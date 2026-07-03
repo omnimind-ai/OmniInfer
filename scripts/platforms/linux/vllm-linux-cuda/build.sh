@@ -190,7 +190,7 @@ create_venv() {
     exit 1
   fi
 
-  run_cmd uv venv --python "${PYTHON_BIN}" "${PACKAGE_ROOT}"
+  run_cmd uv venv --clear --python "${PYTHON_BIN}" "${PACKAGE_ROOT}"
 }
 
 if [[ -z "${PIP_PACKAGE}" && -z "${SOURCE_DIR}" ]]; then
@@ -297,7 +297,7 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
   if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
     echo "+ ${PYTHON_BIN} -m venv ${PACKAGE_ROOT}"
   else
-    echo "+ uv venv --python ${PYTHON_BIN} ${PACKAGE_ROOT}"
+    echo "+ uv venv --clear --python ${PYTHON_BIN} ${PACKAGE_ROOT}"
   fi
   if [[ -n "${SOURCE_DIR}" ]]; then
     echo "+ VLLM_USE_PRECOMPILED=${USE_PRECOMPILED} VLLM_PRECOMPILED_WHEEL_COMMIT=${PRECOMPILED_WHEEL_COMMIT} uv pip install --python ${BIN_ROOT}/python --editable ${SOURCE_DIR} --torch-backend=${UV_TORCH_BACKEND:-auto}"
