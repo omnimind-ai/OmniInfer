@@ -19,6 +19,12 @@ pub(super) struct RustRuntimeManager {
     default_model_key: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RuntimeProxyTarget {
+    pub(super) base_url: String,
+    pub(super) model: Option<String>,
+}
+
 struct LoadedRustRuntime {
     model_key: String,
     owner_admin_id: Option<String>,
@@ -277,17 +283,31 @@ impl RustRuntimeManager {
     }
 
     pub(super) fn proxy_base_for_model(&self, requested_model: Option<&str>) -> Option<String> {
-        let key = match requested_model
+        self.proxy_target_for_model(requested_model)
+            .map(|target| target.base_url)
+    }
+
+    pub(super) fn proxy_target_for_model(
+        &self,
+        requested_model: Option<&str>,
+    ) -> Option<RuntimeProxyTarget> {
+        let key = self.resolve_proxy_model_key(requested_model)?;
+        let loaded = self.loaded.get(&key)?;
+        Some(RuntimeProxyTarget {
+            base_url: format!("http://127.0.0.1:{}", loaded.process.info().port),
+            model: loaded.proxy_model_ref.clone(),
+        })
+    }
+
+    fn resolve_proxy_model_key(&self, requested_model: Option<&str>) -> Option<String> {
+        match requested_model
             .map(str::trim)
             .filter(|model| !model.is_empty())
         {
-            Some("omniinfer" | "local") => self.default_model_key.clone()?,
-            Some(model) => self.resolve_loaded_model_key(model)?,
-            None => self.default_model_key.clone()?,
-        };
-        self.loaded
-            .get(&key)
-            .map(|loaded| format!("http://127.0.0.1:{}", loaded.process.info().port))
+            Some("omniinfer" | "local") => self.default_model_key.clone(),
+            Some(model) => self.resolve_loaded_model_key(model),
+            None => self.default_model_key.clone(),
+        }
     }
 
     fn resolve_loaded_model_key(&self, requested: &str) -> Option<String> {

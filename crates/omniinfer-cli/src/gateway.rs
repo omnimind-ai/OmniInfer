@@ -485,7 +485,8 @@ async fn try_handle_rust_endpoint(
         }
         (&Method::POST, "/v1/chat/completions") => {
             let body = request.into_body().collect().await?.to_bytes();
-            let normalized_payload = normalize_chat_request(serde_json::from_slice(&body)?, false)?;
+            let mut normalized_payload =
+                normalize_chat_request(serde_json::from_slice(&body)?, false)?;
             let requested_model = normalized_payload
                 .payload
                 .get("model")
@@ -493,7 +494,7 @@ async fn try_handle_rust_endpoint(
                 .map(str::to_string);
             let target = {
                 let runtime = state.runtime.lock().await;
-                runtime.proxy_base_for_model(requested_model.as_deref())
+                runtime.proxy_target_for_model(requested_model.as_deref())
             };
             let Some(target) = target else {
                 let message = requested_model
@@ -509,9 +510,10 @@ async fn try_handle_rust_endpoint(
                     json!({"error": {"message": message}}),
                 )));
             };
+            apply_proxy_model(&mut normalized_payload.payload, target.model.as_deref());
             let response = proxy_body_to_runtime(
                 &state.client,
-                &format!("{target}/v1/chat/completions"),
+                &format!("{}/v1/chat/completions", target.base_url),
                 HyperBytes::from(serde_json::to_vec(&normalized_payload.payload)?),
             )
             .await?;
@@ -556,13 +558,13 @@ async fn try_handle_rust_endpoint(
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let openai_payload = anthropic_request_to_openai(&payload);
-            let normalized = normalize_chat_request(openai_payload, false)?;
+            let mut normalized = normalize_chat_request(openai_payload, false)?;
             let mut target = {
                 let runtime = state.runtime.lock().await;
-                runtime.proxy_base_for_model(response_model.as_deref())
+                runtime.proxy_target_for_model(response_model.as_deref())
             };
             if target.is_none() && response_model.is_some() {
-                target = state.runtime.lock().await.proxy_base_for_model(None);
+                target = state.runtime.lock().await.proxy_target_for_model(None);
             }
             let Some(target) = target else {
                 return Ok(Some(json_response(
@@ -571,9 +573,10 @@ async fn try_handle_rust_endpoint(
                 )));
             };
             let response_model = response_model.unwrap_or_else(|| "omniinfer".to_string());
+            apply_proxy_model(&mut normalized.payload, target.model.as_deref());
             let response = proxy_anthropic_to_runtime(
                 &state.client,
-                &format!("{target}/v1/chat/completions"),
+                &format!("{}/v1/chat/completions", target.base_url),
                 HyperBytes::from(serde_json::to_vec(&normalized.payload)?),
                 &response_model,
                 normalized
@@ -613,6 +616,12 @@ async fn proxy_body_to_runtime(
         .body(Full::new(body))?;
     let response = client.request(request).await?;
     response_from_upstream(response).await
+}
+
+fn apply_proxy_model(payload: &mut Value, proxy_model: Option<&str>) {
+    if let Some(proxy_model) = proxy_model.filter(|value| !value.trim().is_empty()) {
+        payload["model"] = json!(proxy_model);
+    }
 }
 
 async fn clear_runtime_cache(
