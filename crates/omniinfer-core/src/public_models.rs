@@ -127,7 +127,7 @@ pub fn public_model_payload(entry: &PublicModelEntry) -> Value {
         "backend": entry.manifest.backend,
         "modalities": entry.manifest.modalities,
         "quant": entry.manifest.quant,
-        "ctx_size": entry.native_ctx_size,
+        "ctx_size": entry.native_ctx_size.or(entry.manifest.ctx_size),
         "native_ctx_size": entry.native_ctx_size,
         "default_ctx_size": entry.manifest.ctx_size,
         "model": entry.model_path.display().to_string(),
@@ -154,7 +154,7 @@ fn read_manifest(
         validate_model_id(alias)?;
     }
     let model_path = resolve_manifest_file(directory, &manifest.model)?;
-    if !model_path.is_file() {
+    if !model_path.is_file() && !model_path.is_dir() {
         return Err(PublicModelError::ModelFileMissing(
             model_path.display().to_string(),
         ));
@@ -169,6 +169,7 @@ fn read_manifest(
         .iter()
         .any(|modality| modality.eq_ignore_ascii_case("vision"))
         && mmproj_path.is_none()
+        && !backend_allows_inline_vision(&manifest)
     {
         return Err(PublicModelError::VisionMmprojMissing(
             manifest.id.to_string(),
@@ -184,10 +185,24 @@ fn read_manifest(
     Ok(PublicModelEntry {
         manifest,
         directory: directory.to_path_buf(),
-        native_ctx_size: read_gguf_context_length(&model_path).ok().flatten(),
+        native_ctx_size: read_native_context_length(&model_path).ok().flatten(),
         model_path,
         mmproj_path,
     })
+}
+
+fn backend_allows_inline_vision(manifest: &PublicModelManifest) -> bool {
+    manifest
+        .backend
+        .as_deref()
+        .is_some_and(|backend| backend.starts_with("vllm"))
+}
+
+pub fn read_native_context_length(path: &Path) -> Result<Option<u32>, PublicModelError> {
+    if path.is_dir() {
+        return read_hf_context_length(path);
+    }
+    read_gguf_context_length(path)
 }
 
 pub fn read_gguf_context_length(path: &Path) -> Result<Option<u32>, PublicModelError> {
@@ -212,6 +227,52 @@ pub fn read_gguf_context_length(path: &Path) -> Result<Option<u32>, PublicModelE
         skip_metadata_value(&mut file, value_type)?;
     }
     Ok(None)
+}
+
+fn read_hf_context_length(path: &Path) -> Result<Option<u32>, PublicModelError> {
+    let config_path = path.join("config.json");
+    let raw = match fs::read_to_string(&config_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_error(error)),
+    };
+    let value: Value =
+        serde_json::from_str(&raw).map_err(|error| PublicModelError::Io(error.to_string()))?;
+    Ok(first_u32_at_paths(
+        &value,
+        &[
+            &["max_position_embeddings"],
+            &["model_max_length"],
+            &["seq_length"],
+            &["text_config", "max_position_embeddings"],
+            &["llm_config", "max_position_embeddings"],
+        ],
+    ))
+}
+
+fn first_u32_at_paths(value: &Value, paths: &[&[&str]]) -> Option<u32> {
+    for path in paths {
+        let mut current = value;
+        for key in *path {
+            let Some(next) = current.get(*key) else {
+                current = &Value::Null;
+                break;
+            };
+            current = next;
+        }
+        if current.is_null() {
+            continue;
+        }
+        if let Some(number) = current.as_u64().and_then(|value| u32::try_from(value).ok()) {
+            return Some(number);
+        }
+        if let Some(text) = current.as_str()
+            && let Ok(number) = text.parse::<u32>()
+        {
+            return Some(number);
+        }
+    }
+    None
 }
 
 fn read_metadata_u32_value<R: Read + Seek>(
@@ -405,10 +466,45 @@ mod tests {
 
         let entries = list_public_models(Some(&root)).unwrap();
         assert_eq!(entries[0].native_ctx_size, None);
-        assert_eq!(public_model_payload(&entries[0])["ctx_size"], Value::Null);
+        assert_eq!(public_model_payload(&entries[0])["ctx_size"], json!(4096));
         assert_eq!(
             public_model_payload(&entries[0])["default_ctx_size"],
             json!(4096)
+        );
+    }
+
+    #[test]
+    fn reads_hf_directory_context_for_vllm_public_model() {
+        let root = temp_root("public-models-hf-context");
+        let dir = root.join("gelab-zero-4b-preview");
+        let model_dir = dir.join("model");
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(
+            model_dir.join("config.json"),
+            r#"{"text_config":{"max_position_embeddings":262144}}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join(MANIFEST_NAME),
+            r#"{
+                "id": "gelab-zero-4b-preview",
+                "display_name": "GELab Zero 4B Preview",
+                "backend": "vllm-linux-cuda",
+                "model": "model",
+                "ctx_size": 32768,
+                "modalities": ["text", "vision"],
+                "quant": "safetensors"
+            }"#,
+        )
+        .unwrap();
+
+        let entries = list_public_models(Some(&root)).unwrap();
+        assert_eq!(entries[0].model_path, model_dir);
+        assert_eq!(entries[0].native_ctx_size, Some(262_144));
+        assert_eq!(public_model_payload(&entries[0])["ctx_size"], json!(262144));
+        assert_eq!(
+            public_model_payload(&entries[0])["default_ctx_size"],
+            json!(32768)
         );
     }
 

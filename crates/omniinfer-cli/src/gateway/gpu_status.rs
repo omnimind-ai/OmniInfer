@@ -29,6 +29,18 @@ pub(super) fn runtime_env_for_backend(
             format!("{}:{existing}", parent.display())
         };
         env.push(("LD_LIBRARY_PATH".to_string(), value));
+        if backend.family == "vllm" {
+            let existing_path = std::env::var("PATH").unwrap_or_default();
+            let path = if existing_path.is_empty() {
+                parent.display().to_string()
+            } else {
+                format!("{}:{existing_path}", parent.display())
+            };
+            env.push(("PATH".to_string(), path));
+        }
+    }
+    if backend.family == "vllm" && std::env::var("VLLM_USE_FLASHINFER_SAMPLER").is_err() {
+        env.push(("VLLM_USE_FLASHINFER_SAMPLER".to_string(), "0".to_string()));
     }
     let mut cuda_selection = None;
     if backend.capabilities.iter().any(|cap| cap == "cuda") {
