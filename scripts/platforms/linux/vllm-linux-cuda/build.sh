@@ -6,7 +6,7 @@ BUILD_TYPE="Release"
 DRY_RUN=0
 CLEAN_BUILD=0
 SMOKE_TEST=0
-PYTHON_BIN="${OMNIINFER_VLLM_PYTHON:-python3}"
+PYTHON_BIN="${OMNIINFER_VLLM_PYTHON:-3.12}"
 PIP_PACKAGE="${OMNIINFER_VLLM_PIP_PACKAGE:-}"
 INDEX_URL="${OMNIINFER_VLLM_INDEX_URL:-}"
 EXTRA_INDEX_URL="${OMNIINFER_VLLM_EXTRA_INDEX_URL:-}"
@@ -34,7 +34,7 @@ Usage: build.sh [options]
 
 Options:
   --build-type <type>        Accepted for CLI consistency; vLLM is installed from Python wheels
-  --python <path>            Python interpreter used to create the local venv
+  --python <path|version>    Python interpreter or uv Python version used to create the local venv
   --package <spec>           Override the default pip package set
                              Defaults to 'vllm==0.24.0'
   --index-url <url>          pip index URL
@@ -52,7 +52,7 @@ Options:
   -h, --help                 Show this help message
 
 Environment:
-  OMNIINFER_VLLM_PYTHON          Default Python interpreter
+  OMNIINFER_VLLM_PYTHON          Default Python interpreter/version, defaults to 3.12
   OMNIINFER_VLLM_PIP_PACKAGE     Default pip package spec
   OMNIINFER_VLLM_INDEX_URL       Default pip index URL
   OMNIINFER_VLLM_EXTRA_INDEX_URL Default extra pip index URL
@@ -79,7 +79,11 @@ check_deps() {
       rc=1
     fi
   }
-  _dep "${PYTHON_BIN}" "Python 3 interpreter" "sudo apt install python3 python3-venv" python3
+  if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    _dep "${PYTHON_BIN}" "Python 3 interpreter" "sudo apt install python3 python3-venv" python3
+  else
+    _dep uv "uv Python environment manager" "Install uv or pass --python to an existing interpreter" uv
+  fi
   return ${rc}
 }
 
@@ -172,23 +176,21 @@ run_cmd() {
 }
 
 create_venv() {
-  if "${PYTHON_BIN}" -m venv "${PACKAGE_ROOT}"; then
-    return
+  if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    if "${PYTHON_BIN}" -m venv "${PACKAGE_ROOT}"; then
+      return
+    fi
+    echo "Falling back to uv venv because ${PYTHON_BIN} could not create a venv."
+    rm -rf "${PACKAGE_ROOT}"
   fi
 
   if ! command -v uv >/dev/null 2>&1; then
     echo "Failed to create venv with ${PYTHON_BIN}, and uv was not found for fallback." >&2
-    echo "Install python3-venv or pass --python to an interpreter with venv support." >&2
+    echo "Install uv, install python3-venv, or pass --python to an interpreter with venv support." >&2
     exit 1
   fi
 
-  echo "Falling back to uv venv because ${PYTHON_BIN} could not create a venv."
-  rm -rf "${PACKAGE_ROOT}"
-  local resolved_python="${PYTHON_BIN}"
-  if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-    resolved_python="$(command -v "${PYTHON_BIN}")"
-  fi
-  run_cmd uv venv --python "${resolved_python}" "${PACKAGE_ROOT}"
+  run_cmd uv venv --python "${PYTHON_BIN}" "${PACKAGE_ROOT}"
 }
 
 if [[ -z "${PIP_PACKAGE}" && -z "${SOURCE_DIR}" ]]; then
@@ -292,7 +294,11 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
   if [[ -n "${SOURCE_DIR}" ]]; then
     echo "+ git clone/fetch ${SOURCE_URL} ${SOURCE_DIR} (${SOURCE_REF})"
   fi
-  echo "+ ${PYTHON_BIN} -m venv ${PACKAGE_ROOT}"
+  if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    echo "+ ${PYTHON_BIN} -m venv ${PACKAGE_ROOT}"
+  else
+    echo "+ uv venv --python ${PYTHON_BIN} ${PACKAGE_ROOT}"
+  fi
   if [[ -n "${SOURCE_DIR}" ]]; then
     echo "+ VLLM_USE_PRECOMPILED=${USE_PRECOMPILED} VLLM_PRECOMPILED_WHEEL_COMMIT=${PRECOMPILED_WHEEL_COMMIT} uv pip install --python ${BIN_ROOT}/python --editable ${SOURCE_DIR} --torch-backend=${UV_TORCH_BACKEND:-auto}"
   elif command -v uv >/dev/null 2>&1; then
@@ -319,13 +325,12 @@ fi
 ensure_source_checkout
 
 if [[ ! -x "${BIN_ROOT}/python" ]]; then
-  require_command "${PYTHON_BIN}"
   create_venv
 fi
 
 if [[ ! -x "${BIN_ROOT}/python" ]]; then
   echo "Failed to create vLLM Python environment at ${PACKAGE_ROOT}" >&2
-  echo "Install python3-venv or pass --python to an interpreter with venv support." >&2
+  echo "Install uv, install python3-venv, or pass --python to an interpreter with venv support." >&2
   exit 1
 fi
 
