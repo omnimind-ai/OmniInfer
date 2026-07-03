@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use anyhow::Result;
@@ -23,10 +24,14 @@ pub(super) fn runtime_env_for_backend(
         && std::env::consts::OS != "windows"
     {
         let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        let mut library_paths = vec![parent.display().to_string()];
+        if backend.family == "vllm" {
+            library_paths.extend(vllm_runtime_library_paths(parent));
+        }
         let value = if existing.is_empty() {
-            parent.display().to_string()
+            library_paths.join(":")
         } else {
-            format!("{}:{existing}", parent.display())
+            format!("{}:{existing}", library_paths.join(":"))
         };
         env.push(("LD_LIBRARY_PATH".to_string(), value));
         if backend.family == "vllm" {
@@ -53,6 +58,39 @@ pub(super) fn runtime_env_for_backend(
         ));
     }
     (env, cuda_selection)
+}
+
+fn vllm_runtime_library_paths(bin_dir: &Path) -> Vec<String> {
+    let Some(runtime_dir) = bin_dir.parent() else {
+        return Vec::new();
+    };
+    let lib_dir = runtime_dir.join("lib");
+    let Ok(python_dirs) = fs::read_dir(lib_dir) else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    for python_dir in python_dirs.flatten().map(|entry| entry.path()) {
+        let Some(name) = python_dir.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("python") {
+            continue;
+        }
+        let nvidia_dir = python_dir.join("site-packages").join("nvidia");
+        let Ok(packages) = fs::read_dir(nvidia_dir) else {
+            continue;
+        };
+        for lib_path in packages
+            .flatten()
+            .map(|entry| entry.path().join("lib"))
+            .filter(|path| path.is_dir())
+        {
+            paths.push(lib_path.display().to_string());
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 fn select_cuda_visible_devices(launch_args: &[String]) -> Option<RuntimeCudaSelection> {
@@ -410,4 +448,46 @@ fn parse_cuda_index(index: &str) -> u32 {
 fn cuda_all_busy_warning() -> String {
     "Warning: all CUDA GPUs appear to be in use; OmniInfer selected the least-used GPU and set CUDA_VISIBLE_DEVICES for the backend process."
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn discovers_vllm_nvidia_library_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "omniinfer-vllm-libs-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bin = root.join("bin");
+        let cuda_lib = root
+            .join("lib")
+            .join("python3.10")
+            .join("site-packages")
+            .join("nvidia")
+            .join("cu13")
+            .join("lib");
+        let cublas_lib = root
+            .join("lib")
+            .join("python3.10")
+            .join("site-packages")
+            .join("nvidia")
+            .join("cublas")
+            .join("lib");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&cuda_lib).unwrap();
+        fs::create_dir_all(&cublas_lib).unwrap();
+
+        let paths = vllm_runtime_library_paths(&bin);
+
+        assert!(paths.contains(&cuda_lib.display().to_string()));
+        assert!(paths.contains(&cublas_lib.display().to_string()));
+        let _ = fs::remove_dir_all(root);
+    }
 }

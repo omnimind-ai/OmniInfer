@@ -260,6 +260,17 @@ install_source_runtime() {
   fi
 }
 
+runtime_library_path() {
+  local library_paths=("${BIN_ROOT}")
+  if [[ -d "${PACKAGE_ROOT}/lib" ]]; then
+    while IFS= read -r path; do
+      library_paths+=("${path}")
+    done < <(find "${PACKAGE_ROOT}/lib" -path '*/site-packages/nvidia/*/lib' -type d | sort)
+  fi
+  local IFS=:
+  echo "${library_paths[*]}"
+}
+
 echo "Preparing vLLM Linux CUDA runtime..."
 echo "  runtime: ${PACKAGE_ROOT}"
 echo "  python: ${PYTHON_BIN}"
@@ -334,7 +345,7 @@ if [[ ! -x "${BIN_ROOT}/vllm" ]]; then
 fi
 
 if [[ ${SMOKE_TEST} -eq 1 ]]; then
-  run_cmd "${BIN_ROOT}/vllm" --help
+  run_cmd env LD_LIBRARY_PATH="$(runtime_library_path):${LD_LIBRARY_PATH:-}" "${BIN_ROOT}/vllm" --help
 fi
 
 echo "vLLM Linux CUDA runtime is ready:"
