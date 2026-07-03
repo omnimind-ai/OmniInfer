@@ -1,4 +1,6 @@
 use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -6,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::{http_client, runtime_plan::ExternalRuntimePlan};
+use crate::runtime_plan::ExternalRuntimePlan;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeProcessOptions {
@@ -160,10 +162,7 @@ fn wait_http_ready(
         if child.try_wait()?.is_some() {
             return Err(RuntimeProcessError::EarlyExit);
         }
-        let url = format!("http://{host}:{port}/health");
-        if let Ok(response) = http_client::get_json(&url, Duration::from_millis(500))
-            && response.status == 200
-        {
+        if health_endpoint_ready(host, port, Duration::from_millis(500)) {
             return Ok(true);
         }
         thread::sleep(Duration::from_millis(100));
@@ -172,6 +171,29 @@ fn wait_http_ready(
         return Err(RuntimeProcessError::EarlyExit);
     }
     Ok(false)
+}
+
+fn health_endpoint_ready(host: &str, port: u16, timeout: Duration) -> bool {
+    let Ok(mut stream) = TcpStream::connect((host, port)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    let request =
+        format!("GET /health HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut reader = BufReader::new(stream);
+    let mut status_line = String::new();
+    if reader.read_line(&mut status_line).is_err() {
+        return false;
+    }
+    status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|status| status.parse::<u16>().ok())
+        .is_some_and(|status| (200..300).contains(&status))
 }
 
 fn terminate_child(child: &mut Child, grace: Duration) -> Result<(), RuntimeProcessError> {
@@ -229,6 +251,32 @@ mod tests {
     use std::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn accepts_empty_success_health_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                if line == "\r\n" || line == "\n" {
+                    break;
+                }
+                line.clear();
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        });
+        assert!(health_endpoint_ready(
+            "127.0.0.1",
+            port,
+            Duration::from_secs(1)
+        ));
+        handle.join().unwrap();
+    }
 
     #[test]
     fn starts_ready_process_and_stops_on_drop() {
