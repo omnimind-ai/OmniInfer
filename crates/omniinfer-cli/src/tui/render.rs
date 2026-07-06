@@ -183,9 +183,9 @@ fn format_model_menu_for_width(
     output.push('\n');
     output.push_str(&model_menu_row(
         "",
-        "---",
-        "---",
-        &"-".repeat(columns.model),
+        "───",
+        "───",
+        &"─".repeat(columns.model),
         &columns.separator_values(),
         &columns,
     ));
@@ -336,7 +336,7 @@ impl ModelMenuColumns {
     fn separator_values(&self) -> Vec<String> {
         self.optional
             .iter()
-            .map(|column| "-".repeat(column.width))
+            .map(|column| "─".repeat(column.width))
             .collect()
     }
 
@@ -478,26 +478,26 @@ fn format_panel(
     let content_width = panel_content_width(terminal_width);
     let panel_width = content_width + 4;
     let top = panel_top(title, panel_width);
-    let bottom = format!("+{}+", "-".repeat(panel_width.saturating_sub(2)));
+    let bottom = format!("└{}┘", "─".repeat(panel_width.saturating_sub(2)));
     let mut output = String::new();
     output.push_str(&top);
     output.push('\n');
     if !subtitle.is_empty() {
         for line in wrap_text(subtitle, content_width) {
-            output.push_str(&format!("| {:<content_width$} |\n", line));
+            output.push_str(&format!("│ {:<content_width$} │\n", line));
         }
-        output.push_str(&format!("| {:<content_width$} |\n", ""));
+        output.push_str(&format!("│ {:<content_width$} │\n", ""));
     }
     for line in lines {
         match body_mode {
             PanelBodyMode::Wrapped => {
                 for wrapped in wrap_text(line, content_width) {
-                    output.push_str(&format!("| {:<content_width$} |\n", wrapped));
+                    output.push_str(&format!("│ {:<content_width$} │\n", wrapped));
                 }
             }
             PanelBodyMode::Preformatted => {
                 output.push_str(&format!(
-                    "| {:<content_width$} |\n",
+                    "│ {:<content_width$} │\n",
                     truncate_cell_plain(line, content_width)
                 ));
             }
@@ -511,7 +511,7 @@ fn panel_top(title: &str, panel_width: usize) -> String {
     let content = format!(" {} ", truncate_cell(title, panel_width.saturating_sub(8)));
     let left = 2;
     let right = panel_width.saturating_sub(content.len() + left + 2);
-    format!("+{}{}{}+", "-".repeat(left), content, "-".repeat(right))
+    format!("┌{}{}{}┐", "─".repeat(left), content, "─".repeat(right))
 }
 
 fn panel_content_width(terminal_width: usize) -> usize {
@@ -558,7 +558,7 @@ fn accent_line(text: &str) -> String {
     };
     text.lines()
         .map(|line| {
-            if line.starts_with('+') {
+            if line.starts_with('┌') || line.starts_with('└') {
                 style(line).with(accent).to_string()
             } else {
                 line.to_string()
