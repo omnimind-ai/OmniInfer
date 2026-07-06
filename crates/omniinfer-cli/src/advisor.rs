@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Result;
+use omniinfer_core::model_load::DEFAULT_LOAD_CONTEXT_SIZE;
 use serde_json::{Value, json};
 
 use crate::{current_system_name, json_bool, json_str, json_u64};
@@ -16,7 +17,7 @@ pub use system::system_payload;
 
 use model::memory_estimate;
 
-const DEFAULT_CONTEXT_SIZE: u32 = 8192;
+const DEFAULT_CONTEXT_SIZE: u32 = DEFAULT_LOAD_CONTEXT_SIZE;
 const GPU_MEMORY_MARGIN_GIB: f64 = 0.5;
 const CPU_MEMORY_MARGIN_GIB: f64 = 1.0;
 pub fn fit_payload(
