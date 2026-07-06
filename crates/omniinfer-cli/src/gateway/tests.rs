@@ -865,6 +865,61 @@ async fn vllm_public_model_rewrites_to_served_model_name() {
     std::fs::remove_dir_all(temp).ok();
 }
 
+#[tokio::test]
+#[cfg(target_os = "linux")]
+async fn vllm_nonstream_can_be_aggregated_from_stream() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("rust-gateway-vllm-nonstream-via-stream");
+    let root = temp.join("public_models");
+    write_vllm_public_model_manifest(&root, "gelab-zero-4b-preview");
+    install_fake_vllm_server(&temp);
+    let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let _stream_guard = EnvGuard::set("OMNIINFER_VLLM_NONSTREAM_VIA_STREAM", "1".to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway_with_public_root(
+        GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+        Some(root),
+    )
+    .await;
+    let port = gateway.port;
+
+    let load = remote_admin_post(
+        port,
+        "/omni/model/select",
+        "admin",
+        json!({"model": "gelab-zero-4b-preview"}),
+    )
+    .await;
+    assert_eq!(load["selected_backend"], "vllm-linux-cuda");
+
+    let chat = remote_chat(port, "inference", "gelab-zero-4b-preview").await;
+    assert_eq!(chat["object"], "chat.completion");
+    assert_eq!(chat["model"], "local");
+    assert_eq!(chat["choices"][0]["message"]["content"], "fake backend");
+    assert_eq!(chat["choices"][0]["finish_reason"], "stop");
+    assert_eq!(chat["usage"]["prompt_tokens"], 3);
+    assert_eq!(chat["usage"]["completion_tokens"], 2);
+    assert_eq!(chat["usage"]["total_tokens"], 5);
+    assert_eq!(chat["omniinfer_metrics"]["mode"], "nonstream_via_stream");
+    assert!(chat["omniinfer_metrics"]["latency_ms"].as_u64().is_some());
+    assert!(
+        chat["omniinfer_metrics"]
+            .get("observed_decode_tps")
+            .is_some()
+    );
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
 #[test]
 fn normalizes_openai_usage_total_tokens() {
     let mut payload = json!({
@@ -1469,6 +1524,21 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length else b"{}"
         payload = json.loads(body.decode() or "{}")
+        if self.path.startswith("/v1/chat/completions") and payload.get("stream") is True:
+            assert payload.get("stream_options", {}).get("include_usage") is True
+            frames = [
+                'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":123,"model":"local","choices":[{"index":0,"delta":{"role":"assistant","content":"fake"},"finish_reason":null}]}\n\n',
+                'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":123,"model":"local","choices":[{"index":0,"delta":{"content":" backend"},"finish_reason":"stop"}]}\n\n',
+                'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":123,"model":"local","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n',
+                'data: [DONE]\n\n',
+            ]
+            raw = "".join(frames).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         self._json({
             "choices": [{"message": {"content": "fake backend"}, "finish_reason": "stop"}],
             "model_echo": payload.get("model"),
