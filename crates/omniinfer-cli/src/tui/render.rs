@@ -761,6 +761,9 @@ mod tests {
         assert!(screen.contains("Host: linux"));
         assert!(screen.contains("Backend: llama.cpp-linux-cuda"));
         assert!(screen.contains("Provider"));
+        assert!(screen.contains('┌'));
+        assert!(screen.contains('└'));
+        assert!(!screen.contains("+--"));
     }
 
     #[test]
