@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
+use omniinfer_core::backend_args::parse_backend_load_extra_args;
 use omniinfer_core::backend_registry::{self, BackendRegistry, BackendScope};
 use omniinfer_core::local_state;
 use omniinfer_core::model_artifacts::{discover_llama_cpp_model_artifacts, maybe_auto_mmproj};
+use omniinfer_core::model_load::DEFAULT_LOAD_CONTEXT_SIZE;
 use omniinfer_core::runtime_plan::{ExternalRuntimeRequest, build_external_runtime_plan};
 use omniinfer_core::runtime_process::{RuntimeProcess, RuntimeProcessOptions};
 use serde_json::{Value, json};
@@ -130,7 +132,7 @@ impl RustRuntimeManager {
         if mmproj_path.is_some() && !backend.supports_mmproj {
             anyhow::bail!("{} does not support mmproj inputs", backend.id);
         }
-        let ctx_size = payload
+        let requested_ctx_size = payload
             .get("ctx_size")
             .and_then(Value::as_u64)
             .and_then(|value| u32::try_from(value).ok());
@@ -147,6 +149,16 @@ impl RustRuntimeManager {
         let effective_launch_args = launch_args
             .clone()
             .unwrap_or_else(|| backend.default_args.clone());
+        let launch_args_have_ctx =
+            launch_args_have_ctx_size(&backend.family, &effective_launch_args);
+        let launch_args_ctx_size =
+            parse_backend_load_extra_args(&backend.id, &backend.family, &effective_launch_args)
+                .ok()
+                .and_then(|parsed| parsed.ctx_size);
+        let ctx_size = requested_ctx_size.or(launch_args_ctx_size).or_else(|| {
+            (backend.supports_ctx_size && !launch_args_have_ctx)
+                .then_some(DEFAULT_LOAD_CONTEXT_SIZE)
+        });
         let port = payload
             .get("backend_port")
             .and_then(Value::as_u64)
@@ -545,7 +557,51 @@ fn expand_home(path: PathBuf) -> PathBuf {
     path
 }
 
+fn launch_args_have_ctx_size(family: &str, args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        let flag = arg.split_once('=').map(|(flag, _)| flag).unwrap_or(arg);
+        match family {
+            "vllm" => flag == "--max-model-len",
+            "llama.cpp" | "turboquant" => matches!(flag, "-c" | "--ctx-size"),
+            _ => matches!(flag, "-c" | "--ctx-size" | "--max-model-len"),
+        }
+    })
+}
+
 pub(super) fn pick_runtime_port(host: &str) -> Result<u16> {
     let listener = std::net::TcpListener::bind((host, 0))?;
     Ok(listener.local_addr()?.port())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_llama_context_args() {
+        assert!(launch_args_have_ctx_size(
+            "llama.cpp",
+            &["-c".to_string(), "8192".to_string()]
+        ));
+        assert!(launch_args_have_ctx_size(
+            "llama.cpp",
+            &["--ctx-size=4096".to_string()]
+        ));
+        assert!(!launch_args_have_ctx_size(
+            "llama.cpp",
+            &["-ngl".to_string(), "999".to_string()]
+        ));
+    }
+
+    #[test]
+    fn detects_vllm_context_args() {
+        assert!(launch_args_have_ctx_size(
+            "vllm",
+            &["--max-model-len=65536".to_string()]
+        ));
+        assert!(!launch_args_have_ctx_size(
+            "vllm",
+            &["--gpu-memory-utilization".to_string(), "0.9".to_string()]
+        ));
+    }
 }

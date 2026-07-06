@@ -6,6 +6,8 @@ use thiserror::Error;
 use crate::backend_args::{parse_backend_chat_extra_args, parse_backend_load_extra_args};
 use crate::backend_profiles::BackendProfile;
 
+pub const DEFAULT_LOAD_CONTEXT_SIZE: u32 = 8192;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModelLoadRequest {
     pub model: String,
@@ -106,7 +108,10 @@ pub fn build_model_load_payload(
         Some(mmproj) => Some(resolve_existing_path(mmproj, cwd, "mmproj file")?),
         None => None,
     };
-    let ctx_size = request.ctx_size.or(load_args.ctx_size);
+    let ctx_size = request
+        .ctx_size
+        .or(load_args.ctx_size)
+        .or_else(|| backend_supports_ctx_size(backend).then_some(DEFAULT_LOAD_CONTEXT_SIZE));
     if ctx_size == Some(0) {
         return Err(ModelLoadError::InvalidCtxSize);
     }
@@ -297,6 +302,10 @@ fn json_bool(value: &Value, key: &str) -> Option<bool> {
     value.get(key).and_then(Value::as_bool)
 }
 
+fn backend_supports_ctx_size(backend: &Value) -> bool {
+    json_bool(backend, "supports_ctx_size").unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,7 +314,17 @@ mod tests {
         serde_json::json!({
             "id": id,
             "family": family,
-            "binary_exists": installed
+            "binary_exists": installed,
+            "supports_ctx_size": true
+        })
+    }
+
+    fn backend_without_ctx(id: &str, family: &str, installed: bool) -> Value {
+        serde_json::json!({
+            "id": id,
+            "family": family,
+            "binary_exists": installed,
+            "supports_ctx_size": false
         })
     }
 
@@ -388,6 +407,59 @@ mod tests {
         .unwrap();
         assert_eq!(plan.payload["ctx_size"], serde_json::json!(8192));
         assert_eq!(plan.payload["backend_port"], serde_json::json!(12345));
+        std::fs::remove_dir_all(cwd).ok();
+    }
+
+    #[test]
+    fn defaults_ctx_for_backends_that_support_context_size() {
+        let cwd = temp_dir("default-ctx");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let model = cwd.join("model.gguf");
+        std::fs::write(&model, "").unwrap();
+        let request = ModelLoadRequest {
+            model: model.display().to_string(),
+            ..ModelLoadRequest::default()
+        };
+
+        let plan = build_model_load_payload(
+            &request,
+            &[backend("llama.cpp-linux-cuda", "llama.cpp", true)],
+            None,
+            Some("llama.cpp-linux-cuda"),
+            None,
+            &cwd,
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.payload["ctx_size"],
+            serde_json::json!(DEFAULT_LOAD_CONTEXT_SIZE)
+        );
+        std::fs::remove_dir_all(cwd).ok();
+    }
+
+    #[test]
+    fn skips_default_ctx_for_backends_without_context_size_support() {
+        let cwd = temp_dir("no-default-ctx");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let model = cwd.join("model.mnn");
+        std::fs::write(&model, "").unwrap();
+        let request = ModelLoadRequest {
+            model: model.display().to_string(),
+            ..ModelLoadRequest::default()
+        };
+
+        let plan = build_model_load_payload(
+            &request,
+            &[backend_without_ctx("mnn-linux", "mnn", true)],
+            None,
+            Some("mnn-linux"),
+            None,
+            &cwd,
+        )
+        .unwrap();
+
+        assert!(plan.payload.get("ctx_size").is_none());
         std::fs::remove_dir_all(cwd).ok();
     }
 

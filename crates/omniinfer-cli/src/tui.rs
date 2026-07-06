@@ -418,14 +418,7 @@ fn choose_model(config: &config::AppConfig, mark_last_selected: bool) -> Result<
         selected: false,
     });
     choices.push(None);
-    let Some(index) = select_model_menu(
-        "Models",
-        "Pick a managed model or link a new local file",
-        &items,
-        default,
-        &menu_context,
-    )?
-    else {
+    let Some(index) = select_model_menu("Models", "", &items, default, &menu_context)? else {
         return Ok(None);
     };
     if let Some(path) = &choices[index] {

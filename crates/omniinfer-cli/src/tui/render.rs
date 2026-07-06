@@ -183,9 +183,9 @@ fn format_model_menu_for_width(
     output.push('\n');
     output.push_str(&model_menu_row(
         "",
-        "---",
-        "---",
-        &"-".repeat(columns.model),
+        "───",
+        "───",
+        &"─".repeat(columns.model),
         &columns.separator_values(),
         &columns,
     ));
@@ -209,10 +209,8 @@ fn format_model_menu_for_width(
     output.push_str(
         "Use Up/Down or j/k to move, PgUp/PgDn to jump, Enter to load, q/Esc to cancel.\n",
     );
-    if number_buffer.is_empty() {
-        output.push_str("Select: ");
-    } else {
-        output.push_str(&format!("Select: {number_buffer}"));
+    if !number_buffer.is_empty() {
+        output.push_str(&format!("Number: {number_buffer}"));
     }
     output
 }
@@ -336,7 +334,7 @@ impl ModelMenuColumns {
     fn separator_values(&self) -> Vec<String> {
         self.optional
             .iter()
-            .map(|column| "-".repeat(column.width))
+            .map(|column| "─".repeat(column.width))
             .collect()
     }
 
@@ -478,26 +476,26 @@ fn format_panel(
     let content_width = panel_content_width(terminal_width);
     let panel_width = content_width + 4;
     let top = panel_top(title, panel_width);
-    let bottom = format!("+{}+", "-".repeat(panel_width.saturating_sub(2)));
+    let bottom = format!("└{}┘", "─".repeat(panel_width.saturating_sub(2)));
     let mut output = String::new();
     output.push_str(&top);
     output.push('\n');
     if !subtitle.is_empty() {
         for line in wrap_text(subtitle, content_width) {
-            output.push_str(&format!("| {:<content_width$} |\n", line));
+            output.push_str(&format!("│ {:<content_width$} │\n", line));
         }
-        output.push_str(&format!("| {:<content_width$} |\n", ""));
+        output.push_str(&format!("│ {:<content_width$} │\n", ""));
     }
     for line in lines {
         match body_mode {
             PanelBodyMode::Wrapped => {
                 for wrapped in wrap_text(line, content_width) {
-                    output.push_str(&format!("| {:<content_width$} |\n", wrapped));
+                    output.push_str(&format!("│ {:<content_width$} │\n", wrapped));
                 }
             }
             PanelBodyMode::Preformatted => {
                 output.push_str(&format!(
-                    "| {:<content_width$} |\n",
+                    "│ {:<content_width$} │\n",
                     truncate_cell_plain(line, content_width)
                 ));
             }
@@ -511,7 +509,7 @@ fn panel_top(title: &str, panel_width: usize) -> String {
     let content = format!(" {} ", truncate_cell(title, panel_width.saturating_sub(8)));
     let left = 2;
     let right = panel_width.saturating_sub(content.len() + left + 2);
-    format!("+{}{}{}+", "-".repeat(left), content, "-".repeat(right))
+    format!("┌{}{}{}┐", "─".repeat(left), content, "─".repeat(right))
 }
 
 fn panel_content_width(terminal_width: usize) -> usize {
@@ -558,8 +556,19 @@ fn accent_line(text: &str) -> String {
     };
     text.lines()
         .map(|line| {
-            if line.starts_with('+') {
+            if line.starts_with('┌') || line.starts_with('└') {
                 style(line).with(accent).to_string()
+            } else if line.starts_with('│') && line.ends_with('│') {
+                let inner = line
+                    .strip_prefix('│')
+                    .and_then(|value| value.strip_suffix('│'))
+                    .unwrap_or(line);
+                format!(
+                    "{}{}{}",
+                    style("│").with(accent),
+                    inner,
+                    style("│").with(accent)
+                )
             } else {
                 line.to_string()
             }
@@ -761,6 +770,9 @@ mod tests {
         assert!(screen.contains("Host: linux"));
         assert!(screen.contains("Backend: llama.cpp-linux-cuda"));
         assert!(screen.contains("Provider"));
+        assert!(screen.contains('┌'));
+        assert!(screen.contains('└'));
+        assert!(!screen.contains("+--"));
     }
 
     #[test]
@@ -791,8 +803,26 @@ mod tests {
         ];
         let table = format_model_menu_for_width(&items, Some(1), "2", 120);
         assert!(table.contains(">    2  *"));
-        assert!(table.contains("Select: 2"));
+        assert!(table.contains("Number: 2"));
         assert!(table.contains("Up/Down"));
+    }
+
+    #[test]
+    fn format_model_menu_hides_empty_number_prompt() {
+        let items = [ModelMenuItem {
+            label: "first.gguf".to_string(),
+            provider: "local".to_string(),
+            quant: "Q4_K_M".to_string(),
+            disk: "2 GiB".to_string(),
+            ctx: "32k".to_string(),
+            fit: "good".to_string(),
+            backend: "llama.cpp-linux-cuda".to_string(),
+            evidence: "direct/high".to_string(),
+            selected: false,
+        }];
+        let table = format_model_menu_for_width(&items, Some(0), "", 120);
+        assert!(!table.contains("Select:"));
+        assert!(!table.contains("Number:"));
     }
 
     #[test]

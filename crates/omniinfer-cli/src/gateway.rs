@@ -46,6 +46,8 @@ use request_history::{RequestHistoryRecord, query_from_pairs};
 use response::{add_cors_headers, cors_response, json_response, should_forward_response_header};
 use runtime_manager::RustRuntimeManager;
 
+const MAX_STREAM_HISTORY_CAPTURE_CHARS: usize = 12_000;
+
 #[cfg(test)]
 use gpu_status::{
     GpuStatusDevice, apply_cuda_process_rows, apply_gpu_process_rows, gpu_status_device_payload,
@@ -558,7 +560,19 @@ async fn try_handle_rust_endpoint(
                 .unwrap_or(false);
             apply_proxy_model(&mut normalized_payload.payload, target.model.as_deref());
             let started_at = Instant::now();
-            let (response, captured_response, status) =
+            let history_context = StreamHistoryContext {
+                state: state.clone(),
+                admin_id: auth.admin_id.clone(),
+                auth_kind: auth_kind(&auth),
+                method: "POST".to_string(),
+                path: "/v1/chat/completions".to_string(),
+                model: requested_model.clone(),
+                backend: Some(target.backend_id.clone()),
+                request: raw_payload.clone(),
+                response_model: response_model.clone(),
+                started_at,
+            };
+            let (response, captured_response, status, history_deferred) =
                 if should_proxy_vllm_nonstream_via_stream(&target.backend_id, stream_requested) {
                     let (payload, status) = proxy_openai_nonstream_via_stream(
                         &state.client,
@@ -571,37 +585,42 @@ async fn try_handle_rust_endpoint(
                         json_response(status, payload.clone()),
                         Some(payload),
                         status,
+                        false,
                     )
                 } else {
                     proxy_openai_chat_to_runtime(
                         &state.client,
                         &format!("{}/v1/chat/completions", target.base_url),
                         HyperBytes::from(serde_json::to_vec(&normalized_payload.payload)?),
+                        Some(history_context.clone()),
                     )
                     .await?
                 };
-            record_request_history(
-                &state,
-                RequestHistoryRecord {
-                    admin_id: auth.admin_id.clone(),
-                    auth_kind: auth_kind(&auth),
-                    method: "POST".to_string(),
-                    path: "/v1/chat/completions".to_string(),
-                    model: requested_model.clone(),
-                    backend: Some(target.backend_id.clone()),
-                    status: status.as_u16(),
-                    latency_ms: duration_ms(started_at.elapsed()),
-                    usage: captured_response
-                        .as_ref()
-                        .and_then(|payload| payload.get("usage").cloned()),
-                    metrics: captured_response
-                        .as_ref()
-                        .and_then(|payload| payload.get("omniinfer_metrics").cloned()),
-                    request: raw_payload,
-                    response: captured_response,
-                    error: (status.as_u16() >= 400).then(|| format!("HTTP {}", status.as_u16())),
-                },
-            );
+            if !history_deferred {
+                record_request_history(
+                    &state,
+                    RequestHistoryRecord {
+                        admin_id: history_context.admin_id,
+                        auth_kind: history_context.auth_kind,
+                        method: history_context.method,
+                        path: history_context.path,
+                        model: history_context.model,
+                        backend: history_context.backend,
+                        status: status.as_u16(),
+                        latency_ms: duration_ms(started_at.elapsed()),
+                        usage: captured_response
+                            .as_ref()
+                            .and_then(|payload| payload.get("usage").cloned()),
+                        metrics: captured_response
+                            .as_ref()
+                            .and_then(|payload| payload.get("omniinfer_metrics").cloned()),
+                        request: raw_payload,
+                        response: captured_response,
+                        error: (status.as_u16() >= 400)
+                            .then(|| format!("HTTP {}", status.as_u16())),
+                    },
+                );
+            }
             Ok(Some(response))
         }
         (&Method::POST, "/tokenize" | "/detokenize" | "/omni/tokenize" | "/omni/detokenize") => {
@@ -707,7 +726,8 @@ async fn proxy_openai_chat_to_runtime(
     client: &Client<HttpConnector, Full<HyperBytes>>,
     uri: &str,
     body: HyperBytes,
-) -> Result<(Response<Body>, Option<Value>, StatusCode)> {
+    stream_history: Option<StreamHistoryContext>,
+) -> Result<(Response<Body>, Option<Value>, StatusCode, bool)> {
     let request = Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -729,8 +749,13 @@ async fn proxy_openai_chat_to_runtime(
         }
     }
     if streaming {
+        if let Some(context) = stream_history.filter(|_| request_history::enabled()) {
+            let response =
+                stream_openai_chat_with_history(upstream.into_body(), builder, context, status)?;
+            return Ok((response, None, status, true));
+        }
         let response = builder.body(Body::new(upstream.into_body()))?;
-        return Ok((response, None, status));
+        return Ok((response, None, status, false));
     }
     let mut body = upstream.into_body().collect().await?.to_bytes();
     let captured = if content_type.contains("application/json") {
@@ -742,7 +767,91 @@ async fn proxy_openai_chat_to_runtime(
     builder = builder.header(CONTENT_LENGTH, body.len().to_string());
     let mut response = builder.body(Body::from(body))?;
     add_cors_headers(response.headers_mut());
-    Ok((response, captured, status))
+    Ok((response, captured, status, false))
+}
+
+#[derive(Clone)]
+struct StreamHistoryContext {
+    state: GatewayState,
+    admin_id: Option<String>,
+    auth_kind: String,
+    method: String,
+    path: String,
+    model: Option<String>,
+    backend: Option<String>,
+    request: Value,
+    response_model: String,
+    started_at: Instant,
+}
+
+fn stream_openai_chat_with_history(
+    upstream_body: hyper::body::Incoming,
+    builder: axum::http::response::Builder,
+    context: StreamHistoryContext,
+    status: StatusCode,
+) -> Result<Response<Body>> {
+    let (tx, rx) = mpsc::channel::<Result<HyperBytes, std::io::Error>>(16);
+    tokio::spawn(async move {
+        let mut body = Body::new(upstream_body);
+        let mut buffered = Vec::<u8>::new();
+        let mut aggregate = OpenAiStreamAggregate::new(
+            &context.response_model,
+            context.started_at,
+            "stream_passthrough",
+        );
+        let mut error = None::<String>;
+        while let Some(frame) = body.frame().await {
+            let frame = match frame {
+                Ok(frame) => frame,
+                Err(frame_error) => {
+                    let message = frame_error.to_string();
+                    let _ = tx.send(Err(std::io::Error::other(message.clone()))).await;
+                    error = Some(format!("upstream stream error: {message}"));
+                    break;
+                }
+            };
+            let Some(data) = frame.data_ref() else {
+                continue;
+            };
+            let chunk = HyperBytes::copy_from_slice(data);
+            if tx.send(Ok(chunk.clone())).await.is_err() {
+                error = Some("client disconnected while streaming response".to_string());
+                break;
+            }
+            buffered.extend_from_slice(&chunk);
+            while let Some(index) = buffered.windows(2).position(|window| window == b"\n\n") {
+                let event = buffered.drain(..index + 2).collect::<Vec<_>>();
+                aggregate.process_sse_bytes(&event);
+            }
+        }
+        if error.is_none() && !buffered.is_empty() {
+            aggregate.process_sse_bytes(&buffered);
+        }
+        let payload = aggregate.finish();
+        let record_error =
+            error.or_else(|| (status.as_u16() >= 400).then(|| format!("HTTP {}", status.as_u16())));
+        record_request_history(
+            &context.state,
+            RequestHistoryRecord {
+                admin_id: context.admin_id,
+                auth_kind: context.auth_kind,
+                method: context.method,
+                path: context.path,
+                model: context.model,
+                backend: context.backend,
+                status: status.as_u16(),
+                latency_ms: duration_ms(context.started_at.elapsed()),
+                usage: payload.get("usage").cloned(),
+                metrics: payload.get("omniinfer_metrics").cloned(),
+                request: context.request,
+                response: Some(payload),
+                error: record_error,
+            },
+        );
+    });
+    let mut response = builder.body(Body::from_stream(ReceiverStream::new(rx)))?;
+    add_cors_headers(response.headers_mut());
+    Ok(response)
 }
 
 fn should_proxy_vllm_nonstream_via_stream(backend_id: &str, stream_requested: bool) -> bool {
@@ -799,7 +908,7 @@ async fn proxy_openai_nonstream_via_stream(
         normalize_openai_usage(&mut payload);
         return Ok((payload, status));
     }
-    let mut aggregate = OpenAiStreamAggregate::new(response_model, start);
+    let mut aggregate = OpenAiStreamAggregate::new(response_model, start, "nonstream_via_stream");
     let mut body = Body::new(response.into_body());
     let mut buffered = Vec::<u8>::new();
     while let Some(frame) = body.frame().await {
@@ -841,6 +950,7 @@ struct AggregatedToolCall {
 }
 
 struct OpenAiStreamAggregate {
+    metrics_mode: &'static str,
     response_model: String,
     started_at: Instant,
     first_output_at: Option<Instant>,
@@ -850,15 +960,19 @@ struct OpenAiStreamAggregate {
     system_fingerprint: Option<Value>,
     role: Option<String>,
     content: String,
+    content_truncated: bool,
     reasoning_content: String,
+    reasoning_truncated: bool,
     tool_calls: BTreeMap<u64, AggregatedToolCall>,
+    tool_arguments_truncated: bool,
     finish_reason: Option<Value>,
     usage: Option<Value>,
 }
 
 impl OpenAiStreamAggregate {
-    fn new(response_model: &str, started_at: Instant) -> Self {
+    fn new(response_model: &str, started_at: Instant, metrics_mode: &'static str) -> Self {
         Self {
+            metrics_mode,
             response_model: response_model.to_string(),
             started_at,
             first_output_at: None,
@@ -868,8 +982,11 @@ impl OpenAiStreamAggregate {
             system_fingerprint: None,
             role: None,
             content: String::new(),
+            content_truncated: false,
             reasoning_content: String::new(),
+            reasoning_truncated: false,
             tool_calls: BTreeMap::new(),
+            tool_arguments_truncated: false,
             finish_reason: None,
             usage: None,
         }
@@ -926,14 +1043,15 @@ impl OpenAiStreamAggregate {
             && !content.is_empty()
         {
             self.mark_first_output();
-            self.content.push_str(content);
+            self.content_truncated |= append_limited_stream_capture(&mut self.content, content);
         }
         for key in ["reasoning_content", "reasoning"] {
             if let Some(reasoning) = delta.get(key).and_then(Value::as_str)
                 && !reasoning.is_empty()
             {
                 self.mark_first_output();
-                self.reasoning_content.push_str(reasoning);
+                self.reasoning_truncated |=
+                    append_limited_stream_capture(&mut self.reasoning_content, reasoning);
             }
         }
         for tool_call in delta
@@ -964,7 +1082,8 @@ impl OpenAiStreamAggregate {
             if let Some(arguments) = function.get("arguments").and_then(Value::as_str)
                 && !arguments.is_empty()
             {
-                entry.arguments.push_str(arguments);
+                self.tool_arguments_truncated |=
+                    append_limited_stream_capture(&mut entry.arguments, arguments);
             }
         }
     }
@@ -1006,6 +1125,8 @@ impl OpenAiStreamAggregate {
         if !tool_calls.is_empty() {
             message["tool_calls"] = Value::Array(tool_calls);
         }
+        let response_truncated =
+            self.content_truncated || self.reasoning_truncated || self.tool_arguments_truncated;
         let mut payload = json!({
             "id": self.id.unwrap_or_else(make_chat_completion_id),
             "object": "chat.completion",
@@ -1018,12 +1139,13 @@ impl OpenAiStreamAggregate {
             }],
             "usage": usage,
             "omniinfer_metrics": {
-                "mode": "nonstream_via_stream",
+                "mode": self.metrics_mode,
                 "latency_ms": latency_ms,
                 "ttft_ms": ttft_ms,
                 "decode_ms": decode_ms,
                 "observed_prefill_tps": observed.prefill_tps,
                 "observed_decode_tps": observed.decode_tps,
+                "response_truncated": response_truncated,
             },
         });
         if let Some(fingerprint) = self.system_fingerprint {
@@ -1037,6 +1159,21 @@ impl OpenAiStreamAggregate {
             self.first_output_at = Some(Instant::now());
         }
     }
+}
+
+fn append_limited_stream_capture(target: &mut String, text: &str) -> bool {
+    let current = target.chars().count();
+    if current >= MAX_STREAM_HISTORY_CAPTURE_CHARS {
+        return true;
+    }
+    let remaining = MAX_STREAM_HISTORY_CAPTURE_CHARS - current;
+    let incoming = text.chars().count();
+    if incoming <= remaining {
+        target.push_str(text);
+        return false;
+    }
+    target.extend(text.chars().take(remaining));
+    true
 }
 
 struct ObservedMetrics {
