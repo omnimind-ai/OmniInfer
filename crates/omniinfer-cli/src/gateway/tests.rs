@@ -820,6 +820,70 @@ async fn remote_public_model_select_resolves_model_id() {
     std::fs::remove_dir_all(temp).ok();
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn vllm_public_model_rewrites_to_served_model_name() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("rust-gateway-vllm-public-model");
+    let root = temp.join("public_models");
+    write_vllm_public_model_manifest(&root, "gelab-zero-4b-preview");
+    install_fake_vllm_server(&temp);
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway_with_public_root(
+        GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+        Some(root),
+    )
+    .await;
+    let port = gateway.port;
+
+    let load = remote_admin_post(
+        port,
+        "/omni/model/select",
+        "admin",
+        json!({"model": "gelab-zero-4b-preview"}),
+    )
+    .await;
+    assert_eq!(load["selected_backend"], "vllm-linux-cuda");
+    assert_eq!(load["model"], "gelab-zero-4b-preview");
+
+    let chat = remote_chat(port, "inference", "gelab-zero-4b-preview").await;
+    assert_eq!(chat["model_echo"], "local");
+    assert_eq!(chat["usage"]["prompt_tokens"], 3);
+    assert_eq!(chat["usage"]["completion_tokens"], 2);
+    assert_eq!(chat["usage"]["total_tokens"], 5);
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[test]
+fn normalizes_openai_usage_total_tokens() {
+    let mut payload = json!({
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7}
+    });
+    normalize_openai_usage(&mut payload);
+    assert_eq!(payload["usage"]["total_tokens"], 18);
+}
+
+#[test]
+fn keeps_existing_openai_usage_total_tokens() {
+    let mut payload = json!({
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 99}
+    });
+    normalize_openai_usage(&mut payload);
+    assert_eq!(payload["usage"]["total_tokens"], 99);
+}
+
 #[tokio::test]
 async fn remote_admins_can_load_multiple_models_with_owner_unload_policy() {
     let _env_lock = TEST_ENV_LOCK.lock().await;
@@ -1218,6 +1282,35 @@ fn write_public_model_manifest(root: &std::path::Path, id: &str) -> PathBuf {
     model
 }
 
+#[cfg(target_os = "linux")]
+fn write_vllm_public_model_manifest(root: &std::path::Path, id: &str) -> PathBuf {
+    let dir = root.join(id);
+    let model = dir.join("model");
+    std::fs::create_dir_all(&model).unwrap();
+    std::fs::write(
+        model.join("config.json"),
+        r#"{"max_position_embeddings":32768}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("omni-model.json"),
+        format!(
+            r#"{{
+                    "id": "{id}",
+                    "display_name": "GELab Zero 4B Preview",
+                    "backend": "vllm-linux-cuda",
+                    "model": "model",
+                    "ctx_size": 32768,
+                    "modalities": ["text", "vision"],
+                    "quant": "BF16",
+                    "launch_args": ["--served-model-name", "local"]
+                }}"#
+        ),
+    )
+    .unwrap();
+    model
+}
+
 fn install_fake_llama_server(root: &std::path::Path, backend_id: &str) {
     let launcher_name = if cfg!(target_os = "windows") {
         "llama-server.exe"
@@ -1325,6 +1418,74 @@ PY
             permissions.set_mode(0o755);
             std::fs::set_permissions(&launcher, permissions).unwrap();
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn install_fake_vllm_server(root: &std::path::Path) {
+    let launcher = root
+        .join(".local")
+        .join("runtime")
+        .join(test_runtime_platform_dir())
+        .join("vllm-linux-cuda")
+        .join("bin")
+        .join("vllm");
+    std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    std::fs::write(
+        &launcher,
+        r#"#!/usr/bin/env bash
+port=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --port) port="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+python3 - "$port" <<'PY'
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+port = int(sys.argv[1])
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+    def _json(self, payload):
+        raw = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+    def do_GET(self):
+        if self.path.startswith("/health"):
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            self._json({"ok": True})
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else b"{}"
+        payload = json.loads(body.decode() or "{}")
+        self._json({
+            "choices": [{"message": {"content": "fake backend"}, "finish_reason": "stop"}],
+            "model_echo": payload.get("model"),
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+        })
+
+HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+PY
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&launcher).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&launcher, permissions).unwrap();
     }
 }
 
