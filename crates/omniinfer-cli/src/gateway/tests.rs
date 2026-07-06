@@ -829,6 +829,7 @@ async fn vllm_public_model_rewrites_to_served_model_name() {
     write_vllm_public_model_manifest(&root, "gelab-zero-4b-preview");
     install_fake_vllm_server(&temp);
     let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let _stream_guard = EnvGuard::set("OMNIINFER_VLLM_NONSTREAM_VIA_STREAM", "0".to_string());
 
     let upstream = spawn_test_upstream().await;
     let gateway = spawn_test_gateway_with_public_root(
@@ -859,6 +860,146 @@ async fn vllm_public_model_rewrites_to_served_model_name() {
     assert_eq!(chat["usage"]["prompt_tokens"], 3);
     assert_eq!(chat["usage"]["completion_tokens"], 2);
     assert_eq!(chat["usage"]["total_tokens"], 5);
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
+#[cfg(target_os = "linux")]
+async fn vllm_nonstream_can_be_aggregated_from_stream() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("rust-gateway-vllm-nonstream-via-stream");
+    let root = temp.join("public_models");
+    write_vllm_public_model_manifest(&root, "gelab-zero-4b-preview");
+    install_fake_vllm_server(&temp);
+    let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway_with_public_root(
+        GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+        Some(root),
+    )
+    .await;
+    let port = gateway.port;
+
+    let load = remote_admin_post(
+        port,
+        "/omni/model/select",
+        "admin",
+        json!({"model": "gelab-zero-4b-preview"}),
+    )
+    .await;
+    assert_eq!(load["selected_backend"], "vllm-linux-cuda");
+
+    let chat = remote_chat(port, "inference", "gelab-zero-4b-preview").await;
+    assert_eq!(chat["object"], "chat.completion");
+    assert_eq!(chat["model"], "local");
+    assert_eq!(chat["choices"][0]["message"]["content"], "fake backend");
+    assert_eq!(chat["choices"][0]["finish_reason"], "stop");
+    assert_eq!(chat["usage"]["prompt_tokens"], 3);
+    assert_eq!(chat["usage"]["completion_tokens"], 2);
+    assert_eq!(chat["usage"]["total_tokens"], 5);
+    assert_eq!(chat["omniinfer_metrics"]["mode"], "nonstream_via_stream");
+    assert!(chat["omniinfer_metrics"]["latency_ms"].as_u64().is_some());
+    assert!(
+        chat["omniinfer_metrics"]
+            .get("observed_decode_tps")
+            .is_some()
+    );
+
+    let denied = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/omni/request-history"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer inference")
+            .call()
+            .unwrap_err()
+    })
+    .await
+    .unwrap();
+    assert!(denied.to_string().contains("401") || denied.to_string().contains("403"));
+
+    let history = wait_for_history(port, "admin", "gelab-zero-4b-preview").await;
+    assert_eq!(history["data"][0]["model"], "gelab-zero-4b-preview");
+    assert_eq!(history["data"][0]["backend"], "vllm-linux-cuda");
+    assert_eq!(history["data"][0]["status"], 200);
+    assert_eq!(
+        history["data"][0]["response"]["choices"][0]["message"]["content"],
+        "fake backend"
+    );
+    assert_eq!(
+        history["data"][0]["response"]["omniinfer_metrics"]["mode"],
+        "nonstream_via_stream"
+    );
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
+async fn request_history_summarizes_image_payloads() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("rust-gateway-request-history-images");
+    let root = temp.join("public_models");
+    write_public_model_manifest(&root, "vision-test-model");
+    install_fake_llama_server(&temp, external_test_backend_id());
+    let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway_with_public_root(
+        GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+        Some(root),
+    )
+    .await;
+    let port = gateway.port;
+
+    remote_admin_post(
+        port,
+        "/omni/model/select",
+        "admin",
+        json!({"model": "vision-test-model"}),
+    )
+    .await;
+
+    tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer inference")
+            .send_json(json!({
+                "model": "vision-test-model",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe this image briefly."},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+                    ]
+                }],
+                "stream": false
+            }))
+            .unwrap();
+    })
+    .await
+    .unwrap();
+
+    let history = wait_for_history(port, "admin", "vision-test-model").await;
+    assert_eq!(
+        history["data"][0]["request"]["messages"][0]["content"][1]["image_url"]["url"]["omitted"],
+        "data_url"
+    );
 
     gateway.stop().await;
     upstream.stop().await;
@@ -1219,6 +1360,32 @@ async fn remote_chat_without_model(port: u16, key: &'static str) -> Value {
     .unwrap()
 }
 
+async fn wait_for_history(port: u16, key: &'static str, model: &'static str) -> Value {
+    for _ in 0..20 {
+        let value = tokio::task::spawn_blocking(move || {
+            let response = ureq::get(format!(
+                "http://127.0.0.1:{port}/omni/request-history?limit=5&model={model}"
+            ))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", &format!("Bearer {key}"))
+            .call()
+            .unwrap();
+            response.into_body().read_json::<Value>().unwrap()
+        })
+        .await
+        .unwrap();
+        if value
+            .get("data")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+        {
+            return value;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for request history");
+}
+
 fn temp_root(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1469,6 +1636,21 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length else b"{}"
         payload = json.loads(body.decode() or "{}")
+        if self.path.startswith("/v1/chat/completions") and payload.get("stream") is True:
+            assert payload.get("stream_options", {}).get("include_usage") is True
+            frames = [
+                'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":123,"model":"local","choices":[{"index":0,"delta":{"role":"assistant","content":"fake"},"finish_reason":null}]}\n\n',
+                'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":123,"model":"local","choices":[{"index":0,"delta":{"content":" backend"},"finish_reason":"stop"}]}\n\n',
+                'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":123,"model":"local","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n',
+                'data: [DONE]\n\n',
+            ]
+            raw = "".join(frames).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         self._json({
             "choices": [{"message": {"content": "fake backend"}, "finish_reason": "stop"}],
             "model_echo": payload.get("model"),

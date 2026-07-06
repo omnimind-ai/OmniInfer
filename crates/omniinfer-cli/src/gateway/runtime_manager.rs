@@ -22,6 +22,7 @@ pub(super) struct RustRuntimeManager {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RuntimeProxyTarget {
     pub(super) base_url: String,
+    pub(super) backend_id: String,
     pub(super) model: Option<String>,
 }
 
@@ -295,6 +296,7 @@ impl RustRuntimeManager {
         let loaded = self.loaded.get(&key)?;
         Some(RuntimeProxyTarget {
             base_url: format!("http://127.0.0.1:{}", loaded.process.info().port),
+            backend_id: loaded.backend_id.clone(),
             model: loaded.proxy_model_ref.clone(),
         })
     }
