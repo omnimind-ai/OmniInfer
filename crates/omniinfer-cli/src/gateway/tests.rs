@@ -6,6 +6,7 @@ use axum::Json;
 use axum::extract::Query;
 use axum::routing::{get, post};
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -999,6 +1000,84 @@ async fn request_history_summarizes_image_payloads() {
     assert_eq!(
         history["data"][0]["request"]["messages"][0]["content"][1]["image_url"]["url"]["omitted"],
         "data_url"
+    );
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
+async fn request_history_captures_streaming_chat_response() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("rust-gateway-request-history-stream");
+    let root = temp.join("public_models");
+    write_public_model_manifest(&root, "qwen3.5-4b-q4_k_m");
+    install_fake_llama_server(&temp, external_test_backend_id());
+    let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway_with_public_root(
+        GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+        Some(root),
+    )
+    .await;
+    let port = gateway.port;
+
+    remote_admin_post(
+        port,
+        "/omni/model/select",
+        "admin",
+        json!({"model": "qwen3.5-4b-q4_k_m"}),
+    )
+    .await;
+
+    let stream_text = tokio::task::spawn_blocking(move || {
+        let response = ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer inference")
+            .send_json(json!({
+                "model": "qwen3.5-4b-q4_k_m",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": true,
+                "stream_options": {"include_usage": true}
+            }))
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        let mut text = String::new();
+        response
+            .into_body()
+            .into_reader()
+            .read_to_string(&mut text)
+            .unwrap();
+        text
+    })
+    .await
+    .unwrap();
+    assert!(stream_text.contains("fake"));
+    assert!(stream_text.contains("[DONE]"));
+
+    let history = wait_for_history(port, "admin", "qwen3.5-4b-q4_k_m").await;
+    assert_eq!(history["data"][0]["status"], 200);
+    assert_eq!(
+        history["data"][0]["response"]["choices"][0]["message"]["content"],
+        "fake backend"
+    );
+    assert_eq!(history["data"][0]["usage"]["prompt_tokens"], 3);
+    assert_eq!(history["data"][0]["usage"]["completion_tokens"], 2);
+    assert_eq!(
+        history["data"][0]["response"]["omniinfer_metrics"]["mode"],
+        "stream_passthrough"
+    );
+    assert_eq!(
+        history["data"][0]["response"]["omniinfer_metrics"]["response_truncated"],
+        false
     );
 
     gateway.stop().await;
