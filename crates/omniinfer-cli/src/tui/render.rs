@@ -209,10 +209,8 @@ fn format_model_menu_for_width(
     output.push_str(
         "Use Up/Down or j/k to move, PgUp/PgDn to jump, Enter to load, q/Esc to cancel.\n",
     );
-    if number_buffer.is_empty() {
-        output.push_str("Select: ");
-    } else {
-        output.push_str(&format!("Select: {number_buffer}"));
+    if !number_buffer.is_empty() {
+        output.push_str(&format!("Number: {number_buffer}"));
     }
     output
 }
@@ -560,6 +558,17 @@ fn accent_line(text: &str) -> String {
         .map(|line| {
             if line.starts_with('┌') || line.starts_with('└') {
                 style(line).with(accent).to_string()
+            } else if line.starts_with('│') && line.ends_with('│') {
+                let inner = line
+                    .strip_prefix('│')
+                    .and_then(|value| value.strip_suffix('│'))
+                    .unwrap_or(line);
+                format!(
+                    "{}{}{}",
+                    style("│").with(accent),
+                    inner,
+                    style("│").with(accent)
+                )
             } else {
                 line.to_string()
             }
@@ -794,8 +803,26 @@ mod tests {
         ];
         let table = format_model_menu_for_width(&items, Some(1), "2", 120);
         assert!(table.contains(">    2  *"));
-        assert!(table.contains("Select: 2"));
+        assert!(table.contains("Number: 2"));
         assert!(table.contains("Up/Down"));
+    }
+
+    #[test]
+    fn format_model_menu_hides_empty_number_prompt() {
+        let items = [ModelMenuItem {
+            label: "first.gguf".to_string(),
+            provider: "local".to_string(),
+            quant: "Q4_K_M".to_string(),
+            disk: "2 GiB".to_string(),
+            ctx: "32k".to_string(),
+            fit: "good".to_string(),
+            backend: "llama.cpp-linux-cuda".to_string(),
+            evidence: "direct/high".to_string(),
+            selected: false,
+        }];
+        let table = format_model_menu_for_width(&items, Some(0), "", 120);
+        assert!(!table.contains("Select:"));
+        assert!(!table.contains("Number:"));
     }
 
     #[test]
