@@ -36,11 +36,13 @@ use tokio_stream::wrappers::ReceiverStream;
 
 mod access_policy;
 mod gpu_status;
+mod request_history;
 mod response;
 mod runtime_manager;
 
 use access_policy::DynamicAccessPolicy;
 use gpu_status::{gpu_status_payload, query_nvidia_smi_gpu_status};
+use request_history::{RequestHistoryRecord, query_from_pairs};
 use response::{add_cors_headers, cors_response, json_response, should_forward_response_header};
 use runtime_manager::RustRuntimeManager;
 
@@ -64,6 +66,7 @@ struct GatewayState {
     backend_host: String,
     access_policy: Arc<tokio::sync::Mutex<DynamicAccessPolicy>>,
     public_model_root: Option<PathBuf>,
+    request_history_dir: PathBuf,
     client: Client<HttpConnector, Full<HyperBytes>>,
     shutdown: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
     runtime: Arc<tokio::sync::Mutex<RustRuntimeManager>>,
@@ -85,6 +88,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
             paths::admin_keys_file(),
         ))),
         public_model_root: config.public_model_root,
+        request_history_dir: paths::local_dir().join("request_history"),
         client: Client::builder(TokioExecutor::new()).build_http(),
         shutdown: Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx))),
         runtime: Arc::new(tokio::sync::Mutex::new(RustRuntimeManager::default())),
@@ -177,6 +181,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
         ) => true,
         (&Method::GET, "/omni/backend/props") => true,
         (&Method::GET, "/omni/public-models") => true,
+        (&Method::GET, path) if request_history_path(path) => true,
         (&Method::GET, "/omni/supported-models" | "/omni/supported-models/best" | "/v1/models") => {
             true
         }
@@ -300,6 +305,37 @@ async fn try_handle_rust_endpoint(
                     json!({"error": {"message": error.to_string()}}),
                 ))),
             }
+        }
+        (&Method::GET, path) if request_history_path(path) => {
+            if auth.admin_id.is_none() {
+                return Ok(Some(json_response(
+                    StatusCode::FORBIDDEN,
+                    json!({"error": {"message": "request history requires an admin key"}}),
+                )));
+            }
+            if let Some(id) = path.strip_prefix("/omni/request-history/") {
+                let history_dir = state.request_history_dir.clone();
+                let id = id.to_string();
+                let lookup_id = id.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    request_history::get_record(&history_dir, &lookup_id)
+                })
+                .await??;
+                return Ok(Some(match result {
+                    Some(entry) => json_response(StatusCode::OK, entry),
+                    None => json_response(
+                        StatusCode::NOT_FOUND,
+                        json!({"error": {"message": format!("request history entry not found: {id}")}}),
+                    ),
+                }));
+            }
+            let query = query_from_pairs(query_pairs(request.uri()));
+            let history_dir = state.request_history_dir.clone();
+            let payload = tokio::task::spawn_blocking(move || {
+                request_history::query_records(&history_dir, query)
+            })
+            .await??;
+            Ok(Some(json_response(StatusCode::OK, payload)))
         }
         (&Method::GET, "/omni/supported-models") => {
             let system = query_value(request.uri(), "system").unwrap_or_else(current_system_name);
@@ -487,8 +523,8 @@ async fn try_handle_rust_endpoint(
         }
         (&Method::POST, "/v1/chat/completions") => {
             let body = request.into_body().collect().await?.to_bytes();
-            let mut normalized_payload =
-                normalize_chat_request(serde_json::from_slice(&body)?, false)?;
+            let raw_payload: Value = serde_json::from_slice(&body)?;
+            let mut normalized_payload = normalize_chat_request(raw_payload.clone(), false)?;
             let requested_model = normalized_payload
                 .payload
                 .get("model")
@@ -521,23 +557,51 @@ async fn try_handle_rust_endpoint(
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             apply_proxy_model(&mut normalized_payload.payload, target.model.as_deref());
-            let response =
+            let started_at = Instant::now();
+            let (response, captured_response, status) =
                 if should_proxy_vllm_nonstream_via_stream(&target.backend_id, stream_requested) {
-                    proxy_openai_nonstream_via_stream(
+                    let (payload, status) = proxy_openai_nonstream_via_stream(
                         &state.client,
                         &format!("{}/v1/chat/completions", target.base_url),
                         normalized_payload.payload,
                         &response_model,
                     )
-                    .await?
+                    .await?;
+                    (
+                        json_response(status, payload.clone()),
+                        Some(payload),
+                        status,
+                    )
                 } else {
-                    proxy_body_to_runtime(
+                    proxy_openai_chat_to_runtime(
                         &state.client,
                         &format!("{}/v1/chat/completions", target.base_url),
                         HyperBytes::from(serde_json::to_vec(&normalized_payload.payload)?),
                     )
                     .await?
                 };
+            record_request_history(
+                &state,
+                RequestHistoryRecord {
+                    admin_id: auth.admin_id.clone(),
+                    auth_kind: auth_kind(&auth),
+                    method: "POST".to_string(),
+                    path: "/v1/chat/completions".to_string(),
+                    model: requested_model.clone(),
+                    backend: Some(target.backend_id.clone()),
+                    status: status.as_u16(),
+                    latency_ms: duration_ms(started_at.elapsed()),
+                    usage: captured_response
+                        .as_ref()
+                        .and_then(|payload| payload.get("usage").cloned()),
+                    metrics: captured_response
+                        .as_ref()
+                        .and_then(|payload| payload.get("omniinfer_metrics").cloned()),
+                    request: raw_payload,
+                    response: captured_response,
+                    error: (status.as_u16() >= 400).then(|| format!("HTTP {}", status.as_u16())),
+                },
+            );
             Ok(Some(response))
         }
         (&Method::POST, "/tokenize" | "/detokenize" | "/omni/tokenize" | "/omni/detokenize") => {
@@ -639,6 +703,48 @@ async fn proxy_body_to_runtime(
     response_from_upstream(response).await
 }
 
+async fn proxy_openai_chat_to_runtime(
+    client: &Client<HttpConnector, Full<HyperBytes>>,
+    uri: &str,
+    body: HyperBytes,
+) -> Result<(Response<Body>, Option<Value>, StatusCode)> {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Full::new(body))?;
+    let upstream = client.request(request).await?;
+    let status = upstream.status();
+    let content_type = upstream
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let streaming = content_type.contains("text/event-stream");
+    let mut builder = Response::builder().status(status);
+    for (name, value) in upstream.headers().iter() {
+        if should_forward_response_header(name) {
+            builder = builder.header(name, value);
+        }
+    }
+    if streaming {
+        let response = builder.body(Body::new(upstream.into_body()))?;
+        return Ok((response, None, status));
+    }
+    let mut body = upstream.into_body().collect().await?.to_bytes();
+    let captured = if content_type.contains("application/json") {
+        body = normalize_upstream_json_body(body)?;
+        serde_json::from_slice::<Value>(&body).ok()
+    } else {
+        None
+    };
+    builder = builder.header(CONTENT_LENGTH, body.len().to_string());
+    let mut response = builder.body(Body::from(body))?;
+    add_cors_headers(response.headers_mut());
+    Ok((response, captured, status))
+}
+
 fn should_proxy_vllm_nonstream_via_stream(backend_id: &str, stream_requested: bool) -> bool {
     !stream_requested
         && backend_id.starts_with("vllm")
@@ -661,7 +767,7 @@ async fn proxy_openai_nonstream_via_stream(
     uri: &str,
     mut payload: Value,
     response_model: &str,
-) -> Result<Response<Body>> {
+) -> Result<(Value, StatusCode)> {
     payload["stream"] = json!(true);
     ensure_stream_usage(&mut payload);
     let request = Request::builder()
@@ -673,7 +779,11 @@ async fn proxy_openai_nonstream_via_stream(
     let response = client.request(request).await?;
     let status = response.status();
     if !status.is_success() {
-        return response_from_upstream(response).await;
+        let body = response.into_body().collect().await?.to_bytes();
+        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(
+            |_| json!({"error": {"message": String::from_utf8_lossy(&body).trim().to_string()}}),
+        );
+        return Ok((payload, status));
     }
     let content_type = response
         .headers()
@@ -682,7 +792,12 @@ async fn proxy_openai_nonstream_via_stream(
         .unwrap_or("")
         .to_ascii_lowercase();
     if !content_type.contains("text/event-stream") {
-        return response_from_upstream(response).await;
+        let body = response.into_body().collect().await?.to_bytes();
+        let mut payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(
+            |_| json!({"error": {"message": String::from_utf8_lossy(&body).trim().to_string()}}),
+        );
+        normalize_openai_usage(&mut payload);
+        return Ok((payload, status));
     }
     let mut aggregate = OpenAiStreamAggregate::new(response_model, start);
     let mut body = Body::new(response.into_body());
@@ -703,7 +818,7 @@ async fn proxy_openai_nonstream_via_stream(
     }
     let mut payload = aggregate.finish();
     normalize_openai_usage(&mut payload);
-    Ok(json_response(StatusCode::OK, payload))
+    Ok((payload, StatusCode::OK))
 }
 
 fn ensure_stream_usage(payload: &mut Value) {
@@ -1289,6 +1404,30 @@ fn public_model_error_status(error: &public_models::PublicModelError) -> StatusC
     }
 }
 
+fn request_history_path(path: &str) -> bool {
+    path == "/omni/request-history" || path.starts_with("/omni/request-history/")
+}
+
+fn record_request_history(state: &GatewayState, record: RequestHistoryRecord) {
+    if !request_history::enabled() {
+        return;
+    }
+    let history_dir = state.request_history_dir.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Err(error) = request_history::append_record(history_dir, record) {
+            eprintln!("warn: failed to append request history: {error}");
+        }
+    });
+}
+
+fn auth_kind(auth: &GatewayAuthDecision) -> String {
+    if auth.admin_id.is_some() {
+        "admin".to_string()
+    } else {
+        "api_key".to_string()
+    }
+}
+
 fn auth_context(request: &Request<Body>, peer_ip: IpAddr) -> RequestAuthContext {
     let headers = request.headers();
     RequestAuthContext {
@@ -1315,6 +1454,17 @@ fn query_value(uri: &Uri, key: &str) -> Option<String> {
         let (name, value) = part.split_once('=')?;
         (name == key && !value.trim().is_empty()).then(|| value.to_string())
     })
+}
+
+fn query_pairs(uri: &Uri) -> BTreeMap<String, String> {
+    uri.query()
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .filter_map(|part| {
+            let (key, value) = part.split_once('=')?;
+            Some((key.to_string(), value.to_string()))
+        })
+        .collect()
 }
 
 fn current_system_name() -> String {

@@ -915,6 +915,92 @@ async fn vllm_nonstream_can_be_aggregated_from_stream() {
             .is_some()
     );
 
+    let denied = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/omni/request-history"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer inference")
+            .call()
+            .unwrap_err()
+    })
+    .await
+    .unwrap();
+    assert!(denied.to_string().contains("401") || denied.to_string().contains("403"));
+
+    let history = wait_for_history(port, "admin", "gelab-zero-4b-preview").await;
+    assert_eq!(history["data"][0]["model"], "gelab-zero-4b-preview");
+    assert_eq!(history["data"][0]["backend"], "vllm-linux-cuda");
+    assert_eq!(history["data"][0]["status"], 200);
+    assert_eq!(
+        history["data"][0]["response"]["choices"][0]["message"]["content"],
+        "fake backend"
+    );
+    assert_eq!(
+        history["data"][0]["response"]["omniinfer_metrics"]["mode"],
+        "nonstream_via_stream"
+    );
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
+async fn request_history_summarizes_image_payloads() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("rust-gateway-request-history-images");
+    let root = temp.join("public_models");
+    write_public_model_manifest(&root, "vision-test-model");
+    install_fake_llama_server(&temp, external_test_backend_id());
+    let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway_with_public_root(
+        GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+        Some(root),
+    )
+    .await;
+    let port = gateway.port;
+
+    remote_admin_post(
+        port,
+        "/omni/model/select",
+        "admin",
+        json!({"model": "vision-test-model"}),
+    )
+    .await;
+
+    tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer inference")
+            .send_json(json!({
+                "model": "vision-test-model",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe this image briefly."},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+                    ]
+                }],
+                "stream": false
+            }))
+            .unwrap();
+    })
+    .await
+    .unwrap();
+
+    let history = wait_for_history(port, "admin", "vision-test-model").await;
+    assert_eq!(
+        history["data"][0]["request"]["messages"][0]["content"][1]["image_url"]["url"]["omitted"],
+        "data_url"
+    );
+
     gateway.stop().await;
     upstream.stop().await;
     std::fs::remove_dir_all(temp).ok();
@@ -1272,6 +1358,32 @@ async fn remote_chat_without_model(port: u16, key: &'static str) -> Value {
     })
     .await
     .unwrap()
+}
+
+async fn wait_for_history(port: u16, key: &'static str, model: &'static str) -> Value {
+    for _ in 0..20 {
+        let value = tokio::task::spawn_blocking(move || {
+            let response = ureq::get(format!(
+                "http://127.0.0.1:{port}/omni/request-history?limit=5&model={model}"
+            ))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", &format!("Bearer {key}"))
+            .call()
+            .unwrap();
+            response.into_body().read_json::<Value>().unwrap()
+        })
+        .await
+        .unwrap();
+        if value
+            .get("data")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+        {
+            return value;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for request history");
 }
 
 fn temp_root(name: &str) -> PathBuf {
