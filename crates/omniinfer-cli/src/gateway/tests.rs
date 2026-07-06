@@ -829,6 +829,7 @@ async fn vllm_public_model_rewrites_to_served_model_name() {
     write_vllm_public_model_manifest(&root, "gelab-zero-4b-preview");
     install_fake_vllm_server(&temp);
     let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let _stream_guard = EnvGuard::set("OMNIINFER_VLLM_NONSTREAM_VIA_STREAM", "0".to_string());
 
     let upstream = spawn_test_upstream().await;
     let gateway = spawn_test_gateway_with_public_root(
@@ -874,7 +875,6 @@ async fn vllm_nonstream_can_be_aggregated_from_stream() {
     write_vllm_public_model_manifest(&root, "gelab-zero-4b-preview");
     install_fake_vllm_server(&temp);
     let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
-    let _stream_guard = EnvGuard::set("OMNIINFER_VLLM_NONSTREAM_VIA_STREAM", "1".to_string());
 
     let upstream = spawn_test_upstream().await;
     let gateway = spawn_test_gateway_with_public_root(

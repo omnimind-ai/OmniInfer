@@ -642,19 +642,18 @@ async fn proxy_body_to_runtime(
 fn should_proxy_vllm_nonstream_via_stream(backend_id: &str, stream_requested: bool) -> bool {
     !stream_requested
         && backend_id.starts_with("vllm")
-        && env_flag_enabled("OMNIINFER_VLLM_NONSTREAM_VIA_STREAM")
+        && env_flag_enabled("OMNIINFER_VLLM_NONSTREAM_VIA_STREAM", true)
 }
 
-fn env_flag_enabled(name: &str) -> bool {
+fn env_flag_enabled(name: &str, default: bool) -> bool {
     std::env::var(name)
-        .ok()
         .map(|value| {
             matches!(
                 value.trim().to_ascii_lowercase().as_str(),
                 "1" | "true" | "yes" | "on"
             )
         })
-        .unwrap_or(false)
+        .unwrap_or(default)
 }
 
 async fn proxy_openai_nonstream_via_stream(
