@@ -71,3 +71,21 @@ fn strict_mode_reports_unported_commands_without_fallback() {
             "Python control-plane fallback has been removed",
         ));
 }
+
+#[test]
+fn packaged_build_reports_source_checkout_requirement() {
+    let root = temp_repo_root("packaged-build");
+    fs::create_dir_all(&root).expect("create package root");
+    fs::write(root.join("VERSION"), "0.3.2").expect("write version marker");
+    fs::write(root.join("omniinfer"), "").expect("write launcher marker");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["build", "llama.cpp-linux"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Backend builds are only available from a source checkout, not packaged releases.",
+        ));
+    fs::remove_dir_all(root).ok();
+}

@@ -1,6 +1,23 @@
 use super::support::*;
 
 #[test]
+fn backend_list_installed_empty_succeeds() {
+    let root = temp_repo_root("backend-list-installed-empty");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["backend", "list", "--scope", "installed"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Installed backends"))
+        .stdout(predicate::str::contains("(none)"));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn backend_stop_posts_to_local_gateway() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),

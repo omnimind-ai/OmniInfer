@@ -60,6 +60,11 @@ fn run_ported_command(command: &Command) -> Result<()> {
         Command::Backend {
             command: BackendCommand::Stop,
         } => stop_backend(),
+        Command::Build { .. } if !source_build_scripts_available() => {
+            anyhow::bail!(
+                "Backend builds are only available from a source checkout, not packaged releases."
+            )
+        }
         Command::Ps { json } => print_ps(*json),
         Command::Model {
             command: ModelCommand::List { all, best },
@@ -239,6 +244,13 @@ fn print_completion(shell: CompletionShell) {
             &mut std::io::stdout(),
         ),
     }
+}
+
+fn source_build_scripts_available() -> bool {
+    paths::repo_root()
+        .join("scripts")
+        .join("platforms")
+        .is_dir()
 }
 
 fn print_advisor_system(json_output: bool) -> Result<()> {
