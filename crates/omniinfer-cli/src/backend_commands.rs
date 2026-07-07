@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{io::IsTerminal, time::Duration};
 
 use anyhow::Result;
+use crossterm::style::{Color, Stylize, style};
 use omniinfer_core::{backend_profiles, backend_registry, config, local_state};
 
 use crate::{BackendScope, json_bool, json_str, post_local_json_for_config_with_autostart};
@@ -19,6 +20,7 @@ pub(crate) fn print_backend_list(scope: BackendScope) -> Result<()> {
         BackendScope::All => "Available backends",
     };
     println!("{title}");
+    let color = color_output_enabled();
     let width = rows
         .iter()
         .filter_map(|item| json_str(item, "id"))
@@ -26,27 +28,81 @@ pub(crate) fn print_backend_list(scope: BackendScope) -> Result<()> {
         .chain(std::iter::once("Backend".len()))
         .max()
         .unwrap_or("Backend".len());
-    println!("{:<width$}  Selected  Installed", "Backend");
+    println!("{:<width$}  Selected  Runtime", "Backend");
     println!("{:<width$}  --------  ---------", "-".repeat(width));
     if rows.is_empty() {
         println!("(none)");
         return Ok(());
     }
-    for item in rows {
+    let mut missing_runtime_count = 0_usize;
+    for item in &rows {
         let backend = json_str(&item, "id").unwrap_or("");
         let selected = if json_bool(&item, "selected").unwrap_or(false) {
             "yes"
         } else {
             ""
         };
-        let installed = if json_bool(&item, "binary_exists").unwrap_or(false) {
-            "yes"
+        let runtime_exists = json_bool(&item, "binary_exists").unwrap_or(false);
+        if !runtime_exists {
+            missing_runtime_count += 1;
+        }
+        let runtime = if runtime_exists {
+            "installed"
         } else {
-            ""
+            "missing"
         };
-        println!("{backend:<width$}  {selected:<8}  {installed:<9}");
+        println!(
+            "{}  {}  {}",
+            styled_backend_cell(backend, width, color),
+            styled_state_cell(selected, 8, StateStyle::Selected, color),
+            styled_state_cell(runtime, 9, runtime_style(runtime_exists), color)
+        );
+    }
+    if matches!(scope, BackendScope::Compatible) && missing_runtime_count == rows.len() {
+        println!("Install one: omniinfer build <backend> --prebuilt");
     }
     Ok(())
+}
+
+fn color_output_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+}
+
+fn styled_backend_cell(value: &str, width: usize, color: bool) -> String {
+    let padded = format!("{value:<width$}");
+    if color {
+        format!("{}", style(padded).with(Color::Blue))
+    } else {
+        padded
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StateStyle {
+    Selected,
+    Installed,
+    Missing,
+}
+
+fn runtime_style(runtime_exists: bool) -> StateStyle {
+    if runtime_exists {
+        StateStyle::Installed
+    } else {
+        StateStyle::Missing
+    }
+}
+
+fn styled_state_cell(value: &str, width: usize, style_kind: StateStyle, color: bool) -> String {
+    let padded = format!("{value:<width$}");
+    if !color || value.is_empty() {
+        return padded;
+    }
+    match style_kind {
+        StateStyle::Selected | StateStyle::Installed => {
+            format!("{}", style(padded).with(Color::Green))
+        }
+        StateStyle::Missing => format!("{}", style(padded).with(Color::DarkGrey)),
+    }
 }
 
 pub(crate) fn rust_backend_payload(scope: BackendScope) -> serde_json::Value {
