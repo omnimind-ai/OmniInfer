@@ -20,7 +20,16 @@ fn executable_root() -> Option<PathBuf> {
 }
 
 fn looks_like_omniinfer_root(root: &Path) -> bool {
-    root.join("Cargo.toml").is_file() || root.join("runtime").is_dir()
+    root.join("Cargo.toml").is_file()
+        || root.join("runtime").is_dir()
+        || looks_like_cli_only_package_root(root)
+}
+
+fn looks_like_cli_only_package_root(root: &Path) -> bool {
+    root.join("VERSION").is_file()
+        && (root.join("omniinfer-rs").is_file()
+            || root.join("omniinfer.exe").is_file()
+            || root.join("omniinfer").is_file())
 }
 
 fn manifest_repo_root() -> PathBuf {
@@ -98,6 +107,14 @@ mod tests {
     fn portable_markers_identify_root() {
         let root = tempfile_root("portable-markers");
         std::fs::create_dir_all(root.join("runtime")).expect("create runtime marker");
+        assert!(looks_like_omniinfer_root(&root));
+    }
+
+    #[test]
+    fn cli_only_package_markers_identify_root() {
+        let root = tempfile_root("cli-only-markers");
+        std::fs::write(root.join("VERSION"), "0.3.2").expect("write version marker");
+        std::fs::write(root.join("omniinfer-rs"), "").expect("write launcher marker");
         assert!(looks_like_omniinfer_root(&root));
     }
 

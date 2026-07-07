@@ -12,9 +12,6 @@ pub(crate) fn print_backend_list(scope: BackendScope) -> Result<()> {
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
-    if rows.is_empty() {
-        anyhow::bail!("No backends are available on this system.");
-    }
 
     let title = match scope {
         BackendScope::Compatible => "Compatible backends",
@@ -31,6 +28,10 @@ pub(crate) fn print_backend_list(scope: BackendScope) -> Result<()> {
         .unwrap_or("Backend".len());
     println!("{:<width$}  Selected  Installed", "Backend");
     println!("{:<width$}  --------  ---------", "-".repeat(width));
+    if rows.is_empty() {
+        println!("(none)");
+        return Ok(());
+    }
     for item in rows {
         let backend = json_str(&item, "id").unwrap_or("");
         let selected = if json_bool(&item, "selected").unwrap_or(false) {
