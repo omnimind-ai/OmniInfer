@@ -129,15 +129,6 @@ fn run_ported_command(command: &Command) -> Result<()> {
                     json,
                 },
         } => print_advisor_recommend(task.as_deref(), *limit, *ctx_size, *json),
-        Command::Thinking {
-            command: ThinkingCommand::Show,
-        } => {
-            print_thinking_show();
-            Ok(())
-        }
-        Command::Thinking {
-            command: ThinkingCommand::Set { mode },
-        } => print_thinking_set(mode.clone()),
         Command::Chat(args) => print_chat(args),
         Command::Shutdown => shutdown_service(),
         Command::Serve(ServeArgs {
@@ -240,7 +231,7 @@ fn print_completion(shell: CompletionShell) {
         CompletionShell::Bash => generate(
             Shell::Bash,
             &mut command,
-            "omniinfer-rs",
+            "omniinfer",
             &mut std::io::stdout(),
         ),
     }
@@ -308,44 +299,6 @@ fn print_advisor_recommend(
     let backends = rust_backend_payload(BackendScope::All);
     let payload = advisor::recommend_payload(task, limit, ctx_size, backends);
     advisor::print_recommend(&payload, json_output)
-}
-
-fn print_thinking_show() {
-    let config = config::load_app_config().unwrap_or_default();
-    println!(
-        "Default thinking: {}",
-        match config.default_thinking.trim().to_ascii_lowercase().as_str() {
-            "on" | "true" | "1" | "yes" | "enabled" => "on",
-            _ => "off",
-        }
-    );
-}
-
-fn print_thinking_set(mode: ThinkingMode) -> Result<()> {
-    let enabled = matches!(mode, ThinkingMode::On);
-    let config = config::load_app_config().unwrap_or_default();
-    let payload = match post_local_json_for_config_with_autostart(
-        "/omni/thinking/select",
-        &serde_json::json!({ "enabled": enabled }),
-        Duration::from_secs(10),
-        &config,
-        false,
-    ) {
-        Ok(payload) => payload,
-        Err(_) => {
-            local_state::save_default_thinking(enabled)?;
-            serde_json::json!({ "default_enabled": enabled })
-        }
-    };
-    println!(
-        "Default thinking set to: {}",
-        if json_bool(&payload, "default_enabled").unwrap_or(false) {
-            "on"
-        } else {
-            "off"
-        }
-    );
-    Ok(())
 }
 
 pub(crate) fn shutdown_service() -> Result<()> {

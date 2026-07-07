@@ -37,4 +37,4 @@ jobs:
         run: cargo test -p omniinfer-core
 
       - name: Run CLI binary unit tests
-        run: cargo test -p omniinfer-cli --bin omniinfer-rs
+        run: cargo test -p omniinfer-cli --bin omniinfer

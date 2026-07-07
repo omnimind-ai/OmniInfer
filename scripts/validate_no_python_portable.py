@@ -17,6 +17,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGER = REPO_ROOT / "scripts" / "platforms" / "common" / "package-rust-cli.py"
 REMOVED_FALLBACK_MESSAGE = "Python control-plane fallback has been removed"
+PACKAGED_BUILD_MESSAGE = "Backend builds are only available from a source checkout"
 FORBIDDEN_LAUNCHER_TEXT = (
     "OMNIINFER_FORCE_PYTHON",
     "OMNIINFER_PYTHON",
@@ -131,7 +132,7 @@ def launcher_has_no_forbidden_text(path: Path) -> CheckResult:
 def packaged_binary(platform: str, portable_root: Path) -> Path:
     if platform == "windows":
         return portable_root / "omniinfer.exe"
-    return portable_root / "omniinfer-rs"
+    return portable_root / "omniinfer"
 
 
 def expected_files(platform: str, portable_root: Path) -> list[Path]:
@@ -143,7 +144,6 @@ def expected_files(platform: str, portable_root: Path) -> list[Path]:
         ]
     return [
         portable_root / "omniinfer",
-        portable_root / "omniinfer-rs",
     ]
 
 
@@ -179,7 +179,8 @@ def validate_portable(platform: str, portable_root: Path, output_dir: Path) -> t
     checks.append(
         CheckResult(
             name="unported-command-probe",
-            ok=probe["returncode"] not in (0, None) and REMOVED_FALLBACK_MESSAGE in probe_text,
+            ok=probe["returncode"] not in (0, None)
+            and (REMOVED_FALLBACK_MESSAGE in probe_text or PACKAGED_BUILD_MESSAGE in probe_text),
             detail=f"exit={probe['returncode']}",
         )
     )

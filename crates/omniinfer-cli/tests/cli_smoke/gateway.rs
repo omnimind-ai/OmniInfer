@@ -19,7 +19,7 @@ fn gateway_foreground_serves_health_and_shutdown() {
 
     let stdout_path = state_root.join("serve-foreground.stdout.txt");
     let stderr_path = state_root.join("serve-foreground.stderr.txt");
-    let mut child = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer-rs"))
+    let mut child = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer"))
         .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)

@@ -39,7 +39,7 @@ Capture Rust command profiles:
 ```bash
 python3 scripts/profile_python_cli.py \
   --runs 7 \
-  --binary target/debug/omniinfer-rs \
+  --binary target/debug/omniinfer \
   --scenario help \
   --scenario status \
   --skip-import-trace \

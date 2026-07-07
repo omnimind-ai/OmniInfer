@@ -17,7 +17,7 @@ fn serve_detach_starts_lan_gateway_with_api_key() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -51,7 +51,7 @@ fn serve_detach_rejects_remote_management_without_key() {
     fs::create_dir_all(&source_root).expect("create source root");
     fs::create_dir_all(&public_root).expect("create public root");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -93,7 +93,7 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
 
     let stdout_path = state_root.join("serve-detach.stdout.txt");
     let stderr_path = state_root.join("serve-detach.stderr.txt");
-    let status = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer-rs"))
+    let status = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer"))
         .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -106,7 +106,7 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
             fs::File::create(&stderr_path).expect("create stderr capture"),
         ))
         .status()
-        .expect("run omniinfer-rs serve");
+        .expect("run omniinfer serve");
     let stdout = fs::read_to_string(&stdout_path).expect("read stdout capture");
     let stderr = fs::read_to_string(&stderr_path).expect("read stderr capture");
     assert!(
@@ -129,7 +129,7 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     assert_eq!(state["port"], port);
     assert!(state["pid"].as_u64().unwrap_or(0) > 0);
 
-    let mut stop = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut stop = Command::cargo_bin("omniinfer").expect("binary exists");
     stop.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -163,7 +163,7 @@ fn serve_detach_starts_gateway_and_writes_state() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -212,7 +212,7 @@ fn serve_detach_ignores_config_host_by_default() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -248,7 +248,7 @@ fn serve_detach_respects_explicit_host() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -304,7 +304,7 @@ fn serve_detach_loads_model_before_ready() {
     let model = state_root.join("model.gguf");
     fs::write(&model, "").expect("write model");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -380,7 +380,7 @@ fn serve_detach_restores_last_model_when_model_is_omitted() {
     .expect("write state");
     install_fake_backend(&state_root, backend_id);
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -447,7 +447,7 @@ fn serve_detach_can_skip_restoring_last_model() {
     )
     .expect("write state");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -502,7 +502,7 @@ fn serve_detach_restores_last_model_without_python_upstream() {
     .expect("write state");
     install_fake_runtime_server(&state_root, test_external_backend_id());
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -524,7 +524,7 @@ fn serve_detach_restores_last_model_without_python_upstream() {
         model.display().to_string()
     );
 
-    let mut stop = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut stop = Command::cargo_bin("omniinfer").expect("binary exists");
     stop.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -568,7 +568,7 @@ fn serve_detach_runs_smoke_test() {
     let model = state_root.join("model.gguf");
     fs::write(&model, "").expect("write model");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -612,7 +612,7 @@ fn serve_detach_starts_cloudflare_tunnel() {
     .expect("write config");
     let cloudflared = fake_cloudflared_launcher(&state_root);
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -685,7 +685,7 @@ fn serve_detach_warns_on_transient_public_smoke_failure() {
         "https://definitely-missing.invalid.trycloudflare.com",
     );
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_PUBLIC_SMOKE_RETRY_SECONDS", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
@@ -749,7 +749,7 @@ fn ps_lists_detached_services_from_pid_files() {
     )
     .expect("write serve state");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .arg("ps")

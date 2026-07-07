@@ -23,7 +23,7 @@ fn model_load_posts_payload_and_persists_state() {
     let model = root.join("model.gguf");
     fs::write(&model, "").expect("write model");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["model", "load", "-m"])
@@ -89,7 +89,7 @@ fn model_load_handles_sse_progress() {
     let model = root.join("model.gguf");
     fs::write(&model, "").expect("write model");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["model", "load", "-m"])

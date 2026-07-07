@@ -293,12 +293,17 @@ You can also pass backend-native extra args directly:
 ./omniinfer model list
 ./omniinfer load -m /path/to/model-directory
 ./omniinfer load -m /path/to/model-directory --config
-./omniinfer thinking show
-./omniinfer thinking set on
 ./omniinfer chat "Hello"
+./omniinfer chat --think on "Hello"
+./omniinfer serve --default-thinking off
 ./omniinfer shutdown
 ./omniinfer completion bash
 ```
+
+Thinking mode remains available through request-level options such as
+`chat --think on|off`, serve defaults such as `serve --default-thinking on|off`,
+TUI `/think`, and the local `/omni/thinking` management API. It is not exposed
+as a standalone top-level CLI command.
 
 On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in PowerShell. Use `.\omniinfer.cmd` only when you specifically need `cmd.exe` compatibility.
 

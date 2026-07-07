@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use omniinfer_core::version;
 
 #[derive(Debug, Parser)]
-#[command(name = "omniinfer-rs")]
+#[command(name = "omniinfer")]
 #[command(version = version::VERSION)]
 #[command(about = "Rust control-plane prototype for OmniInfer")]
 #[command(long_about = "\
@@ -48,11 +48,6 @@ pub(crate) enum Command {
     Advisor {
         #[command(subcommand)]
         command: AdvisorCommand,
-    },
-    /// Manage the default thinking mode.
-    Thinking {
-        #[command(subcommand)]
-        command: ThinkingCommand,
     },
     /// Run inference on the loaded model.
     Chat(ChatArgs),
@@ -169,14 +164,6 @@ pub(crate) enum AdvisorCommand {
         #[arg(long)]
         json: bool,
     },
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum ThinkingCommand {
-    /// Show the default thinking state.
-    Show,
-    /// Set the default thinking state.
-    Set { mode: ThinkingMode },
 }
 
 #[derive(Debug, Clone, ValueEnum)]

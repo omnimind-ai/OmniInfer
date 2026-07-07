@@ -584,7 +584,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("omniinfer-rs-{name}-{nanos}"));
+        let root = std::env::temp_dir().join(format!("omniinfer-{name}-{nanos}"));
         fs::create_dir_all(&root).unwrap();
         root
     }

@@ -6,7 +6,7 @@ fn backend_list_installed_empty_succeeds() {
     fs::create_dir_all(root.join("config")).expect("create config dir");
     fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["backend", "list", "--scope", "installed"])
@@ -32,7 +32,7 @@ fn backend_stop_posts_to_local_gateway() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["backend", "stop"])
@@ -60,7 +60,7 @@ fn shutdown_posts_to_local_gateway() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .arg("shutdown")
@@ -87,7 +87,7 @@ fn backend_stop_starts_gateway_when_needed() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["backend", "stop"])
@@ -109,7 +109,7 @@ fn gateway_autostart_can_use_separate_state_root() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -161,7 +161,7 @@ fn backend_select_persists_state_and_profile() {
     )
     .expect("write state");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["backend", "select", backend_id])

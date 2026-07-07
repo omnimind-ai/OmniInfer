@@ -27,7 +27,7 @@ fn chat_streams_text_and_usage() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["chat", "Hello"])
@@ -74,7 +74,7 @@ fn chat_includes_image_data_url() {
     let image = root.join("image.png");
     fs::write(&image, b"fake-png-bytes").expect("write image");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["chat", "Describe it", "--image"])

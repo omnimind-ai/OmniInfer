@@ -27,9 +27,7 @@ fn looks_like_omniinfer_root(root: &Path) -> bool {
 
 fn looks_like_cli_only_package_root(root: &Path) -> bool {
     root.join("VERSION").is_file()
-        && (root.join("omniinfer-rs").is_file()
-            || root.join("omniinfer.exe").is_file()
-            || root.join("omniinfer").is_file())
+        && (root.join("omniinfer").is_file() || root.join("omniinfer.exe").is_file())
 }
 
 fn manifest_repo_root() -> PathBuf {
@@ -114,7 +112,7 @@ mod tests {
     fn cli_only_package_markers_identify_root() {
         let root = tempfile_root("cli-only-markers");
         std::fs::write(root.join("VERSION"), "0.3.2").expect("write version marker");
-        std::fs::write(root.join("omniinfer-rs"), "").expect("write launcher marker");
+        std::fs::write(root.join("omniinfer"), "").expect("write launcher marker");
         assert!(looks_like_omniinfer_root(&root));
     }
 
