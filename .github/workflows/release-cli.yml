@@ -1,0 +1,140 @@
+name: Release CLI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.3.2"
+        required: true
+      upload:
+        description: "Upload assets to the GitHub Release"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            os: ubuntu-latest
+            platform: linux
+          - target: macos-arm64
+            os: macos-15
+            platform: macos
+          - target: windows-x64
+            os: windows-latest
+            platform: windows
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build CLI archive
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          fi
+
+          python scripts/platforms/common/package-cli-archive.py \
+            --repo-root . \
+            --version "${VERSION}" \
+            --target "${{ matrix.target }}" \
+            --platform "${{ matrix.platform }}" \
+            --output-dir dist
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: omniinfer-${{ matrix.target }}
+          path: |
+            dist/omniinfer-*
+          if-no-files-found: error
+
+  checksums:
+    name: Checksums
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum omniinfer-* > checksums.txt
+          cat checksums.txt
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: checksums
+          path: dist/checksums.txt
+          if-no-files-found: error
+
+  upload-release:
+    name: Upload Release Assets
+    needs: checksums
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: startsWith(github.ref, 'refs/tags/') || inputs.upload == true
+
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          fi
+
+          if ! gh release view "${VERSION}" >/dev/null 2>&1; then
+            gh release create "${VERSION}" \
+              --title "${VERSION}" \
+              --notes "CLI-only binary release assets for Linux x64, macOS arm64, and Windows x64."
+          fi
+
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          fi
+
+          gh release upload "${VERSION}" dist/* --clobber
