@@ -146,6 +146,8 @@ Inspect hardware and runtime availability:
 ./omniinfer advisor system --json
 ```
 
+The text output groups host, GPU, and backend readiness. If no compatible runtime is installed, it shows a short source-checkout install command for a compatible backend.
+
 Inspect a model artifact:
 
 ```sh

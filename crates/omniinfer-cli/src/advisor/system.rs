@@ -24,6 +24,7 @@ pub fn system_payload(backends: Value) -> Value {
         .filter_map(|backend| json_str(backend, "id").map(str::to_string))
         .collect::<Vec<_>>();
     let recommended_installed_backend = recommended_installed_backend(&backends);
+    let recommended_backend_to_install = recommended_backend_to_install(&backends);
 
     json!({
         "object": "advisor.system",
@@ -39,12 +40,15 @@ pub fn system_payload(backends: Value) -> Value {
             "installed_backends": installed_backends,
             "compatible_backends": compatible_backends,
             "recommended_installed_backend": recommended_installed_backend,
+            "recommended_backend_to_install": recommended_backend_to_install,
         },
     })
 }
 
 fn host_payload() -> Value {
-    let (available_ram_gib, total_ram_gib) = linux_meminfo_gib().unwrap_or((None, None));
+    let (available_ram_gib, total_ram_gib) = system_memory_gib()
+        .or_else(linux_meminfo_gib)
+        .unwrap_or((None, None));
     json!({
         "system": current_system_name(),
         "platform": platform_string(),
@@ -54,6 +58,14 @@ fn host_payload() -> Value {
         "available_ram_gib": available_ram_gib,
         "total_ram_gib": total_ram_gib,
     })
+}
+
+fn system_memory_gib() -> Option<(Option<f64>, Option<f64>)> {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let available = bytes_to_gib(system.available_memory())?;
+    let total = bytes_to_gib(system.total_memory())?;
+    Some((Some(available), Some(total)))
 }
 
 fn platform_string() -> String {
@@ -205,6 +217,16 @@ fn recommended_installed_backend(backends: &[Value]) -> Option<String> {
         .map(str::to_string)
 }
 
+fn recommended_backend_to_install(backends: &[Value]) -> Option<String> {
+    backends
+        .iter()
+        .filter(|backend| !json_bool(backend, "installed").unwrap_or(false))
+        .filter(|backend| json_bool(backend, "hardware_compatible").unwrap_or(false))
+        .min_by_key(|backend| json_u64(backend, "priority").unwrap_or(999))
+        .and_then(|backend| json_str(backend, "id"))
+        .map(str::to_string)
+}
+
 fn priority_for_backend(id: &str, recommended: Option<&str>) -> u64 {
     if recommended == Some(id) {
         return 0;
@@ -240,4 +262,12 @@ fn priority_for_backend(id: &str, recommended: Option<&str>) -> u64 {
 
 fn mib_to_gib(value: f64) -> f64 {
     round_gib(value / 1024.0)
+}
+
+fn bytes_to_gib(value: u64) -> Option<f64> {
+    if value == 0 {
+        None
+    } else {
+        Some(round_gib(value as f64 / 1024.0 / 1024.0 / 1024.0))
+    }
 }

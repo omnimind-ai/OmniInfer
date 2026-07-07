@@ -59,7 +59,7 @@ pub(crate) fn print_backend_list(scope: BackendScope) -> Result<()> {
         );
     }
     if matches!(scope, BackendScope::Compatible) && missing_runtime_count == rows.len() {
-        println!("Install one: omniinfer build <backend> --prebuilt");
+        println!("Source install: omniinfer build <backend> --prebuilt");
     }
     Ok(())
 }

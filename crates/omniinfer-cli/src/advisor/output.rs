@@ -1,4 +1,7 @@
 use super::*;
+use std::io::IsTerminal;
+
+use crossterm::style::{Color, Stylize, style};
 
 pub fn print_system(payload: &Value, json_output: bool) -> Result<()> {
     if json_output {
@@ -8,9 +11,11 @@ pub fn print_system(payload: &Value, json_output: bool) -> Result<()> {
     let host = payload.get("host").and_then(Value::as_object);
     let cuda = payload.get("cuda").and_then(Value::as_object);
     let summary = payload.get("summary").and_then(Value::as_object);
-    println!("OmniInfer Advisor System");
+    let color = color_output_enabled();
+    println!("{}", heading("OmniInfer Advisor System", color));
+    println!("{}", section("Host", color));
     println!(
-        "System: {} ({})",
+        "  System: {} ({})",
         host.and_then(|value| value.get("system"))
             .and_then(Value::as_str)
             .unwrap_or("-"),
@@ -19,14 +24,14 @@ pub fn print_system(payload: &Value, json_output: bool) -> Result<()> {
             .unwrap_or("-")
     );
     println!(
-        "CPU cores: {}",
+        "  CPU: {} cores",
         host.and_then(|value| value.get("cpu_cores"))
             .and_then(Value::as_u64)
             .map(|value| value.to_string())
             .unwrap_or_else(|| "-".to_string())
     );
     println!(
-        "RAM: {} GiB available / {} GiB total",
+        "  RAM: {} GiB available / {} GiB total",
         host.and_then(|value| value.get("available_ram_gib"))
             .and_then(Value::as_f64)
             .map(format_gib)
@@ -37,6 +42,7 @@ pub fn print_system(payload: &Value, json_output: bool) -> Result<()> {
             .unwrap_or_else(|| "-".to_string())
     );
 
+    println!("{}", section("GPU", color));
     let devices = cuda
         .and_then(|value| value.get("visible_devices"))
         .and_then(Value::as_array)
@@ -46,30 +52,55 @@ pub fn print_system(payload: &Value, json_output: bool) -> Result<()> {
         });
     match devices {
         Some(devices) if !devices.is_empty() => {
-            println!("CUDA devices:");
             for device in devices {
                 println!(
-                    "  GPU {}: {} free={} GiB total={} GiB util={}%",
+                    "  CUDA {}: {} free={} GiB total={} GiB util={}",
                     json_str(device, "index").unwrap_or("-"),
                     json_str(device, "name").unwrap_or("-"),
                     json_number_string(device, "free_gib"),
                     json_number_string(device, "total_gib"),
                     json_u64(device, "utilization_pct")
-                        .map(|value| value.to_string())
+                        .map(|value| format!("{value}%"))
                         .unwrap_or_else(|| "-".to_string())
                 );
             }
         }
-        _ => println!("CUDA devices: none detected"),
+        _ => println!("  CUDA: none detected"),
     }
 
+    println!("{}", section("Backend readiness", color));
+    let installed_count = summary
+        .and_then(|value| value.get("installed_backends"))
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let recommended_installed = summary
+        .and_then(|value| value.get("recommended_installed_backend"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if installed_count == 0 {
+                "none (no runtime installed)".to_string()
+            } else {
+                "none".to_string()
+            }
+        });
     println!(
-        "Recommended installed backend: {}",
-        summary
-            .and_then(|value| value.get("recommended_installed_backend"))
-            .and_then(Value::as_str)
-            .unwrap_or("-")
+        "  Recommended installed backend: {}",
+        state_text(
+            &recommended_installed,
+            !recommended_installed.starts_with("none"),
+            color,
+        )
     );
+    if installed_count == 0
+        && let Some(candidate) = summary
+            .and_then(|value| value.get("recommended_backend_to_install"))
+            .and_then(Value::as_str)
+    {
+        println!("  Recommended backend to install: {candidate}");
+        println!("  Source install: omniinfer build {candidate} --prebuilt");
+    }
     print_usable_backends(payload);
     Ok(())
 }
@@ -372,6 +403,38 @@ fn print_table(headers: &[&str], rows: &[Vec<String>], indent: &str) {
         }
         println!();
     }
+}
+
+fn color_output_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+}
+
+fn heading(value: &str, color: bool) -> String {
+    if color {
+        format!("{}", style(value).with(Color::Cyan))
+    } else {
+        value.to_string()
+    }
+}
+
+fn section(value: &str, color: bool) -> String {
+    if color {
+        format!("{}", style(value).with(Color::Blue))
+    } else {
+        value.to_string()
+    }
+}
+
+fn state_text(value: &str, healthy: bool, color: bool) -> String {
+    if !color {
+        return value.to_string();
+    }
+    let color = if healthy {
+        Color::Green
+    } else {
+        Color::DarkGrey
+    };
+    format!("{}", style(value).with(color))
 }
 
 fn print_memory_breakdown(breakdown: &Value) {

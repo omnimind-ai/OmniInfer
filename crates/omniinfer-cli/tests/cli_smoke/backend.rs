@@ -33,7 +33,7 @@ fn backend_list_marks_missing_runtime() {
         .stdout(predicate::str::contains("Runtime"))
         .stdout(predicate::str::contains("missing"))
         .stdout(predicate::str::contains(
-            "Install one: omniinfer build <backend> --prebuilt",
+            "Source install: omniinfer build <backend> --prebuilt",
         ));
     fs::remove_dir_all(root).ok();
 }
