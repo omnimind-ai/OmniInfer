@@ -514,7 +514,7 @@ fn main() {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("omniinfer-rs-{name}-{nanos}"))
+        std::env::temp_dir().join(format!("omniinfer-{name}-{nanos}"))
     }
 
     #[cfg(unix)]

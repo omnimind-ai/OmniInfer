@@ -33,4 +33,4 @@ jobs:
         run: cargo test -p omniinfer-core
 
       - name: Run gateway unit tests
-        run: "cargo test -p omniinfer-cli --bin omniinfer-rs gateway::tests::"
+        run: "cargo test -p omniinfer-cli --bin omniinfer gateway::tests::"

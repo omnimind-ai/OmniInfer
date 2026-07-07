@@ -532,7 +532,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time")
             .as_nanos();
-        format!("omniinfer-rs-{prefix}-{nanos}")
+        format!("omniinfer-{prefix}-{nanos}")
     }
 
     fn write_test_gguf(path: &Path, context_key: &str, context_length: u32) {

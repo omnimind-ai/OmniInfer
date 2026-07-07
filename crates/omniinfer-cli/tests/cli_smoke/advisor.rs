@@ -14,7 +14,7 @@ fn advisor_system_json_uses_rust_path() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     let output = cmd
         .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
@@ -54,7 +54,7 @@ fn advisor_system_text_prints_usable_backends() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
@@ -76,7 +76,7 @@ fn advisor_inspect_json_estimates_local_model() {
     let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
     fs::write(&model, vec![0_u8; 1024]).expect("write model");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     let output = cmd
         .env("OMNIINFER_RUST_STRICT", "1")
         .args(["advisor", "inspect"])
@@ -108,7 +108,7 @@ fn advisor_fit_json_ranks_installed_backend() {
     let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
     fs::write(&model, vec![0_u8; 1024]).expect("write model");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     let output = cmd
         .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
@@ -157,7 +157,7 @@ fn advisor_plan_text_shows_simulated_hardware() {
     let model = root.join("Qwen3.5-4B-Q4_K_M.gguf");
     fs::write(&model, vec![0_u8; 1024]).expect("write model");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["advisor", "plan"])
@@ -207,7 +207,7 @@ fn advisor_recommend_json_scans_managed_models() {
     )
     .expect("write config");
 
-    let mut cmd = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     let output = cmd
         .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)

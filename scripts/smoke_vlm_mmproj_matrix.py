@@ -19,7 +19,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "tmp" / "test_results"
-RUST_BINARY = REPO_ROOT / "target" / "debug" / "omniinfer-rs"
+RUST_BINARY = REPO_ROOT / "target" / "debug" / "omniinfer"
 DEFAULT_IMAGE = REPO_ROOT / "tests" / "fixtures" / "test1.png"
 DEFAULT_STEPFUN_MODEL = Path("/home/zhangguanhuai/models/gguf/stepfun/stepfun-ai_GELab-Zero-4B-preview-bf16.gguf")
 DEFAULT_STEPFUN_MMPROJ = Path("/home/zhangguanhuai/models/gguf/stepfun/mmproj-stepfun-ai_GELab-Zero-4B-preview-bf16.gguf")

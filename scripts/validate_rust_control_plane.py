@@ -16,7 +16,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "tmp" / "test_results"
-RUST_BINARY = REPO_ROOT / "target" / "debug" / ("omniinfer-rs.exe" if os.name == "nt" else "omniinfer-rs")
+RUST_BINARY = REPO_ROOT / "target" / "debug" / ("omniinfer.exe" if os.name == "nt" else "omniinfer")
 
 
 @dataclass(frozen=True)

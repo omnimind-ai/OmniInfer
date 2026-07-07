@@ -135,7 +135,7 @@ pub(super) fn temp_repo_root(test_name: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("system time")
         .as_nanos();
-    std::env::temp_dir().join(format!("omniinfer-rs-{test_name}-{nanos}"))
+    std::env::temp_dir().join(format!("omniinfer-{test_name}-{nanos}"))
 }
 
 pub(super) fn install_fake_backend(root: &std::path::Path, backend_id: &str) {
@@ -391,7 +391,7 @@ pub(super) fn stop_rust_serve(
     state_root: &std::path::Path,
     port: u16,
 ) {
-    let mut stop = Command::cargo_bin("omniinfer-rs").expect("binary exists");
+    let mut stop = Command::cargo_bin("omniinfer").expect("binary exists");
     stop.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", state_root)

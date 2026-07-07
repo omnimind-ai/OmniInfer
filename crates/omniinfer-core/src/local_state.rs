@@ -335,7 +335,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("omniinfer-rs-local-state-{name}-{nanos}"))
+        std::env::temp_dir().join(format!("omniinfer-local-state-{name}-{nanos}"))
     }
 
     struct EnvGuard {

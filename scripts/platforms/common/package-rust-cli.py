@@ -21,23 +21,6 @@ def make_executable(path: Path) -> None:
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def install_unix_launcher(target: Path, binary_name: str) -> None:
-    content = rf"""#!/bin/sh
-set -eu
-
-SCRIPT_PATH="$0"
-case "$SCRIPT_PATH" in
-  /*) ;;
-  *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
-esac
-
-ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
-exec "$ROOT/{binary_name}" "$@"
-"""
-    target.write_text(content, encoding="utf-8")
-    make_executable(target)
-
-
 def install_windows_launchers(portable_root: Path) -> None:
     (portable_root / "omniinfer.cmd").write_text(
         """@echo off
@@ -75,7 +58,7 @@ def install_cli(args: argparse.Namespace) -> None:
         run(cargo_args, repo_root, args.dry_run)
 
     exe_suffix = ".exe" if args.platform == "windows" else ""
-    built_binary = repo_root / "target" / "release" / f"omniinfer-rs{exe_suffix}"
+    built_binary = repo_root / "target" / "release" / f"omniinfer{exe_suffix}"
     if not args.dry_run and not built_binary.is_file():
         raise SystemExit(f"Rust CLI build did not produce {built_binary}")
 
@@ -89,13 +72,9 @@ def install_cli(args: argparse.Namespace) -> None:
         shutil.copy2(built_binary, portable_root / "omniinfer.exe")
         install_windows_launchers(portable_root)
     else:
-        rust_target = portable_root / "omniinfer-rs"
-        shutil.copy2(built_binary, rust_target)
-        make_executable(rust_target)
-        install_unix_launcher(
-            portable_root / "omniinfer",
-            "omniinfer-rs",
-        )
+        target = portable_root / "omniinfer"
+        shutil.copy2(built_binary, target)
+        make_executable(target)
 
 
 def parse_args() -> argparse.Namespace:

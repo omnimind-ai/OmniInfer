@@ -357,11 +357,11 @@ service or Rust-native driver.
 while external-server Python runtime backends such as `vllm-linux-cuda` copy
 the runtime environment needed by their launcher.
 
-The portable package exposes `omniinfer` as the user-facing launcher and
-`omniinfer-rs` as the Rust control-plane binary. Packaging builds the CLI with
-`cargo build --release -p omniinfer-cli`. Embedded backend paths that still
-need an in-process Python control plane, such as `mnn-linux`, are rejected
-until they have an adapter service or Rust-native driver.
+The portable package exposes a single user-facing `omniinfer` Rust
+control-plane binary. Packaging builds the CLI with
+`cargo build --release -p omniinfer-cli`. Embedded backend paths that still need
+an in-process Python control plane, such as `mnn-linux`, are rejected until they
+have an adapter service or Rust-native driver.
 
 Optional prebuild examples:
 
@@ -481,10 +481,10 @@ bash ./scripts/platforms/macos/build-release.sh --backends llama.cpp-mac --no-bu
 `--all-supported` and any explicit `mlx-mac` selection currently fail because
 embedded backends are not supported by the Rust-only portable package.
 
-The release exposes `omniinfer` as the user-facing launcher and `omniinfer-rs`
-as the Rust control-plane binary. Packaging builds the CLI with
-`cargo build --release -p omniinfer-cli`. `mlx-mac` is rejected by release
-packaging until it is served through an adapter service or Rust-native driver.
+The release exposes a single user-facing `omniinfer` Rust control-plane binary.
+Packaging builds the CLI with `cargo build --release -p omniinfer-cli`.
+`mlx-mac` is rejected by release packaging until it is served through an adapter
+service or Rust-native driver.
 
 ## Android
 
