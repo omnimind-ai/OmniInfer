@@ -36,6 +36,16 @@ fn advisor_system_json_uses_rust_path() {
         payload["summary"]["recommended_installed_backend"],
         backend_id
     );
+    assert!(
+        payload["host"]["available_ram_gib"]
+            .as_f64()
+            .is_some_and(|value| value > 0.0)
+    );
+    assert!(
+        payload["host"]["total_ram_gib"]
+            .as_f64()
+            .is_some_and(|value| value > 0.0)
+    );
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
 }
@@ -67,6 +77,27 @@ fn advisor_system_text_prints_usable_backends() {
         .stdout(predicate::str::contains("Hidden backends:"));
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
+fn advisor_system_text_explains_missing_runtime() {
+    let root = temp_repo_root("advisor-system-no-runtime");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["advisor", "system"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Backend readiness"))
+        .stdout(predicate::str::contains(
+            "Recommended installed backend: none (no runtime installed)",
+        ))
+        .stdout(predicate::str::contains("Recommended backend to install:"))
+        .stdout(predicate::str::contains("Source install: omniinfer build "));
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]

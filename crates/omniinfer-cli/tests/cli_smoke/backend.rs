@@ -18,6 +18,27 @@ fn backend_list_installed_empty_succeeds() {
 }
 
 #[test]
+fn backend_list_marks_missing_runtime() {
+    let root = temp_repo_root("backend-list-compatible-missing");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["backend", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Compatible backends"))
+        .stdout(predicate::str::contains("Runtime"))
+        .stdout(predicate::str::contains("missing"))
+        .stdout(predicate::str::contains(
+            "Source install: omniinfer build <backend> --prebuilt",
+        ));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn backend_stop_posts_to_local_gateway() {
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),

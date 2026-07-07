@@ -65,7 +65,7 @@ Windows:
 The human-readable output shows the selected backend and runtime availability.
 Use `./omniinfer backend list --json` when automation needs full backend metadata such as capabilities and descriptions.
 By default, `backend list` shows compatible backends only. Use `--scope installed` or `--scope all` for a narrower or broader view.
-In the table output, empty `Selected` or `Installed` cells mean the state is false.
+In the table output, an empty `Selected` cell means no backend is selected, and the `Runtime` cell is either `installed` or `missing`.
 
 ### 2. Build a backend from source, optional
 
@@ -145,6 +145,8 @@ Inspect hardware and runtime availability:
 ./omniinfer advisor system
 ./omniinfer advisor system --json
 ```
+
+The text output groups host, GPU, and backend readiness. If no compatible runtime is installed, it shows a short source-checkout install command for a compatible backend.
 
 Inspect a model artifact:
 
