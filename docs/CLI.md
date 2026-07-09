@@ -67,30 +67,41 @@ Use `./omniinfer backend list --json` when automation needs full backend metadat
 By default, `backend list` shows compatible backends only. Use `--scope installed` or `--scope all` for a narrower or broader view.
 In the table output, an empty `Selected` cell means no backend is selected, and the `Runtime` cell is either `installed` or `missing`.
 
-### 2. Build a backend from source, optional
+### 2. Install a backend runtime
 
-Source checkouts on Linux, macOS, and Windows can install a compatible backend through the CLI:
+Install a prebuilt backend runtime through the CLI:
 
 ```sh
-./omniinfer build <backend>
+./omniinfer backend install <backend>
 ```
 
-Linux backend scripts default to non-build installation. Use `--from-source` when you explicitly want to compile from the checked-out source submodule:
+The default install mode is prebuilt. It downloads the runtime archive from the built-in prebuilt catalog, verifies the archive when a catalog checksum is available, extracts the launcher into `.local/runtime/<platform>/<backend>/bin`, and writes `prebuilt.json` with the installed source/tag/archive metadata.
+
+For example:
 
 ```sh
-./omniinfer build <backend> --from-source
+./omniinfer backend install llama.cpp-linux
 ```
 
 Windows:
 
 ```powershell
-.\omniinfer.ps1 build <backend>
-.\omniinfer.ps1 build <backend> --prebuilt
+.\omniinfer.ps1 backend install llama.cpp-cpu
 ```
 
-The command runs the matching platform script under `scripts/platforms/<platform>/<backend>/build.*` and verifies that the backend launcher exists after the install. `--prebuilt` is still accepted for explicit prebuilt installs where supported.
+The legacy compatibility command is still accepted:
 
-Packaged releases intentionally do not provide this command because they are designed to run from the included `runtime/` directory without requiring a compiler, CUDA toolkit, CMake, or other build tools.
+```sh
+./omniinfer build <backend> --prebuilt
+```
+
+Use source builds only from a source checkout when you explicitly need to compile the checked-out submodule:
+
+```sh
+./omniinfer build <backend> --from-source
+```
+
+Packaged releases support `backend install` for prebuilt runtimes. Source builds still require a cloned repository with `scripts/platforms/...` and the relevant submodules.
 
 ### 3. Select a backend
 

@@ -41,11 +41,20 @@ curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/
 
 The lightweight installer downloads the CLI-only GitHub Release archive, verifies `checksums.txt`, and installs `omniinfer` into `~/.local/bin` by default. It does not clone this repository, install backend runtimes, download models, or use sudo.
 
+Install a prebuilt runtime after the CLI is available:
+
+```bash
+omniinfer backend list
+omniinfer backend install llama.cpp-linux
+```
+
+You can also run `omniinfer` with no arguments to open the TUI; when a compatible backend is missing, the TUI can install the prebuilt runtime before model loading.
+
 macOS arm64 and Windows x64 CLI-only archives are available from [GitHub Releases](https://github.com/omnimind-ai/OmniInfer/releases). Homebrew, Scoop, npm, and platform-native one-line installers are planned.
 
 ### Source And Backend Setup
 
-Use the source installer when you want a repository checkout plus backend runtime setup and optional model setup.
+Use the source installer when you want a repository checkout plus backend runtime setup, source builds, and optional model setup.
 
 Linux and macOS:
 
