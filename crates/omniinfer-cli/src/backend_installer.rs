@@ -144,7 +144,9 @@ fn catalog_entry<'a>(
         .ok_or_else(|| anyhow::anyhow!("no prebuilt catalog entries for platform: {platform}"))?
         .get(backend)
         .ok_or_else(|| {
-            anyhow::anyhow!("no prebuilt archive is configured for {platform}/{backend}")
+            anyhow::anyhow!(
+                "no prebuilt archive is configured for {platform}/{backend}. Use `omniinfer build {backend} --from-source` from a source checkout."
+            )
         })
 }
 

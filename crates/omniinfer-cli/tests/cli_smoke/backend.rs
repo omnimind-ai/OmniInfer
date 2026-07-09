@@ -117,6 +117,65 @@ fn backend_install_prebuilt_rejects_checksum_mismatch() {
 }
 
 #[test]
+fn backend_install_without_catalog_entry_explains_from_source() {
+    let root = temp_repo_root("backend-install-no-catalog-entry");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+    let catalog = root.join("empty-prebuilt.json");
+    fs::write(
+        &catalog,
+        serde_json::json!({
+            "schema_version": 2,
+            "platforms": {
+                test_runtime_platform_dir(): {}
+            }
+        })
+        .to_string(),
+    )
+    .expect("write empty catalog");
+
+    let backend_id = test_external_backend_id();
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &catalog)
+        .args(["backend", "install", backend_id])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(format!(
+            "no prebuilt archive is configured for {}/{}",
+            test_runtime_platform_dir(),
+            backend_id
+        )))
+        .stderr(predicate::str::contains(format!(
+            "omniinfer build {backend_id} --from-source"
+        )));
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_cuda_prebuilt_install_explains_from_source() {
+    let root = temp_repo_root("linux-cuda-no-prebuilt");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["backend", "install", "llama.cpp-linux-cuda"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "no prebuilt archive is configured for linux/llama.cpp-linux-cuda",
+        ))
+        .stderr(predicate::str::contains(
+            "omniinfer build llama.cpp-linux-cuda --from-source",
+        ));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn packaged_backend_install_uses_rust_prebuilt_path() {
     let root = temp_repo_root("packaged-backend-install");
     fs::create_dir_all(&root).expect("create package root");
