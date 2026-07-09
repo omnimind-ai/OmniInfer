@@ -27,19 +27,39 @@ OmniInfer includes a terminal UI for selecting backends, loading models, and cha
 
 ### Quick Install
 
-macOS, Linux, and Android:
+Linux x64 CLI:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash
 ```
 
-Windows (PowerShell):
+Install a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash -s -- --version v0.3.2
+```
+
+The lightweight installer downloads the CLI-only GitHub Release archive, verifies `checksums.txt`, and installs `omniinfer` into `~/.local/bin` by default. It does not clone this repository, install backend runtimes, download models, or use sudo.
+
+macOS arm64 and Windows x64 CLI-only archives are available from [GitHub Releases](https://github.com/omnimind-ai/OmniInfer/releases). Homebrew, Scoop, npm, and platform-native one-line installers are planned.
+
+### Source And Backend Setup
+
+Use the source installer when you want a repository checkout plus backend runtime setup and optional model setup.
+
+Linux and macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install-from-source.sh | bash
+```
+
+Windows PowerShell:
 
 ```powershell
 irm "https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1?$(Get-Random)" | iex
 ```
 
-The installer detects your platform and hardware, recommends a backend, and walks you through model setup interactively.
+The source installer detects your platform and hardware, recommends a backend, and walks you through model setup interactively.
 Use `--model /path/to/model.gguf` for explicit model setup or `--no-model` / `-NoModel` to skip model setup without prompting.
 Install summaries are written to `.local/install-summary.json`; source builds also save logs under `tmp/test_results/install/`.
 
