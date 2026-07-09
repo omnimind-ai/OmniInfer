@@ -34,7 +34,7 @@ jobs:
       matrix:
         include:
           - target: linux-x64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             platform: linux
           - target: macos-arm64
             os: macos-15

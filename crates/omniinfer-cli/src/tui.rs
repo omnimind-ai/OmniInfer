@@ -18,10 +18,10 @@ mod models;
 mod render;
 
 use crate::{
-    BackendScope, ServeArgs, advisor, get_local_json_for_config, json_bool, json_str, json_u64,
-    load_model_with_request_for_config, post_local_json_for_config, print_chat_performance,
-    rust_backend_payload, select_backend_for_config, serve_orchestrated, stop_serve,
-    wait_for_gateway_ready,
+    BackendScope, ServeArgs, advisor, backend_installer, get_local_json_for_config, json_bool,
+    json_str, json_u64, load_model_with_request_for_config, post_local_json_for_config,
+    print_chat_performance, rust_backend_payload, select_backend_for_config, serve_orchestrated,
+    stop_serve, wait_for_gateway_ready,
 };
 
 use models::{
@@ -339,12 +339,46 @@ fn choose_backend(config: &config::AppConfig) -> Result<Option<String>> {
                 &format!("Backend is not installed: {backend}"),
                 NoticeKind::Warning,
             );
+            if prompt_yes_no("Install prebuilt backend now?", true)? {
+                match backend_installer::install_backend(backend_installer::InstallOptions {
+                    backend: backend.clone(),
+                    dry_run: false,
+                    from_source: false,
+                }) {
+                    Ok(()) => {
+                        notice(
+                            &format!("Installed backend: {backend}"),
+                            NoticeKind::Success,
+                        );
+                    }
+                    Err(error) => {
+                        notice(
+                            &format!("Backend install failed: {error}"),
+                            NoticeKind::Warning,
+                        );
+                    }
+                }
+                println!();
+            }
             continue;
         }
         select_backend_for_config(&backend, config)?;
         notice(&format!("Selected backend: {backend}"), NoticeKind::Success);
         println!();
         return Ok(Some(backend));
+    }
+}
+
+fn prompt_yes_no(label: &str, default: bool) -> Result<bool> {
+    let default_text = if default { "Y" } else { "n" };
+    loop {
+        let answer = prompt_default(label, default_text)?;
+        match answer.trim().to_ascii_lowercase().as_str() {
+            "" => return Ok(default),
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => notice("Please answer y or n.", NoticeKind::Warning),
+        }
     }
 }
 

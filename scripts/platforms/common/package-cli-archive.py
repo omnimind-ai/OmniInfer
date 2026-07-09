@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
@@ -18,6 +19,8 @@ TARGETS = {
     "macos-arm64": {"platform": "macos", "archive": "tar.gz", "system": "Darwin", "machine": {"arm64", "aarch64"}},
     "windows-x64": {"platform": "windows", "archive": "zip", "system": "Windows", "machine": {"amd64", "x86_64"}},
 }
+
+LINUX_GLIBC_BASELINE = (2, 35)
 
 
 def run(command: list[str], cwd: Path) -> None:
@@ -88,6 +91,48 @@ def smoke_test(portable_root: Path, platform_name: str) -> None:
 
     run([str(binary), "--version"], portable_root)
     run([str(binary), "--help"], portable_root)
+
+
+def parse_glibc_version(value: str) -> tuple[int, int] | None:
+    match = re.fullmatch(r"(\d+)\.(\d+)", value)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def assert_linux_glibc_baseline(portable_root: Path) -> None:
+    binaries = [path for path in portable_root.iterdir() if path.is_file() and os.access(path, os.X_OK)]
+    max_required: tuple[int, int] | None = None
+    max_path: Path | None = None
+    pattern = re.compile(rb"GLIBC_(\d+\.\d+)")
+
+    for binary in binaries:
+        data = binary.read_bytes()
+        versions = {
+            parsed
+            for raw in pattern.findall(data)
+            if (parsed := parse_glibc_version(raw.decode("ascii"))) is not None
+        }
+        if not versions:
+            continue
+        binary_max = max(versions)
+        if max_required is None or binary_max > max_required:
+            max_required = binary_max
+            max_path = binary
+
+    if max_required is None:
+        return
+
+    if max_required > LINUX_GLIBC_BASELINE:
+        baseline = ".".join(str(part) for part in LINUX_GLIBC_BASELINE)
+        required = ".".join(str(part) for part in max_required)
+        raise SystemExit(
+            f"Linux CLI package requires GLIBC_{required} via {max_path}; "
+            f"release baseline is GLIBC_{baseline}. Build linux-x64 on ubuntu-22.04 or older."
+        )
+
+    required = ".".join(str(part) for part in max_required)
+    print(f"Linux GLIBC baseline check passed: max GLIBC_{required}")
 
 
 def add_zip_file(zip_file: zipfile.ZipFile, path: Path, arcname: str) -> None:
@@ -161,6 +206,8 @@ def main() -> None:
     copy_metadata(args.repo_root, portable_root, args.version, args.target)
     if not args.no_smoke_test:
         smoke_test(portable_root, args.platform)
+    if args.platform == "linux":
+        assert_linux_glibc_baseline(portable_root)
     create_archive(args, portable_root)
 
 

@@ -30,7 +30,7 @@ Common checks:
 cargo fmt --all -- --check
 cargo test --workspace
 python3 -m unittest tests.test_linux_release_backends
-bash -n scripts/install.sh
+bash -n scripts/install.sh scripts/install-from-source.sh
 git diff --check
 ```
 

@@ -10,35 +10,45 @@
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-x64.tar.gz",
         "archive": "tar.gz",
-        "launcher": "llama-server"
+        "launcher": "llama-server",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-linux-rocm": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-rocm-7.2-x64.tar.gz",
         "archive": "tar.gz",
-        "launcher": "llama-server"
+        "launcher": "llama-server",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-linux-vulkan": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-vulkan-x64.tar.gz",
         "archive": "tar.gz",
-        "launcher": "llama-server"
+        "launcher": "llama-server",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-linux-s390x": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-s390x.tar.gz",
         "archive": "tar.gz",
-        "launcher": "llama-server"
+        "launcher": "llama-server",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-linux-openvino": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-openvino-2026.0-x64.tar.gz",
         "archive": "tar.gz",
-        "launcher": "llama-server"
+        "launcher": "llama-server",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       }
     },
     "macos": {
@@ -47,14 +57,18 @@
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-macos-arm64.tar.gz",
         "archive": "tar.gz",
-        "launcher": "llama-server"
+        "launcher": "llama-server",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-mac-intel": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-macos-x64.tar.gz",
         "archive": "tar.gz",
-        "launcher": "llama-server"
+        "launcher": "llama-server",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       }
     },
     "windows": {
@@ -63,35 +77,45 @@
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cpu-x64.zip",
         "archive": "zip",
-        "launcher": "llama-server.exe"
+        "launcher": "llama-server.exe",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-cuda": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cuda-12.4-x64.zip",
         "archive": "zip",
-        "launcher": "llama-server.exe"
+        "launcher": "llama-server.exe",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-hip": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-hip-radeon-x64.zip",
         "archive": "zip",
-        "launcher": "llama-server.exe"
+        "launcher": "llama-server.exe",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-vulkan": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-vulkan-x64.zip",
         "archive": "zip",
-        "launcher": "llama-server.exe"
+        "launcher": "llama-server.exe",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },
       "llama.cpp-windows-arm64": {
         "source": "ggml-org/llama.cpp",
         "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cpu-arm64.zip",
         "archive": "zip",
-        "launcher": "llama-server.exe"
+        "launcher": "llama-server.exe",
+        "submodule_path": "framework/llama.cpp",
+        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       }
     }
   }

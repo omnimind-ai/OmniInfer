@@ -99,7 +99,7 @@ pub fn print_system(payload: &Value, json_output: bool) -> Result<()> {
             .and_then(Value::as_str)
     {
         println!("  Recommended backend to install: {candidate}");
-        println!("  Source install: omniinfer build {candidate} --prebuilt");
+        println!("  Install command: omniinfer backend install {candidate}");
     }
     print_usable_backends(payload);
     Ok(())

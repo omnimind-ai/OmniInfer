@@ -7,6 +7,7 @@ use omniinfer_core::{config, gateway_auth, http_client, local_state, paths, serv
 
 mod advisor;
 mod backend_commands;
+mod backend_installer;
 mod chat;
 mod cli;
 mod cloudflare;
@@ -55,16 +56,38 @@ fn run_ported_command(command: &Command) -> Result<()> {
             command: BackendCommand::List { scope },
         } => print_backend_list(scope.clone()),
         Command::Backend {
+            command:
+                BackendCommand::Install {
+                    backend,
+                    prebuilt: _,
+                    from_source,
+                    dry_run,
+                },
+        } => backend_installer::install_backend(backend_installer::InstallOptions {
+            backend: backend.clone(),
+            dry_run: *dry_run,
+            from_source: *from_source,
+        }),
+        Command::Backend {
             command: BackendCommand::Select { backend },
         } => select_backend(backend),
         Command::Backend {
             command: BackendCommand::Stop,
         } => stop_backend(),
-        Command::Build { .. } if !source_build_scripts_available() => {
-            anyhow::bail!(
-                "Backend builds are only available from a source checkout, not packaged releases."
-            )
+        Command::Build {
+            backend,
+            prebuilt,
+            from_source,
+        } if *prebuilt || !*from_source => {
+            backend_installer::install_backend(backend_installer::InstallOptions {
+                backend: backend.clone(),
+                dry_run: false,
+                from_source: false,
+            })
         }
+        Command::Build { .. } if !source_build_scripts_available() => anyhow::bail!(
+            "Source backend builds are only available from a source checkout, not packaged releases."
+        ),
         Command::Ps { json } => print_ps(*json),
         Command::Model {
             command: ModelCommand::List { all, best },

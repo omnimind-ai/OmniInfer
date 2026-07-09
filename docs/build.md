@@ -56,28 +56,31 @@ git submodule update --init --recursive framework/llama.cpp
 
 ## Prebuilt Runtime Installs
 
-Backend scripts may support a prebuilt install mode. On Linux, backend scripts default to non-build installation; pass `--from-source` when you explicitly want a local source build.
+The supported user-facing prebuilt runtime install command is implemented in Rust:
 
 ```bash
-./omniinfer build <backend>
+./omniinfer backend install <backend>
+```
+
+For example:
+
+```bash
+./omniinfer backend install llama.cpp-linux
+```
+
+`./omniinfer build <backend>` and `./omniinfer build <backend> --prebuilt` are retained as compatibility aliases for the same prebuilt installer. Source builds are explicit and require a source checkout:
+
+```bash
 ./omniinfer build <backend> --from-source
 ```
 
-or directly:
-
-```bash
-bash scripts/platforms/linux/llama.cpp-linux/build.sh --prebuilt
-bash scripts/platforms/linux/llama.cpp-linux/build.sh --from-source
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/platforms/windows/llama.cpp-cpu/build.ps1 -Prebuilt
-```
-
-The per-runtime script owns the install behavior. The interactive installers and CLI only route to that script. Shared llama.cpp release URLs live in `scripts/prebuilt_backends.json`, but a backend is only offered as prebuilt when that catalog contains a matching entry for the current platform.
+The Rust installer owns download, checksum verification, extraction, and manifest writing. Source build scripts still own compilation from checked-out submodules. Shared llama.cpp release URLs live in `scripts/prebuilt_backends.json`, but a backend is only offered as prebuilt when that catalog contains a matching entry for the current platform.
 
 Prebuilt versioning is explicit:
 
-- `scripts/prebuilt_backends.json` records the upstream source, release tag, archive URL, archive type, and launcher name.
+- `scripts/prebuilt_backends.json` records the upstream source, release tag, archive URL, archive type, launcher name, and expected source submodule commit when known.
 - A prebuilt llama.cpp runtime is an upstream release artifact. It is only source-aligned when the catalog tag and `framework/llama.cpp` submodule are pinned to the same upstream release tag or commit.
-- The current llama.cpp catalog and `framework/llama.cpp` submodule are both pinned to upstream release `b9500`.
+- If a source checkout has a different `framework/llama.cpp` commit than the catalog entry, the Rust installer prints a version note and records the catalog metadata in `prebuilt.json`.
 - If no official asset exists, leave the catalog entry absent. For example, llama.cpp `b9500` publishes Linux CPU, ROCm, Vulkan, OpenVINO, macOS, and Windows CUDA assets, but not a Linux CUDA archive.
 - Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and download URL used.
 
@@ -511,10 +514,10 @@ The legacy iOS script helper has been removed.
 From a source checkout on Linux, macOS, or Windows, the shortest path for desktop backends is:
 
 ```bash
-./omniinfer build <backend>
+./omniinfer backend install <backend>
 ```
 
-The CLI delegates to the matching script under `scripts/platforms/<platform>/<backend>/build.*`, uses a `Release` CMake build, and checks that the backend launcher was produced. This build command is intentionally omitted from packaged releases; release archives are expected to run directly from their bundled `runtime/` directory without local build tools.
+The CLI installs a configured prebuilt runtime and checks that the backend launcher was produced. Use `./omniinfer build <backend> --from-source` only when you intentionally want to compile the checked-out runtime source with local build tools.
 
 List the local backends:
 

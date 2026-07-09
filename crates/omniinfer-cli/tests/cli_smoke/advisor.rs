@@ -96,7 +96,9 @@ fn advisor_system_text_explains_missing_runtime() {
             "Recommended installed backend: none (no runtime installed)",
         ))
         .stdout(predicate::str::contains("Recommended backend to install:"))
-        .stdout(predicate::str::contains("Source install: omniinfer build "));
+        .stdout(predicate::str::contains(
+            "Install command: omniinfer backend install ",
+        ));
     fs::remove_dir_all(root).ok();
 }
 

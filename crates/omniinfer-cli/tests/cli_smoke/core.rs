@@ -46,7 +46,7 @@ fn tui_requires_interactive_terminal_without_python_fallback() {
 fn strict_mode_reports_unported_commands_without_fallback() {
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
-        .args(["build", "llama.cpp-linux"])
+        .args(["build", "llama.cpp-linux", "--from-source"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -63,11 +63,11 @@ fn packaged_build_reports_source_checkout_requirement() {
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_REPO_ROOT", &root)
-        .args(["build", "llama.cpp-linux"])
+        .args(["build", "llama.cpp-linux", "--from-source"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "Backend builds are only available from a source checkout, not packaged releases.",
+            "Source backend builds are only available from a source checkout, not packaged releases.",
         ));
     fs::remove_dir_all(root).ok();
 }
