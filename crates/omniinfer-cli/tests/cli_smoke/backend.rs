@@ -1,4 +1,5 @@
 use super::support::*;
+use sha2::{Digest, Sha256};
 
 #[test]
 fn backend_list_installed_empty_succeeds() {
@@ -33,7 +34,151 @@ fn backend_list_marks_missing_runtime() {
         .stdout(predicate::str::contains("Runtime"))
         .stdout(predicate::str::contains("missing"))
         .stdout(predicate::str::contains(
-            "Source install: omniinfer build <backend> --prebuilt",
+            "Install a runtime: omniinfer backend install <backend>",
+        ));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn backend_install_prebuilt_from_local_catalog() {
+    let root = temp_repo_root("backend-install-prebuilt");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+    let backend_id = test_external_backend_id();
+    let fixture = write_prebuilt_fixture(&root, backend_id, false);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["backend", "install", backend_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "Prebuilt backend: {}/{}",
+            test_runtime_platform_dir(),
+            backend_id
+        )))
+        .stdout(predicate::str::contains("Prebuilt backend installed:"));
+
+    let launcher = installed_launcher(&root, backend_id);
+    assert!(launcher.is_file(), "launcher should be installed");
+    let helper = launcher.parent().unwrap().join("helper.txt");
+    assert!(helper.is_file(), "sibling runtime file should be copied");
+    let manifest_raw = fs::read_to_string(
+        root.join(".local")
+            .join("runtime")
+            .join(test_runtime_platform_dir())
+            .join(backend_id)
+            .join("prebuilt.json"),
+    )
+    .expect("prebuilt manifest");
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_raw).expect("manifest json");
+    assert_eq!(manifest["schema_version"], 2);
+    assert_eq!(manifest["backend"], backend_id);
+    assert_eq!(manifest["catalog_sha256"], fixture.sha256);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["backend", "install", backend_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Backend already installed"));
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn backend_install_prebuilt_rejects_checksum_mismatch() {
+    let root = temp_repo_root("backend-install-checksum");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+    let backend_id = test_external_backend_id();
+    let fixture = write_prebuilt_fixture(&root, backend_id, true);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["backend", "install", backend_id])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "failed to download prebuilt archive",
+        ));
+
+    assert!(
+        !installed_launcher(&root, backend_id).exists(),
+        "checksum failure must not install launcher"
+    );
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn packaged_backend_install_uses_rust_prebuilt_path() {
+    let root = temp_repo_root("packaged-backend-install");
+    fs::create_dir_all(&root).expect("create package root");
+    fs::create_dir_all(root.join("config")).expect("create config");
+    fs::write(root.join("VERSION"), "0.3.2").expect("write version marker");
+    fs::write(root.join("omniinfer"), "").expect("write launcher marker");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+    let backend_id = test_external_backend_id();
+    let fixture = write_prebuilt_fixture(&root, backend_id, false);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["backend", "install", backend_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Prebuilt backend installed:"));
+
+    assert!(installed_launcher(&root, backend_id).is_file());
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn legacy_build_command_defaults_to_prebuilt_install() {
+    let root = temp_repo_root("legacy-build-prebuilt");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+    let backend_id = test_external_backend_id();
+    let fixture = write_prebuilt_fixture(&root, backend_id, false);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["build", backend_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Prebuilt backend installed:"));
+
+    assert!(installed_launcher(&root, backend_id).is_file());
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn backend_install_from_source_is_explicitly_not_prebuilt() {
+    let root = temp_repo_root("backend-install-from-source");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args([
+            "backend",
+            "install",
+            test_external_backend_id(),
+            "--from-source",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Source builds require a source checkout",
         ));
     fs::remove_dir_all(root).ok();
 }
@@ -224,4 +369,131 @@ fn backend_select_persists_state_and_profile() {
     assert_eq!(profile["load"]["extra_args"], serde_json::json!([]));
     assert_eq!(profile["infer"]["extra_args"], serde_json::json!([]));
     fs::remove_dir_all(root).ok();
+}
+
+struct PrebuiltFixture {
+    catalog: std::path::PathBuf,
+    sha256: String,
+}
+
+fn write_prebuilt_fixture(
+    root: &std::path::Path,
+    backend_id: &str,
+    wrong_checksum: bool,
+) -> PrebuiltFixture {
+    let fixture = root.join("prebuilt-fixture");
+    let payload_root = fixture.join("payload").join("runtime").join("bin");
+    fs::create_dir_all(&payload_root).expect("create payload");
+    let launcher_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+    let launcher = payload_root.join(launcher_name);
+    fs::write(&launcher, "#!/usr/bin/env bash\nexit 0\n").expect("write launcher");
+    fs::write(payload_root.join("helper.txt"), "runtime helper").expect("write helper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&launcher).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&launcher, permissions).unwrap();
+    }
+
+    let archive = fixture.join(if cfg!(windows) {
+        "runtime.zip"
+    } else {
+        "runtime.tar.gz"
+    });
+    write_runtime_archive(&fixture.join("payload"), &archive);
+    let bytes = fs::read(&archive).expect("read archive");
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let catalog_sha = if wrong_checksum {
+        "0".repeat(64)
+    } else {
+        sha256.clone()
+    };
+    let catalog = fixture.join("prebuilt.json");
+    fs::write(
+        &catalog,
+        serde_json::json!({
+            "schema_version": 2,
+            "platforms": {
+                test_runtime_platform_dir(): {
+                    backend_id: {
+                        "source": "fixture",
+                        "tag": "test",
+                        "url": format!("file://{}", archive.display()),
+                        "archive": if cfg!(windows) { "zip" } else { "tar.gz" },
+                        "launcher": launcher_name,
+                        "sha256": catalog_sha,
+                        "submodule_path": "framework/llama.cpp",
+                        "submodule_commit": "fixture"
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("write catalog");
+    PrebuiltFixture { catalog, sha256 }
+}
+
+fn write_runtime_archive(source_root: &std::path::Path, archive_path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        let file = fs::File::create(archive_path).expect("create zip");
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        add_zip_tree(&mut zip, source_root, source_root, options);
+        zip.finish().expect("finish zip");
+    }
+    #[cfg(not(windows))]
+    {
+        let file = fs::File::create(archive_path).expect("create tar");
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut tar = tar::Builder::new(encoder);
+        tar.append_dir_all(".", source_root).expect("append tar");
+        tar.finish().expect("finish tar");
+    }
+}
+
+#[cfg(windows)]
+fn add_zip_tree(
+    zip: &mut zip::ZipWriter<fs::File>,
+    source_root: &std::path::Path,
+    current: &std::path::Path,
+    options: zip::write::SimpleFileOptions,
+) {
+    for entry in fs::read_dir(current).expect("read zip source") {
+        let entry = entry.expect("zip source entry");
+        let path = entry.path();
+        let name = path
+            .strip_prefix(source_root)
+            .expect("relative zip path")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if path.is_dir() {
+            zip.add_directory(format!("{name}/"), options)
+                .expect("add zip dir");
+            add_zip_tree(zip, source_root, &path, options);
+        } else {
+            zip.start_file(name, options).expect("start zip file");
+            let mut file = fs::File::open(&path).expect("open zip source");
+            std::io::copy(&mut file, zip).expect("copy zip file");
+        }
+    }
+}
+
+fn installed_launcher(root: &std::path::Path, backend_id: &str) -> std::path::PathBuf {
+    root.join(".local")
+        .join("runtime")
+        .join(test_runtime_platform_dir())
+        .join(backend_id)
+        .join("bin")
+        .join(if cfg!(windows) {
+            "llama-server.exe"
+        } else {
+            "llama-server"
+        })
 }

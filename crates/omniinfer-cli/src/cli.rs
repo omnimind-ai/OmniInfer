@@ -22,11 +22,13 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: BackendCommand,
     },
-    /// Build a backend from this source checkout.
+    /// Compatibility alias for backend runtime install/build.
     Build {
         backend: String,
+        /// Install a prebuilt runtime. This is the default for the compatibility alias.
         #[arg(long)]
         prebuilt: bool,
+        /// Build from source. Requires a source checkout and platform build scripts.
         #[arg(long)]
         from_source: bool,
     },
@@ -67,6 +69,18 @@ pub(crate) enum BackendCommand {
     List {
         #[arg(long, default_value = "compatible")]
         scope: BackendScope,
+    },
+    /// Install a backend runtime.
+    Install {
+        backend: String,
+        /// Explicitly install a prebuilt runtime. This is the default.
+        #[arg(long)]
+        prebuilt: bool,
+        /// Reject with source-checkout guidance; source builds use `build --from-source`.
+        #[arg(long)]
+        from_source: bool,
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Select a backend.
     Select { backend: String },

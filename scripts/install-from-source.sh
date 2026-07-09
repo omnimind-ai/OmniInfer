@@ -782,20 +782,13 @@ else
     info "Step 4/6: Building backend ..."
 fi
 
-# ── Desktop: discover and run build script by convention ──
-FULL_BUILD_SCRIPT="${INSTALL_DIR}/scripts/platforms/${PLATFORM_DIR}/${SELECTED_BACKEND}/build.sh"
-if [[ ! -f "${FULL_BUILD_SCRIPT}" ]]; then
-    fatal "Build script not found: ${FULL_BUILD_SCRIPT}"
-fi
-
 if [[ "${SKIP_BUILD}" -eq 1 ]]; then
     info "Skipping build (--skip-build)"
     BUILD_STATUS="skipped"
 else
-    # Check if runtime is already available via CLI
-    RUNTIME_AVAILABLE=$(omniinfer_cmd backend list 2>/dev/null | grep -A3 "[* ]*${SELECTED_BACKEND}$" | grep -c "Runtime available: yes" || true)
+    RUNTIME_AVAILABLE=$(omniinfer_cmd backend list --scope installed 2>/dev/null | grep -c "^${SELECTED_BACKEND}[[:space:]]" || true)
     if [[ "${RUNTIME_AVAILABLE}" -gt 0 ]]; then
-        ok "Backend ${SELECTED_BACKEND} already built, skipping"
+        ok "Backend ${SELECTED_BACKEND} already installed, skipping"
         BUILD_STATUS="already-built"
     else
         if [[ "${PREBUILT_MODE}" -eq 1 ]]; then
@@ -809,12 +802,20 @@ else
         [[ "${PREBUILT_MODE}" -eq 1 ]] && _build_log_kind="prebuilt"
         BUILD_LOG_PATH="${BUILD_LOG_DIR}/${SELECTED_BACKEND}-${_build_log_kind}-$(date +%Y%m%d-%H%M%S).log"
         info "Build log: ${BUILD_LOG_PATH}"
-        _build_args=()
-        [[ "${PREBUILT_MODE}" -eq 1 ]] && _build_args+=(--prebuilt)
-        [[ "${PREBUILT_MODE}" -eq 0 ]] && _build_args+=(--from-source)
         set +e
-        bash "${FULL_BUILD_SCRIPT}" "${_build_args[@]}" 2>&1 | tee "${BUILD_LOG_PATH}"
-        _build_rc=${PIPESTATUS[0]}
+        if [[ "${PREBUILT_MODE}" -eq 1 ]]; then
+            omniinfer_cmd backend install "${SELECTED_BACKEND}" --prebuilt 2>&1 | tee "${BUILD_LOG_PATH}"
+            _build_rc=${PIPESTATUS[0]}
+        else
+            FULL_BUILD_SCRIPT="${INSTALL_DIR}/scripts/platforms/${PLATFORM_DIR}/${SELECTED_BACKEND}/build.sh"
+            if [[ ! -f "${FULL_BUILD_SCRIPT}" ]]; then
+                echo "Build script not found: ${FULL_BUILD_SCRIPT}" >&2
+                _build_rc=1
+            else
+                bash "${FULL_BUILD_SCRIPT}" --from-source 2>&1 | tee "${BUILD_LOG_PATH}"
+                _build_rc=${PIPESTATUS[0]}
+            fi
+        fi
         set -e
         if [[ "${_build_rc}" -ne 0 ]]; then
             echo ""

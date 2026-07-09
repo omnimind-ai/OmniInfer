@@ -49,6 +49,10 @@ Options:
 
 For source checkout, backend runtime setup, or model setup, use:
   scripts/install-from-source.sh
+
+After installing the CLI, run:
+  omniinfer backend list
+  omniinfer backend install <backend>
 HELP
 }
 
@@ -253,4 +257,5 @@ if ! VERIFY_OUTPUT="$("${DEST}" --version 2>&1)"; then
     fatal "installed binary failed to run: ${VERIFY_OUTPUT}"
 fi
 printf '%s\n' "${VERIFY_OUTPUT}"
+ok "Next: run 'omniinfer backend list' and 'omniinfer backend install <backend>'"
 ensure_path_hint

@@ -19,14 +19,18 @@ bytes = "1.0"
 clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
 crossterm = "0.29"
+flate2 = "1.0"
 http-body-util = "0.1"
 hyper = "1.0"
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
 rand = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 sysinfo = { version = "0.39.5", default-features = false, features = ["system"] }
+tar = "0.4"
 thiserror = "2.0"
 tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
 tokio-stream = "0.1"
 ureq = { version = "3.1", default-features = false, features = ["json", "rustls"] }
+zip = { version = "6.0", default-features = false, features = ["deflate"] }
