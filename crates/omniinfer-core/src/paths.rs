@@ -7,10 +7,11 @@ pub fn repo_root() -> PathBuf {
     if let Some(root) = std::env::var_os(ROOT_OVERRIDE_ENV).filter(|value| !value.is_empty()) {
         return PathBuf::from(root);
     }
-    if let Some(root) = executable_root().filter(|root| looks_like_omniinfer_root(root)) {
-        return root;
+    let manifest_root = manifest_repo_root();
+    if let Some(executable_root) = executable_root() {
+        return resolve_repo_root(executable_root, manifest_root);
     }
-    manifest_repo_root()
+    manifest_root
 }
 
 fn executable_root() -> Option<PathBuf> {
@@ -36,6 +37,16 @@ fn manifest_repo_root() -> PathBuf {
         .nth(2)
         .expect("crate path should be under crates/<name>")
         .to_path_buf()
+}
+
+fn resolve_repo_root(executable_root: PathBuf, manifest_root: PathBuf) -> PathBuf {
+    if looks_like_omniinfer_root(&executable_root) {
+        return executable_root;
+    }
+    if executable_root.starts_with(&manifest_root) {
+        return manifest_root;
+    }
+    executable_root
 }
 
 pub fn local_dir() -> PathBuf {
@@ -120,6 +131,27 @@ mod tests {
     fn empty_directory_is_not_portable_root() {
         let root = tempfile_root("empty-root");
         assert!(!looks_like_omniinfer_root(&root));
+    }
+
+    #[test]
+    fn source_checkout_binary_uses_manifest_root() {
+        let manifest_root = tempfile_root("source-manifest");
+        let executable_root = manifest_root.join("target").join("release");
+        std::fs::create_dir_all(&executable_root).expect("create executable root");
+        assert_eq!(
+            resolve_repo_root(executable_root, manifest_root.clone()),
+            manifest_root
+        );
+    }
+
+    #[test]
+    fn installed_single_binary_uses_executable_root() {
+        let manifest_root = tempfile_root("installed-manifest");
+        let executable_root = tempfile_root("installed-bin");
+        assert_eq!(
+            resolve_repo_root(executable_root.clone(), manifest_root),
+            executable_root
+        );
     }
 
     fn tempfile_root(name: &str) -> PathBuf {
