@@ -26,7 +26,7 @@ usage() {
     cat <<'HELP'
 OmniInfer CLI Installer
 
-Downloads the CLI-only binary from GitHub Releases and installs it into
+Downloads the CLI-only archive from GitHub Releases and installs it into
 a user-writable bin directory. It does not clone the repository, install
 backend runtimes, download models, or use sudo.
 
@@ -228,15 +228,29 @@ ok "Checksum verified: ${ACTUAL_SHA}"
 info "Extracting archive"
 tar -xzf "${ARCHIVE_PATH}" -C "${EXTRACT_DIR}"
 
-BINARY_PATH="${EXTRACT_DIR}/OmniInfer/omniinfer"
+PACKAGE_DIR="${EXTRACT_DIR}/OmniInfer"
+BINARY_PATH="${PACKAGE_DIR}/omniinfer"
+RUNTIME_HELPER_PATH="${PACKAGE_DIR}/omniinfer-rs"
 [[ -f "${BINARY_PATH}" ]] || fatal "archive did not contain OmniInfer/omniinfer"
 
 mkdir -p "${INSTALL_DIR}"
 TMP_DEST="${INSTALL_DIR}/.omniinfer.tmp.$$"
 cp "${BINARY_PATH}" "${TMP_DEST}"
 chmod 0755 "${TMP_DEST}"
+
+if [[ -f "${RUNTIME_HELPER_PATH}" ]]; then
+    TMP_HELPER="${INSTALL_DIR}/.omniinfer-rs.tmp.$$"
+    cp "${RUNTIME_HELPER_PATH}" "${TMP_HELPER}"
+    chmod 0755 "${TMP_HELPER}"
+    mv "${TMP_HELPER}" "${INSTALL_DIR}/omniinfer-rs"
+    ok "Installed ${INSTALL_DIR}/omniinfer-rs"
+fi
+
 mv "${TMP_DEST}" "${DEST}"
 
 ok "Installed ${DEST}"
-"${DEST}" --version
+if ! VERIFY_OUTPUT="$("${DEST}" --version 2>&1)"; then
+    fatal "installed binary failed to run: ${VERIFY_OUTPUT}"
+fi
+printf '%s\n' "${VERIFY_OUTPUT}"
 ensure_path_hint
