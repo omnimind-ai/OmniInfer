@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash -s -- --version v0.3.2
+#   curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash -s -- --version v0.3.3
 set -euo pipefail
 
 REPO="omnimind-ai/OmniInfer"
@@ -35,7 +35,7 @@ Usage:
   bash scripts/install.sh [OPTIONS]
 
 Options:
-  --version VERSION     Release tag to install, for example v0.3.2.
+  --version VERSION     Release tag to install, for example v0.3.3.
                         Default: latest GitHub Release.
   --install-dir DIR     Directory for the omniinfer executable.
                         Default: ~/.local/bin

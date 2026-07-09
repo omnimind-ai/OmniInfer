@@ -36,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash -s -- --version v0.3.2
+curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash -s -- --version v0.3.3
 ```
 
 The lightweight installer downloads the CLI-only GitHub Release archive, verifies `checksums.txt`, and installs `omniinfer` into `~/.local/bin` by default. It does not clone this repository, install backend runtimes, download models, or use sudo.
