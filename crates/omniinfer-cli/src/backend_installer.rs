@@ -35,8 +35,20 @@ struct PrebuiltEntry {
     archive: String,
     launcher: String,
     sha256: Option<String>,
+    #[serde(default)]
+    companion_assets: Vec<CompanionAsset>,
+    #[serde(default)]
+    required_files: Vec<String>,
     submodule_path: Option<String>,
     submodule_commit: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CompanionAsset {
+    url: String,
+    archive: String,
+    sha256: Option<String>,
+    files: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -44,6 +56,9 @@ struct DownloadedArchive {
     url: String,
     bytes: Vec<u8>,
     sha256: String,
+    catalog_sha256: Option<String>,
+    archive: String,
+    role: String,
 }
 
 pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
@@ -58,19 +73,37 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
     let spec = registry
         .get(&options.backend)
         .ok_or_else(|| anyhow::anyhow!("Unsupported backend: {}", options.backend))?;
-    if spec.binary_exists() {
-        println!("Backend already installed: {}", options.backend);
-        if let Some(path) = &spec.launcher_path {
-            println!("Launcher: {path}");
-        }
-        return Ok(());
-    }
-
     let catalog = load_catalog()?;
-    let entry = catalog_entry(&catalog, platform, &options.backend)?;
     let runtime_dir = PathBuf::from(&spec.runtime_dir);
+    let entry_result = catalog_entry(&catalog, platform, &options.backend);
+    if spec.binary_exists() {
+        match entry_result.as_ref() {
+            Ok(entry) => {
+                let missing = missing_required_runtime_files(&runtime_dir, entry)?;
+                if missing.is_empty() {
+                    println!("Backend already installed: {}", options.backend);
+                    if let Some(path) = &spec.launcher_path {
+                        println!("Launcher: {path}");
+                    }
+                    return Ok(());
+                }
+                println!(
+                    "Existing backend is incomplete; reinstalling {} (missing: {})",
+                    options.backend,
+                    missing.join(", ")
+                );
+            }
+            Err(_) => {
+                println!("Backend already installed: {}", options.backend);
+                if let Some(path) = &spec.launcher_path {
+                    println!("Launcher: {path}");
+                }
+                return Ok(());
+            }
+        }
+    }
+    let entry = entry_result?;
     let models_dir = spec.models_dir.as_ref().map(PathBuf::from);
-    let urls = mirror_urls(&catalog, &entry.url);
 
     println!("Prebuilt backend: {}/{}", platform, options.backend);
     println!("  source: {}", entry.source.as_deref().unwrap_or("-"));
@@ -80,16 +113,27 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
     if let Some(note) = source_checkout_version_note(&entry) {
         println!("  version note: {note}");
     }
-    if entry.sha256.is_none() {
-        println!("  checksum: not provided by catalog; recording downloaded archive digest");
+    print_asset_plan(
+        "runtime",
+        &catalog,
+        &entry.url,
+        entry.sha256.as_deref(),
+        options.dry_run,
+    );
+    for (index, asset) in entry.companion_assets.iter().enumerate() {
+        print_asset_plan(
+            &format!("companion {}", index + 1),
+            &catalog,
+            &asset.url,
+            asset.sha256.as_deref(),
+            options.dry_run,
+        );
     }
     if options.dry_run {
-        for url in urls {
-            println!("  would try: {url}");
-        }
         return Ok(());
     }
 
+    let archives = download_entry_archives(&catalog, entry)?;
     fs::create_dir_all(&runtime_dir)
         .with_context(|| format!("create runtime dir {}", runtime_dir.display()))?;
     if let Some(models_dir) = models_dir {
@@ -97,14 +141,12 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
             .with_context(|| format!("create models dir {}", models_dir.display()))?;
     }
 
-    let archive = download_archive(&urls, entry.sha256.as_deref())?;
     let extracted_dir = temp_install_dir(&options.backend)?;
     fs::create_dir_all(&extracted_dir)
         .with_context(|| format!("create temp dir {}", extracted_dir.display()))?;
-    let result = extract_archive(&archive.bytes, &entry.archive, &extracted_dir)
-        .and_then(|_| install_extracted_runtime(&extracted_dir, &runtime_dir, &entry))
+    let result = prepare_and_install_runtime(&extracted_dir, &runtime_dir, entry, &archives)
         .and_then(|launcher| {
-            write_install_manifest(&runtime_dir, platform, &options.backend, &entry, &archive)?;
+            write_install_manifest(&runtime_dir, platform, &options.backend, entry, &archives)?;
             Ok(launcher)
         });
     let cleanup = fs::remove_dir_all(&extracted_dir);
@@ -178,7 +220,53 @@ fn mirror_urls(catalog: &PrebuiltCatalog, url: &str) -> Vec<String> {
     urls
 }
 
-fn download_archive(urls: &[String], expected_sha256: Option<&str>) -> Result<DownloadedArchive> {
+fn print_asset_plan(
+    role: &str,
+    catalog: &PrebuiltCatalog,
+    url: &str,
+    expected_sha256: Option<&str>,
+    dry_run: bool,
+) {
+    if let Some(expected) = expected_sha256 {
+        println!("  {role} sha256: {expected}");
+    } else {
+        println!("  {role} checksum: not provided by catalog; recording downloaded archive digest");
+    }
+    if dry_run {
+        for candidate in mirror_urls(catalog, url) {
+            println!("  {role} would try: {candidate}");
+        }
+    }
+}
+
+fn download_entry_archives(
+    catalog: &PrebuiltCatalog,
+    entry: &PrebuiltEntry,
+) -> Result<Vec<DownloadedArchive>> {
+    let mut archives = Vec::with_capacity(1 + entry.companion_assets.len());
+    archives.push(download_archive(
+        &mirror_urls(catalog, &entry.url),
+        entry.sha256.as_deref(),
+        "runtime",
+        &entry.archive,
+    )?);
+    for (index, asset) in entry.companion_assets.iter().enumerate() {
+        archives.push(download_archive(
+            &mirror_urls(catalog, &asset.url),
+            asset.sha256.as_deref(),
+            &format!("companion {}", index + 1),
+            &asset.archive,
+        )?);
+    }
+    Ok(archives)
+}
+
+fn download_archive(
+    urls: &[String],
+    expected_sha256: Option<&str>,
+    role: &str,
+    archive_type: &str,
+) -> Result<DownloadedArchive> {
     let mut last_error = String::new();
     for url in urls {
         match read_url_bytes(url) {
@@ -195,6 +283,9 @@ fn download_archive(urls: &[String], expected_sha256: Option<&str>) -> Result<Do
                     url: url.clone(),
                     bytes,
                     sha256,
+                    catalog_sha256: expected_sha256.map(str::to_string),
+                    archive: archive_type.to_string(),
+                    role: role.to_string(),
                 });
             }
             Err(error) => {
@@ -317,28 +408,107 @@ fn validate_archive_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn install_extracted_runtime(
-    extracted_dir: &Path,
+fn prepare_and_install_runtime(
+    work_dir: &Path,
     runtime_dir: &Path,
     entry: &PrebuiltEntry,
+    archives: &[DownloadedArchive],
 ) -> Result<PathBuf> {
-    let launcher = find_launcher(extracted_dir, &entry.launcher)?;
+    let primary = archives
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("prebuilt catalog produced no runtime archive"))?;
+    let primary_dir = work_dir.join("asset-0");
+    fs::create_dir_all(&primary_dir)?;
+    extract_archive(&primary.bytes, &primary.archive, &primary_dir)?;
+    let launcher = find_launcher(&primary_dir, &entry.launcher)?;
     let source_dir = launcher
         .parent()
         .ok_or_else(|| anyhow::anyhow!("launcher has no parent directory"))?;
+    let staged_bin = work_dir.join("staged-bin");
+    fs::create_dir_all(&staged_bin)?;
+    copy_directory_contents(source_dir, &staged_bin)?;
+
+    if archives.len() != 1 + entry.companion_assets.len() {
+        anyhow::bail!("downloaded prebuilt asset count does not match the catalog");
+    }
+    for (index, asset) in entry.companion_assets.iter().enumerate() {
+        let archive = &archives[index + 1];
+        let asset_dir = work_dir.join(format!("asset-{}", index + 1));
+        fs::create_dir_all(&asset_dir)?;
+        extract_archive(&archive.bytes, &archive.archive, &asset_dir)?;
+        if asset.files.is_empty() {
+            anyhow::bail!("companion asset {} does not declare any files", index + 1);
+        }
+        for file in &asset.files {
+            copy_named_asset_file(&asset_dir, &staged_bin, file)?;
+        }
+    }
+    validate_required_runtime_files(&staged_bin, entry)?;
+
+    install_staged_runtime(&staged_bin, runtime_dir, &entry.launcher)
+}
+
+fn install_staged_runtime(
+    staged_bin: &Path,
+    runtime_dir: &Path,
+    launcher_name: &str,
+) -> Result<PathBuf> {
     let bin_dir = runtime_dir.join("bin");
     let logs_dir = runtime_dir.join("logs");
-    if bin_dir.exists() {
-        fs::remove_dir_all(&bin_dir)?;
-    }
-    fs::create_dir_all(&bin_dir)?;
     fs::create_dir_all(&logs_dir)?;
-    copy_directory_contents(source_dir, &bin_dir)?;
-    let installed_launcher = bin_dir.join(
-        launcher
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("launcher has no file name"))?,
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
     );
+    let next_dir = runtime_dir.join(format!("bin.installing-{suffix}"));
+    let backup_dir = runtime_dir.join(format!("bin.backup-{suffix}"));
+    copy_dir_recursive(staged_bin, &next_dir)?;
+    let next_launcher = next_dir.join(launcher_name);
+    if !next_launcher.is_file() {
+        let _ = fs::remove_dir_all(&next_dir);
+        anyhow::bail!(
+            "prebuilt install failed: {} was not staged",
+            next_launcher.display()
+        );
+    }
+    make_executable(&next_launcher)?;
+
+    if bin_dir.exists() {
+        fs::rename(&bin_dir, &backup_dir).with_context(|| {
+            format!(
+                "move existing runtime {} to {}",
+                bin_dir.display(),
+                backup_dir.display()
+            )
+        })?;
+    }
+    if let Err(error) = fs::rename(&next_dir, &bin_dir) {
+        if backup_dir.exists() {
+            let _ = fs::rename(&backup_dir, &bin_dir);
+        }
+        let _ = fs::remove_dir_all(&next_dir);
+        return Err(error).with_context(|| {
+            format!(
+                "activate staged runtime {} as {}",
+                next_dir.display(),
+                bin_dir.display()
+            )
+        });
+    }
+    if backup_dir.exists()
+        && let Err(error) = fs::remove_dir_all(&backup_dir)
+    {
+        eprintln!(
+            "warning: failed to remove old runtime backup {}: {error}",
+            backup_dir.display()
+        );
+    }
+
+    let installed_launcher = bin_dir.join(launcher_name);
     if !installed_launcher.is_file() {
         anyhow::bail!(
             "prebuilt install failed: {} was not created",
@@ -347,6 +517,65 @@ fn install_extracted_runtime(
     }
     make_executable(&installed_launcher)?;
     Ok(installed_launcher)
+}
+
+fn copy_named_asset_file(source_root: &Path, target_root: &Path, file: &str) -> Result<()> {
+    let relative = Path::new(file);
+    validate_archive_path(relative)?;
+    if relative.components().count() != 1 {
+        anyhow::bail!("companion asset file must be a plain file name: {file}");
+    }
+    let source = find_launcher(source_root, file)
+        .with_context(|| format!("required companion file {file} was not found"))?;
+    let target = target_root.join(file);
+    fs::copy(&source, &target).with_context(|| {
+        format!(
+            "copy companion file {} to {}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn missing_required_runtime_files(
+    runtime_dir: &Path,
+    entry: &PrebuiltEntry,
+) -> Result<Vec<String>> {
+    let bin_dir = runtime_dir.join("bin");
+    let mut required = Vec::with_capacity(1 + entry.required_files.len());
+    required.push(entry.launcher.as_str());
+    required.extend(entry.required_files.iter().map(String::as_str));
+    let mut missing = Vec::new();
+    for file in required {
+        let relative = Path::new(file);
+        validate_archive_path(relative)?;
+        if !bin_dir.join(relative).is_file() {
+            missing.push(file.to_string());
+        }
+    }
+    Ok(missing)
+}
+
+fn validate_required_runtime_files(bin_dir: &Path, entry: &PrebuiltEntry) -> Result<()> {
+    let mut required = Vec::with_capacity(1 + entry.required_files.len());
+    required.push(entry.launcher.as_str());
+    required.extend(entry.required_files.iter().map(String::as_str));
+    let mut missing = Vec::new();
+    for file in required {
+        let relative = Path::new(file);
+        validate_archive_path(relative)?;
+        if !bin_dir.join(relative).is_file() {
+            missing.push(file);
+        }
+    }
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "prebuilt install is incomplete; missing required files: {}",
+            missing.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn find_launcher(root: &Path, launcher: &str) -> Result<PathBuf> {
@@ -402,6 +631,8 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
 }
 
 fn make_executable(path: &Path) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -413,6 +644,8 @@ fn make_executable(path: &Path) -> Result<()> {
 }
 
 fn make_executable_if_source_is_executable(source: &Path, target: &Path) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = (source, target);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -431,24 +664,41 @@ fn write_install_manifest(
     platform: &str,
     backend: &str,
     entry: &PrebuiltEntry,
-    archive: &DownloadedArchive,
+    archives: &[DownloadedArchive],
 ) -> Result<()> {
     let installed_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let primary = archives
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("prebuilt manifest requires a runtime archive"))?;
+    let asset_records = archives
+        .iter()
+        .map(|archive| {
+            json!({
+                "role": archive.role,
+                "url": archive.url,
+                "archive": archive.archive,
+                "archive_sha256": archive.sha256,
+                "catalog_sha256": archive.catalog_sha256,
+            })
+        })
+        .collect::<Vec<_>>();
     let manifest = json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "installed_at": installed_at,
         "platform": platform,
         "backend": backend,
         "source": entry.source,
         "tag": entry.tag,
-        "url": archive.url,
-        "archive_sha256": archive.sha256,
+        "url": primary.url,
+        "archive_sha256": primary.sha256,
         "catalog_sha256": entry.sha256,
         "archive": entry.archive,
         "launcher": entry.launcher,
+        "required_files": entry.required_files,
+        "assets": asset_records,
         "submodule_path": entry.submodule_path,
         "submodule_commit": entry.submodule_commit,
     });
