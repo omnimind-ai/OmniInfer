@@ -306,6 +306,7 @@ fn serve_detach_loads_model_before_ready() {
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_TEST_ALLOW_OCCUPIED_SERVE_PORT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .args(["serve", "--detach", "--port"])
@@ -382,6 +383,7 @@ fn serve_detach_restores_last_model_when_model_is_omitted() {
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_TEST_ALLOW_OCCUPIED_SERVE_PORT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .args(["serve", "--detach", "--port"])
@@ -449,6 +451,7 @@ fn serve_detach_can_skip_restoring_last_model() {
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_TEST_ALLOW_OCCUPIED_SERVE_PORT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .args(["serve", "--detach", "--no-restore-model", "--port"])
@@ -570,6 +573,7 @@ fn serve_detach_runs_smoke_test() {
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_TEST_ALLOW_OCCUPIED_SERVE_PORT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
         .args(["serve", "--detach", "--smoke-test", "--port"])
@@ -592,6 +596,84 @@ fn serve_detach_runs_smoke_test() {
     gateway.join();
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
+fn serve_rejects_an_occupied_port_before_spawning_gateway() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind occupied port");
+    let port = listener.local_addr().expect("occupied port address").port();
+    let source_root = temp_repo_root("serve-occupied-source");
+    let state_root = temp_repo_root("serve-occupied-state");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{port},"startup_timeout":10}}"#),
+    )
+    .expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .args(["serve", "--detach", "--port"])
+        .arg(port.to_string())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(format!(
+            "127.0.0.1:{port} is already in use"
+        )));
+
+    drop(listener);
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
+fn failed_smoke_test_releases_gateway_port_for_retry() {
+    for detach in [false, true] {
+        let port = free_port();
+        let source_root = temp_repo_root(if detach {
+            "serve-smoke-cleanup-detached-source"
+        } else {
+            "serve-smoke-cleanup-foreground-source"
+        });
+        let state_root = temp_repo_root(if detach {
+            "serve-smoke-cleanup-detached-state"
+        } else {
+            "serve-smoke-cleanup-foreground-state"
+        });
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(state_root.join("config")).expect("create state config");
+        fs::write(
+            state_root.join("config").join("omniinfer.json"),
+            format!(r#"{{"host":"127.0.0.1","port":{port},"startup_timeout":10}}"#),
+        )
+        .expect("write config");
+
+        for _ in 0..2 {
+            let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+            cmd.env("OMNIINFER_RUST_STRICT", "1")
+                .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+                .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+                .args(["serve", "--smoke-test", "--no-restore-model", "--port"])
+                .arg(port.to_string());
+            if detach {
+                cmd.arg("--detach");
+            }
+            cmd.assert()
+                .failure()
+                .stderr(predicate::str::contains("smoke test failed"))
+                .stderr(predicate::str::contains("10048").not());
+            assert!(
+                wait_for_port_closed(port),
+                "failed smoke test must release port {port} (detach={detach})"
+            );
+        }
+
+        fs::remove_dir_all(source_root).ok();
+        fs::remove_dir_all(state_root).ok();
+    }
 }
 
 #[cfg(unix)]
@@ -687,6 +769,7 @@ fn serve_detach_warns_on_transient_public_smoke_failure() {
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_TEST_ALLOW_OCCUPIED_SERVE_PORT", "1")
         .env("OMNIINFER_RUST_PUBLIC_SMOKE_RETRY_SECONDS", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
