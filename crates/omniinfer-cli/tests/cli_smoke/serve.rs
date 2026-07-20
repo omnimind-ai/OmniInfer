@@ -145,6 +145,111 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
     fs::remove_dir_all(state_root).ok();
 }
 
+#[test]
+fn serve_explicit_roots_reach_gateway_model_load_lifecycle() {
+    let backend_id = test_external_backend_id();
+    let source_root = temp_repo_root("serve-explicit-roots-source");
+    let state_root = temp_repo_root("serve-explicit-roots-state");
+    let runtime_root = temp_repo_root("serve-explicit-roots-runtime");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    let port = free_port();
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{},"startup_timeout":10,"default_backend":"{backend_id}"}}"#,
+            port,
+        ),
+    )
+    .expect("write config");
+    install_fake_runtime_server_in_root(&runtime_root, backend_id);
+    let model = state_root.join("model.gguf");
+    fs::write(&model, "gguf").expect("write model");
+
+    let stdout_path = state_root.join("serve-explicit-roots.stdout.txt");
+    let stderr_path = state_root.join("serve-explicit-roots.stderr.txt");
+    let status = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer"))
+        .env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env_remove("OMNIINFER_STATE_ROOT")
+        .env_remove("OMNIINFER_RUNTIME_ROOT")
+        .env_remove("OMNIINFER_RUST_STATE_ROOT")
+        .args([
+            "serve",
+            "--detach",
+            "--api-key",
+            "test-key",
+            "--backend",
+            backend_id,
+            "--model",
+        ])
+        .arg(&model)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--state-root")
+        .arg(&state_root)
+        .arg("--runtime-root")
+        .arg(&runtime_root)
+        .stdout(Stdio::from(
+            fs::File::create(&stdout_path).expect("create stdout capture"),
+        ))
+        .stderr(Stdio::from(
+            fs::File::create(&stderr_path).expect("create stderr capture"),
+        ))
+        .status()
+        .expect("run serve with explicit roots");
+    let stdout = fs::read_to_string(&stdout_path).expect("read stdout capture");
+    let stderr = fs::read_to_string(&stderr_path).expect("read stderr capture");
+    assert!(
+        status.success(),
+        "serve failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("Backend ready: yes"), "stdout:\n{stdout}");
+
+    let health = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(health["status"], "ok");
+    assert_eq!(health["omni"]["backend"], backend_id);
+    assert_eq!(health["omni"]["backend_ready"], true);
+    assert_eq!(
+        health["omni"]["model"].as_str().unwrap(),
+        model.display().to_string()
+    );
+    let launch_command = health["omni"]["launch_command"]
+        .as_array()
+        .expect("runtime launch command");
+    assert_eq!(
+        std::path::PathBuf::from(launch_command[0].as_str().unwrap()),
+        runtime_root
+            .join(backend_id)
+            .join("bin")
+            .join(if cfg!(windows) {
+                "llama-server.exe"
+            } else {
+                "llama-server"
+            })
+    );
+    assert!(!state_root.join(".local").join("runtime").exists());
+
+    let mut stop = Command::cargo_bin("omniinfer").expect("binary exists");
+    stop.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env_remove("OMNIINFER_STATE_ROOT")
+        .env_remove("OMNIINFER_RUNTIME_ROOT")
+        .env_remove("OMNIINFER_RUST_STATE_ROOT")
+        .args(["serve", "stop", "--port"])
+        .arg(port.to_string())
+        .arg("--state-root")
+        .arg(&state_root)
+        .arg("--runtime-root")
+        .arg(&runtime_root)
+        .assert()
+        .success();
+    assert!(wait_for_port_closed(port));
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+    fs::remove_dir_all(runtime_root).ok();
+}
+
 #[cfg(unix)]
 #[test]
 fn serve_detach_starts_gateway_and_writes_state() {

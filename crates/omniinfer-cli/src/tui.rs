@@ -97,6 +97,7 @@ impl TuiGatewayGuard {
         print_section("Service", "Starting local OmniInfer gateway");
         print_kv("Port", &config.port.to_string());
         let mut command = ProcessCommand::new(std::env::current_exe()?);
+        paths::propagate_cli_roots(&mut command);
         command
             .arg("gateway")
             .arg("--host")
