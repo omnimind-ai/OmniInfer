@@ -16,9 +16,11 @@ The production entrypoint is `./omniinfer`, which starts the Rust control
 plane. Python control-plane fallback has been removed; unsupported commands
 return explicit Rust errors.
 
-Use `OMNIINFER_RUST_STATE_ROOT=/tmp/omniinfer-state` when running isolated
-integration checks so test state, logs, and backend profiles do not mutate the
-real checkout.
+Use the public `--state-root` and `--runtime-root` global options for isolated
+application integration. `OMNIINFER_STATE_ROOT` and `OMNIINFER_RUNTIME_ROOT`
+are their stable environment equivalents. The older
+`OMNIINFER_RUST_STATE_ROOT` name remains accepted by tests and existing
+automation for compatibility.
 
 ## Local Development
 

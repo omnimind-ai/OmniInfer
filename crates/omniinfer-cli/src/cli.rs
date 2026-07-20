@@ -1,5 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use omniinfer_core::version;
+use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(name = "omniinfer")]
@@ -11,6 +12,12 @@ Rust control-plane prototype for OmniInfer.
 This binary is intentionally experimental. It mirrors the Python OmniInfer CLI
 surface while gateway, runtime, and TUI features are migrated incrementally.")]
 pub(crate) struct Cli {
+    /// Root for OmniInfer state, configuration, logs, models, and default runtimes.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub(crate) state_root: Option<PathBuf>,
+    /// Root containing platform backend runtime directories.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub(crate) runtime_root: Option<PathBuf>,
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
 }
@@ -81,6 +88,9 @@ pub(crate) enum BackendCommand {
         from_source: bool,
         #[arg(long)]
         dry_run: bool,
+        /// Emit newline-delimited JSON progress events on stdout.
+        #[arg(long)]
+        json: bool,
     },
     /// Select a backend.
     Select { backend: String },

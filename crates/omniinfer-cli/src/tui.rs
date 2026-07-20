@@ -344,6 +344,7 @@ fn choose_backend(config: &config::AppConfig) -> Result<Option<String>> {
                     backend: backend.clone(),
                     dry_run: false,
                     from_source: false,
+                    json: false,
                 }) {
                     Ok(()) => {
                         notice(

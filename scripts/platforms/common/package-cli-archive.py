@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -26,6 +28,11 @@ LINUX_GLIBC_BASELINE = (2, 35)
 def run(command: list[str], cwd: Path) -> None:
     print("+", " ".join(command))
     subprocess.run(command, cwd=cwd, check=True)
+
+
+def run_capture(command: list[str], cwd: Path) -> str:
+    print("+", " ".join(command))
+    return subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True).stdout
 
 
 def normalized_machine() -> str:
@@ -96,6 +103,47 @@ def smoke_test(portable_root: Path, platform_name: str) -> None:
             [str(binary), "backend", "install", "llama.cpp-cuda", "--dry-run"],
             portable_root,
         )
+        with tempfile.TemporaryDirectory(prefix="omniinfer-release-smoke-") as temp:
+            state_root = Path(temp) / "state"
+            runtime_root = Path(temp) / "runtimes"
+            output = run_capture(
+                [
+                    str(binary),
+                    "backend",
+                    "install",
+                    "llama.cpp-cpu",
+                    "--dry-run",
+                    "--json",
+                    "--state-root",
+                    str(state_root),
+                    "--runtime-root",
+                    str(runtime_root),
+                ],
+                portable_root,
+            )
+            events = [json.loads(line) for line in output.splitlines()]
+            planned = next(event for event in events if event["event"] == "asset_planned")
+            if planned.get("expected_sha256") != "9d04ebc1af723cb11be09a0ec1f9a375934697e8d7fe57439e508a636c197a28":
+                raise SystemExit("Packaged Windows CPU catalog digest is missing or incorrect.")
+            advisor = json.loads(
+                run_capture(
+                    [
+                        str(binary),
+                        "advisor",
+                        "system",
+                        "--json",
+                        "--state-root",
+                        str(state_root),
+                        "--runtime-root",
+                        str(runtime_root),
+                    ],
+                    portable_root,
+                )
+            )
+            recommendation = advisor["summary"]["recommended_backend_to_install"]
+            backend = next(item for item in advisor["backends"] if item["id"] == recommendation)
+            if not backend.get("prebuilt_installable") or not backend.get("install_command"):
+                raise SystemExit("Advisor recommended a backend that the packaged installer cannot install.")
 
 
 def parse_glibc_version(value: str) -> tuple[int, int] | None:
