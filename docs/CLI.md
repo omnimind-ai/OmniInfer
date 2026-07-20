@@ -104,6 +104,7 @@ Desktop applications can isolate OmniInfer from the package directory with the p
 - `--runtime-root <PATH>` overrides only the directory whose direct children are backend runtime directories such as `llama.cpp-cuda`.
 - Relative CLI paths are resolved against the process working directory.
 - Precedence is CLI option, public environment variable (`OMNIINFER_STATE_ROOT` or `OMNIINFER_RUNTIME_ROOT`), legacy/internal defaults, then the package-local default. `OMNIINFER_RUST_STATE_ROOT` remains accepted for compatibility but is not the preferred public integration API.
+- Explicit CLI roots are preserved across `serve`, its gateway child process, model selection, backend launch, and detached service lifetime.
 
 Use `--json` for streaming machine-readable installation progress. stdout is newline-delimited JSON (JSONL), one complete object per line; human progress is suppressed. Each event has `schema_version: 1`, a monotonic `sequence`, `event`, and `backend`. Download events also report `asset_index`, `asset_count`, `bytes_downloaded`, and `bytes_total` when the server supplies a content length.
 

@@ -163,6 +163,44 @@ pub(super) fn install_fake_backend(root: &std::path::Path, backend_id: &str) {
     }
 }
 
+pub(super) fn install_fake_runtime_server_in_root(
+    runtime_root: &std::path::Path,
+    backend_id: &str,
+) {
+    let launcher_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+    let launcher = runtime_root
+        .join(backend_id)
+        .join("bin")
+        .join(launcher_name);
+    fs::create_dir_all(launcher.parent().unwrap()).expect("create isolated fake runtime dir");
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("fake_llama_server.rs");
+    let mut command = StdCommand::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
+    command
+        .arg("--edition=2021")
+        .arg(&fixture)
+        .arg("-o")
+        .arg(&launcher);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let status = command.status().expect("compile isolated fake runtime");
+    assert!(
+        status.success(),
+        "failed to compile fake runtime fixture {}",
+        fixture.display()
+    );
+}
+
 pub(super) fn test_external_backend_id() -> &'static str {
     if cfg!(target_os = "macos") {
         "llama.cpp-mac"

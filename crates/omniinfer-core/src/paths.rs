@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
 
 const ROOT_OVERRIDE_ENV: &str = "OMNIINFER_RUST_REPO_ROOT";
@@ -24,6 +25,20 @@ pub fn configure_cli_roots(
         )?;
     }
     Ok(())
+}
+
+/// Propagate explicit CLI root overrides to a child OmniInfer process.
+///
+/// Environment-provided roots are inherited normally. CLI roots live in this
+/// process's `OnceLock`s, so they must be copied into the child's public root
+/// environment variables to preserve CLI precedence across process boundaries.
+pub fn propagate_cli_roots(command: &mut Command) {
+    if let Some(root) = STATE_ROOT_OVERRIDE.get() {
+        command.env(STATE_ROOT_OVERRIDE_ENV, root);
+    }
+    if let Some(root) = RUNTIME_ROOT_OVERRIDE.get() {
+        command.env(RUNTIME_ROOT_OVERRIDE_ENV, root);
+    }
 }
 
 fn set_once(cell: &OnceLock<PathBuf>, value: PathBuf, label: &str) -> Result<(), String> {

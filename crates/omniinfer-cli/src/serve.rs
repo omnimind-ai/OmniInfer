@@ -689,6 +689,7 @@ fn start_rust_gateway_child(
         .open(log_path)?;
     let stderr = stdout.try_clone()?;
     let mut command = ProcessCommand::new(std::env::current_exe()?);
+    paths::propagate_cli_roots(&mut command);
     command
         .arg("gateway")
         .arg("--host")
