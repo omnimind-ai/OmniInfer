@@ -1,54 +1,24 @@
-use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use omniinfer_core::{backend_registry, paths};
-use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-const DEFAULT_CATALOG: &str = include_str!("../../../scripts/prebuilt_backends.json");
+use crate::prebuilt_catalog::{
+    PrebuiltCatalog, PrebuiltEntry, current_platform_name, load_catalog,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct InstallOptions {
     pub(crate) backend: String,
     pub(crate) dry_run: bool,
     pub(crate) from_source: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct PrebuiltCatalog {
-    #[serde(default)]
-    mirrors: Vec<String>,
-    platforms: BTreeMap<String, BTreeMap<String, PrebuiltEntry>>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct PrebuiltEntry {
-    source: Option<String>,
-    tag: Option<String>,
-    url: String,
-    archive: String,
-    launcher: String,
-    sha256: Option<String>,
-    #[serde(default)]
-    companion_assets: Vec<CompanionAsset>,
-    #[serde(default)]
-    required_files: Vec<String>,
-    submodule_path: Option<String>,
-    submodule_commit: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct CompanionAsset {
-    url: String,
-    archive: String,
-    sha256: Option<String>,
-    files: Vec<String>,
+    pub(crate) json: bool,
 }
 
 #[derive(Debug)]
@@ -61,7 +31,66 @@ struct DownloadedArchive {
     role: String,
 }
 
+struct InstallReporter {
+    backend: String,
+    json: bool,
+    sequence: u64,
+}
+
+impl InstallReporter {
+    fn new(backend: &str, json: bool) -> Self {
+        Self {
+            backend: backend.to_string(),
+            json,
+            sequence: 0,
+        }
+    }
+
+    fn human(&self, message: impl AsRef<str>) {
+        if !self.json {
+            println!("{}", message.as_ref());
+        }
+    }
+
+    fn event(&mut self, event: &str, fields: Value) {
+        if !self.json {
+            return;
+        }
+        self.sequence += 1;
+        let mut payload = json!({
+            "schema_version": 1,
+            "sequence": self.sequence,
+            "event": event,
+            "backend": self.backend,
+        });
+        if let (Some(target), Some(source)) = (payload.as_object_mut(), fields.as_object()) {
+            for (key, value) in source {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&payload).expect("serialize install event")
+        );
+        let _ = std::io::stdout().flush();
+    }
+}
+
 pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
+    let mut reporter = InstallReporter::new(&options.backend, options.json);
+    let result = install_backend_inner(&options, &mut reporter);
+    if let Err(error) = &result {
+        reporter.event(
+            "error",
+            json!({
+                "message": error.to_string(),
+            }),
+        );
+    }
+    result
+}
+
+fn install_backend_inner(options: &InstallOptions, reporter: &mut InstallReporter) -> Result<()> {
     if options.from_source {
         anyhow::bail!(
             "Source builds require a source checkout. Use `scripts/install-from-source.sh` or run the backend build script from a cloned repository."
@@ -76,28 +105,67 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
     let catalog = load_catalog()?;
     let runtime_dir = PathBuf::from(&spec.runtime_dir);
     let entry_result = catalog_entry(&catalog, platform, &options.backend);
+    reporter.event(
+        "install_started",
+        json!({
+            "platform": platform,
+            "state_root": paths::state_root(),
+            "runtime_root": paths::runtime_root_override(),
+            "runtime_dir": runtime_dir,
+            "dry_run": options.dry_run,
+        }),
+    );
     if spec.binary_exists() {
         match entry_result.as_ref() {
             Ok(entry) => {
                 let missing = missing_required_runtime_files(&runtime_dir, entry)?;
                 if missing.is_empty() {
-                    println!("Backend already installed: {}", options.backend);
-                    if let Some(path) = &spec.launcher_path {
-                        println!("Launcher: {path}");
+                    if let Some(reason) =
+                        existing_prebuilt_verification_failure(&runtime_dir, entry)
+                    {
+                        reporter.human(format!(
+                            "Existing prebuilt backend is not verified by the current catalog; reinstalling {} ({reason})",
+                            options.backend
+                        ));
+                        reporter.event(
+                            "repair_started",
+                            json!({ "reason": reason, "missing_files": [] }),
+                        );
+                    } else {
+                        reporter.human(format!("Backend already installed: {}", options.backend));
+                        if let Some(path) = &spec.launcher_path {
+                            reporter.human(format!("Launcher: {path}"));
+                        }
+                        reporter.event(
+                            "already_installed",
+                            json!({
+                                "runtime_dir": runtime_dir,
+                                "launcher": spec.launcher_path,
+                            }),
+                        );
+                        return Ok(());
                     }
-                    return Ok(());
+                } else {
+                    reporter.human(format!(
+                        "Existing backend is incomplete; reinstalling {} (missing: {})",
+                        options.backend,
+                        missing.join(", ")
+                    ));
+                    reporter.event("repair_started", json!({ "missing_files": missing }));
                 }
-                println!(
-                    "Existing backend is incomplete; reinstalling {} (missing: {})",
-                    options.backend,
-                    missing.join(", ")
-                );
             }
             Err(_) => {
-                println!("Backend already installed: {}", options.backend);
+                reporter.human(format!("Backend already installed: {}", options.backend));
                 if let Some(path) = &spec.launcher_path {
-                    println!("Launcher: {path}");
+                    reporter.human(format!("Launcher: {path}"));
                 }
+                reporter.event(
+                    "already_installed",
+                    json!({
+                        "runtime_dir": runtime_dir,
+                        "launcher": spec.launcher_path,
+                    }),
+                );
                 return Ok(());
             }
         }
@@ -105,16 +173,28 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
     let entry = entry_result?;
     let models_dir = spec.models_dir.as_ref().map(PathBuf::from);
 
-    println!("Prebuilt backend: {}/{}", platform, options.backend);
-    println!("  source: {}", entry.source.as_deref().unwrap_or("-"));
-    println!("  tag: {}", entry.tag.as_deref().unwrap_or("-"));
-    println!("  runtime: {}", runtime_dir.display());
-    println!("  launcher: {}", entry.launcher);
-    if let Some(note) = source_checkout_version_note(&entry) {
-        println!("  version note: {note}");
+    reporter.human(format!(
+        "Prebuilt backend: {}/{}",
+        platform, options.backend
+    ));
+    reporter.human(format!(
+        "  source: {}",
+        entry.source.as_deref().unwrap_or("-")
+    ));
+    reporter.human(format!(
+        "  tag: {}",
+        catalog.resolved_tag(entry).unwrap_or("-")
+    ));
+    reporter.human(format!("  runtime: {}", runtime_dir.display()));
+    reporter.human(format!("  launcher: {}", entry.launcher));
+    if let Some(note) = source_checkout_version_note(&catalog, entry) {
+        reporter.human(format!("  version note: {note}"));
     }
     print_asset_plan(
+        reporter,
         "runtime",
+        1,
+        1 + entry.companion_assets.len(),
         &catalog,
         &entry.url,
         entry.sha256.as_deref(),
@@ -122,7 +202,10 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
     );
     for (index, asset) in entry.companion_assets.iter().enumerate() {
         print_asset_plan(
+            reporter,
             &format!("companion {}", index + 1),
+            index + 2,
+            1 + entry.companion_assets.len(),
             &catalog,
             &asset.url,
             asset.sha256.as_deref(),
@@ -130,10 +213,11 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
         );
     }
     if options.dry_run {
+        reporter.event("dry_run_completed", json!({ "runtime_dir": runtime_dir }));
         return Ok(());
     }
 
-    let archives = download_entry_archives(&catalog, entry)?;
+    let archives = download_entry_archives(&catalog, entry, reporter)?;
     fs::create_dir_all(&runtime_dir)
         .with_context(|| format!("create runtime dir {}", runtime_dir.display()))?;
     if let Some(models_dir) = models_dir {
@@ -144,9 +228,23 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
     let extracted_dir = temp_install_dir(&options.backend)?;
     fs::create_dir_all(&extracted_dir)
         .with_context(|| format!("create temp dir {}", extracted_dir.display()))?;
+    reporter.event(
+        "staging_started",
+        json!({
+            "asset_count": archives.len(),
+            "runtime_dir": runtime_dir,
+        }),
+    );
     let result = prepare_and_install_runtime(&extracted_dir, &runtime_dir, entry, &archives)
         .and_then(|launcher| {
-            write_install_manifest(&runtime_dir, platform, &options.backend, entry, &archives)?;
+            write_install_manifest(
+                &runtime_dir,
+                platform,
+                &options.backend,
+                &catalog,
+                entry,
+                &archives,
+            )?;
             Ok(launcher)
         });
     let cleanup = fs::remove_dir_all(&extracted_dir);
@@ -158,21 +256,19 @@ pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
         );
     }
 
-    println!("Prebuilt backend installed: {}", launcher.display());
+    reporter.human(format!(
+        "Prebuilt backend installed: {}",
+        launcher.display()
+    ));
+    reporter.event(
+        "completed",
+        json!({
+            "runtime_dir": runtime_dir,
+            "launcher": launcher,
+            "manifest": runtime_dir.join("prebuilt.json"),
+        }),
+    );
     Ok(())
-}
-
-fn load_catalog() -> Result<PrebuiltCatalog> {
-    if let Some(path) =
-        std::env::var_os("OMNIINFER_PREBUILT_CATALOG").filter(|value| !value.is_empty())
-    {
-        let path = PathBuf::from(path);
-        let raw = fs::read_to_string(&path)
-            .with_context(|| format!("read prebuilt catalog {}", path.display()))?;
-        return Ok(serde_json::from_str(&raw)
-            .with_context(|| format!("parse prebuilt catalog {}", path.display()))?);
-    }
-    Ok(serde_json::from_str(DEFAULT_CATALOG).context("parse built-in prebuilt catalog")?)
 }
 
 fn catalog_entry<'a>(
@@ -180,24 +276,11 @@ fn catalog_entry<'a>(
     platform: &str,
     backend: &str,
 ) -> Result<&'a PrebuiltEntry> {
-    catalog
-        .platforms
-        .get(platform)
-        .ok_or_else(|| anyhow::anyhow!("no prebuilt catalog entries for platform: {platform}"))?
-        .get(backend)
-        .ok_or_else(|| {
+    catalog.entry(platform, backend).ok_or_else(|| {
             anyhow::anyhow!(
                 "no prebuilt archive is configured for {platform}/{backend}. Use `omniinfer build {backend} --from-source` from a source checkout."
             )
         })
-}
-
-fn current_platform_name() -> &'static str {
-    match std::env::consts::OS {
-        "windows" => "windows",
-        "macos" => "macos",
-        _ => "linux",
-    }
 }
 
 fn mirror_urls(catalog: &PrebuiltCatalog, url: &str) -> Vec<String> {
@@ -221,20 +304,37 @@ fn mirror_urls(catalog: &PrebuiltCatalog, url: &str) -> Vec<String> {
 }
 
 fn print_asset_plan(
+    reporter: &mut InstallReporter,
     role: &str,
+    asset_index: usize,
+    asset_count: usize,
     catalog: &PrebuiltCatalog,
     url: &str,
     expected_sha256: Option<&str>,
     dry_run: bool,
 ) {
     if let Some(expected) = expected_sha256 {
-        println!("  {role} sha256: {expected}");
+        reporter.human(format!("  {role} sha256: {expected}"));
     } else {
-        println!("  {role} checksum: not provided by catalog; recording downloaded archive digest");
+        reporter.human(format!(
+            "  {role} checksum: not provided by catalog; recording downloaded archive digest"
+        ));
     }
+    let candidates = mirror_urls(catalog, url);
+    reporter.event(
+        "asset_planned",
+        json!({
+            "role": role,
+            "asset_index": asset_index,
+            "asset_count": asset_count,
+            "url": url,
+            "candidate_urls": candidates,
+            "expected_sha256": expected_sha256,
+        }),
+    );
     if dry_run {
-        for candidate in mirror_urls(catalog, url) {
-            println!("  {role} would try: {candidate}");
+        for candidate in candidates {
+            reporter.human(format!("  {role} would try: {candidate}"));
         }
     }
 }
@@ -242,13 +342,18 @@ fn print_asset_plan(
 fn download_entry_archives(
     catalog: &PrebuiltCatalog,
     entry: &PrebuiltEntry,
+    reporter: &mut InstallReporter,
 ) -> Result<Vec<DownloadedArchive>> {
-    let mut archives = Vec::with_capacity(1 + entry.companion_assets.len());
+    let asset_count = 1 + entry.companion_assets.len();
+    let mut archives = Vec::with_capacity(asset_count);
     archives.push(download_archive(
         &mirror_urls(catalog, &entry.url),
         entry.sha256.as_deref(),
         "runtime",
         &entry.archive,
+        1,
+        asset_count,
+        reporter,
     )?);
     for (index, asset) in entry.companion_assets.iter().enumerate() {
         archives.push(download_archive(
@@ -256,6 +361,9 @@ fn download_entry_archives(
             asset.sha256.as_deref(),
             &format!("companion {}", index + 1),
             &asset.archive,
+            index + 2,
+            asset_count,
+            reporter,
         )?);
     }
     Ok(archives)
@@ -266,10 +374,13 @@ fn download_archive(
     expected_sha256: Option<&str>,
     role: &str,
     archive_type: &str,
+    asset_index: usize,
+    asset_count: usize,
+    reporter: &mut InstallReporter,
 ) -> Result<DownloadedArchive> {
     let mut last_error = String::new();
     for url in urls {
-        match read_url_bytes(url) {
+        match read_url_bytes(url, role, asset_index, asset_count, reporter) {
             Ok(bytes) => {
                 let sha256 = sha256_hex(&bytes);
                 if let Some(expected) = expected_sha256
@@ -277,8 +388,31 @@ fn download_archive(
                 {
                     last_error =
                         format!("checksum mismatch for {url}: expected {expected}, got {sha256}");
+                    reporter.event(
+                        "checksum_failed",
+                        json!({
+                            "role": role,
+                            "asset_index": asset_index,
+                            "asset_count": asset_count,
+                            "url": url,
+                            "expected_sha256": expected,
+                            "actual_sha256": sha256,
+                        }),
+                    );
                     continue;
                 }
+                reporter.event(
+                    "checksum_verified",
+                    json!({
+                        "role": role,
+                        "asset_index": asset_index,
+                        "asset_count": asset_count,
+                        "url": url,
+                        "bytes": bytes.len(),
+                        "sha256": sha256,
+                        "expected_sha256": expected_sha256,
+                    }),
+                );
                 return Ok(DownloadedArchive {
                     url: url.clone(),
                     bytes,
@@ -290,16 +424,43 @@ fn download_archive(
             }
             Err(error) => {
                 last_error = error.to_string();
+                reporter.event(
+                    "download_failed",
+                    json!({
+                        "role": role,
+                        "asset_index": asset_index,
+                        "asset_count": asset_count,
+                        "url": url,
+                        "message": last_error,
+                    }),
+                );
             }
         }
     }
     anyhow::bail!("failed to download prebuilt archive; last error: {last_error}")
 }
 
-fn read_url_bytes(url: &str) -> Result<Vec<u8>> {
-    println!("Downloading prebuilt archive: {url}");
+fn read_url_bytes(
+    url: &str,
+    role: &str,
+    asset_index: usize,
+    asset_count: usize,
+    reporter: &mut InstallReporter,
+) -> Result<Vec<u8>> {
+    reporter.human(format!("Downloading prebuilt archive: {url}"));
+    reporter.event(
+        "download_started",
+        json!({
+            "role": role,
+            "asset_index": asset_index,
+            "asset_count": asset_count,
+            "url": url,
+        }),
+    );
     if let Some(path) = url.strip_prefix("file://") {
-        return Ok(fs::read(path).with_context(|| format!("read local archive {path}"))?);
+        let file = File::open(path).with_context(|| format!("read local archive {path}"))?;
+        let total = file.metadata().ok().map(|metadata| metadata.len());
+        return read_with_progress(file, total, url, role, asset_index, asset_count, reporter);
     }
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(300)))
@@ -310,12 +471,79 @@ fn read_url_bytes(url: &str) -> Result<Vec<u8>> {
         .header("User-Agent", "OmniInfer-prebuilt-installer")
         .call()
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    Ok(response
-        .body_mut()
-        .with_config()
-        .limit(512 * 1024 * 1024)
-        .read_to_vec()
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?)
+    let total = response.body().content_length();
+    read_with_progress(
+        response.body_mut().as_reader(),
+        total,
+        url,
+        role,
+        asset_index,
+        asset_count,
+        reporter,
+    )
+}
+
+fn read_with_progress(
+    mut reader: impl Read,
+    total: Option<u64>,
+    url: &str,
+    role: &str,
+    asset_index: usize,
+    asset_count: usize,
+    reporter: &mut InstallReporter,
+) -> Result<Vec<u8>> {
+    const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
+    const REPORT_INTERVAL_BYTES: u64 = 1024 * 1024;
+    if total.is_some_and(|value| value > MAX_ARCHIVE_BYTES) {
+        anyhow::bail!("prebuilt archive exceeds the 512 MiB limit");
+    }
+    let mut bytes = Vec::with_capacity(total.unwrap_or_default().min(16 * 1024 * 1024) as usize);
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut downloaded = 0_u64;
+    let mut next_report = REPORT_INTERVAL_BYTES;
+    let mut last_reported = None;
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if count == 0 {
+            break;
+        }
+        downloaded += count as u64;
+        if downloaded > MAX_ARCHIVE_BYTES {
+            anyhow::bail!("prebuilt archive exceeds the 512 MiB limit");
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if downloaded >= next_report || total.is_some_and(|value| downloaded >= value) {
+            reporter.event(
+                "download_progress",
+                json!({
+                    "role": role,
+                    "asset_index": asset_index,
+                    "asset_count": asset_count,
+                    "url": url,
+                    "bytes_downloaded": downloaded,
+                    "bytes_total": total,
+                }),
+            );
+            last_reported = Some(downloaded);
+            next_report = downloaded.saturating_add(REPORT_INTERVAL_BYTES);
+        }
+    }
+    if last_reported != Some(downloaded) {
+        reporter.event(
+            "download_progress",
+            json!({
+                "role": role,
+                "asset_index": asset_index,
+                "asset_count": asset_count,
+                "url": url,
+                "bytes_downloaded": downloaded,
+                "bytes_total": total,
+            }),
+        );
+    }
+    Ok(bytes)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -557,6 +785,53 @@ fn missing_required_runtime_files(
     Ok(missing)
 }
 
+fn existing_prebuilt_verification_failure(
+    runtime_dir: &Path,
+    entry: &PrebuiltEntry,
+) -> Option<String> {
+    let manifest_path = runtime_dir.join("prebuilt.json");
+    if !manifest_path.is_file() {
+        return None;
+    }
+    let raw = match fs::read_to_string(&manifest_path) {
+        Ok(raw) => raw,
+        Err(error) => return Some(format!("cannot read prebuilt manifest: {error}")),
+    };
+    let manifest: Value = match serde_json::from_str(&raw) {
+        Ok(manifest) => manifest,
+        Err(error) => return Some(format!("cannot parse prebuilt manifest: {error}")),
+    };
+    if let Some(expected) = entry.sha256.as_deref() {
+        let actual = manifest
+            .get("archive_sha256")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !expected.eq_ignore_ascii_case(actual) {
+            return Some(format!(
+                "runtime archive digest is {actual:?}, expected {expected}"
+            ));
+        }
+    }
+    let assets = manifest.get("assets").and_then(Value::as_array);
+    for (index, companion) in entry.companion_assets.iter().enumerate() {
+        let Some(expected) = companion.sha256.as_deref() else {
+            continue;
+        };
+        let actual = assets
+            .and_then(|items| items.get(index + 1))
+            .and_then(|asset| asset.get("archive_sha256"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !expected.eq_ignore_ascii_case(actual) {
+            return Some(format!(
+                "companion {} archive digest is {actual:?}, expected {expected}",
+                index + 1
+            ));
+        }
+    }
+    None
+}
+
 fn validate_required_runtime_files(bin_dir: &Path, entry: &PrebuiltEntry) -> Result<()> {
     let mut required = Vec::with_capacity(1 + entry.required_files.len());
     required.push(entry.launcher.as_str());
@@ -663,6 +938,7 @@ fn write_install_manifest(
     runtime_dir: &Path,
     platform: &str,
     backend: &str,
+    catalog: &PrebuiltCatalog,
     entry: &PrebuiltEntry,
     archives: &[DownloadedArchive],
 ) -> Result<()> {
@@ -691,7 +967,7 @@ fn write_install_manifest(
         "platform": platform,
         "backend": backend,
         "source": entry.source,
-        "tag": entry.tag,
+        "tag": catalog.resolved_tag(entry),
         "url": primary.url,
         "archive_sha256": primary.sha256,
         "catalog_sha256": entry.sha256,
@@ -699,8 +975,8 @@ fn write_install_manifest(
         "launcher": entry.launcher,
         "required_files": entry.required_files,
         "assets": asset_records,
-        "submodule_path": entry.submodule_path,
-        "submodule_commit": entry.submodule_commit,
+        "submodule_path": catalog.resolved_submodule_path(entry),
+        "submodule_commit": catalog.resolved_submodule_commit(entry),
     });
     fs::write(
         runtime_dir.join("prebuilt.json"),
@@ -709,12 +985,15 @@ fn write_install_manifest(
     Ok(())
 }
 
-fn source_checkout_version_note(entry: &PrebuiltEntry) -> Option<String> {
-    let submodule_path = entry.submodule_path.as_deref()?;
+fn source_checkout_version_note(
+    catalog: &PrebuiltCatalog,
+    entry: &PrebuiltEntry,
+) -> Option<String> {
+    let submodule_path = catalog.resolved_submodule_path(entry)?;
     if !paths::repo_root().join(submodule_path).exists() {
         return None;
     }
-    let expected = entry.submodule_commit.as_deref()?;
+    let expected = catalog.resolved_submodule_commit(entry)?;
     let actual = git_rev_parse(submodule_path)?;
     if actual == expected {
         Some(format!("{submodule_path} matches {expected}"))

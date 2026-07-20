@@ -173,7 +173,7 @@ fn best_cuda_device(devices: &[Value]) -> Option<Value> {
 }
 
 fn normalize_backends(payload: Value) -> Vec<Value> {
-    let recommended = json_str(&payload, "recommended").map(str::to_string);
+    let installable = prebuilt_catalog::installable_backend_ids();
     payload
         .get("data")
         .and_then(Value::as_array)
@@ -196,10 +196,21 @@ fn normalize_backends(payload: Value) -> Vec<Value> {
                 "hardware_compatible".to_string(),
                 Value::Bool(hardware_compatible),
             );
-            if let Some(id) = map.get("id").and_then(Value::as_str) {
+            if let Some(id) = map.get("id").and_then(Value::as_str).map(str::to_string) {
+                let prebuilt_installable = installable.contains(&id);
+                map.insert(
+                    "prebuilt_installable".to_string(),
+                    Value::Bool(prebuilt_installable),
+                );
+                map.insert(
+                    "install_command".to_string(),
+                    prebuilt_installable
+                        .then(|| Value::String(format!("omniinfer backend install {id}")))
+                        .unwrap_or(Value::Null),
+                );
                 map.insert(
                     "priority".to_string(),
-                    Value::Number(priority_for_backend(id, recommended.as_deref()).into()),
+                    Value::Number(backend_priority(&id).into()),
                 );
             }
             Some(backend)
@@ -222,42 +233,10 @@ fn recommended_backend_to_install(backends: &[Value]) -> Option<String> {
         .iter()
         .filter(|backend| !json_bool(backend, "installed").unwrap_or(false))
         .filter(|backend| json_bool(backend, "hardware_compatible").unwrap_or(false))
+        .filter(|backend| json_bool(backend, "prebuilt_installable").unwrap_or(false))
         .min_by_key(|backend| json_u64(backend, "priority").unwrap_or(999))
         .and_then(|backend| json_str(backend, "id"))
         .map(str::to_string)
-}
-
-fn priority_for_backend(id: &str, recommended: Option<&str>) -> u64 {
-    if recommended == Some(id) {
-        return 0;
-    }
-    match id {
-        "llama.cpp-mac"
-        | "turboquant-mac"
-        | "mlx-mac"
-        | "llama.cpp-cuda"
-        | "llama.cpp-vulkan"
-        | "llama.cpp-sycl"
-        | "llama.cpp-hip"
-        | "llama.cpp-linux-cuda"
-        | "llama.cpp-linux-rocm"
-        | "llama.cpp-linux-vulkan"
-        | "omniinfer-native-linux"
-        | "llama.cpp-linux-openvino"
-        | "llama.cpp-ios"
-        | "mlx-ios"
-        | "ik_llama.cpp-linux-cuda"
-        | "ik_llama.cpp-cuda" => 0,
-        "llama.cpp-mac-intel"
-        | "llama.cpp-linux"
-        | "llama.cpp-linux-s390x"
-        | "llama.cpp-cpu"
-        | "llama.cpp-windows-arm64"
-        | "ik_llama.cpp-linux"
-        | "ik_llama.cpp-cpu" => 1,
-        "vllm-linux-cuda" => 2,
-        _ => 99,
-    }
 }
 
 fn mib_to_gib(value: f64) -> f64 {
@@ -269,5 +248,48 @@ fn bytes_to_gib(value: u64) -> Option<f64> {
         None
     } else {
         Some(round_gib(value as f64 / 1024.0 / 1024.0 / 1024.0))
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_recommendation_requires_catalog_entry() {
+        let backends = normalize_backends(json!({
+            "recommended": "ik_llama.cpp-cuda",
+            "data": [
+                {
+                    "id": "ik_llama.cpp-cuda",
+                    "binary_exists": false,
+                    "compatibility": "compatible"
+                },
+                {
+                    "id": "llama.cpp-cuda",
+                    "binary_exists": false,
+                    "compatibility": "compatible"
+                }
+            ]
+        }));
+        assert_eq!(
+            recommended_backend_to_install(&backends).as_deref(),
+            Some("llama.cpp-cuda")
+        );
+        let ik = backends
+            .iter()
+            .find(|backend| json_str(backend, "id") == Some("ik_llama.cpp-cuda"))
+            .unwrap();
+        let llama = backends
+            .iter()
+            .find(|backend| json_str(backend, "id") == Some("llama.cpp-cuda"))
+            .unwrap();
+        assert_eq!(ik["prebuilt_installable"], false);
+        assert!(ik["install_command"].is_null());
+        assert_eq!(llama["prebuilt_installable"], true);
+        assert_eq!(
+            llama["install_command"],
+            "omniinfer backend install llama.cpp-cuda"
+        );
     }
 }

@@ -14,6 +14,7 @@ mod cloudflare;
 mod gateway;
 mod local_gateway;
 mod model_commands;
+mod prebuilt_catalog;
 mod serve;
 mod tui;
 
@@ -40,6 +41,8 @@ pub(crate) use serve::{
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    paths::configure_cli_roots(cli.state_root.clone(), cli.runtime_root.clone())
+        .map_err(|error| anyhow::anyhow!(error))?;
     match cli.command.as_ref() {
         None => tui::run()?,
         Some(Command::Status) => print_status(),
@@ -62,11 +65,13 @@ fn run_ported_command(command: &Command) -> Result<()> {
                     prebuilt: _,
                     from_source,
                     dry_run,
+                    json,
                 },
         } => backend_installer::install_backend(backend_installer::InstallOptions {
             backend: backend.clone(),
             dry_run: *dry_run,
             from_source: *from_source,
+            json: *json,
         }),
         Command::Backend {
             command: BackendCommand::Select { backend },
@@ -83,6 +88,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
                 backend: backend.clone(),
                 dry_run: false,
                 from_source: false,
+                json: false,
             })
         }
         Command::Build { .. } if !source_build_scripts_available() => anyhow::bail!(

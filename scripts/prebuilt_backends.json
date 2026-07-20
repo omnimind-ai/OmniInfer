@@ -1,89 +1,79 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "mirrors": [
     "https://ghfast.top/"
   ],
+  "sources": {
+    "ggml-org/llama.cpp": {
+      "tag": "b9500",
+      "submodule_path": "framework/llama.cpp",
+      "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+    }
+  },
   "platforms": {
     "linux": {
       "llama.cpp-linux": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-x64.tar.gz",
         "archive": "tar.gz",
         "launcher": "llama-server",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "d6d370a509166788d191261225746adc9dee0666973a989897b2224ef5073b30"
       },
       "llama.cpp-linux-rocm": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-rocm-7.2-x64.tar.gz",
         "archive": "tar.gz",
         "launcher": "llama-server",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "df8b41897a2d4a8b293d4dc8ae84702fcefc065ac46921be4a873060d9a09c1d"
       },
       "llama.cpp-linux-vulkan": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-vulkan-x64.tar.gz",
         "archive": "tar.gz",
         "launcher": "llama-server",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "5614d2786372a95d4e5f2d7994d790aa445983969dd9ad8324fe839728738eae"
       },
       "llama.cpp-linux-s390x": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-s390x.tar.gz",
         "archive": "tar.gz",
         "launcher": "llama-server",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "a793ada7ede011e32ffb123d61668bc79b265819577267d1c88a77729e957e63"
       },
       "llama.cpp-linux-openvino": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-ubuntu-openvino-2026.0-x64.tar.gz",
         "archive": "tar.gz",
         "launcher": "llama-server",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "f502f9982937f698577fe388c20471137fa63c22449aa64812596f18fe415a37"
       }
     },
     "macos": {
       "llama.cpp-mac": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-macos-arm64.tar.gz",
         "archive": "tar.gz",
         "launcher": "llama-server",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "3b2fca4a5c819892e087e346aca957f12b0ad6723560dedb99ffa6c68698b055"
       },
       "llama.cpp-mac-intel": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-macos-x64.tar.gz",
         "archive": "tar.gz",
         "launcher": "llama-server",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "5bd1157244cd007ecd48f913c492ab2e66f02504a3c8188378cfdb5b5a21e8ec"
       }
     },
     "windows": {
       "llama.cpp-cpu": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cpu-x64.zip",
         "archive": "zip",
         "launcher": "llama-server.exe",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "9d04ebc1af723cb11be09a0ec1f9a375934697e8d7fe57439e508a636c197a28"
       },
       "llama.cpp-cuda": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cuda-12.4-x64.zip",
         "archive": "zip",
         "launcher": "llama-server.exe",
@@ -104,36 +94,28 @@
           "cudart64_12.dll",
           "cublas64_12.dll",
           "cublasLt64_12.dll"
-        ],
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        ]
       },
       "llama.cpp-hip": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-hip-radeon-x64.zip",
         "archive": "zip",
         "launcher": "llama-server.exe",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "ca8b9df5a69ae3ae242582636e43021acee2bfd3363517ab5fbc5652fcc16ea7"
       },
       "llama.cpp-vulkan": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-vulkan-x64.zip",
         "archive": "zip",
         "launcher": "llama-server.exe",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "9be538f17a8d0e90493478cd20ad6e021cb408e45db4c2fe3781be2733421b57"
       },
       "llama.cpp-windows-arm64": {
         "source": "ggml-org/llama.cpp",
-        "tag": "b9500",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cpu-arm64.zip",
         "archive": "zip",
         "launcher": "llama-server.exe",
-        "submodule_path": "framework/llama.cpp",
-        "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
+        "sha256": "d2fbf017770c3558b30cde309f607d13900aa663e65204a18327efe3b2c7ea87"
       }
     }
   }

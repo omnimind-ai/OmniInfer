@@ -78,12 +78,33 @@ The Rust installer owns multi-asset download, pinned SHA256 verification, staged
 
 Prebuilt versioning is explicit:
 
-- `scripts/prebuilt_backends.json` records the upstream source, release tag, primary archive, optional companion assets, pinned SHA256 values, required runtime files, launcher name, and expected source submodule commit when known.
+- `scripts/prebuilt_backends.json` schema 3 keeps each upstream release tag and expected submodule commit once under `sources`, while platform entries record primary archives, companion assets, pinned SHA256 values, required runtime files, and launcher names.
 - A prebuilt llama.cpp runtime is an upstream release artifact. It is only source-aligned when the catalog tag and `framework/llama.cpp` submodule are pinned to the same upstream release tag or commit.
 - If a source checkout has a different `framework/llama.cpp` commit than the catalog entry, the Rust installer prints a version note and records the catalog metadata in `prebuilt.json`.
 - If no official asset exists, leave the catalog entry absent. For example, llama.cpp `b9500` publishes Linux CPU, ROCm, Vulkan, OpenVINO, macOS, and Windows CUDA assets, but not a Linux CUDA archive.
 - Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and all downloaded URLs and digests.
 - Windows `llama.cpp-cuda` requires the matching llama.cpp CUDA runtime companion asset. The three required CUDA DLLs are validated before activation, and an incomplete older install is repaired on the next `backend install` invocation.
+- Existing `prebuilt.json` archive digests are compared with newly pinned catalog digests before an installed runtime is accepted. A mismatched or malformed managed manifest triggers a transactional reinstall; an unmanaged/source-built runtime without `prebuilt.json` is not overwritten merely because it exists.
+
+Validate catalog structure, URL/tag consistency, and complete SHA256 coverage before committing:
+
+```bash
+python scripts/update_prebuilt_catalog.py check
+```
+
+When a future llama.cpp submodule update should move the prebuilt release at the same time, update the gitlink first and run the catalog updater. It fetches the named official GitHub Release, updates every primary and companion URL/digest for that source, and records the gitlink commit once:
+
+```bash
+git submodule update --init framework/llama.cpp
+# Move framework/llama.cpp to the reviewed upstream release commit and stage the gitlink.
+python scripts/update_prebuilt_catalog.py update \
+  --source ggml-org/llama.cpp \
+  --tag bNNNN \
+  --submodule-commit current
+python scripts/update_prebuilt_catalog.py check --require-gitlink-match
+```
+
+Do not use the update command for a submodule-only development commit that has no matching official prebuilt Release. In that case, retain the existing catalog source metadata so the installer continues to report the intentional source/prebuilt mismatch.
 
 ## Runtime Output Layout
 

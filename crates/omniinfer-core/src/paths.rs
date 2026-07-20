@@ -1,7 +1,54 @@
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 const ROOT_OVERRIDE_ENV: &str = "OMNIINFER_RUST_REPO_ROOT";
-const STATE_ROOT_OVERRIDE_ENV: &str = "OMNIINFER_RUST_STATE_ROOT";
+const STATE_ROOT_OVERRIDE_ENV: &str = "OMNIINFER_STATE_ROOT";
+const LEGACY_STATE_ROOT_OVERRIDE_ENV: &str = "OMNIINFER_RUST_STATE_ROOT";
+const RUNTIME_ROOT_OVERRIDE_ENV: &str = "OMNIINFER_RUNTIME_ROOT";
+
+static STATE_ROOT_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+static RUNTIME_ROOT_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn configure_cli_roots(
+    state_root: Option<PathBuf>,
+    runtime_root: Option<PathBuf>,
+) -> Result<(), String> {
+    if let Some(root) = state_root {
+        set_once(&STATE_ROOT_OVERRIDE, absolute_cli_path(root), "state root")?;
+    }
+    if let Some(root) = runtime_root {
+        set_once(
+            &RUNTIME_ROOT_OVERRIDE,
+            absolute_cli_path(root),
+            "runtime root",
+        )?;
+    }
+    Ok(())
+}
+
+fn set_once(cell: &OnceLock<PathBuf>, value: PathBuf, label: &str) -> Result<(), String> {
+    if let Some(existing) = cell.get() {
+        if existing == &value {
+            return Ok(());
+        }
+        return Err(format!(
+            "{label} is already configured as {}",
+            existing.display()
+        ));
+    }
+    cell.set(value)
+        .map_err(|_| format!("failed to configure {label}"))
+}
+
+fn absolute_cli_path(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&path))
+            .unwrap_or(path)
+    }
+}
 
 pub fn repo_root() -> PathBuf {
     if let Some(root) = std::env::var_os(ROOT_OVERRIDE_ENV).filter(|value| !value.is_empty()) {
@@ -57,12 +104,27 @@ pub fn config_dir() -> PathBuf {
     state_root().join("config")
 }
 
-fn state_root() -> PathBuf {
-    if let Some(root) = std::env::var_os(STATE_ROOT_OVERRIDE_ENV).filter(|value| !value.is_empty())
+pub fn state_root() -> PathBuf {
+    if let Some(root) = STATE_ROOT_OVERRIDE.get() {
+        return root.clone();
+    }
+    if let Some(root) = std::env::var_os(STATE_ROOT_OVERRIDE_ENV)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var_os(LEGACY_STATE_ROOT_OVERRIDE_ENV).filter(|value| !value.is_empty())
+        })
     {
         return PathBuf::from(root);
     }
     repo_root()
+}
+
+pub fn runtime_root_override() -> Option<PathBuf> {
+    RUNTIME_ROOT_OVERRIDE.get().cloned().or_else(|| {
+        std::env::var_os(RUNTIME_ROOT_OVERRIDE_ENV)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    })
 }
 
 pub fn local_config_dir() -> PathBuf {

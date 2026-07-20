@@ -257,10 +257,10 @@ pub fn backend_priority(backend_id: &str) -> i32 {
         "llama.cpp-windows-arm64" => 1,
         "llama.cpp-ios" => 0,
         "mlx-ios" => 0,
-        "ik_llama.cpp-linux" => 1,
-        "ik_llama.cpp-linux-cuda" => 0,
-        "ik_llama.cpp-cpu" => 1,
-        "ik_llama.cpp-cuda" => 0,
+        "ik_llama.cpp-linux" => 11,
+        "ik_llama.cpp-linux-cuda" => 10,
+        "ik_llama.cpp-cpu" => 11,
+        "ik_llama.cpp-cuda" => 10,
         _ => 99,
     }
 }
@@ -312,6 +312,9 @@ fn build_backend_spec(
 }
 
 fn discover_runtime_root(host: HostInfo, requested_runtime_root: &str) -> PathBuf {
+    if let Some(root) = paths::runtime_root_override() {
+        return root;
+    }
     let requested = requested_runtime_root.trim();
     if !requested.is_empty() {
         let requested_path = resolve_app_path(PathBuf::from(requested));
@@ -1231,5 +1234,14 @@ mod tests {
         assert_eq!(payload["compatibility"], "compatible");
         assert_eq!(payload["hardware_compatible"], true);
         assert_eq!(payload["priority"], 0);
+    }
+
+    #[test]
+    fn validated_llama_backends_rank_before_experimental_ik_backends() {
+        assert!(backend_priority("llama.cpp-cuda") < backend_priority("ik_llama.cpp-cuda"));
+        assert!(
+            backend_priority("llama.cpp-linux-cuda") < backend_priority("ik_llama.cpp-linux-cuda")
+        );
+        assert!(backend_priority("llama.cpp-cpu") < backend_priority("ik_llama.cpp-cpu"));
     }
 }

@@ -48,6 +48,8 @@ omniinfer backend list
 omniinfer backend install llama.cpp-linux
 ```
 
+Desktop integrations can add `--state-root <path>` and `--runtime-root <path>` to isolate managed files, and `backend install ... --json` emits streaming JSONL progress. See [CLI Usage](docs/CLI.md#2-install-a-backend-runtime) for the stable integration contract.
+
 You can also run `omniinfer` with no arguments to open the TUI; when a compatible backend is missing, the TUI can install the prebuilt runtime before model loading.
 
 macOS arm64 and Windows x64 CLI-only archives are available from [GitHub Releases](https://github.com/omnimind-ai/OmniInfer/releases). Homebrew, Scoop, npm, and platform-native one-line installers are planned.

@@ -54,6 +54,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Validate prebuilt runtime catalog
+        run: python scripts/update_prebuilt_catalog.py check
+
       - name: Build CLI archive
         shell: bash
         run: |

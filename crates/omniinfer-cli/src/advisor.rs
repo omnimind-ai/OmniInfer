@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Result;
-use omniinfer_core::model_load::DEFAULT_LOAD_CONTEXT_SIZE;
+use omniinfer_core::{backend_registry::backend_priority, model_load::DEFAULT_LOAD_CONTEXT_SIZE};
 use serde_json::{Value, json};
 
-use crate::{current_system_name, json_bool, json_str, json_u64};
+use crate::{current_system_name, json_bool, json_str, json_u64, prebuilt_catalog};
 
 mod model;
 mod output;

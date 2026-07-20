@@ -92,6 +92,27 @@ Windows:
 
 The Windows CUDA entry installs both the llama.cpp CUDA package and its matching CUDA runtime companion package. A system CUDA Toolkit is not required; the NVIDIA driver is still required.
 
+Desktop applications can isolate OmniInfer from the package directory with the public global root options. Global options may appear before or after the subcommands:
+
+```powershell
+.\omniinfer.exe backend install llama.cpp-cuda `
+  --state-root "C:\Users\me\AppData\Local\OmniStudio\omniinfer" `
+  --runtime-root "C:\Users\me\AppData\Local\OmniStudio\runtimes"
+```
+
+- `--state-root <PATH>` owns OmniInfer state, configuration, logs, models, and the default runtime location.
+- `--runtime-root <PATH>` overrides only the directory whose direct children are backend runtime directories such as `llama.cpp-cuda`.
+- Relative CLI paths are resolved against the process working directory.
+- Precedence is CLI option, public environment variable (`OMNIINFER_STATE_ROOT` or `OMNIINFER_RUNTIME_ROOT`), legacy/internal defaults, then the package-local default. `OMNIINFER_RUST_STATE_ROOT` remains accepted for compatibility but is not the preferred public integration API.
+
+Use `--json` for streaming machine-readable installation progress. stdout is newline-delimited JSON (JSONL), one complete object per line; human progress is suppressed. Each event has `schema_version: 1`, a monotonic `sequence`, `event`, and `backend`. Download events also report `asset_index`, `asset_count`, `bytes_downloaded`, and `bytes_total` when the server supplies a content length.
+
+```powershell
+.\omniinfer.exe backend install llama.cpp-cuda --json --state-root <state> --runtime-root <runtimes>
+```
+
+The stable event names are `install_started`, `asset_planned`, `download_started`, `download_progress`, `checksum_verified`, `checksum_failed`, `download_failed`, `repair_started`, `staging_started`, `already_installed`, `dry_run_completed`, `completed`, and `error`. A failed command exits non-zero and ends stdout with an `error` event. Consumers must ignore unknown event names and fields for forward compatibility.
+
 The legacy compatibility command is still accepted:
 
 ```sh
@@ -160,7 +181,14 @@ Inspect hardware and runtime availability:
 ./omniinfer advisor system --json
 ```
 
-The text output groups host, GPU, and backend readiness. If no compatible runtime is installed, it shows a short source-checkout install command for a compatible backend.
+The text output groups host, GPU, and backend readiness. If no compatible runtime is installed, it shows a prebuilt install command only for a backend present in the current platform catalog.
+
+In `advisor system --json`, hardware compatibility and installer availability are separate contracts:
+
+- `hardware_compatible` means the device can support the backend.
+- `prebuilt_installable` means the current platform catalog contains an asset that `backend install` can install.
+- `install_command` is non-null only when `prebuilt_installable` is true.
+- `summary.recommended_backend_to_install` only selects a hardware-compatible, prebuilt-installable backend. Validated official llama.cpp packages rank ahead of experimental ik_llama.cpp builds; on a supported Windows NVIDIA system the install recommendation is `llama.cpp-cuda`, not `ik_llama.cpp-cuda`.
 
 Inspect a model artifact:
 

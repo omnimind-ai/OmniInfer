@@ -92,6 +92,127 @@ fn backend_install_prebuilt_from_local_catalog() {
 }
 
 #[test]
+fn backend_install_public_roots_emit_jsonl_progress() {
+    let source_root = temp_repo_root("backend-install-json-source");
+    let state_root = temp_repo_root("backend-install-json-state");
+    let runtime_root = temp_repo_root("backend-install-json-runtime");
+    fs::create_dir_all(&source_root).expect("create source root");
+    let backend_id = test_external_backend_id();
+    let fixture = write_prebuilt_fixture(&source_root, backend_id, false);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    let output = cmd
+        .env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["backend", "install", backend_id, "--state-root"])
+        .arg(&state_root)
+        .arg("--runtime-root")
+        .arg(&runtime_root)
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = String::from_utf8(output)
+        .expect("UTF-8 JSONL")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON event"))
+        .collect::<Vec<_>>();
+
+    assert!(!events.is_empty());
+    assert!(events.iter().all(|event| event["schema_version"] == 1));
+    assert!(
+        events
+            .windows(2)
+            .all(|pair| pair[0]["sequence"].as_u64() < pair[1]["sequence"].as_u64())
+    );
+    for name in [
+        "install_started",
+        "asset_planned",
+        "download_started",
+        "download_progress",
+        "checksum_verified",
+        "staging_started",
+        "completed",
+    ] {
+        assert!(
+            events.iter().any(|event| event["event"] == name),
+            "missing {name} event"
+        );
+    }
+    let completed = events
+        .iter()
+        .find(|event| event["event"] == "completed")
+        .expect("completed event");
+    assert_eq!(
+        std::path::PathBuf::from(completed["runtime_dir"].as_str().unwrap()),
+        runtime_root.join(backend_id)
+    );
+    assert!(
+        runtime_root
+            .join(backend_id)
+            .join("bin")
+            .join(if cfg!(windows) {
+                "llama-server.exe"
+            } else {
+                "llama-server"
+            })
+            .is_file()
+    );
+    assert!(!state_root.join(".local").join("runtime").exists());
+
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+    fs::remove_dir_all(runtime_root).ok();
+}
+
+#[test]
+fn backend_install_repairs_manifest_not_verified_by_current_catalog() {
+    let root = temp_repo_root("backend-install-reverify");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    let backend_id = test_external_backend_id();
+    let fixture = write_prebuilt_fixture(&root, backend_id, false);
+
+    let run_install = || {
+        let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+        cmd.env("OMNIINFER_RUST_STRICT", "1")
+            .env("OMNIINFER_RUST_REPO_ROOT", &root)
+            .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+            .args(["backend", "install", backend_id])
+            .assert()
+    };
+    run_install().success();
+
+    let runtime_dir = root
+        .join(".local")
+        .join("runtime")
+        .join(test_runtime_platform_dir())
+        .join(backend_id);
+    let manifest_path = runtime_dir.join("prebuilt.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    manifest["archive_sha256"] = serde_json::Value::String("0".repeat(64));
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    run_install()
+        .success()
+        .stdout(predicate::str::contains(
+            "Existing prebuilt backend is not verified by the current catalog; reinstalling",
+        ))
+        .stdout(predicate::str::contains("Prebuilt backend installed:"));
+    let repaired: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    assert_eq!(repaired["archive_sha256"], fixture.sha256);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn backend_install_prebuilt_rejects_checksum_mismatch() {
     let root = temp_repo_root("backend-install-checksum");
     fs::create_dir_all(root.join("config")).expect("create config dir");
@@ -113,6 +234,38 @@ fn backend_install_prebuilt_rejects_checksum_mismatch() {
     assert!(
         !installed_launcher(&root, backend_id).exists(),
         "checksum failure must not install launcher"
+    );
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn backend_install_json_failure_ends_with_error_event() {
+    let root = temp_repo_root("backend-install-json-checksum");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    let backend_id = test_external_backend_id();
+    let fixture = write_prebuilt_fixture(&root, backend_id, true);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    let output = cmd
+        .env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["backend", "install", backend_id, "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let events = String::from_utf8(output)
+        .expect("UTF-8 JSONL")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON event"))
+        .collect::<Vec<_>>();
+    assert_eq!(events.last().unwrap()["event"], "error");
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"] == "checksum_failed")
     );
     fs::remove_dir_all(root).ok();
 }
