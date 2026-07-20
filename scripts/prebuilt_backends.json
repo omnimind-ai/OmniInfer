@@ -87,6 +87,24 @@
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/llama-b9500-bin-win-cuda-12.4-x64.zip",
         "archive": "zip",
         "launcher": "llama-server.exe",
+        "sha256": "b2b1a00f7470259b594cdd4cfc100c8fb53dc2070b83e6d2b715632e578136e7",
+        "companion_assets": [
+          {
+            "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9500/cudart-llama-bin-win-cuda-12.4-x64.zip",
+            "archive": "zip",
+            "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+            "files": [
+              "cudart64_12.dll",
+              "cublas64_12.dll",
+              "cublasLt64_12.dll"
+            ]
+          }
+        ],
+        "required_files": [
+          "cudart64_12.dll",
+          "cublas64_12.dll",
+          "cublasLt64_12.dll"
+        ],
         "submodule_path": "framework/llama.cpp",
         "submodule_commit": "3d1998634e62b3a9920ea549c920bfc356ac599e"
       },

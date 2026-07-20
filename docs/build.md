@@ -74,15 +74,16 @@ For example:
 ./omniinfer build <backend> --from-source
 ```
 
-The Rust installer owns download, checksum verification, extraction, and manifest writing. Source build scripts still own compilation from checked-out submodules. Shared llama.cpp release URLs live in `scripts/prebuilt_backends.json`, but a backend is only offered as prebuilt when that catalog contains a matching entry for the current platform.
+The Rust installer owns multi-asset download, pinned SHA256 verification, staged extraction, required-file validation, atomic activation, and manifest writing. Source build scripts still own compilation from checked-out submodules. Shared llama.cpp release URLs live in `scripts/prebuilt_backends.json`, but a backend is only offered as prebuilt when that catalog contains a matching entry for the current platform.
 
 Prebuilt versioning is explicit:
 
-- `scripts/prebuilt_backends.json` records the upstream source, release tag, archive URL, archive type, launcher name, and expected source submodule commit when known.
+- `scripts/prebuilt_backends.json` records the upstream source, release tag, primary archive, optional companion assets, pinned SHA256 values, required runtime files, launcher name, and expected source submodule commit when known.
 - A prebuilt llama.cpp runtime is an upstream release artifact. It is only source-aligned when the catalog tag and `framework/llama.cpp` submodule are pinned to the same upstream release tag or commit.
 - If a source checkout has a different `framework/llama.cpp` commit than the catalog entry, the Rust installer prints a version note and records the catalog metadata in `prebuilt.json`.
 - If no official asset exists, leave the catalog entry absent. For example, llama.cpp `b9500` publishes Linux CPU, ROCm, Vulkan, OpenVINO, macOS, and Windows CUDA assets, but not a Linux CUDA archive.
-- Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and download URL used.
+- Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and all downloaded URLs and digests.
+- Windows `llama.cpp-cuda` requires the matching llama.cpp CUDA runtime companion asset. The three required CUDA DLLs are validated before activation, and an incomplete older install is repaired on the next `backend install` invocation.
 
 ## Runtime Output Layout
 

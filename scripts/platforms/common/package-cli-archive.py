@@ -91,6 +91,11 @@ def smoke_test(portable_root: Path, platform_name: str) -> None:
 
     run([str(binary), "--version"], portable_root)
     run([str(binary), "--help"], portable_root)
+    if platform_name == "windows":
+        run(
+            [str(binary), "backend", "install", "llama.cpp-cuda", "--dry-run"],
+            portable_root,
+        )
 
 
 def parse_glibc_version(value: str) -> tuple[int, int] | None:

@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::OpenOptions;
-use std::net::{TcpStream, UdpSocket};
+use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
@@ -60,6 +60,39 @@ fn wait_for_local_port_closed(port: u16, timeout: Duration) -> bool {
     TcpStream::connect(("127.0.0.1", port)).is_err()
 }
 
+fn ensure_serve_port_available(config: &config::AppConfig) -> Result<()> {
+    #[cfg(debug_assertions)]
+    if env_flag("OMNIINFER_TEST_ALLOW_OCCUPIED_SERVE_PORT") {
+        return Ok(());
+    }
+    match TcpListener::bind((config.host.as_str(), config.port)) {
+        Ok(listener) => {
+            drop(listener);
+            Ok(())
+        }
+        Err(error) => anyhow::bail!(
+            "cannot start OmniInfer service: {}:{} is already in use ({error}). Stop the existing service or choose another --port.",
+            config.host,
+            config.port
+        ),
+    }
+}
+
+fn cleanup_failed_serve(
+    gateway: &mut std::process::Child,
+    cloudflared: Option<&mut std::process::Child>,
+    port: u16,
+) {
+    if let Some(tunnel) = cloudflared {
+        let _ = tunnel.kill();
+        let _ = tunnel.wait();
+    }
+    stop_process(gateway.id());
+    let _ = gateway.wait();
+    let _ = wait_for_local_port_closed(port, Duration::from_secs(5));
+    let _ = serve_state::remove_serve_pid_info(port);
+}
+
 fn stop_process(pid: u32) {
     #[cfg(unix)]
     {
@@ -67,9 +100,10 @@ fn stop_process(pid: u32) {
     }
     #[cfg(windows)]
     {
-        let _ = ProcessCommand::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        let mut command = ProcessCommand::new("taskkill");
+        command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        hide_child_window(&mut command);
+        let _ = command.status();
     }
 }
 
@@ -153,10 +187,11 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     }
     reject_embedded_serve_backend(args)?;
     let public_config = config.clone();
+    ensure_serve_port_available(&public_config)?;
     let log_path = paths::local_logs_dir().join(format!("serve-{}.log", public_config.port));
     println!("Starting OmniInfer service on port {}...", config.port);
     println!("Log: {}", log_path.display());
-    let rust_gateway = start_rust_gateway_child(
+    let mut rust_gateway = start_rust_gateway_child(
         &public_config,
         args,
         &log_path,
@@ -165,14 +200,23 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         &admin_api_keys,
         public_model_root.as_deref(),
     )?;
-    wait_for_gateway_ready(&public_config)?;
+    if let Err(error) = wait_for_gateway_ready(&public_config) {
+        cleanup_failed_serve(&mut rust_gateway, None, public_config.port);
+        return Err(error.into());
+    }
     let mut cloudflared_child = None;
     let mut public_url = None;
     if args.cloudflare {
         let cloudflared = resolve_cloudflared(args.cloudflared_path.as_deref())?;
         let local_url = format!("http://127.0.0.1:{}", config.port);
         let (child, url) =
-            start_cloudflare_quick_tunnel(&cloudflared, &local_url, &log_path, args.detach)?;
+            match start_cloudflare_quick_tunnel(&cloudflared, &local_url, &log_path, args.detach) {
+                Ok(result) => result,
+                Err(error) => {
+                    cleanup_failed_serve(&mut rust_gateway, None, public_config.port);
+                    return Err(error);
+                }
+            };
         cloudflared_child = Some(child);
         public_url = Some(url);
     }
@@ -224,15 +268,25 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     match configure_result {
         Ok(_) => {}
         Err(error) => {
-            if let Some(mut child) = cloudflared_child {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            stop_process(rust_gateway.id());
+            cleanup_failed_serve(
+                &mut rust_gateway,
+                cloudflared_child.as_mut(),
+                public_config.port,
+            );
             return Err(error);
         }
     }
-    let state = get_serve_health_state(&public_config)?;
+    let state = match get_serve_health_state(&public_config) {
+        Ok(state) => state,
+        Err(error) => {
+            cleanup_failed_serve(
+                &mut rust_gateway,
+                cloudflared_child.as_mut(),
+                public_config.port,
+            );
+            return Err(error);
+        }
+    };
     let mut smoke_text = None;
     let mut smoke_failed = false;
     if args.smoke_test {
@@ -267,7 +321,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             }
         }
     }
-    serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
+    if let Err(error) = serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
         pid: Some(rust_gateway.id()),
         cloudflared_pid: cloudflared_child.as_ref().map(std::process::Child::id),
         port: Some(public_config.port),
@@ -283,7 +337,14 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         backend_ready: json_bool(&state, "backend_ready"),
         backend_pid: json_u64(&state, "backend_pid").and_then(|value| u32::try_from(value).ok()),
         backend_port: json_u64(&state, "backend_port").and_then(|value| u16::try_from(value).ok()),
-    })?;
+    }) {
+        cleanup_failed_serve(
+            &mut rust_gateway,
+            cloudflared_child.as_mut(),
+            public_config.port,
+        );
+        return Err(error.into());
+    }
     print_serve_ready(
         public_config.port,
         &state,
@@ -298,6 +359,11 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         smoke_text.as_deref(),
     );
     if smoke_failed {
+        cleanup_failed_serve(
+            &mut rust_gateway,
+            cloudflared_child.as_mut(),
+            public_config.port,
+        );
         anyhow::bail!("smoke test failed");
     }
     if !args.detach {

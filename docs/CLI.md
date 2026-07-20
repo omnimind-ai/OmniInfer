@@ -75,7 +75,7 @@ Install a prebuilt backend runtime through the CLI:
 ./omniinfer backend install <backend>
 ```
 
-The default install mode is prebuilt. It downloads the runtime archive from the built-in prebuilt catalog, verifies the archive when a catalog checksum is available, extracts the launcher into `.local/runtime/<platform>/<backend>/bin`, and writes `prebuilt.json` with the installed source/tag/archive metadata.
+The default install mode is prebuilt. It downloads every runtime and companion archive declared by the built-in catalog, verifies each pinned SHA256, stages and validates the complete runtime, then atomically activates it under `.local/runtime/<platform>/<backend>/bin`. The installer writes `prebuilt.json` with every downloaded asset and digest. If an older installation has a launcher but is missing catalog-required files, rerunning `backend install` repairs it instead of reporting it as installed.
 
 For example:
 
@@ -87,7 +87,10 @@ Windows:
 
 ```powershell
 .\omniinfer.ps1 backend install llama.cpp-cpu
+.\omniinfer.ps1 backend install llama.cpp-cuda
 ```
+
+The Windows CUDA entry installs both the llama.cpp CUDA package and its matching CUDA runtime companion package. A system CUDA Toolkit is not required; the NVIDIA driver is still required.
 
 The legacy compatibility command is still accepted:
 

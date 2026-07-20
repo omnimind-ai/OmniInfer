@@ -74,9 +74,10 @@ fn backend_install_prebuilt_from_local_catalog() {
     )
     .expect("prebuilt manifest");
     let manifest: serde_json::Value = serde_json::from_str(&manifest_raw).expect("manifest json");
-    assert_eq!(manifest["schema_version"], 2);
+    assert_eq!(manifest["schema_version"], 3);
     assert_eq!(manifest["backend"], backend_id);
     assert_eq!(manifest["catalog_sha256"], fixture.sha256);
+    assert_eq!(manifest["assets"].as_array().unwrap().len(), 1);
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
@@ -112,6 +113,85 @@ fn backend_install_prebuilt_rejects_checksum_mismatch() {
     assert!(
         !installed_launcher(&root, backend_id).exists(),
         "checksum failure must not install launcher"
+    );
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn backend_install_prebuilt_merges_companion_assets() {
+    let root = temp_repo_root("backend-install-companion");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+    let backend_id = test_external_backend_id();
+    let fixture = write_companion_prebuilt_fixture(&root, backend_id, false);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["backend", "install", backend_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Prebuilt backend installed:"));
+
+    let bin_dir = installed_launcher(&root, backend_id)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    assert!(bin_dir.join("runtime-dependency.dll").is_file());
+    let manifest_raw = fs::read_to_string(
+        root.join(".local")
+            .join("runtime")
+            .join(test_runtime_platform_dir())
+            .join(backend_id)
+            .join("prebuilt.json"),
+    )
+    .expect("prebuilt manifest");
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_raw).expect("manifest json");
+    assert_eq!(manifest["schema_version"], 3);
+    assert_eq!(manifest["assets"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        manifest["required_files"],
+        serde_json::json!(["runtime-dependency.dll"])
+    );
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn backend_install_incomplete_companion_preserves_existing_runtime() {
+    let root = temp_repo_root("backend-install-companion-incomplete");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+    let backend_id = test_external_backend_id();
+    let launcher = installed_launcher(&root, backend_id);
+    fs::create_dir_all(launcher.parent().unwrap()).expect("create existing runtime");
+    fs::write(&launcher, "existing launcher").expect("write existing launcher");
+    fs::write(launcher.parent().unwrap().join("existing.txt"), "keep")
+        .expect("write existing marker");
+    let fixture = write_companion_prebuilt_fixture(&root, backend_id, true);
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
+        .args(["backend", "install", backend_id])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "Existing backend is incomplete; reinstalling",
+        ))
+        .stderr(predicate::str::contains(
+            "required companion file runtime-dependency.dll was not found",
+        ));
+
+    assert_eq!(fs::read_to_string(&launcher).unwrap(), "existing launcher");
+    assert!(launcher.parent().unwrap().join("existing.txt").is_file());
+    assert!(
+        !launcher
+            .parent()
+            .unwrap()
+            .join("runtime-dependency.dll")
+            .exists()
     );
     fs::remove_dir_all(root).ok();
 }
@@ -496,6 +576,90 @@ fn write_prebuilt_fixture(
     )
     .expect("write catalog");
     PrebuiltFixture { catalog, sha256 }
+}
+
+fn write_companion_prebuilt_fixture(
+    root: &std::path::Path,
+    backend_id: &str,
+    omit_required_file: bool,
+) -> PrebuiltFixture {
+    let fixture = root.join("prebuilt-companion-fixture");
+    let launcher_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+
+    let primary_payload = fixture.join("primary-payload").join("runtime").join("bin");
+    fs::create_dir_all(&primary_payload).expect("create primary payload");
+    let launcher = primary_payload.join(launcher_name);
+    fs::write(&launcher, "#!/usr/bin/env bash\nexit 0\n").expect("write launcher");
+    fs::write(primary_payload.join("helper.txt"), "runtime helper").expect("write helper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&launcher).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&launcher, permissions).unwrap();
+    }
+
+    let companion_payload = fixture.join("companion-payload").join("dependencies");
+    fs::create_dir_all(&companion_payload).expect("create companion payload");
+    if !omit_required_file {
+        fs::write(
+            companion_payload.join("runtime-dependency.dll"),
+            "runtime dependency",
+        )
+        .expect("write dependency");
+    }
+
+    let extension = if cfg!(windows) { "zip" } else { "tar.gz" };
+    let primary_archive = fixture.join(format!("runtime.{extension}"));
+    let companion_archive = fixture.join(format!("companion.{extension}"));
+    write_runtime_archive(&fixture.join("primary-payload"), &primary_archive);
+    write_runtime_archive(&fixture.join("companion-payload"), &companion_archive);
+    let primary_sha = format!(
+        "{:x}",
+        Sha256::digest(fs::read(&primary_archive).expect("read primary archive"))
+    );
+    let companion_sha = format!(
+        "{:x}",
+        Sha256::digest(fs::read(&companion_archive).expect("read companion archive"))
+    );
+    let catalog = fixture.join("prebuilt.json");
+    fs::write(
+        &catalog,
+        serde_json::json!({
+            "schema_version": 2,
+            "platforms": {
+                test_runtime_platform_dir(): {
+                    backend_id: {
+                        "source": "fixture",
+                        "tag": "test",
+                        "url": format!("file://{}", primary_archive.display()),
+                        "archive": extension,
+                        "launcher": launcher_name,
+                        "sha256": primary_sha,
+                        "companion_assets": [{
+                            "url": format!("file://{}", companion_archive.display()),
+                            "archive": extension,
+                            "sha256": companion_sha,
+                            "files": ["runtime-dependency.dll"]
+                        }],
+                        "required_files": ["runtime-dependency.dll"],
+                        "submodule_path": "framework/llama.cpp",
+                        "submodule_commit": "fixture"
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("write companion catalog");
+    PrebuiltFixture {
+        catalog,
+        sha256: primary_sha,
+    }
 }
 
 fn write_runtime_archive(source_root: &std::path::Path, archive_path: &std::path::Path) {
