@@ -217,6 +217,10 @@ fn serve_explicit_roots_reach_gateway_model_load_lifecycle() {
     let launch_command = health["omni"]["launch_command"]
         .as_array()
         .expect("runtime launch command");
+    let backend_port = health["omni"]["backend_port"]
+        .as_u64()
+        .and_then(|value| u16::try_from(value).ok())
+        .expect("runtime backend port");
     assert_eq!(
         std::path::PathBuf::from(launch_command[0].as_str().unwrap()),
         runtime_root
@@ -230,21 +234,25 @@ fn serve_explicit_roots_reach_gateway_model_load_lifecycle() {
     );
     assert!(!state_root.join(".local").join("runtime").exists());
 
-    let mut stop = Command::cargo_bin("omniinfer").expect("binary exists");
-    stop.env("OMNIINFER_RUST_STRICT", "1")
+    let mut shutdown = Command::cargo_bin("omniinfer").expect("binary exists");
+    shutdown
+        .env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
         .env_remove("OMNIINFER_STATE_ROOT")
         .env_remove("OMNIINFER_RUNTIME_ROOT")
         .env_remove("OMNIINFER_RUST_STATE_ROOT")
-        .args(["serve", "stop", "--port"])
-        .arg(port.to_string())
+        .arg("shutdown")
         .arg("--state-root")
         .arg(&state_root)
         .arg("--runtime-root")
         .arg(&runtime_root)
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "OmniInfer service stopped on port {port}"
+        )));
     assert!(wait_for_port_closed(port));
+    assert!(wait_for_port_closed(backend_port));
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
     fs::remove_dir_all(runtime_root).ok();
@@ -658,6 +666,7 @@ fn serve_detach_runs_smoke_test() {
             r#"{"omni":{"backend":"llama.cpp-linux-cuda","backend_ready":true,"model":"/tmp/model.gguf","ctx_size":1024}}"#,
         ),
         Response::new(r#"{"choices":[{"message":{"content":"hello smoke"}}]}"#),
+        Response::new(r#"{"ok":true}"#),
     ]);
     let port = gateway.port;
     let source_root = temp_repo_root("serve-detach-smoke-source");
@@ -687,7 +696,8 @@ fn serve_detach_runs_smoke_test() {
         .arg(&model)
         .assert()
         .success()
-        .stdout(predicate::str::contains("Smoke: hello smoke"));
+        .stdout(predicate::str::contains("Smoke: hello smoke"))
+        .stdout(predicate::str::contains("Smoke test cleanup complete"));
 
     let _ = gateway.request();
     let _ = gateway.request();
@@ -698,9 +708,124 @@ fn serve_detach_runs_smoke_test() {
     let body = request_body_json(&request);
     assert_eq!(body["stream"], false);
     assert_eq!(body["messages"][0]["content"], "Hello");
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/shutdown HTTP/1.1"));
     gateway.join();
+    assert!(wait_for_port_closed(port));
+    assert!(
+        !state_root
+            .join(".local")
+            .join("run")
+            .join(format!("serve-{port}.json"))
+            .exists()
+    );
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
+}
+
+#[test]
+fn successful_smoke_test_stops_gateway_backend_and_releases_ports() {
+    let backend_id = test_external_backend_id();
+    let runtime_root = temp_repo_root("serve-success-smoke-runtime");
+    install_fake_runtime_server_in_root(&runtime_root, backend_id);
+
+    for detach in [false, true] {
+        let suffix = if detach { "detached" } else { "foreground" };
+        let source_root = temp_repo_root(&format!("serve-success-smoke-{suffix}-source"));
+        let state_root = temp_repo_root(&format!("serve-success-smoke-{suffix}-state"));
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(state_root.join("config")).expect("create state config");
+        fs::write(
+            state_root.join("config").join("omniinfer.json"),
+            r#"{"host":"127.0.0.1","startup_timeout":10}"#,
+        )
+        .expect("write config");
+        let model = state_root.join("model.gguf");
+        fs::write(&model, "gguf").expect("write model");
+        let gateway_port = free_port();
+        let mut backend_port = free_port();
+        while backend_port == gateway_port {
+            backend_port = free_port();
+        }
+        let stdout_path = state_root.join("smoke.stdout.txt");
+        let stderr_path = state_root.join("smoke.stderr.txt");
+        let mut command = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer"));
+        command
+            .env("OMNIINFER_RUST_STRICT", "1")
+            .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+            .env_remove("OMNIINFER_STATE_ROOT")
+            .env_remove("OMNIINFER_RUNTIME_ROOT")
+            .env_remove("OMNIINFER_RUST_STATE_ROOT")
+            .args(["serve", "--smoke-test", "--backend", backend_id, "--model"])
+            .arg(&model)
+            .arg("--backend-port")
+            .arg(backend_port.to_string())
+            .arg("--port")
+            .arg(gateway_port.to_string())
+            .arg("--state-root")
+            .arg(&state_root)
+            .arg("--runtime-root")
+            .arg(&runtime_root)
+            .stdout(Stdio::from(
+                fs::File::create(&stdout_path).expect("create stdout capture"),
+            ))
+            .stderr(Stdio::from(
+                fs::File::create(&stderr_path).expect("create stderr capture"),
+            ));
+        if detach {
+            command.arg("--detach");
+        }
+
+        let mut child = command.spawn().expect("spawn successful smoke test");
+        let Some(status) = wait_for_process_exit(&mut child, Duration::from_secs(30)) else {
+            let mut stop = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer"));
+            let _ = stop
+                .env("OMNIINFER_RUST_STRICT", "1")
+                .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+                .args(["serve", "stop", "--port"])
+                .arg(gateway_port.to_string())
+                .arg("--state-root")
+                .arg(&state_root)
+                .arg("--runtime-root")
+                .arg(&runtime_root)
+                .status();
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("successful smoke test did not exit within 30 seconds (detach={detach})");
+        };
+        let stdout = fs::read_to_string(&stdout_path).expect("read stdout capture");
+        let stderr = fs::read_to_string(&stderr_path).expect("read stderr capture");
+        assert_eq!(
+            status.code(),
+            Some(0),
+            "smoke test failed (detach={detach})\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(stdout.contains("Smoke: fake backend"), "stdout:\n{stdout}");
+        assert!(
+            stdout.contains("Smoke test cleanup complete"),
+            "stdout:\n{stdout}"
+        );
+        assert!(
+            wait_for_port_closed(gateway_port),
+            "gateway port {gateway_port} remained open (detach={detach})"
+        );
+        assert!(
+            wait_for_port_closed(backend_port),
+            "backend port {backend_port} remained open (detach={detach})"
+        );
+        assert!(
+            !state_root
+                .join(".local")
+                .join("run")
+                .join(format!("serve-{gateway_port}.json"))
+                .exists(),
+            "smoke test must remove serve metadata"
+        );
+        fs::remove_dir_all(source_root).ok();
+        fs::remove_dir_all(state_root).ok();
+    }
+
+    fs::remove_dir_all(runtime_root).ok();
 }
 
 #[test]
@@ -767,6 +892,7 @@ fn failed_smoke_test_releases_gateway_port_for_retry() {
                 cmd.arg("--detach");
             }
             cmd.assert()
+                .code(1)
                 .failure()
                 .stderr(predicate::str::contains("smoke test failed"))
                 .stderr(predicate::str::contains("10048").not());
@@ -853,6 +979,7 @@ fn serve_detach_warns_on_transient_public_smoke_failure() {
         Response::new(
             r#"{"choices":[{"message":{"content":"hello local"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#,
         ),
+        Response::new(r#"{"ok":true}"#),
     ]);
     let port = gateway.port;
     let source_root = temp_repo_root("serve-cloudflare-smoke-warning-source");
@@ -891,13 +1018,16 @@ fn serve_detach_warns_on_transient_public_smoke_failure() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Smoke: local ok: hello local"))
-        .stdout(predicate::str::contains("public warning:"));
+        .stdout(predicate::str::contains("public warning:"))
+        .stdout(predicate::str::contains("Smoke test cleanup complete"));
 
     let _ = gateway.request();
     let _ = gateway.request();
     let _ = gateway.request();
     let request = gateway.request();
     assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/shutdown HTTP/1.1"));
     gateway.join();
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();

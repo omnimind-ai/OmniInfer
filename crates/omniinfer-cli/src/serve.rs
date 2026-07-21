@@ -21,32 +21,62 @@ use crate::{
     select_backend_for_config_with_autostart, wait_for_gateway_ready, yes_no,
 };
 
+const SHUTDOWN_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+const FORCED_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub(crate) fn stop_serve(port: u16) -> Result<()> {
     let mut config = config::load_app_config().unwrap_or_default();
     config.port = port;
     let info = serve_state::load_serve_pid_info(port).ok().flatten();
     let url = format!("{}/omni/shutdown", config.service_base_url());
-    let stopped =
-        match http_client::post_json(&url, &serde_json::json!({}), Duration::from_secs(10)) {
+    let shutdown_accepted =
+        match http_client::post_json(&url, &serde_json::json!({}), SHUTDOWN_REQUEST_TIMEOUT) {
             Ok(response) => response.status < 400,
             Err(_) => false,
         };
-    if stopped && !wait_for_local_port_closed(port, Duration::from_secs(3)) {
-        if let Some(pid) = info.as_ref().and_then(|info| info.pid) {
+
+    let mut gateway_closed = wait_for_local_port_closed(
+        port,
+        if shutdown_accepted {
+            GRACEFUL_SHUTDOWN_TIMEOUT
+        } else {
+            Duration::ZERO
+        },
+    );
+    let mut backend_closed = info
+        .as_ref()
+        .and_then(|value| value.backend_port)
+        .is_none_or(|backend_port| wait_for_local_port_closed(backend_port, Duration::ZERO));
+    if info.is_some() && (!gateway_closed || !backend_closed) {
+        if let Some(pid) = info.as_ref().and_then(|value| value.backend_pid) {
             stop_process(pid);
-            let _ = wait_for_local_port_closed(port, Duration::from_secs(3));
         }
+        if let Some(pid) = info.as_ref().and_then(|value| value.pid) {
+            stop_process(pid);
+        }
+        gateway_closed = wait_for_local_port_closed(port, FORCED_SHUTDOWN_TIMEOUT);
+        backend_closed = info
+            .as_ref()
+            .and_then(|value| value.backend_port)
+            .is_none_or(|backend_port| {
+                wait_for_local_port_closed(backend_port, FORCED_SHUTDOWN_TIMEOUT)
+            });
     }
-    if let Some(pid) = info.and_then(|info| info.cloudflared_pid) {
+    if let Some(pid) = info.as_ref().and_then(|value| value.cloudflared_pid) {
         stop_process(pid);
     }
-    let _ = serve_state::remove_serve_pid_info(port);
-    if stopped {
+
+    if (shutdown_accepted || info.is_some()) && gateway_closed && backend_closed {
+        let _ = serve_state::remove_serve_pid_info(port);
         println!("OmniInfer service stopped on port {port}");
-    } else {
+        Ok(())
+    } else if !shutdown_accepted && info.is_none() {
         println!("OmniInfer service is not running on port {port}");
+        Ok(())
+    } else {
+        anyhow::bail!("failed to stop OmniInfer service on port {port} within the shutdown timeout")
     }
-    Ok(())
 }
 
 fn wait_for_local_port_closed(port: u16, timeout: Duration) -> bool {
@@ -84,24 +114,107 @@ fn cleanup_failed_serve(
     port: u16,
 ) {
     if let Some(tunnel) = cloudflared {
-        let _ = tunnel.kill();
-        let _ = tunnel.wait();
+        stop_process(tunnel.id());
+        let _ = wait_for_child_exit(tunnel, FORCED_SHUTDOWN_TIMEOUT);
     }
     stop_process(gateway.id());
-    let _ = gateway.wait();
-    let _ = wait_for_local_port_closed(port, Duration::from_secs(5));
+    let _ = wait_for_child_exit(gateway, FORCED_SHUTDOWN_TIMEOUT);
+    let _ = wait_for_local_port_closed(port, FORCED_SHUTDOWN_TIMEOUT);
     let _ = serve_state::remove_serve_pid_info(port);
+}
+
+fn cleanup_smoke_serve(
+    gateway: &mut std::process::Child,
+    cloudflared: Option<&mut std::process::Child>,
+    port: u16,
+    backend_pid: Option<u32>,
+    backend_port: Option<u16>,
+) -> Result<()> {
+    let mut cleanup_errors = Vec::new();
+    if let Some(tunnel) = cloudflared
+        && !wait_for_child_exit(tunnel, Duration::ZERO)
+    {
+        stop_process(tunnel.id());
+        if !wait_for_child_exit(tunnel, FORCED_SHUTDOWN_TIMEOUT) {
+            cleanup_errors.push("cloudflared did not exit".to_string());
+        }
+    }
+
+    let mut config = config::load_app_config().unwrap_or_default();
+    config.port = port;
+    let url = format!("{}/omni/shutdown", config.service_base_url());
+    let shutdown_accepted =
+        http_client::post_json(&url, &serde_json::json!({}), SHUTDOWN_REQUEST_TIMEOUT)
+            .is_ok_and(|response| response.status < 400);
+
+    let gateway_exited = wait_for_child_exit(gateway, GRACEFUL_SHUTDOWN_TIMEOUT);
+    let gateway_closed = wait_for_local_port_closed(port, GRACEFUL_SHUTDOWN_TIMEOUT);
+    let backend_closed = backend_port
+        .is_none_or(|value| wait_for_local_port_closed(value, GRACEFUL_SHUTDOWN_TIMEOUT));
+    if !shutdown_accepted || !gateway_exited || !gateway_closed || !backend_closed {
+        if let Some(pid) = backend_pid {
+            stop_process(pid);
+        }
+        if !gateway_exited {
+            stop_process(gateway.id());
+        }
+    }
+
+    if !wait_for_child_exit(gateway, FORCED_SHUTDOWN_TIMEOUT) {
+        cleanup_errors.push("gateway did not exit".to_string());
+    }
+    if !wait_for_local_port_closed(port, FORCED_SHUTDOWN_TIMEOUT) {
+        cleanup_errors.push(format!("gateway port {port} is still in use"));
+    }
+    if let Some(backend_port) = backend_port
+        && !wait_for_local_port_closed(backend_port, FORCED_SHUTDOWN_TIMEOUT)
+    {
+        cleanup_errors.push(format!("backend port {backend_port} is still in use"));
+    }
+    if cleanup_errors.is_empty() {
+        let _ = serve_state::remove_serve_pid_info(port);
+        println!("Smoke test cleanup complete; gateway/backend stopped and port {port} released");
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "smoke test cleanup failed: {}; serve metadata was retained for `omniinfer serve stop --port {port}`",
+            cleanup_errors.join("; ")
+        )
+    }
+}
+
+fn wait_for_child_exit(child: &mut std::process::Child, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let _ = child.wait();
+                return true;
+            }
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) | Err(_) => return false,
+        }
+    }
 }
 
 fn stop_process(pid: u32) {
     #[cfg(unix)]
     {
-        let _ = ProcessCommand::new("kill").arg(pid.to_string()).status();
+        let _ = ProcessCommand::new("kill")
+            .arg(pid.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
     #[cfg(windows)]
     {
         let mut command = ProcessCommand::new("taskkill");
-        command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        command
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         hide_child_window(&mut command);
         let _ = command.status();
     }
@@ -287,6 +400,32 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             return Err(error);
         }
     };
+    let backend_pid = json_u64(&state, "backend_pid").and_then(|value| u32::try_from(value).ok());
+    let backend_port = json_u64(&state, "backend_port").and_then(|value| u16::try_from(value).ok());
+    if let Err(error) = serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
+        pid: Some(rust_gateway.id()),
+        cloudflared_pid: cloudflared_child.as_ref().map(std::process::Child::id),
+        port: Some(public_config.port),
+        log: Some(log_path.display().to_string()),
+        public_url: public_url.clone(),
+        openai_base_url: public_url
+            .as_ref()
+            .map(|url| format!("{}/v1", url.trim_end_matches('/'))),
+        backend: json_str(&state, "backend").map(str::to_string),
+        model: json_str(&state, "model").map(str::to_string),
+        mmproj: json_str(&state, "mmproj").map(str::to_string),
+        ctx_size: json_u64(&state, "ctx_size").and_then(|value| u32::try_from(value).ok()),
+        backend_ready: json_bool(&state, "backend_ready"),
+        backend_pid,
+        backend_port,
+    }) {
+        cleanup_failed_serve(
+            &mut rust_gateway,
+            cloudflared_child.as_mut(),
+            public_config.port,
+        );
+        return Err(error.into());
+    }
     let mut smoke_text = None;
     let mut smoke_failed = false;
     if args.smoke_test {
@@ -321,30 +460,6 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
             }
         }
     }
-    if let Err(error) = serve_state::save_serve_pid_info(&serve_state::ServePidInfo {
-        pid: Some(rust_gateway.id()),
-        cloudflared_pid: cloudflared_child.as_ref().map(std::process::Child::id),
-        port: Some(public_config.port),
-        log: Some(log_path.display().to_string()),
-        public_url: public_url.clone(),
-        openai_base_url: public_url
-            .as_ref()
-            .map(|url| format!("{}/v1", url.trim_end_matches('/'))),
-        backend: json_str(&state, "backend").map(str::to_string),
-        model: json_str(&state, "model").map(str::to_string),
-        mmproj: json_str(&state, "mmproj").map(str::to_string),
-        ctx_size: json_u64(&state, "ctx_size").and_then(|value| u32::try_from(value).ok()),
-        backend_ready: json_bool(&state, "backend_ready"),
-        backend_pid: json_u64(&state, "backend_pid").and_then(|value| u32::try_from(value).ok()),
-        backend_port: json_u64(&state, "backend_port").and_then(|value| u16::try_from(value).ok()),
-    }) {
-        cleanup_failed_serve(
-            &mut rust_gateway,
-            cloudflared_child.as_mut(),
-            public_config.port,
-        );
-        return Err(error.into());
-    }
     print_serve_ready(
         public_config.port,
         &state,
@@ -355,16 +470,28 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         public_model_root.as_deref(),
         args.allow_remote_management,
         !args.cloudflare_no_print_key,
+        !args.smoke_test,
         &log_path,
         smoke_text.as_deref(),
     );
-    if smoke_failed {
-        cleanup_failed_serve(
+    if args.smoke_test {
+        let cleanup_result = cleanup_smoke_serve(
             &mut rust_gateway,
             cloudflared_child.as_mut(),
             public_config.port,
+            backend_pid,
+            backend_port,
         );
-        anyhow::bail!("smoke test failed");
+        if let Err(cleanup_error) = cleanup_result {
+            if smoke_failed {
+                anyhow::bail!("smoke test failed; {cleanup_error}");
+            }
+            return Err(cleanup_error);
+        }
+        if smoke_failed {
+            anyhow::bail!("smoke test failed");
+        }
+        return Ok(());
     }
     if !args.detach {
         println!("Press Ctrl+C to stop.");
@@ -795,6 +922,7 @@ fn print_serve_ready(
     public_model_root: Option<&std::path::Path>,
     remote_management: bool,
     print_api_key: bool,
+    persistent: bool,
     log_path: &std::path::Path,
     smoke_text: Option<&str>,
 ) {
@@ -841,6 +969,9 @@ fn print_serve_ready(
         println!("Smoke: {smoke_text}");
     }
     println!("Log: {}", log_path.display());
+    if !persistent {
+        return;
+    }
     println!("Stop: ./omniinfer serve stop --port {port}");
     let remote_base_url = public_url
         .map(|url| format!("{}/v1", url.trim_end_matches('/')))

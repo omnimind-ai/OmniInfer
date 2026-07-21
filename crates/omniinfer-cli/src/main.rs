@@ -332,17 +332,27 @@ fn print_advisor_recommend(
 
 pub(crate) fn shutdown_service() -> Result<()> {
     let config = config::load_app_config().unwrap_or_default();
-    let url = format!("{}/omni/shutdown", config.service_base_url());
-    match http_client::post_json(&url, &serde_json::json!({}), Duration::from_secs(10)) {
-        Ok(response) if response.status < 400 => {
-            println!("OmniInfer service stopped");
-            Ok(())
-        }
-        _ => {
-            println!("OmniInfer service is not running");
-            Ok(())
-        }
-    }
+    let mut recorded_ports = serve_state::list_serve_pid_infos()?
+        .into_iter()
+        .filter_map(|info| info.port)
+        .collect::<Vec<_>>();
+    recorded_ports.sort_unstable();
+    recorded_ports.dedup();
+    let port = if recorded_ports.contains(&config.port) || recorded_ports.is_empty() {
+        config.port
+    } else if recorded_ports.len() == 1 {
+        recorded_ports[0]
+    } else {
+        anyhow::bail!(
+            "multiple OmniInfer services are recorded on ports {}. Use `omniinfer serve stop --port <PORT>` to choose one.",
+            recorded_ports
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    };
+    stop_serve(port)
 }
 
 fn stop_backend() -> Result<()> {

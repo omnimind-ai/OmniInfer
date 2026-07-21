@@ -251,6 +251,7 @@ pub(crate) struct ServeArgs {
     pub(crate) public_model_root: Option<String>,
     #[arg(long)]
     pub(crate) detach: bool,
+    /// Run one inference check, then stop the gateway/backend and release their ports.
     #[arg(long)]
     pub(crate) smoke_test: bool,
     #[arg(long)]

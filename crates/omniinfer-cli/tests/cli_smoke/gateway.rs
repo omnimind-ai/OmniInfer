@@ -36,11 +36,13 @@ fn gateway_foreground_serves_health_and_shutdown() {
 
     let health = wait_for_http_json(port, "/health?deep=true");
     assert_eq!(health["status"], "ok");
-    let _ = http_client::post_json(
+    let response = http_client::post_json(
         &format!("http://127.0.0.1:{port}/omni/shutdown"),
         &serde_json::json!({}),
         Duration::from_secs(2),
-    );
+    )
+    .expect("shutdown response");
+    assert_eq!(response.status, 200);
     let status = child.wait().expect("wait foreground serve");
     let stdout = fs::read_to_string(&stdout_path).expect("read stdout capture");
     let stderr = fs::read_to_string(&stderr_path).expect("read stderr capture");

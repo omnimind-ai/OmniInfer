@@ -450,3 +450,19 @@ pub(super) fn wait_for_port_closed(port: u16) -> bool {
     }
     false
 }
+
+pub(super) fn wait_for_process_exit(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> Option<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) | Err(_) => return None,
+        }
+    }
+}

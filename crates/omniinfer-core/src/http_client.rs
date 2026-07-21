@@ -229,7 +229,14 @@ where
     let head = read_response_head(&mut reader)?;
     let status = parse_status(&head)?;
     let content_type = header_value(&head, "Content-Type");
-    let body = read_response_body(reader, content_type.as_deref(), &mut on_line)?;
+    let content_length =
+        header_value(&head, "Content-Length").and_then(|value| value.parse::<usize>().ok());
+    let body = read_response_body(
+        reader,
+        content_type.as_deref(),
+        content_length,
+        &mut on_line,
+    )?;
     Ok(RawResponse {
         status,
         content_type,
@@ -259,6 +266,7 @@ fn read_response_head(reader: &mut impl BufRead) -> Result<String, HttpError> {
 fn read_response_body<F>(
     mut reader: BufReader<TcpStream>,
     content_type: Option<&str>,
+    content_length: Option<usize>,
     on_line: &mut F,
 ) -> Result<String, HttpError>
 where
@@ -279,6 +287,10 @@ where
             on_line(line.trim_end_matches(['\r', '\n']));
             body.push_str(&line);
         }
+    } else if let Some(content_length) = content_length {
+        reader
+            .take(content_length as u64)
+            .read_to_string(&mut body)?;
     } else {
         reader.read_to_string(&mut body)?;
     }
@@ -355,6 +367,43 @@ mod tests {
             header_value(head, "Content-Type").as_deref(),
             Some("text/event-stream; charset=utf-8")
         );
+    }
+
+    #[test]
+    fn content_length_response_does_not_wait_for_connection_close() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                if line == "\r\n" || line == "\n" {
+                    break;
+                }
+                line.clear();
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: keep-alive\r\n\r\n{\"ok\":true}",
+                )
+                .unwrap();
+            stream.flush().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut closed = [0_u8; 1];
+            assert_eq!(stream.read(&mut closed).unwrap_or(0), 0);
+        });
+
+        let response = get_json(
+            &format!("http://127.0.0.1:{port}/health"),
+            Duration::from_millis(500),
+        )
+        .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body["ok"], true);
+        handle.join().unwrap();
     }
 
     #[test]
