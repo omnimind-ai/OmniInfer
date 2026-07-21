@@ -37,6 +37,9 @@ jobs:
       - name: Run gateway unit tests
         run: "cargo test -p omniinfer-cli --bin omniinfer gateway::tests::"
 
+      - name: Run backend archive security tests
+        run: "cargo test -p omniinfer-cli --bin omniinfer backend_installer::tests::"
+
   windows-desktop-contract:
     name: Windows Desktop Contract
     runs-on: windows-latest
