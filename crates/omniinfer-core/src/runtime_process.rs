@@ -215,7 +215,11 @@ fn terminate_child(child: &mut Child, grace: Duration) -> Result<(), RuntimeProc
 
 #[cfg(unix)]
 fn terminate_process(pid: u32) {
-    let _ = Command::new("kill").arg(pid.to_string()).status();
+    let _ = Command::new("kill")
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 #[cfg(windows)]
@@ -224,6 +228,8 @@ fn terminate_process(pid: u32) {
     hide_child_window(&mut command);
     let _ = command
         .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
 }
 

@@ -533,6 +533,77 @@ fn shutdown_posts_to_local_gateway() {
 }
 
 #[test]
+fn shutdown_uses_the_single_recorded_service_port() {
+    let gateway = TestGateway::start(vec![Response::new(r#"{"ok":true}"#)]);
+    let port = gateway.port;
+    let root = temp_repo_root("shutdown-recorded-service");
+    fs::create_dir_all(root.join(".local").join("run")).expect("create run dir");
+    fs::write(
+        root.join(".local")
+            .join("run")
+            .join(format!("serve-{port}.json")),
+        format!(r#"{{"port":{port}}}"#),
+    )
+    .expect("write serve state");
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .arg("--state-root")
+        .arg(&root)
+        .arg("shutdown")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "OmniInfer service stopped on port {}",
+            port
+        )));
+
+    let request = gateway.request();
+    assert!(request.starts_with("POST /omni/shutdown HTTP/1.1"));
+    gateway.join();
+    assert!(wait_for_port_closed(port));
+    assert!(
+        !root
+            .join(".local")
+            .join("run")
+            .join(format!("serve-{port}.json"))
+            .exists()
+    );
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn shutdown_rejects_ambiguous_recorded_services() {
+    let root = temp_repo_root("shutdown-ambiguous-services");
+    let run_dir = root.join(".local").join("run");
+    fs::create_dir_all(&run_dir).expect("create run dir");
+    for port in [19101, 19102] {
+        fs::write(
+            run_dir.join(format!("serve-{port}.json")),
+            format!(r#"{{"port":{port}}}"#),
+        )
+        .expect("write serve state");
+    }
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .arg("--state-root")
+        .arg(&root)
+        .arg("shutdown")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "multiple OmniInfer services are recorded on ports 19101, 19102",
+        ))
+        .stderr(predicate::str::contains(
+            "omniinfer serve stop --port <PORT>",
+        ));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn backend_stop_starts_gateway_when_needed() {
     let root = temp_repo_root("backend-stop-autostart");
     fs::create_dir_all(root.join("config")).expect("create config dir");

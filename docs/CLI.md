@@ -394,9 +394,15 @@ If you already know the model to serve, the same command can start the gateway, 
   --model /path/to/model.gguf \
   --ctx-size 8192 \
   --api-key auto \
-  --detach \
-  --smoke-test
+  --detach
 ```
+
+Use `--smoke-test` for an ephemeral lifecycle check. It performs one
+non-streaming inference request and then stops the gateway, backend, and tunnel,
+removes the serve-state record, releases their ports, and exits with code `0`.
+Startup, inference, or cleanup failures exit non-zero after the same bounded
+cleanup. This behavior also applies when `--detach` is present; omit
+`--smoke-test` when the service should remain running.
 
 Windows:
 
@@ -412,6 +418,12 @@ Detached services can be checked or stopped without remembering process IDs:
 ./omniinfer serve status --port 9000
 ./omniinfer serve stop --port 9000
 ```
+
+The generic `./omniinfer shutdown` command uses the configured port when it has
+a matching serve-state record. Otherwise, it targets the only service recorded
+under the active `--state-root`. If several non-default services are recorded,
+it exits non-zero and requires `serve stop --port <PORT>` instead of choosing an
+arbitrary process.
 
 LAN and Cloudflare access can run at the same time:
 

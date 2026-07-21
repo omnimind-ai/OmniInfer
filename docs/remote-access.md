@@ -6,7 +6,7 @@ Quick Tunnel is best for demos, testing, and short-lived personal access. Cloudf
 
 ## Cloudflare Quick Tunnel
 
-Start the gateway with Cloudflare mode. If you already know the model path, use one command to start the gateway, open the tunnel, load the model, and run a short smoke test:
+Start the gateway with Cloudflare mode. If you already know the model path, use one command to start the gateway, open the tunnel, and load the model:
 
 ```sh
 ./omniinfer serve \
@@ -15,11 +15,16 @@ Start the gateway with Cloudflare mode. If you already know the model path, use 
   --model /path/to/model.gguf \
   --ctx-size 8192 \
   --api-key auto \
-  --detach \
-  --smoke-test
+  --detach
 ```
 
 For foreground debugging, omit `--detach`. When `--api-key auto` is used, OmniInfer generates a session key and prints it in the startup summary.
+
+`--smoke-test` is an ephemeral lifecycle check, not a persistent-service flag.
+It runs one local inference check (and the public check when Cloudflare is
+enabled), then stops the tunnel, gateway, and backend, releases their ports,
+and exits. This remains true when combined with `--detach`. Start without
+`--smoke-test` when the detached service should remain available.
 
 When no model is supplied and the command runs in an interactive terminal, OmniInfer first asks you to choose a backend and model, then starts the gateway and tunnel:
 

@@ -49,5 +49,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Test serve root propagation
-        run: cargo test -p omniinfer-cli --test cli_smoke serve_explicit_roots_reach_gateway_model_load_lifecycle
+      - name: Test desktop serve lifecycle
+        run: |
+          cargo test -p omniinfer-cli --test cli_smoke serve_explicit_roots_reach_gateway_model_load_lifecycle
+          cargo test -p omniinfer-cli --test cli_smoke successful_smoke_test_stops_gateway_backend_and_releases_ports
