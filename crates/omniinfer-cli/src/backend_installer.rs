@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -29,6 +30,20 @@ struct DownloadedArchive {
     catalog_sha256: Option<String>,
     archive: String,
     role: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TarLinkKind {
+    Symbolic,
+    Hard,
+}
+
+#[derive(Clone, Debug)]
+struct TarLink {
+    path: PathBuf,
+    target: PathBuf,
+    resolved_target: PathBuf,
+    kind: TarLinkKind,
 }
 
 struct InstallReporter {
@@ -578,21 +593,7 @@ fn sanitize_name(value: &str) -> String {
 
 fn extract_archive(bytes: &[u8], archive_type: &str, destination: &Path) -> Result<()> {
     match archive_type.to_ascii_lowercase().as_str() {
-        "tar.gz" | "tgz" => {
-            let decoder = GzDecoder::new(Cursor::new(bytes));
-            let mut archive = tar::Archive::new(decoder);
-            for entry in archive.entries()? {
-                let mut entry = entry?;
-                let path = entry.path()?.to_path_buf();
-                validate_archive_path(&path)?;
-                let entry_type = entry.header().entry_type();
-                if !(entry_type.is_file() || entry_type.is_dir()) {
-                    anyhow::bail!("unsupported tar entry type for {}", path.display());
-                }
-                entry.unpack_in(destination)?;
-            }
-            Ok(())
-        }
+        "tar.gz" | "tgz" => extract_tar_archive(bytes, destination),
         "zip" => {
             let reader = Cursor::new(bytes);
             let mut archive = zip::ZipArchive::new(reader)?;
@@ -623,6 +624,266 @@ fn extract_archive(bytes: &[u8], archive_type: &str, destination: &Path) -> Resu
         }
         other => anyhow::bail!("unsupported prebuilt archive type: {other}"),
     }
+}
+
+fn extract_tar_archive(bytes: &[u8], destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    let destination_root = fs::canonicalize(destination)
+        .with_context(|| format!("resolve tar destination {}", destination.display()))?;
+    let links = inspect_tar_entries(bytes)?;
+
+    let decoder = GzDecoder::new(Cursor::new(bytes));
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.to_path_buf();
+        let entry_type = entry.header().entry_type();
+        if (entry_type.is_file() || entry_type.is_dir()) && !entry.unpack_in(&destination_root)? {
+            anyhow::bail!("unsafe tar path: {}", path.display());
+        }
+    }
+
+    create_tar_links(&destination_root, &links)
+}
+
+fn inspect_tar_entries(bytes: &[u8]) -> Result<Vec<TarLink>> {
+    let decoder = GzDecoder::new(Cursor::new(bytes));
+    let mut archive = tar::Archive::new(decoder);
+    let mut links = Vec::new();
+    for entry in archive.entries()? {
+        let entry = entry?;
+        let path = entry.path()?.to_path_buf();
+        validate_archive_path(&path)?;
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_file() || entry_type.is_dir() {
+            continue;
+        }
+        let kind = if entry_type.is_symlink() {
+            TarLinkKind::Symbolic
+        } else if entry_type.is_hard_link() {
+            TarLinkKind::Hard
+        } else {
+            anyhow::bail!("unsupported tar entry type for {}", path.display());
+        };
+        let target = entry
+            .link_name()?
+            .ok_or_else(|| anyhow::anyhow!("tar link {} has no target", path.display()))?
+            .into_owned();
+        let resolved_target = resolve_tar_link_target(&path, &target, kind)?;
+        links.push(TarLink {
+            path,
+            target,
+            resolved_target,
+            kind,
+        });
+    }
+    validate_tar_link_graph(&links)?;
+    Ok(links)
+}
+
+fn resolve_tar_link_target(path: &Path, target: &Path, kind: TarLinkKind) -> Result<PathBuf> {
+    let mut resolved = PathBuf::new();
+    if kind == TarLinkKind::Symbolic
+        && let Some(parent) = path.parent()
+    {
+        resolved.push(parent);
+    }
+    for component in target.components() {
+        match component {
+            Component::Normal(value) => resolved.push(value),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !resolved.pop() {
+                    anyhow::bail!(
+                        "tar link target escapes staging root: {} -> {}",
+                        path.display(),
+                        target.display()
+                    );
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!(
+                    "tar link target must be relative: {} -> {}",
+                    path.display(),
+                    target.display()
+                );
+            }
+        }
+    }
+    if resolved.as_os_str().is_empty() {
+        anyhow::bail!(
+            "tar link target is empty: {} -> {}",
+            path.display(),
+            target.display()
+        );
+    }
+    Ok(resolved)
+}
+
+fn validate_tar_link_graph(links: &[TarLink]) -> Result<()> {
+    let symbolic_links = links
+        .iter()
+        .filter(|link| link.kind == TarLinkKind::Symbolic)
+        .map(|link| (link.path.clone(), link.resolved_target.clone()))
+        .collect::<HashMap<_, _>>();
+    if symbolic_links.len()
+        != links
+            .iter()
+            .filter(|link| link.kind == TarLinkKind::Symbolic)
+            .count()
+    {
+        anyhow::bail!("tar archive contains duplicate symbolic link paths");
+    }
+
+    for link in links {
+        let mut ancestor = link.path.parent();
+        while let Some(path) = ancestor {
+            if symbolic_links.contains_key(path) {
+                anyhow::bail!(
+                    "tar link path traverses another symbolic link: {}",
+                    link.path.display()
+                );
+            }
+            ancestor = path.parent();
+        }
+
+        let mut current = link.resolved_target.as_path();
+        let mut visited = HashSet::new();
+        while let Some(next) = symbolic_links.get(current) {
+            if !visited.insert(current.to_path_buf()) {
+                anyhow::bail!("tar symbolic link cycle at {}", link.path.display());
+            }
+            current = next;
+        }
+    }
+    Ok(())
+}
+
+fn create_tar_links(destination_root: &Path, links: &[TarLink]) -> Result<()> {
+    let symbolic_targets = links
+        .iter()
+        .filter(|link| link.kind == TarLinkKind::Symbolic)
+        .map(|link| (link.path.clone(), link.resolved_target.clone()))
+        .collect::<HashMap<_, _>>();
+
+    for link in links.iter().filter(|link| link.kind == TarLinkKind::Hard) {
+        let final_target = resolve_final_tar_target(&link.resolved_target, &symbolic_targets)?;
+        let source = canonical_target_in_root(destination_root, &final_target, link)?;
+        if !source.is_file() {
+            anyhow::bail!("tar hard link target is not a file: {}", source.display());
+        }
+        let target = checked_link_destination(destination_root, &link.path)?;
+        fs::hard_link(&source, &target).with_context(|| {
+            format!(
+                "create tar hard link {} -> {}",
+                target.display(),
+                source.display()
+            )
+        })?;
+    }
+
+    for link in links
+        .iter()
+        .filter(|link| link.kind == TarLinkKind::Symbolic)
+    {
+        let final_target = resolve_final_tar_target(&link.resolved_target, &symbolic_targets)?;
+        let source = canonical_target_in_root(destination_root, &final_target, link)?;
+        let target = checked_link_destination(destination_root, &link.path)?;
+        create_symbolic_link(&link.target, &target, &source)?;
+    }
+
+    for link in links
+        .iter()
+        .filter(|link| link.kind == TarLinkKind::Symbolic)
+    {
+        let target = destination_root.join(&link.path);
+        let resolved = fs::canonicalize(&target)
+            .with_context(|| format!("resolve extracted tar link {}", target.display()))?;
+        if !resolved.starts_with(destination_root) {
+            anyhow::bail!(
+                "extracted tar link escapes staging root: {}",
+                target.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn resolve_final_tar_target(
+    target: &Path,
+    symbolic_targets: &HashMap<PathBuf, PathBuf>,
+) -> Result<PathBuf> {
+    let mut current = target.to_path_buf();
+    let mut visited = HashSet::new();
+    while let Some(next) = symbolic_targets.get(&current) {
+        if !visited.insert(current.clone()) {
+            anyhow::bail!("tar symbolic link cycle at {}", current.display());
+        }
+        current = next.clone();
+    }
+    Ok(current)
+}
+
+fn canonical_target_in_root(
+    destination_root: &Path,
+    relative_target: &Path,
+    link: &TarLink,
+) -> Result<PathBuf> {
+    let target = destination_root.join(relative_target);
+    let canonical = fs::canonicalize(&target).with_context(|| {
+        format!(
+            "tar link target does not exist: {} -> {}",
+            link.path.display(),
+            link.target.display()
+        )
+    })?;
+    if !canonical.starts_with(destination_root) {
+        anyhow::bail!(
+            "tar link target escapes staging root: {} -> {}",
+            link.path.display(),
+            link.target.display()
+        );
+    }
+    Ok(canonical)
+}
+
+fn checked_link_destination(destination_root: &Path, relative: &Path) -> Result<PathBuf> {
+    let target = destination_root.join(relative);
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("tar link has no parent: {}", relative.display()))?;
+    fs::create_dir_all(parent)?;
+    let canonical_parent = fs::canonicalize(parent)
+        .with_context(|| format!("resolve tar link parent {}", parent.display()))?;
+    if !canonical_parent.starts_with(destination_root) {
+        anyhow::bail!("tar link path escapes staging root: {}", relative.display());
+    }
+    if fs::symlink_metadata(&target).is_ok() {
+        anyhow::bail!("tar link path already exists: {}", relative.display());
+    }
+    Ok(target)
+}
+
+fn create_symbolic_link(target: &Path, link: &Path, resolved_target: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = resolved_target;
+        std::os::unix::fs::symlink(target, link)?;
+    }
+    #[cfg(windows)]
+    {
+        if resolved_target.is_dir() {
+            std::os::windows::fs::symlink_dir(target, link)?;
+        } else {
+            std::os::windows::fs::symlink_file(target, link)?;
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link, resolved_target);
+        anyhow::bail!("symbolic links are not supported on this platform");
+    }
+    Ok(())
 }
 
 fn validate_archive_path(path: &Path) -> Result<()> {
@@ -885,16 +1146,31 @@ fn collect_launcher_matches(root: &Path, launcher: &str, matches: &mut Vec<PathB
 }
 
 fn copy_directory_contents(source_dir: &Path, target_dir: &Path) -> Result<()> {
+    let source_root = fs::canonicalize(source_dir)
+        .with_context(|| format!("resolve copy source {}", source_dir.display()))?;
+    copy_directory_contents_in_root(source_dir, target_dir, &source_root)
+}
+
+fn copy_directory_contents_in_root(
+    source_dir: &Path,
+    target_dir: &Path,
+    source_root: &Path,
+) -> Result<()> {
     for entry in fs::read_dir(source_dir)? {
         let entry = entry?;
         let source = entry.path();
         let target = target_dir.join(entry.file_name());
         let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&source, &target)?;
+        if file_type.is_symlink() {
+            copy_safe_symbolic_link(&source, &target, source_root)?;
+        } else if file_type.is_dir() {
+            fs::create_dir_all(&target)?;
+            copy_directory_contents_in_root(&source, &target, source_root)?;
         } else if file_type.is_file() {
             fs::copy(&source, &target)?;
             make_executable_if_source_is_executable(&source, &target)?;
+        } else {
+            anyhow::bail!("unsupported runtime file type: {}", source.display());
         }
     }
     Ok(())
@@ -903,6 +1179,32 @@ fn copy_directory_contents(source_dir: &Path, target_dir: &Path) -> Result<()> {
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
     fs::create_dir_all(target)?;
     copy_directory_contents(source, target)
+}
+
+fn copy_safe_symbolic_link(source: &Path, target: &Path, source_root: &Path) -> Result<()> {
+    let link_target = fs::read_link(source)
+        .with_context(|| format!("read runtime symbolic link {}", source.display()))?;
+    if link_target.is_absolute() {
+        anyhow::bail!(
+            "runtime symbolic link target must be relative: {}",
+            source.display()
+        );
+    }
+    let resolved = fs::canonicalize(
+        source
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("runtime symbolic link has no parent"))?
+            .join(&link_target),
+    )
+    .with_context(|| format!("resolve runtime symbolic link {}", source.display()))?;
+    if !resolved.starts_with(source_root) {
+        anyhow::bail!(
+            "runtime symbolic link escapes source root: {}",
+            source.display()
+        );
+    }
+    create_symbolic_link(&link_target, target, &resolved)
+        .with_context(|| format!("copy runtime symbolic link {}", source.display()))
 }
 
 fn make_executable(path: &Path) -> Result<()> {
@@ -1015,4 +1317,250 @@ fn git_rev_parse(path: &str) -> Option<String> {
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io;
+
+    enum TestTarEntry<'a> {
+        File(&'a str, &'a [u8]),
+        Symlink(&'a str, &'a str),
+        HardLink(&'a str, &'a str),
+        Special(&'a str),
+        RawFilePath(&'a str),
+    }
+
+    #[test]
+    fn tar_links_extract_and_survive_runtime_staging() {
+        let archive = build_test_tar(&[
+            TestTarEntry::File("runtime/llama-server", b"launcher"),
+            TestTarEntry::File("runtime/libreal.dylib", b"library"),
+            TestTarEntry::Symlink("runtime/libalias.dylib", "libreal.dylib"),
+            TestTarEntry::HardLink("runtime/libhard.dylib", "runtime/libreal.dylib"),
+        ]);
+        let extracted = test_dir("safe-links-extracted");
+        extract_archive(&archive, "tar.gz", &extracted).expect("extract safe links");
+
+        let symlink = extracted.join("runtime/libalias.dylib");
+        assert!(
+            fs::symlink_metadata(&symlink)
+                .expect("symlink metadata")
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_link(&symlink).unwrap(), Path::new("libreal.dylib"));
+        assert_eq!(
+            fs::read(extracted.join("runtime/libhard.dylib")).unwrap(),
+            b"library"
+        );
+
+        let staged = test_dir("safe-links-staged");
+        copy_dir_recursive(&extracted.join("runtime"), &staged).expect("stage runtime links");
+        let staged_symlink = staged.join("libalias.dylib");
+        assert!(
+            fs::symlink_metadata(&staged_symlink)
+                .expect("staged symlink metadata")
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::canonicalize(&staged_symlink).unwrap(),
+            fs::canonicalize(staged.join("libreal.dylib")).unwrap()
+        );
+
+        fs::remove_dir_all(extracted).ok();
+        fs::remove_dir_all(staged).ok();
+    }
+
+    #[test]
+    fn tar_extractor_rejects_unsafe_paths_links_and_entry_types() {
+        let cases = [
+            (
+                "absolute-path",
+                build_test_tar(&[TestTarEntry::RawFilePath("/tmp/escape")]),
+                "unsafe archive path",
+            ),
+            (
+                "parent-path",
+                build_test_tar(&[TestTarEntry::RawFilePath("../escape")]),
+                "unsafe archive path",
+            ),
+            (
+                "absolute-link",
+                build_test_tar(&[
+                    TestTarEntry::File("runtime/real", b"safe"),
+                    TestTarEntry::Symlink("runtime/link", "/tmp/escape"),
+                ]),
+                "tar link target must be relative",
+            ),
+            (
+                "escaping-link",
+                build_test_tar(&[
+                    TestTarEntry::File("runtime/real", b"safe"),
+                    TestTarEntry::Symlink("runtime/link", "../../escape"),
+                ]),
+                "tar link target escapes staging root",
+            ),
+            (
+                "dangling-link",
+                build_test_tar(&[TestTarEntry::Symlink("runtime/link", "missing")]),
+                "tar link target does not exist",
+            ),
+            (
+                "link-cycle",
+                build_test_tar(&[
+                    TestTarEntry::Symlink("runtime/one", "two"),
+                    TestTarEntry::Symlink("runtime/two", "one"),
+                ]),
+                "tar symbolic link cycle",
+            ),
+            (
+                "escaping-hard-link",
+                build_test_tar(&[TestTarEntry::HardLink("runtime/link", "../escape")]),
+                "tar link target escapes staging root",
+            ),
+            (
+                "special-entry",
+                build_test_tar(&[TestTarEntry::Special("runtime/device")]),
+                "unsupported tar entry type",
+            ),
+        ];
+
+        for (name, archive, expected) in cases {
+            let destination = test_dir(name);
+            let error = extract_archive(&archive, "tar.gz", &destination)
+                .expect_err("unsafe tar must fail");
+            assert!(
+                error.to_string().contains(expected),
+                "{name}: expected {expected:?}, got {error:#}"
+            );
+            fs::remove_dir_all(destination).ok();
+        }
+    }
+
+    #[test]
+    fn tar_extractor_rejects_canonical_target_outside_staging() {
+        let destination = test_dir("canonical-target-destination");
+        let outside = test_dir("canonical-target-outside");
+        fs::write(outside.join("library.dylib"), "outside").unwrap();
+        fs::create_dir_all(destination.join("runtime")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.join("library.dylib"),
+            destination.join("runtime/external"),
+        )
+        .unwrap();
+        let archive = build_test_tar(&[TestTarEntry::Symlink("runtime/link.dylib", "external")]);
+
+        let error = extract_archive(&archive, "tar.gz", &destination)
+            .expect_err("canonical target outside staging must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("tar link target escapes staging root")
+        );
+
+        fs::remove_dir_all(destination).ok();
+        fs::remove_dir_all(outside).ok();
+    }
+
+    #[test]
+    fn runtime_staging_rejects_symbolic_links_outside_source_root() {
+        let source = test_dir("copy-external-source");
+        let destination = test_dir("copy-external-destination");
+        let outside = test_dir("copy-external-outside");
+        fs::write(outside.join("library.dylib"), "outside").unwrap();
+        let outside_name = outside.file_name().expect("outside directory name");
+        std::os::unix::fs::symlink(
+            Path::new("..").join(outside_name).join("library.dylib"),
+            source.join("external.dylib"),
+        )
+        .unwrap();
+
+        let error = copy_dir_recursive(&source, &destination)
+            .expect_err("runtime staging must reject external symbolic link");
+        assert!(
+            format!("{error:#}").contains("runtime symbolic link escapes source root"),
+            "{error:#}"
+        );
+
+        fs::remove_dir_all(source).ok();
+        fs::remove_dir_all(destination).ok();
+        fs::remove_dir_all(outside).ok();
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let path = temp_install_dir(name).expect("test temp path");
+        fs::remove_dir_all(&path).ok();
+        fs::create_dir_all(&path).expect("create test directory");
+        path
+    }
+
+    fn build_test_tar(entries: &[TestTarEntry<'_>]) -> Vec<u8> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for entry in entries {
+            match entry {
+                TestTarEntry::File(path, contents) => {
+                    let mut header = tar::Header::new_gnu();
+                    header.set_path(path).unwrap();
+                    header.set_size(contents.len() as u64);
+                    header.set_mode(0o755);
+                    header.set_cksum();
+                    builder.append(&header, *contents).unwrap();
+                }
+                TestTarEntry::Symlink(path, target) => {
+                    append_test_link(&mut builder, path, target, tar::EntryType::Symlink);
+                }
+                TestTarEntry::HardLink(path, target) => {
+                    append_test_link(&mut builder, path, target, tar::EntryType::Link);
+                }
+                TestTarEntry::Special(path) => {
+                    let mut header = tar::Header::new_gnu();
+                    header.set_path(path).unwrap();
+                    header.set_size(0);
+                    header.set_mode(0o600);
+                    header.set_entry_type(tar::EntryType::Char);
+                    header.set_cksum();
+                    builder.append(&header, io::empty()).unwrap();
+                }
+                TestTarEntry::RawFilePath(path) => {
+                    let mut header = tar::Header::new_gnu();
+                    header.set_size(0);
+                    header.set_mode(0o600);
+                    set_raw_header_value(&mut header, 0, 100, path.as_bytes());
+                    header.set_cksum();
+                    builder.append(&header, io::empty()).unwrap();
+                }
+            }
+        }
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish gzip")
+    }
+
+    fn append_test_link(
+        builder: &mut tar::Builder<GzEncoder<Vec<u8>>>,
+        path: &str,
+        target: &str,
+        entry_type: tar::EntryType,
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.set_path(path).unwrap();
+        header.set_link_name(target).unwrap();
+        header.set_size(0);
+        header.set_mode(0o777);
+        header.set_entry_type(entry_type);
+        header.set_cksum();
+        builder.append(&header, io::empty()).unwrap();
+    }
+
+    fn set_raw_header_value(header: &mut tar::Header, offset: usize, size: usize, value: &[u8]) {
+        assert!(value.len() < size);
+        let bytes = header.as_mut_bytes();
+        bytes[offset..offset + size].fill(0);
+        bytes[offset..offset + value.len()].copy_from_slice(value);
+    }
 }
