@@ -464,7 +464,10 @@ fn is_hardware_compatible(host: HostInfo, spec: &BackendSpec) -> bool {
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    if caps.contains(&"arm64") && !matches!(host.machine, "aarch64" | "arm64") {
+    if caps.contains(&"arm64") && !is_arm64(host.machine) {
+        return false;
+    }
+    if caps.contains(&"x64") && !is_x86_64(host.machine) {
         return false;
     }
     if caps.contains(&"s390x") && host.machine != "s390x" {
@@ -489,6 +492,14 @@ fn is_hardware_compatible(host: HostInfo, spec: &BackendSpec) -> bool {
         return vulkan_detected();
     }
     spec.binary_exists()
+}
+
+fn is_arm64(machine: &str) -> bool {
+    machine.eq_ignore_ascii_case("aarch64") || machine.eq_ignore_ascii_case("arm64")
+}
+
+fn is_x86_64(machine: &str) -> bool {
+    machine.eq_ignore_ascii_case("x86_64") || machine.eq_ignore_ascii_case("amd64")
 }
 
 fn cuda_detected() -> bool {
@@ -993,6 +1004,7 @@ const MAC_TEMPLATES: &[BackendTemplate] = &[
                 "stream",
                 "metal",
                 "apple",
+                "arm64",
                 "shared-memory",
             ],
             "OMNIINFER_LLAMA_CPP_MAC",
@@ -1243,5 +1255,49 @@ mod tests {
             backend_priority("llama.cpp-linux-cuda") < backend_priority("ik_llama.cpp-linux-cuda")
         );
         assert!(backend_priority("llama.cpp-cpu") < backend_priority("ik_llama.cpp-cpu"));
+    }
+
+    #[test]
+    fn mac_arm64_only_accepts_arm_llama_backend() {
+        for machine in ["aarch64", "arm64"] {
+            let registry = BackendRegistry::build(
+                HostInfo {
+                    system: HostSystem::Mac,
+                    machine,
+                },
+                "runtime",
+                &Value::Null,
+            );
+            assert!(is_hardware_compatible(
+                registry.host,
+                registry.get("llama.cpp-mac").unwrap()
+            ));
+            assert!(!is_hardware_compatible(
+                registry.host,
+                registry.get("llama.cpp-mac-intel").unwrap()
+            ));
+        }
+    }
+
+    #[test]
+    fn mac_x86_64_only_accepts_intel_llama_backend() {
+        for machine in ["x86_64", "amd64"] {
+            let registry = BackendRegistry::build(
+                HostInfo {
+                    system: HostSystem::Mac,
+                    machine,
+                },
+                "runtime",
+                &Value::Null,
+            );
+            assert!(!is_hardware_compatible(
+                registry.host,
+                registry.get("llama.cpp-mac").unwrap()
+            ));
+            assert!(is_hardware_compatible(
+                registry.host,
+                registry.get("llama.cpp-mac-intel").unwrap()
+            ));
+        }
     }
 }
