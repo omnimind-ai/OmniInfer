@@ -223,7 +223,7 @@ fn recommended_installed_backend(backends: &[Value]) -> Option<String> {
         .iter()
         .filter(|backend| json_bool(backend, "installed").unwrap_or(false))
         .filter(|backend| json_bool(backend, "hardware_compatible").unwrap_or(false))
-        .min_by_key(|backend| json_u64(backend, "priority").unwrap_or(999))
+        .min_by(|left, right| compare_backend_candidates(left, right))
         .and_then(|backend| json_str(backend, "id"))
         .map(str::to_string)
 }
@@ -234,9 +234,20 @@ fn recommended_backend_to_install(backends: &[Value]) -> Option<String> {
         .filter(|backend| !json_bool(backend, "installed").unwrap_or(false))
         .filter(|backend| json_bool(backend, "hardware_compatible").unwrap_or(false))
         .filter(|backend| json_bool(backend, "prebuilt_installable").unwrap_or(false))
-        .min_by_key(|backend| json_u64(backend, "priority").unwrap_or(999))
+        .min_by(|left, right| compare_backend_candidates(left, right))
         .and_then(|backend| json_str(backend, "id"))
         .map(str::to_string)
+}
+
+fn compare_backend_candidates(left: &Value, right: &Value) -> std::cmp::Ordering {
+    json_u64(left, "priority")
+        .unwrap_or(999)
+        .cmp(&json_u64(right, "priority").unwrap_or(999))
+        .then_with(|| {
+            json_str(left, "id")
+                .unwrap_or("")
+                .cmp(json_str(right, "id").unwrap_or(""))
+        })
 }
 
 fn mib_to_gib(value: f64) -> f64 {
@@ -251,10 +262,11 @@ fn bytes_to_gib(value: u64) -> Option<f64> {
     }
 }
 
-#[cfg(all(test, target_os = "windows"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn install_recommendation_requires_catalog_entry() {
         let backends = normalize_backends(json!({
@@ -290,6 +302,80 @@ mod tests {
         assert_eq!(
             llama["install_command"],
             "omniinfer backend install llama.cpp-cuda"
+        );
+    }
+
+    #[test]
+    fn arm64_candidate_sorting_rejects_intel_backend() {
+        let backends = vec![
+            json!({
+                "id": "llama.cpp-mac-intel",
+                "installed": false,
+                "hardware_compatible": false,
+                "prebuilt_installable": true,
+                "priority": 0
+            }),
+            json!({
+                "id": "llama.cpp-mac",
+                "installed": true,
+                "hardware_compatible": true,
+                "prebuilt_installable": true,
+                "priority": 1
+            }),
+        ];
+        assert_eq!(
+            recommended_installed_backend(&backends).as_deref(),
+            Some("llama.cpp-mac")
+        );
+        assert_eq!(recommended_backend_to_install(&backends), None);
+    }
+
+    #[test]
+    fn x86_64_candidate_sorting_rejects_arm_backend() {
+        let backends = vec![
+            json!({
+                "id": "llama.cpp-mac",
+                "installed": false,
+                "hardware_compatible": false,
+                "prebuilt_installable": true,
+                "priority": 0
+            }),
+            json!({
+                "id": "llama.cpp-mac-intel",
+                "installed": false,
+                "hardware_compatible": true,
+                "prebuilt_installable": true,
+                "priority": 1
+            }),
+        ];
+        assert_eq!(recommended_installed_backend(&backends), None);
+        assert_eq!(
+            recommended_backend_to_install(&backends).as_deref(),
+            Some("llama.cpp-mac-intel")
+        );
+    }
+
+    #[test]
+    fn candidate_sorting_uses_backend_id_as_tiebreaker() {
+        let backends = vec![
+            json!({
+                "id": "backend-z",
+                "installed": false,
+                "hardware_compatible": true,
+                "prebuilt_installable": true,
+                "priority": 0
+            }),
+            json!({
+                "id": "backend-a",
+                "installed": false,
+                "hardware_compatible": true,
+                "prebuilt_installable": true,
+                "priority": 0
+            }),
+        ];
+        assert_eq!(
+            recommended_backend_to_install(&backends).as_deref(),
+            Some("backend-a")
         );
     }
 }
