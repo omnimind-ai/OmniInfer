@@ -195,10 +195,10 @@ fn print_quantization_rows(model_info: &serde_json::Value, include_backend: bool
         return;
     };
     for (quant_name, quant_info) in quantizations {
-        let suitable = if json_bool(quant_info, "suitable").unwrap_or(false) {
-            "yes"
-        } else {
-            "no"
+        let suitable = match json_str(quant_info, "memory_status") {
+            Some("unknown") => "unknown",
+            _ if json_bool(quant_info, "suitable").unwrap_or(false) => "yes",
+            _ => "no",
         };
         let memory = quant_info
             .get("required_memory_gib")
