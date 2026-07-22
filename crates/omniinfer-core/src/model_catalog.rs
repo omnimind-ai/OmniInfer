@@ -34,6 +34,7 @@ pub fn list_supported_models_best(system_name: &str) -> Result<Value, ModelCatal
     let installed_backends = BackendRegistry::build(system_host(system), "", &Value::Null)
         .rows(BackendScope::Installed)
         .into_iter()
+        .filter(|row| row.get("hardware_compatible").and_then(Value::as_bool) == Some(true))
         .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_string))
         .collect::<Vec<_>>();
     Ok(merge_best_supported_models(
@@ -119,10 +120,17 @@ fn annotate_model_quantizations(
         quant_map.insert("required_memory_gib".to_string(), json!(required));
         let available = available_memory_for_catalog_backend(system, catalog_backend, memory);
         let margin = safety_margin_gib(system, catalog_backend);
+        let memory_status = match available {
+            Some(value) if value >= round_gib(required + margin) => "sufficient",
+            Some(_) => "insufficient",
+            None => "unknown",
+        };
+        quant_map.insert("suitable".to_string(), json!(memory_status == "sufficient"));
         quant_map.insert(
-            "suitable".to_string(),
-            json!(available >= round_gib(required + margin)),
+            "available_memory_gib".to_string(),
+            available.map_or(Value::Null, |value| json!(value)),
         );
+        quant_map.insert("memory_status".to_string(), json!(memory_status));
     }
 }
 
@@ -212,14 +220,7 @@ fn merge_best_supported_models(
         let replacement = best.payload.as_object().cloned().unwrap_or_else(Map::new);
         target_quant.clear();
         target_quant.extend(replacement);
-        target_quant.insert(
-            "backend".to_string(),
-            Value::String(if best.suitable {
-                best.backend.clone()
-            } else {
-                String::new()
-            }),
-        );
+        target_quant.insert("backend".to_string(), Value::String(best.backend.clone()));
     }
 
     Value::Object(merged)
@@ -255,22 +256,26 @@ fn object_entry<'a>(map: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<S
 }
 
 fn resolve_catalog_backend_id(system: HostSystem, backend_id: &str) -> String {
+    resolve_catalog_backend_id_for_machine(system, backend_id, std::env::consts::ARCH)
+}
+
+fn resolve_catalog_backend_id_for_machine(
+    system: HostSystem,
+    backend_id: &str,
+    machine: &str,
+) -> String {
     match (system, backend_id) {
         (HostSystem::Linux, "llama.cpp-cuda") => "llama.cpp-linux-cuda".to_string(),
         (HostSystem::Linux, "llama.cpp-vulkan") => "llama.cpp-linux-vulkan".to_string(),
         (HostSystem::Linux, "llama.cpp-openvino") => "llama.cpp-linux-openvino".to_string(),
-        (HostSystem::Linux, "llama.cpp-linux") if std::env::consts::ARCH == "s390x" => {
+        (HostSystem::Linux, "llama.cpp-linux") if machine == "s390x" => {
             "llama.cpp-linux-s390x".to_string()
         }
-        (HostSystem::Mac, "llama.cpp-cpu")
-            if matches!(std::env::consts::ARCH, "x86_64" | "amd64") =>
-        {
+        (HostSystem::Mac, "llama.cpp-cpu") if matches!(machine, "x86_64" | "amd64") => {
             "llama.cpp-mac-intel".to_string()
         }
         (HostSystem::Mac, "llama.cpp-cpu") => "llama.cpp-mac".to_string(),
-        (HostSystem::Windows, "llama.cpp-cpu")
-            if matches!(std::env::consts::ARCH, "aarch64" | "arm64") =>
-        {
+        (HostSystem::Windows, "llama.cpp-cpu") if matches!(machine, "aarch64" | "arm64") => {
             "llama.cpp-windows-arm64".to_string()
         }
         _ => backend_id.to_string(),
@@ -286,15 +291,15 @@ fn system_host(system: HostSystem) -> HostInfo {
 
 #[derive(Debug, Clone, Copy)]
 struct MemoryContext {
-    ram_available_gib: f64,
-    cuda_available_gib: f64,
+    ram_available_gib: Option<f64>,
+    cuda_available_gib: Option<f64>,
 }
 
 impl MemoryContext {
     fn detect() -> Self {
         Self {
-            ram_available_gib: available_ram_gib().unwrap_or(0.0),
-            cuda_available_gib: available_cuda_gib().unwrap_or(0.0),
+            ram_available_gib: available_ram_gib(),
+            cuda_available_gib: available_cuda_gib(),
         }
     }
 }
@@ -303,7 +308,7 @@ fn available_memory_for_catalog_backend(
     system: HostSystem,
     catalog_backend: &str,
     memory: &MemoryContext,
-) -> f64 {
+) -> Option<f64> {
     let runtime_backend = resolve_catalog_backend_id(system, catalog_backend);
     if is_gpu_backend(&runtime_backend) && runtime_backend.contains("cuda") {
         return memory.cuda_available_gib;
@@ -338,18 +343,10 @@ fn is_gpu_backend(backend_id: &str) -> bool {
 }
 
 fn available_ram_gib() -> Option<f64> {
-    #[cfg(target_os = "linux")]
-    {
-        let text = std::fs::read_to_string("/proc/meminfo").ok()?;
-        for line in text.lines() {
-            let Some(rest) = line.strip_prefix("MemAvailable:") else {
-                continue;
-            };
-            let kb = rest.split_whitespace().next()?.parse::<f64>().ok()?;
-            return Some(round_gib(kb / 1024.0 / 1024.0));
-        }
-    }
-    None
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let available = system.available_memory();
+    (available > 0).then(|| round_gib(available as f64 / 1024.0 / 1024.0 / 1024.0))
 }
 
 fn available_cuda_gib() -> Option<f64> {
@@ -395,6 +392,88 @@ mod tests {
             .unwrap();
         assert_eq!(quant["required_memory_gib"], json!(0.49));
         assert!(quant.get("suitable").and_then(Value::as_bool).is_some());
+        assert!(quant.get("memory_status").and_then(Value::as_str).is_some());
+    }
+
+    fn mac_qwen_quant(catalog: &Value) -> &Value {
+        catalog
+            .get("llama.cpp-mac")
+            .and_then(|value| value.get("Qwen3.5"))
+            .and_then(|value| value.get("Qwen3.5-0.8B"))
+            .and_then(|value| value.get("quantization"))
+            .and_then(|value| value.get("Q4_K_M"))
+            .unwrap()
+    }
+
+    #[test]
+    fn mac_catalog_uses_injected_available_memory() {
+        let mut catalog = bundled_catalog(HostSystem::Mac).unwrap();
+        let memory = MemoryContext {
+            ram_available_gib: Some(8.0),
+            cuda_available_gib: None,
+        };
+        annotate_catalog_root(&mut catalog, HostSystem::Mac, &memory);
+        let quant = mac_qwen_quant(&catalog);
+        assert_eq!(quant["available_memory_gib"], json!(8.0));
+        assert_eq!(quant["memory_status"], json!("sufficient"));
+        assert_eq!(quant["suitable"], json!(true));
+    }
+
+    #[test]
+    fn unknown_mac_memory_preserves_installed_backend() {
+        let mut catalog = bundled_catalog(HostSystem::Mac).unwrap();
+        let memory = MemoryContext {
+            ram_available_gib: None,
+            cuda_available_gib: None,
+        };
+        annotate_catalog_root(&mut catalog, HostSystem::Mac, &memory);
+        let quant = mac_qwen_quant(&catalog);
+        assert_eq!(quant["available_memory_gib"], Value::Null);
+        assert_eq!(quant["memory_status"], json!("unknown"));
+        assert_eq!(quant["suitable"], json!(false));
+
+        let merged =
+            merge_best_supported_models(HostSystem::Mac, catalog, &["llama.cpp-mac".to_string()]);
+        assert_eq!(
+            merged["Qwen3.5"]["Qwen3.5-0.8B"]["quantization"]["Q4_K_M"]["backend"],
+            json!("llama.cpp-mac")
+        );
+    }
+
+    #[test]
+    fn insufficient_mac_memory_preserves_installed_backend() {
+        let mut catalog = bundled_catalog(HostSystem::Mac).unwrap();
+        let memory = MemoryContext {
+            ram_available_gib: Some(1.0),
+            cuda_available_gib: None,
+        };
+        annotate_catalog_root(&mut catalog, HostSystem::Mac, &memory);
+        let quant = mac_qwen_quant(&catalog);
+        assert_eq!(quant["memory_status"], json!("insufficient"));
+        assert_eq!(quant["suitable"], json!(false));
+
+        let merged =
+            merge_best_supported_models(HostSystem::Mac, catalog, &["llama.cpp-mac".to_string()]);
+        assert_eq!(
+            merged["Qwen3.5"]["Qwen3.5-0.8B"]["quantization"]["Q4_K_M"]["backend"],
+            json!("llama.cpp-mac")
+        );
+    }
+
+    #[test]
+    fn resolves_mac_backend_for_each_architecture() {
+        assert_eq!(
+            resolve_catalog_backend_id_for_machine(HostSystem::Mac, "llama.cpp-cpu", "arm64"),
+            "llama.cpp-mac"
+        );
+        assert_eq!(
+            resolve_catalog_backend_id_for_machine(HostSystem::Mac, "llama.cpp-cpu", "aarch64"),
+            "llama.cpp-mac"
+        );
+        assert_eq!(
+            resolve_catalog_backend_id_for_machine(HostSystem::Mac, "llama.cpp-cpu", "x86_64"),
+            "llama.cpp-mac-intel"
+        );
     }
 
     #[test]

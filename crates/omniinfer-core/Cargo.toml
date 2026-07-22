@@ -11,3 +11,4 @@ serde_json.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
+sysinfo.workspace = true

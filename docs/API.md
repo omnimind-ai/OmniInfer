@@ -404,10 +404,13 @@ Returns a merged catalog where each quantization chooses the best installed back
 The response is grouped by model family and model name. Each quantization includes:
 
 - `required_memory_gib`
-- `suitable`
+- `available_memory_gib` (or `null` when unavailable)
+- `memory_status`: `sufficient`, `insufficient`, or `unknown`
+- `suitable` (true only when memory status is `sufficient`)
 - `backend`
 
-If no suitable installed backend exists for a quantization, `backend` is an empty string.
+`backend` identifies the selected installed, hardware-compatible backend even when memory is
+insufficient or unavailable. It is empty only when no installed hardware-compatible backend exists.
 
 Example:
 

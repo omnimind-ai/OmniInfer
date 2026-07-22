@@ -924,7 +924,7 @@ dependencies = [
 
 [[package]]
 name = "omniinfer-cli"
-version = "0.3.10"
+version = "0.3.11"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -954,11 +954,12 @@ dependencies = [
 
 [[package]]
 name = "omniinfer-core"
-version = "0.3.10"
+version = "0.3.11"
 dependencies = [
  "rand",
  "serde",
  "serde_json",
+ "sysinfo",
  "thiserror",
  "ureq",
 ]
