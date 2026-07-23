@@ -639,6 +639,42 @@ fn serve_detach_restores_last_model_without_python_upstream() {
         health["omni"]["model"].as_str().unwrap(),
         model.display().to_string()
     );
+    assert_eq!(health["omni"]["restore_status"], "loaded");
+    assert_eq!(health["omni"]["restore_completed"], true);
+    let backend_pid = health["omni"]["backend_pid"].as_u64().unwrap();
+
+    let repeated = ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+        .send_json(serde_json::json!({
+            "backend": test_external_backend_id(),
+            "model": model.display().to_string(),
+            "ctx_size": 512,
+        }))
+        .expect("repeat restored model selection");
+    let repeated: serde_json::Value = repeated
+        .into_body()
+        .read_json()
+        .expect("repeat response json");
+    assert_eq!(repeated["already_loaded"], true);
+    assert_eq!(repeated["requires_reload"], false);
+    assert_eq!(repeated["backend_pid"], backend_pid);
+
+    let conflict = ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .send_json(serde_json::json!({
+            "backend": test_external_backend_id(),
+            "model": model.display().to_string(),
+            "ctx_size": 1024,
+        }))
+        .expect("select restored model with different settings");
+    assert_eq!(conflict.status().as_u16(), 409);
+    let conflict: serde_json::Value = conflict
+        .into_body()
+        .read_json()
+        .expect("conflict response json");
+    assert_eq!(conflict["requires_reload"], true);
+    assert_eq!(conflict["error"]["code"], "model_reload_required");
 
     let mut stop = Command::cargo_bin("omniinfer").expect("binary exists");
     stop.env("OMNIINFER_RUST_STRICT", "1")

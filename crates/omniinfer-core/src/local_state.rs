@@ -118,6 +118,21 @@ pub fn save_selected_model(
     save_state_value(&value)
 }
 
+pub fn clear_selected_model() -> Result<bool, StateError> {
+    let mut value = load_state_value()?;
+    let Some(map) = value.as_object_mut() else {
+        return Ok(false);
+    };
+    let mut cleared = false;
+    for key in ["selected_model", "selected_mmproj", "selected_ctx_size"] {
+        cleared |= map.remove(key).is_some();
+    }
+    if cleared {
+        save_state_value(&value)?;
+    }
+    Ok(cleared)
+}
+
 pub fn save_tui_show_reasoning(enabled: bool) -> Result<(), StateError> {
     save_boolish_state_field("tui_show_reasoning", enabled)
 }
@@ -239,6 +254,9 @@ fn boolish_field(value: Option<&Value>) -> Option<bool> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parses_python_state_shape() {
@@ -320,6 +338,7 @@ mod tests {
 
     #[test]
     fn saves_default_thinking_as_python_shape() {
+        let _env_lock = TEST_ENV_LOCK.lock().unwrap();
         let root = temp_root("default-thinking");
         let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", root.display().to_string());
         save_default_thinking(true).expect("save");
@@ -327,6 +346,29 @@ mod tests {
         assert_eq!(state.default_thinking, Some(true));
         let raw = std::fs::read_to_string(crate::paths::state_file()).expect("read state");
         assert!(raw.contains(r#""default_thinking": "on""#));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn clear_selected_model_preserves_other_state() {
+        let _env_lock = TEST_ENV_LOCK.lock().unwrap();
+        let root = temp_root("clear-selected-model");
+        let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", root.display().to_string());
+        save_selected_backend("llama.cpp-mac").expect("save backend");
+        save_default_thinking(true).expect("save default thinking");
+        save_selected_model(
+            "/models/model.gguf",
+            Some("/models/mmproj.gguf"),
+            Some(8192),
+        )
+        .expect("save model");
+
+        assert!(clear_selected_model().expect("clear model"));
+        assert!(!clear_selected_model().expect("clear model again"));
+        let state = load_state().expect("load state");
+        assert_eq!(state.selected_backend.as_deref(), Some("llama.cpp-mac"));
+        assert_eq!(state.selected_model, None);
+        assert_eq!(state.default_thinking, Some(true));
         std::fs::remove_dir_all(root).ok();
     }
 

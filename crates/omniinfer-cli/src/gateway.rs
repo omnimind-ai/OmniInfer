@@ -44,7 +44,7 @@ use access_policy::DynamicAccessPolicy;
 use gpu_status::{gpu_status_payload, query_nvidia_smi_gpu_status};
 use request_history::{RequestHistoryRecord, query_from_pairs};
 use response::{add_cors_headers, cors_response, json_response, should_forward_response_header};
-use runtime_manager::RustRuntimeManager;
+use runtime_manager::{LoadModelOutcome, RustRuntimeManager};
 
 const MAX_STREAM_HISTORY_CAPTURE_CHARS: usize = 12_000;
 
@@ -192,6 +192,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
             &Method::POST,
             "/omni/backend/select"
             | "/omni/backend/stop"
+            | "/omni/model/clear-selection"
             | "/omni/model/select"
             | "/omni/model/load"
             | "/omni/model/unload",
@@ -416,6 +417,23 @@ async fn try_handle_rust_endpoint(
             .await??;
             Ok(Some(json_response(StatusCode::OK, result)))
         }
+        (&Method::POST, "/omni/model/clear-selection") => {
+            let runtime = state.runtime.lock().await;
+            let selection_cleared = local_state::clear_selected_model()?;
+            let snapshot = runtime.snapshot();
+            Ok(Some(json_response(
+                StatusCode::OK,
+                json!({
+                    "ok": true,
+                    "selection_cleared": selection_cleared,
+                    "backend_ready": snapshot["backend_ready"],
+                    "current_model": snapshot["model"],
+                    "restore_selection": snapshot["restore_selection"],
+                    "restore_status": snapshot["restore_status"],
+                    "restore_completed": snapshot["restore_completed"],
+                }),
+            )))
+        }
         (&Method::POST, "/omni/shutdown") => {
             let result = tokio::task::spawn_blocking({
                 let runtime = Arc::clone(&state.runtime);
@@ -483,7 +501,7 @@ async fn try_handle_rust_endpoint(
             };
             let backend_host = state.backend_host.clone();
             let runtime = Arc::clone(&state.runtime);
-            let result = tokio::task::spawn_blocking(move || {
+            let outcome = tokio::task::spawn_blocking(move || {
                 let handle = tokio::runtime::Handle::current();
                 handle.block_on(async move {
                     runtime.lock().await.load_model(
@@ -495,7 +513,11 @@ async fn try_handle_rust_endpoint(
                 })
             })
             .await??;
-            Ok(Some(json_response(StatusCode::OK, result)))
+            let (status, result) = match outcome {
+                LoadModelOutcome::Success(result) => (StatusCode::OK, result),
+                LoadModelOutcome::ReloadRequired(result) => (StatusCode::CONFLICT, result),
+            };
+            Ok(Some(json_response(status, result)))
         }
         (&Method::POST, "/omni/model/unload") => {
             let body = request.into_body().collect().await?.to_bytes();

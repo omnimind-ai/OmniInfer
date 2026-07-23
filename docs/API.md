@@ -115,6 +115,7 @@ Quick Tunnel is intended for demos and short-lived testing. For best compatibili
 | `POST` | `/omni/shutdown` | Stop the gateway |
 | `POST` | `/omni/thinking/select` | Update default thinking setting |
 | `POST` | `/omni/model/select` | Load a model |
+| `POST` | `/omni/model/clear-selection` | Disable model restore without stopping the runtime |
 | `POST` | `/tokenize` | llama.cpp-compatible tokenization |
 | `POST` | `/detokenize` | llama.cpp-compatible detokenization |
 | `POST` | `/omni/tokenize` | Local-only alias for `/tokenize` |
@@ -205,6 +206,13 @@ Possible shapes include:
 
 Returns the current runtime state plus all platform-declared backends.
 
+The active runtime and the persisted startup selection are reported separately:
+
+- `backend_ready`, `model`, `model_path`, `mmproj`, `ctx_size`, and `launch_args` describe the runtime that is loaded now.
+- `restore_selection` describes the model OmniInfer will try to restore on the next direct `serve` startup, or is `null` when no restore is configured.
+- `restore_status` is `not_configured`, `pending`, or `loaded`.
+- `restore_completed` is true only when a loaded runtime matches the persisted backend, model, `mmproj`, and context size.
+
 Example:
 
 ```bash
@@ -230,6 +238,14 @@ Example response:
   "backend_port": 12894,
   "backend_pid": 45210,
   "launch_args": ["-ngl", "999"],
+  "restore_selection": {
+    "backend": "llama.cpp-cuda",
+    "model": "models/Qwen3.5-2B-Q4_K_M.gguf",
+    "mmproj": null,
+    "ctx_size": 4096
+  },
+  "restore_status": "loaded",
+  "restore_completed": true,
   "launch_command": ["llama-server", "-m", "models/Qwen3.5-2B-Q4_K_M.gguf", "--port", "12894"],
   "backend_log": ".local/runtime/linux/llama.cpp-linux-cuda/logs/runtime.log",
   "effective_parameters": {
@@ -337,7 +353,7 @@ Status codes:
 
 ### `POST /omni/backend/stop`
 
-Stops the currently loaded backend runtime process. The selected backend is preserved.
+Stops the currently loaded backend runtime process. The selected backend and persisted model selection are preserved, so a later direct `serve` can restore the model. Use `/omni/model/clear-selection` when the next startup must remain unloaded.
 
 Example response:
 
@@ -345,7 +361,27 @@ Example response:
 {
   "ok": true,
   "stopped": true,
-  "selected_backend": "llama.cpp-cuda"
+  "selected_backend": "llama.cpp-cuda",
+  "selected_model_preserved": true,
+  "restore_status": "pending"
+}
+```
+
+### `POST /omni/model/clear-selection`
+
+Clears the persisted model, `mmproj`, and context-size selection without stopping a currently loaded runtime. The selected backend is preserved. The operation is idempotent.
+
+Example response while a model is still running:
+
+```json
+{
+  "ok": true,
+  "selection_cleared": true,
+  "backend_ready": true,
+  "current_model": "models/Qwen3.5-2B-Q4_K_M.gguf",
+  "restore_selection": null,
+  "restore_status": "not_configured",
+  "restore_completed": false
 }
 ```
 
@@ -422,7 +458,7 @@ curl -s "http://127.0.0.1:9000/omni/supported-models/best?system=windows"
 
 ### `POST /omni/model/select`
 
-Loads a model and optionally an `mmproj` file. This is the management endpoint that starts or restarts the selected backend runtime.
+Loads a model and optionally an `mmproj` file. This is the management endpoint that starts the selected backend runtime.
 For the stable gateway contract, see [Model Load Parameters](model-load.md).
 
 Request body:
@@ -459,6 +495,8 @@ Example response:
 ```json
 {
   "ok": true,
+  "already_loaded": false,
+  "requires_reload": false,
   "selected_backend": "llama.cpp-cuda",
   "selected_model": "models/Qwen3.5-2B-Q4_K_M.gguf",
   "selected_mmproj": null,
@@ -466,6 +504,10 @@ Example response:
   "warnings": []
 }
 ```
+
+Selecting the same resolved model, backend, `mmproj`, context size, and effective launch arguments again is idempotent. OmniInfer returns `200` with `already_loaded: true`, `requires_reload: false`, and the existing backend PID instead of starting a second runtime. This also applies when a startup-restored path is selected again through its public model id.
+
+If the model is already loaded with different runtime settings, OmniInfer leaves it unchanged and returns `409` with `requires_reload: true`, `error.code: "model_reload_required"`, and `current` plus `requested` configurations. The client can then explicitly unload or stop the runtime before selecting the new configuration.
 
 ### `GET /omni/public-models`
 
@@ -496,7 +538,7 @@ Status codes:
 
 - `200` on success
 - `400` for invalid input or missing files
-- `409` if the backend could not be started or became unavailable
+- `409` when the selected model is already loaded with different runtime settings
 
 ### Streaming model load
 
