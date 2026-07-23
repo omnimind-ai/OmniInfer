@@ -26,8 +26,9 @@ Key endpoints:
 | `/omni/supported-models` | GET | Bundled supported-model catalog |
 | `/omni/supported-models/best` | GET | Supported-model catalog with best installed backend choices |
 | `/omni/model/select` | POST | Load a model |
+| `/omni/model/clear-selection` | POST | Disable startup restore without stopping the current model |
 | `/omni/backend/select` | POST | Select a backend |
-| `/omni/backend/stop` | POST | Stop current backend |
+| `/omni/backend/stop` | POST | Temporarily stop the current backend while preserving restore selection |
 | `/omni/cache/clear` | POST | Clear KV cache without reloading model |
 | `/omni/thinking` | GET | Read default thinking mode |
 | `/omni/thinking/select` | POST | Update default thinking mode |
@@ -225,6 +226,14 @@ curl -X POST http://127.0.0.1:9000/omni/model/select \
     "ctx_size": 4096,
     "launch_args": ["-ngl", "999"]
   }'
+```
+
+Repeating the same resolved model, backend, `mmproj`, context size, and launch arguments is an idempotent success with `already_loaded: true`. If runtime settings differ, OmniInfer returns `409`, `requires_reload: true`, and the current and requested configurations without changing the running model.
+
+`GET /omni/state` separates the active runtime from startup intent through `restore_selection`, `restore_status`, and `restore_completed`. Direct non-interactive `serve` restores the persisted selection by default; `--no-restore-model` disables it for one startup. `POST /omni/backend/stop` preserves that selection. To prevent later restore without stopping the currently loaded model:
+
+```bash
+curl -X POST http://127.0.0.1:9000/omni/model/clear-selection
 ```
 
 ### Advanced: Clear KV Cache

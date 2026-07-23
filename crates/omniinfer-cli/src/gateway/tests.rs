@@ -455,6 +455,188 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
     std::fs::remove_dir_all(temp).ok();
 }
 
+#[tokio::test]
+async fn model_selection_is_idempotent_and_restore_state_is_explicit() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("model-restore-contract");
+    let model = temp.join("model.gguf");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&model, "").unwrap();
+    let backend_id = external_test_backend_id();
+    install_fake_llama_server(&temp, backend_id);
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+    let port = gateway.port;
+    let backend_port = pick_runtime_port("127.0.0.1").unwrap();
+    let request = json!({
+        "backend": backend_id,
+        "model": model.display().to_string(),
+        "ctx_size": 512,
+        "backend_port": backend_port
+    });
+
+    let first = tokio::task::spawn_blocking({
+        let request = request.clone();
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                .send_json(request)
+                .unwrap()
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(first.status().as_u16(), 200);
+    let first: Value = first.into_body().read_json().unwrap();
+    assert_eq!(first["already_loaded"], false);
+    assert_eq!(first["requires_reload"], false);
+    let backend_pid = first["backend_pid"].as_u64().unwrap();
+
+    let repeated = tokio::task::spawn_blocking({
+        let mut request = request.clone();
+        request["public_model_id"] = json!("public-model");
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                .send_json(request)
+                .unwrap()
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(repeated.status().as_u16(), 200);
+    let repeated: Value = repeated.into_body().read_json().unwrap();
+    assert_eq!(repeated["already_loaded"], true);
+    assert_eq!(repeated["requires_reload"], false);
+    assert_eq!(repeated["backend_pid"], backend_pid);
+    assert_eq!(repeated["model"], "public-model");
+    assert_eq!(repeated["selected_public_model_id"], "public-model");
+
+    let models = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/v1/models"))
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let models: Value = models.into_body().read_json().unwrap();
+    assert_eq!(models["data"][0]["id"], "public-model");
+
+    let restored_state = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/omni/state"))
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let restored_state: Value = restored_state.into_body().read_json().unwrap();
+    assert_eq!(restored_state["restore_status"], "loaded");
+    assert_eq!(restored_state["restore_completed"], true);
+
+    let conflict = tokio::task::spawn_blocking({
+        let mut request = request.clone();
+        request["ctx_size"] = json!(1024);
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                .config()
+                .http_status_as_error(false)
+                .build()
+                .send_json(request)
+                .unwrap()
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(conflict.status().as_u16(), 409);
+    let conflict: Value = conflict.into_body().read_json().unwrap();
+    assert_eq!(conflict["requires_reload"], true);
+    assert_eq!(conflict["error"]["code"], "model_reload_required");
+    assert_eq!(conflict["current"]["ctx_size"], 512);
+    assert_eq!(conflict["requested"]["ctx_size"], 1024);
+
+    let clear = tokio::task::spawn_blocking(move || {
+        ureq::post(format!(
+            "http://127.0.0.1:{port}/omni/model/clear-selection"
+        ))
+        .send_json(json!({}))
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    let clear: Value = clear.into_body().read_json().unwrap();
+    assert_eq!(clear["selection_cleared"], true);
+    assert_eq!(clear["backend_ready"], true);
+    assert_eq!(clear["current_model"], "public-model");
+    assert_eq!(clear["restore_selection"], Value::Null);
+    assert_eq!(clear["restore_status"], "not_configured");
+    assert_eq!(clear["restore_completed"], false);
+
+    let selected_again = tokio::task::spawn_blocking({
+        let request = request.clone();
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                .send_json(request)
+                .unwrap()
+        }
+    })
+    .await
+    .unwrap();
+    let selected_again: Value = selected_again.into_body().read_json().unwrap();
+    assert_eq!(selected_again["already_loaded"], true);
+
+    let stop = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/backend/stop"))
+            .send_json(json!({}))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let stop: Value = stop.into_body().read_json().unwrap();
+    assert_eq!(stop["selected_model_preserved"], true);
+    assert_eq!(stop["restore_status"], "pending");
+
+    let state = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/omni/state"))
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let state: Value = state.into_body().read_json().unwrap();
+    assert_eq!(state["backend_ready"], false);
+    assert_eq!(state["restore_status"], "pending");
+    assert_eq!(state["restore_completed"], false);
+    assert_eq!(
+        state["restore_selection"]["model"],
+        model.display().to_string()
+    );
+
+    let clear_again = tokio::task::spawn_blocking(move || {
+        ureq::post(format!(
+            "http://127.0.0.1:{port}/omni/model/clear-selection"
+        ))
+        .send_json(json!({}))
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    let clear_again: Value = clear_again.into_body().read_json().unwrap();
+    assert_eq!(clear_again["selection_cleared"], true);
+    assert_eq!(clear_again["restore_status"], "not_configured");
+
+    let persisted: Value = serde_json::from_str(
+        &std::fs::read_to_string(temp.join(".local/config/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(persisted.get("selected_model").is_none());
+    assert!(persisted.get("selected_mmproj").is_none());
+    assert!(persisted.get("selected_ctx_size").is_none());
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
 #[test]
 fn cuda_picker_prefers_lowest_idle_index() {
     let mut devices = parse_cuda_gpu_rows(

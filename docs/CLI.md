@@ -369,7 +369,13 @@ On packaged Windows releases, replace `./omniinfer` with `.\omniinfer.ps1` in Po
 
 In a terminal, `serve` opens the Rust server launcher. It asks you to choose a backend and then a model every time. The last selected backend and model are preselected and marked `last selected`, so pressing Enter twice reuses the previous choices. After the model is loaded, the launcher starts the gateway and keeps it running until you press `Ctrl+C`.
 
-When `serve` is used from a non-interactive script, or when `OMNIINFER_SERVE_DIRECT=1` is set, it starts the gateway directly without the launcher. Direct `serve` starts on `127.0.0.1` by default; configuration-file `host` values do not change the listener. Use `--lan` to bind `0.0.0.0`, or pass `--host` explicitly for another address. If no `--model` is supplied, OmniInfer reloads the last selected model from `.local/config/state.json` when one is available; otherwise it starts an empty gateway. Use `--no-restore-model` for managed multi-admin servers where every loaded model should have a named admin owner.
+When `serve` is used from a non-interactive script, or when `OMNIINFER_SERVE_DIRECT=1` is set, it starts the gateway directly without the launcher. Direct `serve` starts on `127.0.0.1` by default; configuration-file `host` values do not change the listener. Use `--lan` to bind `0.0.0.0`, or pass `--host` explicitly for another address. If no `--model` is supplied, OmniInfer reloads the last selected model from `.local/config/state.json` when one is available; otherwise it starts an empty gateway. Use `--no-restore-model` to disable restore for one startup. To disable later restores persistently without stopping the currently loaded runtime, call `POST /omni/model/clear-selection`.
+
+`POST /omni/backend/stop` is a temporary runtime stop: it preserves the selected model for the next direct startup. The active runtime and future restore selection are exposed separately by `GET /omni/state`. Identical client selections after automatic restore are idempotent and return `already_loaded: true`; changed runtime parameters return `409` with `requires_reload: true`.
+
+```sh
+curl -sS -X POST http://127.0.0.1:9000/omni/model/clear-selection
+```
 
 To expose only the inference API to trusted devices on the same LAN, use:
 

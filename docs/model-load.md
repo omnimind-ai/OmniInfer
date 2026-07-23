@@ -61,6 +61,8 @@ Common generation defaults include:
 ```json
 {
   "ok": true,
+  "already_loaded": false,
+  "requires_reload": false,
   "selected_backend": "llama.cpp-cuda",
   "selected_model": "models/Qwen3.5-2B-Q4_K_M.gguf",
   "selected_mmproj": null,
@@ -68,6 +70,47 @@ Common generation defaults include:
   "warnings": []
 }
 ```
+
+## Idempotency and Reloads
+
+The gateway compares the resolved model path, backend, `mmproj`, context size,
+and effective backend launch arguments. Repeating an identical selection
+returns `200` and reuses the current process:
+
+```json
+{
+  "ok": true,
+  "already_loaded": true,
+  "requires_reload": false,
+  "backend_pid": 45210
+}
+```
+
+This includes a model restored during direct `serve` startup and then selected
+again by a client. A public model id can take over the restored path identity
+without starting a second backend process.
+
+When any runtime setting differs, the gateway does not reload implicitly. It
+returns `409` with both configurations so the client can perform a controlled
+unload or stop first:
+
+```json
+{
+  "ok": false,
+  "already_loaded": true,
+  "requires_reload": true,
+  "error": {
+    "code": "model_reload_required",
+    "message": "model is already loaded with different runtime settings"
+  },
+  "current": {"ctx_size": 4096},
+  "requested": {"ctx_size": 8192}
+}
+```
+
+`POST /omni/backend/stop` only stops the current runtime and preserves the
+startup selection. `POST /omni/model/clear-selection` disables future restore
+without stopping a runtime that is currently loaded.
 
 When the gateway accepts a request but drops a load option that the selected
 backend cannot use, the response includes a warning:
