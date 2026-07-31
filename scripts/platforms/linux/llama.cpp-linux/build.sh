@@ -6,7 +6,6 @@ BUILD_TYPE="Release"
 DRY_RUN=0
 JOBS=""
 CLEAN_BUILD=0
-BOOTSTRAP_SUBMODULE=1
 SMOKE_TEST=0
 INSTALL_PREBUILT=1
 USE_NATIVE=0
@@ -38,9 +37,9 @@ Options:
   --portable           Disable host-specific CPU tuning (default)
   --lto                Enable link-time optimization
   --clean              Remove the previous build directory before configuring
-  --no-bootstrap       Do not auto-initialize the llama.cpp git submodule
+  --no-bootstrap       Compatibility flag; llama.cpp source is vendored
   --prebuilt           Download and install the configured upstream prebuilt archive
-  --from-source        Build from the checked-out source submodule instead of installing a prebuilt archive
+  --from-source        Build from the vendored source tree instead of installing a prebuilt archive
   --smoke-test         Run `llama-server --version` after the build completes
   --dry-run            Print actions without executing them
   -h, --help           Show this help message
@@ -74,7 +73,6 @@ while (($# > 0)); do
       shift
       ;;
     --no-bootstrap)
-      BOOTSTRAP_SUBMODULE=0
       shift
       ;;
     --prebuilt)
@@ -162,29 +160,9 @@ ensure_llama_root() {
     return
   fi
 
-  if [[ ${BOOTSTRAP_SUBMODULE} -eq 0 ]]; then
-    echo "llama.cpp source tree was not found at ${LLAMA_ROOT}" >&2
-    echo "Run: git submodule update --init --recursive framework/llama.cpp" >&2
-    exit 1
-  fi
-
-  if [[ ! -d "${REPO_ROOT}/.git" && ! -f "${REPO_ROOT}/.git" ]]; then
-    echo "llama.cpp source tree was not found at ${LLAMA_ROOT}" >&2
-    exit 1
-  fi
-
-  require_command git
-  echo "llama.cpp source tree is missing. Bootstrapping the submodule..."
-  if [[ ${DRY_RUN} -eq 1 ]]; then
-    echo "  git -C ${REPO_ROOT} submodule update --init --recursive framework/llama.cpp"
-    return
-  fi
-  git -C "${REPO_ROOT}" submodule update --init --recursive framework/llama.cpp
-
-  if [[ ! -f "${LLAMA_ROOT}/CMakeLists.txt" ]]; then
-    echo "Failed to prepare llama.cpp at ${LLAMA_ROOT}" >&2
-    exit 1
-  fi
+  echo "Vendored llama.cpp source tree was not found at ${LLAMA_ROOT}." >&2
+  echo "This checkout is incomplete; restore framework/llama.cpp from the OmniInfer repository." >&2
+  exit 1
 }
 
 prepare_runtime_dirs() {

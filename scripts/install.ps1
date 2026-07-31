@@ -168,27 +168,6 @@ function Find-And-Load-Msvc {
     return $false
 }
 
-function Set-GitHubSubmodulesToHttps {
-    param([string]$RepoDir)
-    $gitmodules = Join-Path $RepoDir ".gitmodules"
-    if (-not (Test-Path $gitmodules)) { return 0 }
-
-    $converted = 0
-    $moduleUrls = git -C $RepoDir config --file .gitmodules --get-regexp '^submodule\..*\.url$' 2>$null
-    foreach ($line in $moduleUrls) {
-        if ($line -notmatch '^(submodule\..+)\.url\s+(.+)$') { continue }
-        $keyPrefix = $matches[1]
-        $url = $matches[2]
-        if ($url -notmatch '^git@github\.com:(.+)$') { continue }
-
-        $httpsUrl = "https://github.com/$($matches[1])"
-        git -C $RepoDir config --local "$keyPrefix.url" $httpsUrl
-        if ($LASTEXITCODE -eq 0) { $converted++ }
-    }
-
-    return $converted
-}
-
 # Arrow-key menu selector. Returns 0-based index.
 # Falls back to numbered list when console is not interactive (e.g. irm | iex).
 function Select-Menu {
@@ -636,27 +615,9 @@ if ($Prebuilt) {
 }
 
 if (-not $Prebuilt) {
-    # Windows build scripts do NOT auto-bootstrap submodules.
     $llamaCppDir = Join-Path $InstallDir "framework\llama.cpp"
     if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
-        Write-Info "Initializing llama.cpp submodule ..."
-        git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "SSH submodule clone failed, retrying with HTTPS ..."
-            $converted = Set-GitHubSubmodulesToHttps $InstallDir
-            if ($converted -eq 0) {
-                Stop-Fatal "Failed to initialize llama.cpp submodule and no GitHub SSH submodule URLs could be converted to HTTPS."
-            }
-            git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
-            if ($LASTEXITCODE -ne 0) {
-                Stop-Fatal "Failed to initialize llama.cpp submodule via SSH and HTTPS. Check network access to GitHub and retry."
-            }
-        }
-        if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
-            Stop-Fatal "llama.cpp submodule initialized but CMakeLists.txt is missing in $llamaCppDir"
-        }
-        Write-Ok "Submodule ready"
-        Write-Host ""
+        Stop-Fatal "Vendored llama.cpp source is missing from $llamaCppDir. This checkout is incomplete; clone or restore the full OmniInfer repository and retry."
     }
 }
 

@@ -20,6 +20,7 @@ from urllib.parse import unquote, urlparse
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG = REPO_ROOT / "scripts" / "prebuilt_backends.json"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_REVISION_MARKER = ".omniinfer-upstream-revision"
 
 
 def load_catalog(path: Path) -> dict[str, Any]:
@@ -38,7 +39,7 @@ def iter_source_release_assets(catalog: dict[str, Any], source_name: str):
 def validate(
     catalog: dict[str, Any],
     *,
-    require_gitlink_match: bool,
+    require_source_match: bool,
     verify_upstream_tags: bool,
 ) -> list[str]:
     errors: list[str] = []
@@ -61,12 +62,17 @@ def validate(
             errors.append(f"{source_name}: submodule_path is required")
         if not isinstance(submodule_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", submodule_commit):
             errors.append(f"{source_name}: submodule_commit must be a 40-character lowercase commit")
-        if require_gitlink_match and isinstance(submodule_path, str):
-            actual = gitlink_commit(submodule_path)
-            if actual != submodule_commit:
-                errors.append(
-                    f"{source_name}: catalog commit {submodule_commit} does not match gitlink {actual}"
-                )
+        if require_source_match and isinstance(submodule_path, str):
+            try:
+                actual = source_checkout_revision(submodule_path)
+            except Exception as error:
+                errors.append(f"{source_name}: failed to resolve source revision: {error}")
+            else:
+                if actual != submodule_commit:
+                    errors.append(
+                        f"{source_name}: catalog commit {submodule_commit} "
+                        f"does not match source revision {actual}"
+                    )
         if (
             verify_upstream_tags
             and isinstance(submodule_tag, str)
@@ -232,6 +238,16 @@ def gitlink_commit(submodule_path: str) -> str:
     return fields[1]
 
 
+def source_checkout_revision(source_path: str) -> str:
+    marker = REPO_ROOT / source_path / SOURCE_REVISION_MARKER
+    if marker.is_file():
+        revision = marker.read_text(encoding="utf-8").strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise RuntimeError(f"{marker} does not contain a valid source revision")
+        return revision
+    return gitlink_commit(source_path)
+
+
 def github_json(url: str) -> Any:
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     headers = {
@@ -293,7 +309,7 @@ def update_source(
     if not isinstance(old_tag, str) or not old_tag:
         raise SystemExit(f"catalog source {source_name} has no current tag")
     if submodule_commit == "current":
-        submodule_commit = gitlink_commit(source["submodule_path"])
+        submodule_commit = source_checkout_revision(source["submodule_path"])
     if not re.fullmatch(r"[0-9a-f]{40}", submodule_commit):
         raise SystemExit("--submodule-commit must be 'current' or a 40-character lowercase commit")
     tag_commit = github_tag_commit(source_name, tag)
@@ -352,7 +368,13 @@ def main() -> int:
     parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     subparsers = parser.add_subparsers(dest="command", required=True)
     check_parser = subparsers.add_parser("check", help="validate local catalog metadata")
-    check_parser.add_argument("--require-gitlink-match", action="store_true")
+    check_parser.add_argument(
+        "--require-source-match",
+        "--require-gitlink-match",
+        dest="require_source_match",
+        action="store_true",
+        help="verify catalog commits against vendored revision markers or submodule gitlinks",
+    )
     check_parser.add_argument(
         "--verify-upstream-tags",
         action="store_true",
@@ -369,7 +391,7 @@ def main() -> int:
         update_source(catalog, args.source, args.tag, args.submodule_commit)
     errors = validate(
         catalog,
-        require_gitlink_match=getattr(args, "require_gitlink_match", False),
+        require_source_match=getattr(args, "require_source_match", False),
         verify_upstream_tags=getattr(args, "verify_upstream_tags", False),
     )
     if errors:

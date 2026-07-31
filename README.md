@@ -9,7 +9,7 @@
 
 Easy, fast, and private LLM & VLM inference for every device
 
-| [Demo](#demo) | [Getting Started](#getting-started) | [About](#about) | [Documentation](#documentation) | [Architecture](#architecture) |
+| [Demo](#demo) | [Getting Started](#getting-started) | [About](#about) | [ZO-LoRA](#on-device-zeroth-order-optimization) | [Documentation](#documentation) | [Architecture](#architecture) |
 
 ## Demo
 
@@ -135,6 +135,66 @@ OmniInfer runs everywhere:
 - Android and iOS — mobile and edge devices
 - One codebase across CLI, HTTP gateway, and mobile modules
 
+## On-device Zeroth-Order Optimization
+
+OmniInfer also includes an experimental `llama-zo` workflow for optimizing a
+LoRA Adapter directly on an Android device without backpropagation. The SST-2
+reference task keeps LoRA A fixed, updates only an F32 master copy of LoRA B,
+and estimates each update from two seeded loss evaluations at `B + epsilon*z`
+and `B - epsilon*z`.
+
+The same deterministic batches and perturbations are available through:
+
+- A standard llama.cpp CPU reference path
+- Hexagon HTP serial execution with separate plus and minus decodes
+- Hexagon HTP paired execution with both sides in one rectangular decode
+- Optional host pipelining for preparation of the next perturbation plan
+
+The HTP implementation preserves native Q4_0, Q8_0, and F16 base matmul paths,
+then applies an explicit F16 LoRA-A matmul and in-place LoRA accumulation. HMX
+accelerates eligible base matmuls and Flash Attention on supported SoCs; other
+HTP work uses HVX. In particular, the tested rank-8 LoRA-A projection and LoRA
+accumulation are HVX operations, so an HTP run is not an HMX-only graph.
+Critical ZO-LoRA graph nodes are pinned to HTP and unsupported placement fails
+instead of silently falling back to CPU.
+
+### Result Snapshot
+
+Historical TinyLlama F16 learning results measured on a Redmi K60 Pro
+(Snapdragon 8 Gen 2 / SM8550, Hexagon v73) on 2026-07-29 used HTP paired
+execution, rank 8, seed 1337, the first 1,000 SST-2 training rows, and the full
+872-row development set:
+
+| Independent run | Dev loss | Dev accuracy |
+| --- | ---: | ---: |
+| B=0, step 0 | 6.298321 | 484/872 = 55.504587% |
+| 500 updates | 5.542850 | 500/872 = 57.339450% |
+| 5,000 updates | 0.710105 | 707/872 = 81.077982% |
+
+After the HTP activation-cache lifecycle fix, a one-step TinyLlama Q4_0 check
+reported mean loss `6.540161` on CPU and `6.546338` on HTP, a difference of
+`+0.006177`. This is a numerical correctness result, not a Q4 accuracy or
+performance claim.
+
+The final-source Q4_0 performance run on the same Redmi K60 Pro used 5 warmups,
+20 measured steps, rank 8, batch size 4, sequence limit 128, and seed 1337:
+
+| Path | Step p50 | Real token/s | Backend token/s | Real / padding / backend tokens |
+| --- | ---: | ---: | ---: | ---: |
+| CPU reference | 1,072,087 us | 127.770 | 127.770 | 2,640 / 0 / 2,640 |
+| HTP serial | 761,579 us | 176.717 | 305.774 | 2,640 / 1,928 / 4,568 |
+| HTP paired + pipeline | 566,687 us | 216.318 | 374.295 | 2,640 / 1,928 / 4,568 |
+
+Paired HTP was 1.344x faster than serial HTP and 1.892x faster than CPU by
+step p50. A profile of the first measured shape confirmed HMX base matmul and
+Flash Attention, zero critical-node CPU fallbacks, and a median LoRA-A plus
+LoRA-accumulation share of 19.431% of decode time across three runs.
+
+Start with the [complete ZO-LoRA example](framework/llama.cpp/examples/zo-lora/README.md)
+for the algorithm, native build, mode matrix, reproducibility protocol, and
+result details. The [Android ZO-LoRA guide](docs/android/zo-lora-cli.md) covers
+toolchain setup, packaging, and ADB deployment.
+
 ## Documentation
 
 Recommended docs:
@@ -142,6 +202,7 @@ Recommended docs:
 - [CLI Guide](docs/CLI.md): end-to-end CLI usage for Linux, macOS, Windows, and Android
 - [Android App Integration](docs/android/integration.md): embed OmniInfer in a third-party Android app
 - [Android Backend Reference](docs/android/backends.md): Android backend options for llama.cpp, MNN, LiteRT-LM, and ExecuTorch QNN
+- [Android ZO-LoRA CLI](docs/android/zo-lora-cli.md): build and run the standalone native SST-2 trainer with CPU or Hexagon HTP
 - [Android Smoke Tests](docs/android/smoke-tests.md): adb/curl checks and source-build validation
 - [Android Troubleshooting](docs/android/troubleshooting.md): common build, runtime, and backend failures
 - [Build Guide](docs/build.md): build and platform packaging notes
@@ -171,3 +232,8 @@ We welcome and value any contributions and collaborations. Please check out [Con
 ## License
 
 This project is licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
+
+`framework/llama.cpp` is vendored and modified from
+[ggml-org/llama.cpp at revision `8a091c47abe67e0a03b85bc7c9eee8bdb9b14b05`](https://github.com/ggml-org/llama.cpp/commit/8a091c47abe67e0a03b85bc7c9eee8bdb9b14b05)
+and remains available under its MIT license; see
+[framework/llama.cpp/LICENSE](framework/llama.cpp/LICENSE).

@@ -50,11 +50,10 @@ Do not initialize all submodules recursively. The `framework/` directory contain
 Initialize only the native Android backends you keep enabled:
 
 ```bash
-git submodule update --init third_party/omniinfer/framework/llama.cpp
-git submodule update --init third_party/omniinfer/framework/mnn
+git -C third_party/omniinfer submodule update --init framework/mnn
 ```
 
-`framework/llama.cpp` is needed only when `omniinfer.backend.llama_cpp=true`. `framework/mnn` is needed only when `omniinfer.backend.mnn=true`. LiteRT-LM does not require OmniInfer native submodules.
+`framework/llama.cpp` is vendored in the OmniInfer checkout and is used only when `omniinfer.backend.llama_cpp=true`; it does not need a nested submodule initialization. `framework/mnn` remains a submodule and is needed only when `omniinfer.backend.mnn=true`. LiteRT-LM does not require additional native framework sources.
 
 ### Option B: AAR / Maven
 

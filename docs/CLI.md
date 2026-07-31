@@ -150,13 +150,13 @@ The legacy compatibility command is still accepted:
 ./omniinfer build <backend> --prebuilt
 ```
 
-Use source builds only from a source checkout when you explicitly need to compile the checked-out submodule:
+Use source builds only from a source checkout when you explicitly need to compile the checked-out source tree:
 
 ```sh
 ./omniinfer build <backend> --from-source
 ```
 
-Packaged releases support `backend install` for prebuilt runtimes. Source builds still require a cloned repository with `scripts/platforms/...` and the relevant submodules.
+Packaged releases support `backend install` for prebuilt runtimes. Source builds still require a cloned repository with `scripts/platforms/...`, vendored framework sources, and any relevant submodules.
 
 ### 3. Select a backend
 

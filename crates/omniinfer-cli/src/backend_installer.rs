@@ -14,6 +14,8 @@ use crate::prebuilt_catalog::{
     PrebuiltCatalog, PrebuiltEntry, current_platform_name, load_catalog,
 };
 
+const UPSTREAM_REVISION_MARKER: &str = ".omniinfer-upstream-revision";
+
 #[derive(Debug, Clone)]
 pub(crate) struct InstallOptions {
     pub(crate) backend: String,
@@ -1330,7 +1332,7 @@ fn source_checkout_version_note(
         return None;
     }
     let expected = catalog.resolved_submodule_commit(entry)?;
-    let actual = git_rev_parse(submodule_path)?;
+    let actual = source_checkout_revision(submodule_path)?;
     if actual == expected {
         Some(format!("{submodule_path} matches {expected}"))
     } else {
@@ -1340,10 +1342,26 @@ fn source_checkout_version_note(
     }
 }
 
-fn git_rev_parse(path: &str) -> Option<String> {
+fn source_checkout_revision(path: &str) -> Option<String> {
+    let source_root = paths::repo_root().join(path);
+    let marker_revision = fs::read_to_string(source_root.join(UPSTREAM_REVISION_MARKER))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if marker_revision.is_some() {
+        return marker_revision;
+    }
+    if !source_root.join(".git").exists() {
+        return None;
+    }
+    git_rev_parse(&source_root)
+}
+
+fn git_rev_parse(path: &Path) -> Option<String> {
     let output = std::process::Command::new("git")
-        .args(["-C", path, "rev-parse", "HEAD"])
-        .current_dir(paths::repo_root())
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "HEAD"])
         .output()
         .ok()?;
     output

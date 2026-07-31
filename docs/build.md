@@ -31,7 +31,7 @@ For all desktop builds:
 - Git
 - Python 3
 - `cmake`
-- `framework/llama.cpp` available for every `llama.cpp-*` backend
+- the vendored `framework/llama.cpp` source tree available for every `llama.cpp-*` backend
 
 Additional framework notes:
 
@@ -41,19 +41,15 @@ Additional framework notes:
 - `vllm-linux-cuda` installs vLLM Python wheels into an OmniInfer-managed local venv by default, which matches vLLM's normal binary distribution path
 - Windows `vllm-wsl2-cuda` and `vllm-wsl2-rocm` install pinned official Linux wheels into OmniInfer-managed WSL2 venvs; upstream vLLM has no native Windows runtime
 
-Submodule behavior:
+Framework source behavior:
 
-- Linux `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`
-- macOS `llama.cpp-*` scripts can bootstrap `framework/llama.cpp` automatically unless you pass `--no-bootstrap`
+- `framework/llama.cpp` is part of a full OmniInfer source checkout; Linux, macOS, and Windows builds do not download it separately
+- Linux and macOS llama.cpp scripts still accept `--no-bootstrap` as a compatibility flag, but it is a no-op for the vendored tree
 - macOS `turboquant-mac` can bootstrap `framework/llama-cpp-turboquant` automatically unless you pass `--no-bootstrap`
-- Windows `llama.cpp-*` scripts do not bootstrap submodules automatically; initialize `framework/llama.cpp` first if it is missing
 - `vllm-linux-cuda`, `vllm-wsl2-cuda`, and `vllm-wsl2-rocm` do not bootstrap or update `framework/vllm` during normal wheel installation
 
-Example:
-
-```bash
-git submodule update --init --recursive framework/llama.cpp
-```
+If `framework/llama.cpp/CMakeLists.txt` is missing, the checkout is incomplete.
+Restore the vendored directory from the OmniInfer repository before building.
 
 ## Prebuilt Runtime Installs
 
@@ -75,13 +71,13 @@ For example:
 ./omniinfer build <backend> --from-source
 ```
 
-The Rust installer owns multi-asset download, pinned SHA256 verification, staged extraction, required-file validation, atomic activation, and manifest writing. Source build scripts still own compilation from checked-out submodules. Shared llama.cpp release URLs live in `scripts/prebuilt_backends.json`, but a backend is only offered as prebuilt when that catalog contains a matching entry for the current platform.
+The Rust installer owns multi-asset download, pinned SHA256 verification, staged extraction, required-file validation, atomic activation, and manifest writing. Source build scripts still own compilation from vendored sources and checked-out framework submodules. Shared llama.cpp release URLs live in `scripts/prebuilt_backends.json`, but a backend is only offered as prebuilt when that catalog contains a matching entry for the current platform.
 
 Prebuilt versioning is explicit:
 
-- `scripts/prebuilt_backends.json` schema 3 keeps each upstream release tag and expected submodule commit once under `sources`, while platform entries record primary archives, companion assets, pinned SHA256 values, required runtime files, and launcher names.
-- A prebuilt llama.cpp runtime is an upstream release artifact. It is only source-aligned when the catalog tag and `framework/llama.cpp` submodule are pinned to the same upstream release tag or commit.
-- If a source checkout has a different `framework/llama.cpp` commit than the catalog entry, the Rust installer prints a version note and records the catalog metadata in `prebuilt.json`.
+- `scripts/prebuilt_backends.json` schema 5 keeps each upstream release tag and expected source commit once under `sources`, while platform entries record primary archives, companion assets, pinned SHA256 values, required runtime files, and launcher names. The legacy `submodule_path` and `submodule_commit` field names remain part of the catalog and manifest schema.
+- A prebuilt llama.cpp runtime is an upstream release artifact. It is source-aligned when the catalog commit matches `framework/llama.cpp/.omniinfer-upstream-revision`.
+- If the vendored llama.cpp revision marker differs from the catalog entry, the Rust installer prints a version note and records the catalog metadata in `prebuilt.json`.
 - If no official asset exists, leave the catalog entry absent. For example, llama.cpp `b9500` publishes Linux CPU, ROCm, Vulkan, OpenVINO, macOS, and Windows CUDA assets, but not a Linux CUDA archive.
 - Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and all downloaded URLs and digests.
 - Windows `llama.cpp-cuda` requires the matching llama.cpp CUDA runtime companion asset. The three required CUDA DLLs are validated before activation, and an incomplete older install is repaired on the next `backend install` invocation.
@@ -93,19 +89,18 @@ Validate catalog structure, URL/tag consistency, and complete SHA256 coverage be
 python scripts/update_prebuilt_catalog.py check
 ```
 
-When a future llama.cpp submodule update should move the prebuilt release at the same time, update the gitlink first and run the catalog updater. It fetches the named official GitHub Release, updates every primary and companion URL/digest for that source, and records the gitlink commit once:
+When a future llama.cpp upstream sync should move the prebuilt release at the same time, update the vendored source and its `.omniinfer-upstream-revision` marker first, then run the catalog updater. It fetches the named official GitHub Release, updates every primary and companion URL/digest for that source, and records the marker commit once:
 
 ```bash
-git submodule update --init framework/llama.cpp
-# Move framework/llama.cpp to the reviewed upstream release commit and stage the gitlink.
+# Sync framework/llama.cpp to the reviewed upstream commit and update its revision marker.
 python scripts/update_prebuilt_catalog.py update \
   --source ggml-org/llama.cpp \
   --tag bNNNN \
   --submodule-commit current
-python scripts/update_prebuilt_catalog.py check --require-gitlink-match
+python scripts/update_prebuilt_catalog.py check --require-source-match
 ```
 
-Do not use the update command for a submodule-only development commit that has no matching official prebuilt Release. In that case, retain the existing catalog source metadata so the installer continues to report the intentional source/prebuilt mismatch.
+Do not use the update command for downstream-only llama.cpp changes that have no matching official prebuilt Release. In that case, retain the upstream revision marker and existing catalog source metadata.
 
 ## Runtime Output Layout
 
@@ -158,10 +153,10 @@ python scripts/update_prebuilt_catalog.py update `
   --source vllm-project/vllm `
   --tag <vLLM-tag> `
   --submodule-commit <upstream-commit>
-python scripts/update_prebuilt_catalog.py check --require-gitlink-match --verify-upstream-tags
+python scripts/update_prebuilt_catalog.py check --require-source-match --verify-upstream-tags
 ```
 
-The updater verifies that the requested source tag resolves to the supplied commit, changes the source/runtime release metadata and matching prebuilt assets, and refuses a tag/commit mismatch. Python runtime releases are intentionally independent entries: their release tag, package version, wheel URL/SHA256, accelerator ABI, and optional ROCm build commit/index must be updated together. Updating the actual gitlink remains a separate explicit operation; `check --require-gitlink-match --verify-upstream-tags` confirms that every catalog submodule tag/commit matches both the gitlink and GitHub.
+The updater verifies that the requested source tag resolves to the supplied commit, changes the source/runtime release metadata and matching prebuilt assets, and refuses a tag/commit mismatch. Python runtime releases are intentionally independent entries: their release tag, package version, wheel URL/SHA256, accelerator ABI, and optional ROCm build commit/index must be updated together. Updating the actual vLLM gitlink remains a separate explicit operation; `check --require-source-match --verify-upstream-tags` checks vendored revision markers or submodule gitlinks as appropriate, then verifies the corresponding GitHub tags.
 
 ### Available Scripts
 

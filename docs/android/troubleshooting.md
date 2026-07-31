@@ -67,14 +67,13 @@ Symptom:
 
 Fix: install an Android SDK CMake package such as `cmake;3.22.1`; it includes the Ninja binary used by AGP's external native build. A LiteRT-only host still configures `:omniinfer-server`'s CMake project for `libomniinfer-jni.so`.
 
-### Native submodules are missing
+### Native framework sources are missing
 
 Symptom: CMake fails because `framework/llama.cpp` or `framework/mnn` is empty.
 
-Fix: either initialize the backend submodule you enabled, or disable that backend in `gradle.properties`.
+Fix: `framework/llama.cpp` is vendored, so a missing copy means the OmniInfer checkout is incomplete. Restore or clone the full repository. For MNN, initialize its submodule. You can also disable either backend in `gradle.properties`.
 
 ```bash
-git submodule update --init framework/llama.cpp
 git submodule update --init framework/mnn
 ```
 

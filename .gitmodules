@@ -1,7 +1,4 @@
 
-[submodule "framework/llama.cpp"]
-	path = framework/llama.cpp
-	url = git@github.com:ggml-org/llama.cpp.git
 [submodule "framework/mlx"]
 	path = framework/mlx
 	url = git@github.com:ml-explore/mlx.git

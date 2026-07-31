@@ -46,6 +46,13 @@ fn backend_install_prebuilt_from_local_catalog() {
     fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
     let backend_id = test_external_backend_id();
     let fixture = write_prebuilt_fixture(&root, backend_id, false);
+    let source_root = root.join("framework").join("llama.cpp");
+    fs::create_dir_all(&source_root).expect("create vendored source root");
+    fs::write(
+        source_root.join(".omniinfer-upstream-revision"),
+        "fixture\n",
+    )
+    .expect("write upstream revision marker");
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
@@ -59,6 +66,9 @@ fn backend_install_prebuilt_from_local_catalog() {
             test_runtime_platform_dir(),
             backend_id
         )))
+        .stdout(predicate::str::contains(
+            "version note: framework/llama.cpp matches fixture",
+        ))
         .stdout(predicate::str::contains("Prebuilt backend installed:"));
 
     let launcher = installed_launcher(&root, backend_id);
@@ -78,6 +88,8 @@ fn backend_install_prebuilt_from_local_catalog() {
     assert_eq!(manifest["backend"], backend_id);
     assert_eq!(manifest["catalog_sha256"], fixture.sha256);
     assert_eq!(manifest["assets"].as_array().unwrap().len(), 1);
+    assert_eq!(manifest["submodule_path"], "framework/llama.cpp");
+    assert_eq!(manifest["submodule_commit"], "fixture");
 
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")

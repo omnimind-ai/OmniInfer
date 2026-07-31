@@ -21,11 +21,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "tmp" / "test_results"
 RUST_BINARY = REPO_ROOT / "target" / "debug" / "omniinfer"
 DEFAULT_IMAGE = REPO_ROOT / "tests" / "fixtures" / "test1.png"
-DEFAULT_STEPFUN_MODEL = Path("/home/zhangguanhuai/models/gguf/stepfun/stepfun-ai_GELab-Zero-4B-preview-bf16.gguf")
-DEFAULT_STEPFUN_MMPROJ = Path("/home/zhangguanhuai/models/gguf/stepfun/mmproj-stepfun-ai_GELab-Zero-4B-preview-bf16.gguf")
-DEFAULT_QWEN27_MODEL = Path("/home/zhangguanhuai/models/gguf/qwen/qwen3.6-27b/Qwen3.6-27B-Q4_K_M.gguf")
-DEFAULT_QWEN27_MMPROJ_BF16 = Path("/home/zhangguanhuai/models/gguf/qwen/qwen3.6-27b/mmproj-BF16.gguf")
-DEFAULT_QWEN27_MMPROJ_F16 = Path("/home/zhangguanhuai/models/gguf/qwen/qwen3.6-27b/mmproj-F16.gguf")
 
 
 @dataclass(frozen=True)
@@ -233,12 +228,12 @@ def _run_case(case: SmokeCase, *, output_dir: Path, env: dict[str, str]) -> dict
     return result
 
 
-def _default_cases(include_qwen27: bool) -> list[SmokeCase]:
-    cases = [
+def _default_cases(stepfun_model: Path, stepfun_mmproj: Path) -> list[SmokeCase]:
+    return [
         SmokeCase(
             name="stepfun-text-with-mmproj",
-            model=DEFAULT_STEPFUN_MODEL,
-            mmproj=DEFAULT_STEPFUN_MMPROJ,
+            model=stepfun_model,
+            mmproj=stepfun_mmproj,
             prompt="Reply with the word text-ok.",
             image=None,
             ctx_size=2048,
@@ -246,38 +241,37 @@ def _default_cases(include_qwen27: bool) -> list[SmokeCase]:
         ),
         SmokeCase(
             name="stepfun-image-with-mmproj",
-            model=DEFAULT_STEPFUN_MODEL,
-            mmproj=DEFAULT_STEPFUN_MMPROJ,
+            model=stepfun_model,
+            mmproj=stepfun_mmproj,
             prompt="Describe the image in one short sentence.",
             image=DEFAULT_IMAGE,
             ctx_size=2048,
             timeout_s=300,
         ),
     ]
-    if include_qwen27:
-        cases.extend(
-            [
-                SmokeCase(
-                    name="qwen27-image-bf16-mmproj",
-                    model=DEFAULT_QWEN27_MODEL,
-                    mmproj=DEFAULT_QWEN27_MMPROJ_BF16,
-                    prompt="Describe the image in one short sentence.",
-                    image=DEFAULT_IMAGE,
-                    ctx_size=2048,
-                    timeout_s=600,
-                ),
-                SmokeCase(
-                    name="qwen27-image-f16-mmproj",
-                    model=DEFAULT_QWEN27_MODEL,
-                    mmproj=DEFAULT_QWEN27_MMPROJ_F16,
-                    prompt="Describe the image in one short sentence.",
-                    image=DEFAULT_IMAGE,
-                    ctx_size=2048,
-                    timeout_s=600,
-                ),
-            ]
-        )
-    return cases
+
+
+def _qwen27_cases(model: Path, mmproj_bf16: Path, mmproj_f16: Path) -> list[SmokeCase]:
+    return [
+        SmokeCase(
+            name="qwen27-image-bf16-mmproj",
+            model=model,
+            mmproj=mmproj_bf16,
+            prompt="Describe the image in one short sentence.",
+            image=DEFAULT_IMAGE,
+            ctx_size=2048,
+            timeout_s=600,
+        ),
+        SmokeCase(
+            name="qwen27-image-f16-mmproj",
+            model=model,
+            mmproj=mmproj_f16,
+            prompt="Describe the image in one short sentence.",
+            image=DEFAULT_IMAGE,
+            ctx_size=2048,
+            timeout_s=600,
+        ),
+    ]
 
 
 def _write_summary(path: Path, payload: dict[str, Any]) -> None:
@@ -313,16 +307,36 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run real VLM/mmproj smoke matrix through the Rust serve path.")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--cuda-device", default=os.environ.get("OMNIINFER_CUDA_VISIBLE_DEVICES", "1"))
+    parser.add_argument("--stepfun-model", type=Path, required=True, help="StepFun model GGUF path")
+    parser.add_argument("--stepfun-mmproj", type=Path, required=True, help="StepFun mmproj GGUF path")
     parser.add_argument("--include-qwen27", action="store_true", help="also run heavier Qwen3.6 27B BF16/F16 mmproj cases")
+    parser.add_argument("--qwen27-model", type=Path, help="Qwen3.6 27B model GGUF path")
+    parser.add_argument("--qwen27-mmproj-bf16", type=Path, help="Qwen3.6 27B BF16 mmproj GGUF path")
+    parser.add_argument("--qwen27-mmproj-f16", type=Path, help="Qwen3.6 27B F16 mmproj GGUF path")
     args = parser.parse_args(argv)
+
+    qwen27_model = args.qwen27_model
+    qwen27_mmproj_bf16 = args.qwen27_mmproj_bf16
+    qwen27_mmproj_f16 = args.qwen27_mmproj_f16
+    if args.include_qwen27 and (
+        qwen27_model is None or qwen27_mmproj_bf16 is None or qwen27_mmproj_f16 is None
+    ):
+        parser.error(
+            "--include-qwen27 requires --qwen27-model, --qwen27-mmproj-bf16, "
+            "and --qwen27-mmproj-f16"
+        )
 
     output_dir = args.output_dir or DEFAULT_OUTPUT_ROOT / f"{_utc_stamp()}-vlm-mmproj-smoke"
     output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["OMNIINFER_CUDA_VISIBLE_DEVICES"] = args.cuda_device
 
+    cases = _default_cases(args.stepfun_model, args.stepfun_mmproj)
+    if args.include_qwen27:
+        cases.extend(_qwen27_cases(qwen27_model, qwen27_mmproj_bf16, qwen27_mmproj_f16))
+
     results = []
-    for case in _default_cases(args.include_qwen27):
+    for case in cases:
         missing = [path for path in [case.model, case.mmproj, case.image] if path and not path.exists()]
         if missing:
             results.append(
