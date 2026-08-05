@@ -31,6 +31,7 @@ else:
 
 INTERNAL_BACKEND_HOST = "127.0.0.1"
 INTERNAL_BACKEND_PORT = 0
+PROMPT_CACHE_KEY_MAX_BYTES = 256
 
 
 def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -140,6 +141,34 @@ def apply_thinking_mode(payload: dict[str, Any], default_enabled: bool) -> None:
     final_enabled = chat_template_kwargs.get("enable_thinking")
     if isinstance(final_enabled, bool) and final_enabled is False and "reasoning_format" not in payload:
         payload["reasoning_format"] = "none"
+
+
+def normalize_prompt_cache_key(payload: dict[str, Any]) -> None:
+    if "prompt_cache_key" not in payload:
+        return
+
+    value = payload.get("prompt_cache_key")
+    if value is None or value == "":
+        payload.pop("prompt_cache_key", None)
+        return
+    if not isinstance(value, str):
+        raise ValueError("field 'prompt_cache_key' must be a string")
+    try:
+        value_bytes = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("field 'prompt_cache_key' must contain valid UTF-8 text") from exc
+    if len(value_bytes) > PROMPT_CACHE_KEY_MAX_BYTES:
+        raise ValueError(
+            f"field 'prompt_cache_key' must not exceed {PROMPT_CACHE_KEY_MAX_BYTES} UTF-8 bytes"
+        )
+    if "id_slot" in payload:
+        raise ValueError("field 'prompt_cache_key' cannot be combined with 'id_slot'")
+    if payload.get("cache_prompt") is False:
+        raise ValueError("field 'prompt_cache_key' requires prompt caching")
+
+    n_completions = payload.get("n_cmpl", payload.get("n", 1))
+    if n_completions != 1:
+        raise ValueError("field 'prompt_cache_key' currently requires exactly one completion")
 
 
 _request_log_counter = 0
@@ -595,6 +624,12 @@ class OmniHandler(BaseHTTPRequestHandler):
             launch_args = parse_extra_args(payload.get("launch_args")) if "launch_args" in payload else None
             raw_request_defaults = payload.get("request_defaults")
             request_defaults = dict(raw_request_defaults) if isinstance(raw_request_defaults, dict) else None
+            if request_defaults is not None:
+                try:
+                    normalize_prompt_cache_key(request_defaults)
+                except ValueError as e:
+                    self._send_json(400, {"error": {"message": str(e)}})
+                    return
             try:
                 ctx_size = parse_optional_positive_int_field(payload, "ctx_size", "ctx-size")
             except ValueError as e:
@@ -667,6 +702,16 @@ class OmniHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": {"message": str(e)}})
                 return
 
+            if requested_request_defaults is not None:
+                try:
+                    normalize_prompt_cache_key(requested_request_defaults)
+                    prospective_payload = dict(requested_request_defaults)
+                    prospective_payload.update(payload)
+                    normalize_prompt_cache_key(prospective_payload)
+                except ValueError as e:
+                    self._send_json(400, {"error": {"message": str(e)}})
+                    return
+
             try:
                 # Chat completions never triggers model loading; use /omni/model/select instead.
                 # model/mmproj/ctx_size/launch_args from the request are ignored for loading decisions.
@@ -688,6 +733,12 @@ class OmniHandler(BaseHTTPRequestHandler):
             effective_payload = dict(runtime.request_defaults)
             effective_payload.update(payload)
             payload = effective_payload
+
+            try:
+                normalize_prompt_cache_key(payload)
+            except ValueError as e:
+                self._send_json(400, {"error": {"message": str(e)}})
+                return
 
             if not payload.get("model"):
                 payload["model"] = runtime.model_ref

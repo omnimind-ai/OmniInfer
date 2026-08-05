@@ -255,6 +255,29 @@ You can also pass backend-native extra args directly:
 .\omniinfer.cmd chat --message "Hello" -- --top-k 40 --top-p 0.9
 ```
 
+OpenAI-compatible clients can keep one llama.cpp cache session on a stable key by
+including `prompt_cache_key` in each `/v1/chat/completions` request:
+
+```sh
+curl http://127.0.0.1:9000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "your-model",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "prompt_cache_key": "openclaw/session-123"
+  }'
+```
+
+The key is passed unchanged to the llama.cpp backend for both streaming and
+non-streaming requests. Reuse the same key for successive turns of one conversation
+and use a different key for each concurrent conversation. Keys are limited to 256
+UTF-8 bytes. A keyed request cannot also set `id_slot`, disable `cache_prompt`, or
+request multiple completions with `n` or `n_cmpl`. Set the field to `null` or an
+empty string on a request to disable a configured default key for that request.
+Configure llama.cpp with `--cache-ram` when active session keys can outnumber its
+slots. Different keys are isolated, so a new key does not reuse another key's
+common system-prompt prefix.
+
 ## Common Commands
 
 ```sh
