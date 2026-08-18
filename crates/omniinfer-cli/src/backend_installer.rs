@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -51,6 +53,8 @@ pub(super) struct InstallReporter {
     backend: String,
     json: bool,
     sequence: u64,
+    event_sink: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    cancel_requested: Option<Arc<AtomicBool>>,
 }
 
 impl InstallReporter {
@@ -59,17 +63,33 @@ impl InstallReporter {
             backend: backend.to_string(),
             json,
             sequence: 0,
+            event_sink: None,
+            cancel_requested: None,
+        }
+    }
+
+    pub(super) fn with_control(
+        backend: &str,
+        event_sink: Arc<dyn Fn(Value) + Send + Sync>,
+        cancel_requested: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            backend: backend.to_string(),
+            json: false,
+            sequence: 0,
+            event_sink: Some(event_sink),
+            cancel_requested: Some(cancel_requested),
         }
     }
 
     pub(super) fn human(&self, message: impl AsRef<str>) {
-        if !self.json {
+        if !self.json && self.event_sink.is_none() {
             println!("{}", message.as_ref());
         }
     }
 
     pub(super) fn event(&mut self, event: &str, fields: Value) {
-        if !self.json {
+        if !self.json && self.event_sink.is_none() {
             return;
         }
         self.sequence += 1;
@@ -84,29 +104,55 @@ impl InstallReporter {
                 target.insert(key.clone(), value.clone());
             }
         }
-        println!(
-            "{}",
-            serde_json::to_string(&payload).expect("serialize install event")
-        );
-        let _ = std::io::stdout().flush();
+        if self.json {
+            println!(
+                "{}",
+                serde_json::to_string(&payload).expect("serialize install event")
+            );
+            let _ = std::io::stdout().flush();
+        }
+        if let Some(event_sink) = &self.event_sink {
+            event_sink(payload);
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancel_requested
+            .as_ref()
+            .is_some_and(|requested| requested.load(Ordering::Relaxed))
+    }
+
+    fn check_cancelled(&self) -> Result<()> {
+        if self.is_cancelled() {
+            anyhow::bail!("backend installation cancelled");
+        }
+        Ok(())
     }
 }
 
 pub(crate) fn install_backend(options: InstallOptions) -> Result<()> {
     let mut reporter = InstallReporter::new(&options.backend, options.json);
-    let result = install_backend_inner(&options, &mut reporter);
+    install_backend_with_reporter(options, &mut reporter)
+}
+
+pub(crate) fn install_backend_with_reporter(
+    options: InstallOptions,
+    reporter: &mut InstallReporter,
+) -> Result<()> {
+    let result = install_backend_inner(&options, reporter);
     if let Err(error) = &result {
-        reporter.event(
-            "error",
-            json!({
-                "message": error.to_string(),
-            }),
-        );
+        let event = if reporter.is_cancelled() {
+            "cancelled"
+        } else {
+            "error"
+        };
+        reporter.event(event, json!({ "message": error.to_string() }));
     }
     result
 }
 
 fn install_backend_inner(options: &InstallOptions, reporter: &mut InstallReporter) -> Result<()> {
+    reporter.check_cancelled()?;
     if options.from_source {
         anyhow::bail!(
             "Source builds require a source checkout. Use `scripts/install-from-source.sh` or run the backend build script from a cloned repository."
@@ -201,6 +247,7 @@ fn install_backend_inner(options: &InstallOptions, reporter: &mut InstallReporte
         }
     }
     let entry = entry_result?;
+    reporter.check_cancelled()?;
     let models_dir = spec.models_dir.as_ref().map(PathBuf::from);
 
     reporter.human(format!(
@@ -248,6 +295,7 @@ fn install_backend_inner(options: &InstallOptions, reporter: &mut InstallReporte
     }
 
     let archives = download_entry_archives(&catalog, entry, reporter)?;
+    reporter.check_cancelled()?;
     fs::create_dir_all(&runtime_dir)
         .with_context(|| format!("create runtime dir {}", runtime_dir.display()))?;
     if let Some(models_dir) = models_dir {
@@ -265,7 +313,11 @@ fn install_backend_inner(options: &InstallOptions, reporter: &mut InstallReporte
             "runtime_dir": runtime_dir,
         }),
     );
-    let result = prepare_and_install_runtime(&extracted_dir, &runtime_dir, entry, &archives)
+    let result = reporter
+        .check_cancelled()
+        .and_then(|()| {
+            prepare_and_install_runtime(&extracted_dir, &runtime_dir, entry, &archives, reporter)
+        })
         .and_then(|launcher| {
             write_install_manifest(
                 &runtime_dir,
@@ -410,6 +462,7 @@ fn download_archive(
 ) -> Result<DownloadedArchive> {
     let mut last_error = String::new();
     for url in urls {
+        reporter.check_cancelled()?;
         match read_url_bytes(url, role, asset_index, asset_count, reporter) {
             Ok(bytes) => {
                 let sha256 = sha256_hex(&bytes);
@@ -552,6 +605,7 @@ fn read_with_progress(
     let mut next_report = REPORT_INTERVAL_BYTES;
     let mut last_reported = None;
     loop {
+        reporter.check_cancelled()?;
         let count = reader
             .read(&mut buffer)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -936,6 +990,7 @@ fn prepare_and_install_runtime(
     runtime_dir: &Path,
     entry: &PrebuiltEntry,
     archives: &[DownloadedArchive],
+    reporter: &InstallReporter,
 ) -> Result<PathBuf> {
     let primary = archives
         .first()
@@ -967,6 +1022,7 @@ fn prepare_and_install_runtime(
         }
     }
     validate_required_runtime_files(&staged_bin, entry)?;
+    reporter.check_cancelled()?;
 
     install_staged_runtime(&staged_bin, runtime_dir, &entry.launcher)
 }
@@ -1303,6 +1359,10 @@ fn write_install_manifest(
         "platform": platform,
         "backend": backend,
         "source": entry.source,
+        "source_repository": catalog.resolved_source_repository(entry),
+        "source_commit": catalog.resolved_source_commit(entry),
+        "release_repository": catalog.resolved_release_repository(entry),
+        "release_tag": catalog.resolved_tag(entry),
         "tag": catalog.resolved_tag(entry),
         "url": primary.url,
         "archive_sha256": primary.sha256,

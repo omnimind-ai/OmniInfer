@@ -1,20 +1,34 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "mirrors": [
     "https://ghfast.top/"
   ],
   "sources": {
     "ggml-org/llama.cpp": {
+      "source_repository": "ggml-org/llama.cpp",
+      "source_commit": "61881b1f7f0b13d9e46d561fc25afcd6bbaec479",
+      "release_repository": "ggml-org/llama.cpp",
+      "release_tag": "b10280",
       "tag": "b10280",
       "submodule_tag": "b10280",
       "submodule_path": "framework/llama.cpp",
       "submodule_commit": "61881b1f7f0b13d9e46d561fc25afcd6bbaec479"
     },
     "vllm-project/vllm": {
+      "source_repository": "vllm-project/vllm",
+      "source_commit": "0b3ba88f165976e77ca5e6a7a3f5bba4562b80af",
+      "release_repository": "vllm-project/vllm",
+      "release_tag": "v0.22.0",
       "tag": "v0.22.0",
       "submodule_tag": "v0.22.0",
       "submodule_path": "framework/vllm",
       "submodule_commit": "0b3ba88f165976e77ca5e6a7a3f5bba4562b80af"
+    },
+    "omnimind-ai/OmniCore": {
+      "source_repository": "omnimind-ai/OmniCore",
+      "source_commit": "35acb25fa2b201abbde91ea934b2fda4e90589e9",
+      "release_repository": "zzw-2025/omnicore-prebuilt",
+      "release_tag": "v0.1.0-preview.1"
     }
   },
   "python_runtimes": {
@@ -384,6 +398,23 @@
       }
     },
     "windows": {
+      "omnicore-cpu": {
+        "source": "omnimind-ai/OmniCore",
+        "url": "https://github.com/zzw-2025/omnicore-prebuilt/releases/download/v0.1.0-preview.1/omnicore-0.1.0-preview.1-windows-x86_64-cpu.zip",
+        "archive": "zip",
+        "launcher": "llama-server.exe",
+        "sha256": "23a9b95570aef9e6e8a3166c29310122ea3d3812bde0b8b9fa5f4b33f982f323",
+        "required_files": [
+          "LICENSE",
+          "THIRD_PARTY_NOTICES.md",
+          "build-metadata.json",
+          "llama-server.exe",
+          "msvcp140.dll",
+          "vcomp140.dll",
+          "vcruntime140.dll",
+          "vcruntime140_1.dll"
+        ]
+      },
       "llama.cpp-cpu": {
         "source": "ggml-org/llama.cpp",
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10280/llama-b10280-bin-win-cpu-x64.zip",

@@ -152,6 +152,10 @@ pub(crate) struct RocmPackageAsset {
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct SourceMetadata {
+    pub(crate) source_repository: Option<String>,
+    pub(crate) source_commit: Option<String>,
+    pub(crate) release_repository: Option<String>,
+    pub(crate) release_tag: Option<String>,
     pub(crate) tag: Option<String>,
     pub(crate) submodule_tag: Option<String>,
     pub(crate) submodule_path: Option<String>,
@@ -202,7 +206,39 @@ impl PrebuiltCatalog {
     pub(crate) fn resolved_tag<'a>(&'a self, entry: &'a PrebuiltEntry) -> Option<&'a str> {
         entry.tag.as_deref().or_else(|| {
             self.source_metadata(entry)
-                .and_then(|source| source.tag.as_deref())
+                .and_then(|source| source.release_tag.as_deref().or(source.tag.as_deref()))
+        })
+    }
+
+    pub(crate) fn resolved_release_repository<'a>(
+        &'a self,
+        entry: &'a PrebuiltEntry,
+    ) -> Option<&'a str> {
+        self.source_metadata(entry).and_then(|source| {
+            source
+                .release_repository
+                .as_deref()
+                .or(source.source_repository.as_deref())
+        })
+    }
+
+    pub(crate) fn resolved_source_repository<'a>(
+        &'a self,
+        entry: &'a PrebuiltEntry,
+    ) -> Option<&'a str> {
+        self.source_metadata(entry)
+            .and_then(|source| source.source_repository.as_deref())
+    }
+
+    pub(crate) fn resolved_source_commit<'a>(
+        &'a self,
+        entry: &'a PrebuiltEntry,
+    ) -> Option<&'a str> {
+        self.source_metadata(entry).and_then(|source| {
+            source
+                .source_commit
+                .as_deref()
+                .or(source.submodule_commit.as_deref())
         })
     }
 
@@ -282,9 +318,67 @@ fn validate_catalog(catalog: &PrebuiltCatalog) -> Result<()> {
         anyhow::bail!("prebuilt catalog schema 3 or newer requires source metadata");
     }
     for (source_name, source) in &catalog.sources {
+        if catalog.schema_version >= 6 {
+            let source_repository = source
+                .source_repository
+                .as_deref()
+                .filter(|value| is_github_slug(value))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("catalog source {source_name} has no valid source repository")
+                })?;
+            if source_repository != source_name {
+                anyhow::bail!(
+                    "catalog source key {source_name} does not match source repository {source_repository}"
+                );
+            }
+            let release_repository = source
+                .release_repository
+                .as_deref()
+                .filter(|value| is_github_slug(value))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("catalog source {source_name} has no valid release repository")
+                })?;
+            let source_commit = source.source_commit.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("catalog source {source_name} has no source commit")
+            })?;
+            if !is_lowercase_commit(source_commit) {
+                anyhow::bail!("catalog source {source_name} has an invalid source commit");
+            }
+            let release_tag = source
+                .release_tag
+                .as_deref()
+                .filter(|value| !value.is_empty() && !value.contains('/'))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("catalog source {source_name} has no valid release tag")
+                })?;
+            let _ = (source_repository, release_repository, release_tag);
+            let submodule_values = [
+                source.submodule_tag.as_deref(),
+                source.submodule_path.as_deref(),
+                source.submodule_commit.as_deref(),
+            ];
+            if submodule_values.iter().any(Option::is_some) {
+                if submodule_values
+                    .iter()
+                    .any(|value| value.is_none_or(str::is_empty))
+                {
+                    anyhow::bail!("catalog source {source_name} has incomplete submodule metadata");
+                }
+                let submodule_tag = source.submodule_tag.as_deref().unwrap_or_default();
+                let submodule_commit = source.submodule_commit.as_deref().unwrap_or_default();
+                if submodule_tag.contains('/')
+                    || !is_lowercase_commit(submodule_commit)
+                    || submodule_commit != source_commit
+                {
+                    anyhow::bail!("catalog source {source_name} has invalid submodule metadata");
+                }
+            }
+            continue;
+        }
         let tag = source
-            .tag
+            .release_tag
             .as_deref()
+            .or(source.tag.as_deref())
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("catalog source {source_name} has no tag"))?;
         let submodule_tag = source
@@ -327,11 +421,29 @@ fn validate_catalog(catalog: &PrebuiltCatalog) -> Result<()> {
             let tag = catalog.resolved_tag(entry).ok_or_else(|| {
                 anyhow::anyhow!("{platform}/{backend} has no resolved source tag")
             })?;
-            validate_asset_url(&entry.url, platform, backend, "runtime", tag)?;
+            let release_repository =
+                catalog.resolved_release_repository(entry).ok_or_else(|| {
+                    anyhow::anyhow!("{platform}/{backend} has no resolved release repository")
+                })?;
+            validate_asset_url(
+                &entry.url,
+                platform,
+                backend,
+                "runtime",
+                release_repository,
+                tag,
+            )?;
             for (index, asset) in entry.companion_assets.iter().enumerate() {
                 let role = format!("companion {}", index + 1);
                 validate_sha256(asset.sha256.as_deref(), platform, backend, &role)?;
-                validate_asset_url(&asset.url, platform, backend, &role, tag)?;
+                validate_asset_url(
+                    &asset.url,
+                    platform,
+                    backend,
+                    &role,
+                    release_repository,
+                    tag,
+                )?;
             }
         }
     }
@@ -543,13 +655,13 @@ fn validate_asset_url(
     platform: &str,
     backend: &str,
     role: &str,
+    release_repository: &str,
     tag: &str,
 ) -> Result<()> {
-    if !url.starts_with("https://") {
+    let expected_prefix =
+        format!("https://github.com/{release_repository}/releases/download/{tag}/");
+    if !url.starts_with(&expected_prefix) {
         anyhow::bail!("{platform}/{backend} {role} asset requires a canonical HTTPS URL");
-    }
-    if !url.contains(&format!("/download/{tag}/")) {
-        anyhow::bail!("{platform}/{backend} {role} URL does not match source tag {tag}");
     }
     Ok(())
 }
@@ -563,7 +675,15 @@ fn validate_python_asset_url(
     tag: &str,
 ) -> Result<()> {
     if url.starts_with("https://github.com/") {
-        return validate_asset_url(url, platform, backend, role, tag);
+        let repository = url
+            .strip_prefix("https://github.com/")
+            .and_then(|suffix| {
+                suffix
+                    .split_once("/releases/download/")
+                    .map(|(repo, _)| repo)
+            })
+            .unwrap_or_default();
+        return validate_asset_url(url, platform, backend, role, repository, tag);
     }
     let Some(commit) = build_commit else {
         anyhow::bail!("{platform}/{backend} {role} non-release asset has no build commit");
@@ -588,6 +708,18 @@ fn validate_sha256(value: Option<&str>, platform: &str, backend: &str, role: &st
         anyhow::bail!("{platform}/{backend} {role} asset has an invalid SHA256");
     }
     Ok(())
+}
+
+fn is_github_slug(value: &str) -> bool {
+    let mut parts = value.split('/');
+    matches!((parts.next(), parts.next(), parts.next()), (Some(owner), Some(repo), None) if !owner.is_empty() && !repo.is_empty())
+}
+
+fn is_lowercase_commit(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 #[cfg(test)]
@@ -615,10 +747,6 @@ mod tests {
     fn rejects_companion_url_with_mismatched_source_tag() {
         let mut value: serde_json::Value =
             serde_json::from_str(DEFAULT_CATALOG).expect("parse built-in catalog");
-        let source_tag = value["sources"]["ggml-org/llama.cpp"]["tag"]
-            .as_str()
-            .expect("llama.cpp source tag")
-            .to_string();
         value["platforms"]["windows"]["llama.cpp-cuda"]["companion_assets"][0]["url"] =
             serde_json::Value::String(
                 "https://github.com/ggml-org/llama.cpp/releases/download/b9999/runtime.zip"
@@ -626,10 +754,57 @@ mod tests {
             );
         let catalog: PrebuiltCatalog = serde_json::from_value(value).expect("parse test catalog");
         let error = validate_catalog(&catalog).expect_err("reject mismatched companion tag");
-        assert!(
-            error
-                .to_string()
-                .contains(&format!("does not match source tag {source_tag}"))
-        );
+        assert!(error.to_string().contains("requires a canonical HTTPS URL"));
+    }
+
+    #[test]
+    fn schema_six_allows_release_assets_outside_the_source_repository() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(DEFAULT_CATALOG).expect("parse built-in catalog");
+        value["sources"]["ggml-org/llama.cpp"]["release_repository"] =
+            serde_json::json!("example/prebuilt");
+        for entries in value["platforms"]
+            .as_object_mut()
+            .expect("platform map")
+            .values_mut()
+        {
+            for entry in entries.as_object_mut().expect("backend map").values_mut() {
+                if entry["source"] != "ggml-org/llama.cpp" {
+                    continue;
+                }
+                let rewrite = |url: &str| {
+                    url.replacen(
+                        "https://github.com/ggml-org/llama.cpp/releases/download/",
+                        "https://github.com/example/prebuilt/releases/download/",
+                        1,
+                    )
+                };
+                entry["url"] =
+                    serde_json::json!(rewrite(entry["url"].as_str().expect("runtime URL")));
+                if let Some(companions) = entry
+                    .get_mut("companion_assets")
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    for companion in companions {
+                        companion["url"] = serde_json::json!(rewrite(
+                            companion["url"].as_str().expect("companion URL")
+                        ));
+                    }
+                }
+            }
+        }
+        let catalog: PrebuiltCatalog = serde_json::from_value(value).expect("parse test catalog");
+        validate_catalog(&catalog).expect("accept separate release repository");
+    }
+
+    #[test]
+    fn schema_six_rejects_source_and_submodule_commit_drift() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(DEFAULT_CATALOG).expect("parse built-in catalog");
+        value["sources"]["ggml-org/llama.cpp"]["source_commit"] =
+            serde_json::json!("0000000000000000000000000000000000000000");
+        let catalog: PrebuiltCatalog = serde_json::from_value(value).expect("parse test catalog");
+        let error = validate_catalog(&catalog).expect_err("reject commit drift");
+        assert!(error.to_string().contains("invalid submodule metadata"));
     }
 }

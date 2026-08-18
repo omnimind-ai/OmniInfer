@@ -90,11 +90,11 @@ The Rust installer owns multi-asset download, pinned SHA256 verification, staged
 
 Prebuilt versioning is explicit:
 
-- `scripts/prebuilt_backends.json` schema 3 keeps each upstream release tag and expected submodule commit once under `sources`, while platform entries record primary archives, companion assets, pinned SHA256 values, required runtime files, and launcher names.
+- `scripts/prebuilt_backends.json` schema 6 records source repository/commit and Release repository/tag as separate identities under `sources`. This supports both upstream assets and externally published prebuilt repositories without pretending that a binary Release tag identifies the source commit. Platform entries record primary archives, companion assets, pinned SHA256 values, required runtime files, and launcher names.
 - A prebuilt llama.cpp runtime is an upstream release artifact. It is only source-aligned when the catalog tag and `framework/llama.cpp` submodule are pinned to the same upstream release tag or commit.
 - If a source checkout has a different `framework/llama.cpp` commit than the catalog entry, the Rust installer prints a version note and records the catalog metadata in `prebuilt.json`.
 - If no official asset exists, leave the catalog entry absent. For example, llama.cpp `b10280` publishes Linux CPU, ROCm, Vulkan, OpenVINO, macOS, and Windows CUDA assets, but not a Linux CUDA archive.
-- Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and all downloaded URLs and digests.
+- Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with source repository/commit, Release repository/tag, and all downloaded URLs and digests.
 - Windows `llama.cpp-cuda` requires the matching llama.cpp CUDA runtime companion asset. The three required CUDA DLLs are validated before activation, and an incomplete older install is repaired on the next `backend install` invocation.
 - Existing `prebuilt.json` archive digests are compared with newly pinned catalog digests before an installed runtime is accepted. A mismatched or malformed managed manifest triggers a transactional reinstall; an unmanaged/source-built runtime without `prebuilt.json` is not overwritten merely because it exists.
 
@@ -118,11 +118,21 @@ python scripts/update_prebuilt_catalog.py check --require-gitlink-match
 
 Do not use the update command for a submodule-only development commit that has no matching official prebuilt Release. In that case, retain the existing catalog source metadata so the installer continues to report the intentional source/prebuilt mismatch.
 
+For a runtime whose assets are published outside its source repository, generate
+the source and platform fragments from the signed publisher manifest. OmniCore,
+for example, is built from `omnimind-ai/OmniCore` but published through the
+separate `omnicore-prebuilt` repository. Windows x64 CPU is currently available
+through this path. Keep every other platform entry absent until its own final
+asset URL, SHA-256, signature, and target-platform validation all exist; one
+published platform does not validate or enable the others.
+
 ## Runtime Output Layout
 
 Current desktop runtime directories:
 
 - Windows x64 CPU: `.local/runtime/windows/llama.cpp-cpu`
+- Windows x64 OmniCore CPU: `.local/runtime/windows/omnicore-cpu`
+- Windows x64 OmniCore CUDA: `.local/runtime/windows/omnicore-cuda`
 - Windows x64 CUDA: `.local/runtime/windows/llama.cpp-cuda`
 - Windows x64 Vulkan: `.local/runtime/windows/llama.cpp-vulkan`
 - Windows arm64 CPU: `.local/runtime/windows/llama.cpp-windows-arm64`
@@ -139,6 +149,7 @@ Current desktop runtime directories:
 - Linux x64 vla.cpp CPU: `.local/runtime/linux/vla.cpp-linux`
 - Linux x64 vla.cpp CUDA: `.local/runtime/linux/vla.cpp-linux-cuda`
 - macOS Apple Silicon Metal: `.local/runtime/macos/llama.cpp-mac`
+- macOS arm64 OmniCore Metal: `.local/runtime/macos/omnicore-metal`
 - macOS Intel x64 CPU: `.local/runtime/macos/llama.cpp-mac-intel`
 - macOS TurboQuant: `.local/runtime/macos/turboquant-mac`
 - macOS MLX embedded runtime: `.local/runtime/macos/mlx-mac`

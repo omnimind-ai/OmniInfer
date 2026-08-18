@@ -2,10 +2,12 @@ use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderMap};
 use axum::http::{Method, Request, Response, StatusCode, Uri};
@@ -74,6 +76,13 @@ struct GatewayState {
     client: Client<HttpConnector, Full<HyperBytes>>,
     shutdown: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
     runtime: Arc<tokio::sync::Mutex<RustRuntimeManager>>,
+    backend_install: Arc<tokio::sync::Mutex<Option<BackendInstallControl>>>,
+}
+
+#[derive(Clone)]
+struct BackendInstallControl {
+    snapshot: Arc<StdMutex<Value>>,
+    cancel_requested: Arc<AtomicBool>,
 }
 
 pub fn run_gateway_blocking(config: GatewayConfig) -> Result<()> {
@@ -97,6 +106,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<()> {
         client: Client::builder(TokioExecutor::new()).build_http(),
         shutdown: Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx))),
         runtime: Arc::new(tokio::sync::Mutex::new(RustRuntimeManager::default())),
+        backend_install: Arc::new(tokio::sync::Mutex::new(None)),
     };
     let app = axum::Router::new()
         .fallback(proxy_request)
@@ -179,6 +189,8 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
             "/health"
             | "/omni/state"
             | "/omni/backends"
+            | "/omni/advisor/system"
+            | "/omni/backend/install"
             | "/omni/thinking"
             | "/omni/models"
             | "/omni/gpus"
@@ -191,6 +203,7 @@ async fn should_handle_rust_endpoint(state: &GatewayState, method: &Method, path
             true
         }
         (&Method::POST, "/omni/shutdown") => true,
+        (&Method::POST, "/omni/backend/install" | "/omni/backend/install/cancel") => true,
         (
             &Method::POST,
             "/omni/backend/select"
@@ -266,6 +279,126 @@ async fn try_handle_rust_endpoint(
                 StatusCode::OK,
                 BackendRegistry::load_current().api_payload(scope),
             )))
+        }
+        (&Method::GET, "/omni/advisor/system") => {
+            if auth.admin_id.is_none() {
+                return Ok(Some(admin_key_required_response("system advisor")));
+            }
+            Ok(Some(json_response(
+                StatusCode::OK,
+                crate::advisor::system_payload(
+                    BackendRegistry::load_current().api_payload(BackendScope::All),
+                ),
+            )))
+        }
+        (&Method::GET, "/omni/backend/install") => {
+            if auth.admin_id.is_none() {
+                return Ok(Some(admin_key_required_response(
+                    "backend installation status",
+                )));
+            }
+            let snapshot = backend_install_snapshot(&state).await;
+            Ok(Some(json_response(StatusCode::OK, snapshot)))
+        }
+        (&Method::POST, "/omni/backend/install") => {
+            if auth.admin_id.is_none() {
+                return Ok(Some(admin_key_required_response("backend installation")));
+            }
+            let body = match to_bytes(request.into_body(), 4096).await {
+                Ok(body) => body,
+                Err(_) => {
+                    return Ok(Some(json_response(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        json!({"error": {"message": "backend install request exceeds 4096 bytes"}}),
+                    )));
+                }
+            };
+            let payload = match serde_json::from_slice::<Value>(&body) {
+                Ok(Value::Object(payload)) => Value::Object(payload),
+                Ok(_) => {
+                    return Ok(Some(json_response(
+                        StatusCode::BAD_REQUEST,
+                        json!({"error": {"message": "request body must be a JSON object"}}),
+                    )));
+                }
+                Err(error) => {
+                    return Ok(Some(json_response(
+                        StatusCode::BAD_REQUEST,
+                        json!({"error": {"message": format!("invalid JSON body: {error}")}}),
+                    )));
+                }
+            };
+            let Some(backend) = payload
+                .get("backend")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                return Ok(Some(json_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({"error": {"message": "backend is required"}}),
+                )));
+            };
+            match start_backend_install(
+                &state,
+                backend,
+                auth.admin_id.as_deref().expect("admin id checked above"),
+            )
+            .await
+            {
+                Ok(snapshot) => Ok(Some(json_response(StatusCode::ACCEPTED, snapshot))),
+                Err((status, message)) => Ok(Some(json_response(
+                    status,
+                    json!({"error": {"message": message}}),
+                ))),
+            }
+        }
+        (&Method::POST, "/omni/backend/install/cancel") => {
+            if auth.admin_id.is_none() {
+                return Ok(Some(admin_key_required_response(
+                    "backend installation cancellation",
+                )));
+            }
+            let body = match to_bytes(request.into_body(), 4096).await {
+                Ok(body) => body,
+                Err(_) => {
+                    return Ok(Some(json_response(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        json!({"error": {"message": "backend install cancellation request exceeds 4096 bytes"}}),
+                    )));
+                }
+            };
+            let task_id = match serde_json::from_slice::<Value>(&body)
+                .ok()
+                .and_then(|payload| {
+                    payload
+                        .get("task_id")?
+                        .as_str()
+                        .map(|value| value.trim().to_string())
+                })
+                .filter(|value| !value.is_empty())
+            {
+                Some(task_id) => task_id,
+                None => {
+                    return Ok(Some(json_response(
+                        StatusCode::BAD_REQUEST,
+                        json!({"error": {"message": "task_id is required"}}),
+                    )));
+                }
+            };
+            match cancel_backend_install(
+                &state,
+                &task_id,
+                auth.admin_id.as_deref().expect("admin id checked above"),
+            )
+            .await
+            {
+                Ok(snapshot) => Ok(Some(json_response(StatusCode::ACCEPTED, snapshot))),
+                Err((status, message)) => Ok(Some(json_response(
+                    status,
+                    json!({"error": {"message": message}}),
+                ))),
+            }
         }
         (&Method::GET, "/omni/thinking") => Ok(Some(json_response(
             StatusCode::OK,
@@ -1595,6 +1728,241 @@ fn public_model_error_status(error: &public_models::PublicModelError) -> StatusC
         | public_models::PublicModelError::VisionMmprojMissing(_) => StatusCode::BAD_REQUEST,
         public_models::PublicModelError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+fn admin_key_required_response(operation: &str) -> Response<Body> {
+    json_response(
+        StatusCode::FORBIDDEN,
+        json!({"error": {"message": format!("{operation} requires an admin key")}}),
+    )
+}
+
+async fn backend_install_snapshot(state: &GatewayState) -> Value {
+    let control = state.backend_install.lock().await.clone();
+    control
+        .and_then(|control| {
+            control
+                .snapshot
+                .lock()
+                .ok()
+                .map(|snapshot| snapshot.clone())
+        })
+        .unwrap_or_else(|| json!({"object": "backend.install", "status": "idle"}))
+}
+
+async fn start_backend_install(
+    state: &GatewayState,
+    backend: &str,
+    owner_admin_id: &str,
+) -> Result<Value, (StatusCode, String)> {
+    let advisor_payload = crate::advisor::system_payload(
+        BackendRegistry::load_current().api_payload(BackendScope::All),
+    );
+    let backend_entry = advisor_payload
+        .get("backends")
+        .and_then(Value::as_array)
+        .and_then(|backends| {
+            backends
+                .iter()
+                .find(|entry| entry.get("id").and_then(Value::as_str) == Some(backend))
+        })
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("unsupported backend: {backend}"),
+            )
+        })?;
+    let installed = backend_entry
+        .get("installed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let hardware_compatible = backend_entry
+        .get("hardware_compatible")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let prebuilt_installable = backend_entry
+        .get("prebuilt_installable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !hardware_compatible {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("backend is not compatible with this host: {backend}"),
+        ));
+    }
+    if !installed && !prebuilt_installable {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("no verified prebuilt artifact is available for backend: {backend}"),
+        ));
+    }
+
+    let mut active = state.backend_install.lock().await;
+    if let Some(control) = active.as_ref()
+        && let Ok(snapshot) = control.snapshot.lock()
+        && matches!(
+            snapshot.get("status").and_then(Value::as_str),
+            Some("queued" | "running" | "cancelling")
+        )
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "backend installation already in progress: {}",
+                snapshot
+                    .get("backend")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            ),
+        ));
+    }
+
+    let backend = backend.to_string();
+    let task_id = format!(
+        "backend-install-{}-{}-{:016x}",
+        std::process::id(),
+        unix_milliseconds(),
+        rand::random::<u64>()
+    );
+    let snapshot = Arc::new(StdMutex::new(json!({
+        "object": "backend.install",
+        "task_id": task_id,
+        "backend": backend,
+        "owner_admin_id": owner_admin_id,
+        "status": "queued",
+        "started_at": unix_seconds(),
+        "latest_event": null,
+    })));
+    let cancel_requested = Arc::new(AtomicBool::new(false));
+    let control = BackendInstallControl {
+        snapshot: snapshot.clone(),
+        cancel_requested: cancel_requested.clone(),
+    };
+    *active = Some(control);
+    drop(active);
+
+    let response = snapshot
+        .lock()
+        .map(|snapshot| snapshot.clone())
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backend installation state lock poisoned".to_string(),
+            )
+        })?;
+    tokio::spawn(async move {
+        let event_snapshot = snapshot.clone();
+        let event_sink = Arc::new(move |event: Value| {
+            if let Ok(mut current) = event_snapshot.lock() {
+                let status = match event.get("event").and_then(Value::as_str) {
+                    Some("completed" | "already_installed") => Some("completed"),
+                    Some("cancelled") => Some("cancelled"),
+                    Some("error") => Some("failed"),
+                    Some(_) => Some("running"),
+                    None => None,
+                };
+                if let Some(status) = status {
+                    current["status"] = Value::String(status.to_string());
+                }
+                if matches!(status, Some("completed" | "cancelled" | "failed")) {
+                    current["finished_at"] = json!(unix_seconds());
+                }
+                if let Some(message) = event.get("message").and_then(Value::as_str) {
+                    current["message"] = Value::String(message.to_string());
+                }
+                current["latest_event"] = event;
+            }
+        });
+        let task_backend = backend.clone();
+        let task_snapshot = snapshot.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut reporter = crate::backend_installer::InstallReporter::with_control(
+                &task_backend,
+                event_sink,
+                cancel_requested,
+            );
+            crate::backend_installer::install_backend_with_reporter(
+                crate::backend_installer::InstallOptions {
+                    backend: task_backend,
+                    dry_run: false,
+                    from_source: false,
+                    json: false,
+                    wsl_distro: None,
+                },
+                &mut reporter,
+            )
+        })
+        .await;
+        if let Err(error) = result
+            && let Ok(mut current) = task_snapshot.lock()
+        {
+            current["status"] = Value::String("failed".to_string());
+            current["message"] = Value::String(format!("backend install task failed: {error}"));
+            current["finished_at"] = json!(unix_seconds());
+        }
+    });
+    Ok(response)
+}
+
+async fn cancel_backend_install(
+    state: &GatewayState,
+    task_id: &str,
+    admin_id: &str,
+) -> Result<Value, (StatusCode, String)> {
+    let control = state.backend_install.lock().await.clone().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            "no backend installation task exists".to_string(),
+        )
+    })?;
+    let mut snapshot = control.snapshot.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend installation state lock poisoned".to_string(),
+        )
+    })?;
+    let current_task_id = snapshot
+        .get("task_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if current_task_id != task_id {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("backend installation task changed; current task is {current_task_id}"),
+        ));
+    }
+    let owner_admin_id = snapshot
+        .get("owner_admin_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if admin_id != "local" && owner_admin_id != admin_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("backend installation is owned by admin '{owner_admin_id}'"),
+        ));
+    }
+    match snapshot.get("status").and_then(Value::as_str) {
+        Some("queued" | "running" | "cancelling") => {
+            control.cancel_requested.store(true, Ordering::Relaxed);
+            snapshot["status"] = Value::String("cancelling".to_string());
+            Ok(snapshot.clone())
+        }
+        Some(status) => Err((
+            StatusCode::CONFLICT,
+            format!("backend installation is not active (status: {status})"),
+        )),
+        None => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backend installation status is missing".to_string(),
+        )),
+    }
+}
+
+fn unix_milliseconds() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 fn request_history_path(path: &str) -> bool {

@@ -532,6 +532,7 @@ For a fixed HTTPS hostname behind a trusted reverse proxy such as nginx + frp, k
   --backend llama.cpp-linux-cuda \
   --public-model-root /path/to/public_models \
   --api-key oi_inference_key \
+  --admin-api-key oi_admin_key \
   --allow-remote-management \
   --behind-proxy \
   --no-restore-model \
@@ -569,6 +570,34 @@ curl -sS -H 'Authorization: Bearer oi_admin_key' \
   https://omniinfer.example.com/omni/model/select \
   -d '{"model":"qwen3.5-4b-q4_k_m"}'
 ```
+
+The same admin API can inspect and install verified backend runtimes on the
+remote host. Installation is asynchronous: start one task, poll its status,
+and cancel it if needed. Only backend IDs declared by the host registry and
+backed by the host's verified prebuilt catalog are accepted.
+
+```sh
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  https://omniinfer.example.com/omni/advisor/system
+
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  -H 'Content-Type: application/json' \
+  https://omniinfer.example.com/omni/backend/install \
+  -d '{"backend":"llama.cpp-linux-cuda"}'
+
+curl -sS -H 'Authorization: Bearer oi_admin_key' \
+  https://omniinfer.example.com/omni/backend/install
+
+curl -sS -X POST -H 'Authorization: Bearer oi_admin_key' \
+  -H 'Content-Type: application/json' \
+  https://omniinfer.example.com/omni/backend/install/cancel \
+  -d '{"task_id":"<task-id-from-start-response>"}'
+```
+
+OmniInfer permits one backend installation at a time. Cancellation is bound to
+the returned task ID and its initiating admin. It is checked
+during streamed download and again before activation; it never treats an
+unverified or partially staged runtime as installed.
 
 On Windows, allow the port through the Private-network firewall profile when needed:
 

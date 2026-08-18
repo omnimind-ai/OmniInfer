@@ -64,7 +64,7 @@ Only inference-facing endpoints are exposed to remote clients by default:
 | `POST` | `/tokenize` |
 | `POST` | `/detokenize` |
 
-Management endpoints under `/omni/*`, including model loading, backend switching, backend stop, and gateway shutdown, remain local-only unless the gateway is started with `--allow-remote-management` and an API key. Keep OmniStudio and other local controllers pointed at `http://127.0.0.1:<port>`.
+Management endpoints under `/omni/*`, including model loading, backend switching, backend installation, backend stop, and gateway shutdown, remain local-only unless the gateway is started with `--allow-remote-management` and an admin API key. Use a separate inference key for ordinary remote inference clients.
 
 If you intentionally need an unauthenticated LAN test server, use `--allow-insecure-lan`. Do not use that mode on shared networks.
 
@@ -102,6 +102,8 @@ Quick Tunnel is intended for demos and short-lived testing. For best compatibili
 | `GET` | `/health?deep=true` | Health plus backend process health |
 | `GET` | `/omni/state` | Full OmniInfer runtime state |
 | `GET` | `/omni/backends?scope=installed\|compatible\|all` | Backend list |
+| `GET` | `/omni/advisor/system` | Host hardware and backend recommendations |
+| `GET` | `/omni/backend/install` | Current backend installation task |
 | `GET` | `/omni/thinking` | Default thinking setting |
 | `GET` | `/omni/backend/props` | Active backend `/props` payload |
 | `GET` | `/omni/models` | Deprecated, returns `410` |
@@ -110,6 +112,8 @@ Quick Tunnel is intended for demos and short-lived testing. For best compatibili
 | `GET` | `/omni/supported-models/best?system=windows\|mac\|linux` | Best-backend model catalog |
 | `GET` | `/v1/models` | OpenAI-compatible loaded-model list |
 | `POST` | `/omni/backend/select` | Select a backend |
+| `POST` | `/omni/backend/install` | Start installing one verified prebuilt backend |
+| `POST` | `/omni/backend/install/cancel` | Cancel the active backend installation |
 | `POST` | `/omni/backend/stop` | Stop current backend runtime |
 | `POST` | `/omni/cache/clear` | Clear backend KV cache |
 | `POST` | `/omni/shutdown` | Stop the gateway |
@@ -328,6 +332,35 @@ Example response:
 ```
 
 Invalid `scope` returns `400`.
+
+### Remote backend installation
+
+These endpoints are management-only. A remote request requires the gateway to
+be started with `--allow-remote-management` and must authenticate with an admin
+API key. An ordinary inference API key is rejected.
+
+`GET /omni/advisor/system` returns the host platform, detected accelerators,
+installed backends, compatible backends, and the recommended verified prebuilt
+backend. `POST /omni/backend/install` accepts exactly one registry backend ID:
+
+```json
+{
+  "backend": "llama.cpp-linux-cuda"
+}
+```
+
+The start response is `202 Accepted`. Poll `GET /omni/backend/install` until
+`status` is `completed`, `failed`, or `cancelled`. The response includes
+`latest_event`, whose schema matches `omniinfer backend install --json` events,
+including byte progress when the server reports a content length.
+
+Only one installation may run at a time; a second start returns `409`. Unknown,
+hardware-incompatible, or catalog-unverified backends return `400`. Send
+`POST /omni/backend/install/cancel` with
+`{"task_id":"<task-id-from-start-response>"}` to request cancellation. The
+task ID and initiating admin must both match, preventing one remote admin from
+cancelling another admin's later task. Cancellation is cooperative during
+download and staging and is checked before runtime activation.
 
 ### `POST /omni/backend/select`
 

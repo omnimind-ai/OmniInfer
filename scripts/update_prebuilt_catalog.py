@@ -42,26 +42,38 @@ def validate(
     verify_upstream_tags: bool,
 ) -> list[str]:
     errors: list[str] = []
-    if catalog.get("schema_version") != 5:
-        errors.append("schema_version must be 5")
+    if catalog.get("schema_version") != 6:
+        errors.append("schema_version must be 6")
     sources = catalog.get("sources", {})
     if not isinstance(sources, dict) or not sources:
         errors.append("sources must be a non-empty object")
         return errors
     for source_name, source in sources.items():
-        tag = source.get("tag")
+        source_repository = source.get("source_repository")
+        source_commit = source.get("source_commit")
+        release_repository = source.get("release_repository")
+        tag = source.get("release_tag")
         submodule_tag = source.get("submodule_tag")
         submodule_path = source.get("submodule_path")
         submodule_commit = source.get("submodule_commit")
+        if source_repository != source_name or not is_github_slug(source_repository):
+            errors.append(f"{source_name}: source_repository must match the source key")
+        if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+            errors.append(f"{source_name}: source_commit must be a 40-character lowercase commit")
+        if not is_github_slug(release_repository):
+            errors.append(f"{source_name}: release_repository must be an owner/repository slug")
         if not isinstance(tag, str) or not tag:
-            errors.append(f"{source_name}: tag is required")
-        if not isinstance(submodule_tag, str) or not submodule_tag:
-            errors.append(f"{source_name}: submodule_tag is required")
-        if not isinstance(submodule_path, str) or not submodule_path:
-            errors.append(f"{source_name}: submodule_path is required")
-        if not isinstance(submodule_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", submodule_commit):
+            errors.append(f"{source_name}: release_tag is required")
+        submodule_values = (submodule_tag, submodule_path, submodule_commit)
+        if any(value is not None for value in submodule_values) and not all(
+            isinstance(value, str) and value for value in submodule_values
+        ):
+            errors.append(f"{source_name}: submodule metadata must be complete when present")
+        if isinstance(submodule_commit, str) and not re.fullmatch(r"[0-9a-f]{40}", submodule_commit):
             errors.append(f"{source_name}: submodule_commit must be a 40-character lowercase commit")
-        if require_gitlink_match and isinstance(submodule_path, str):
+        if isinstance(submodule_commit, str) and submodule_commit != source_commit:
+            errors.append(f"{source_name}: source_commit and submodule_commit must match")
+        if require_gitlink_match and isinstance(submodule_path, str) and submodule_path:
             actual = gitlink_commit(submodule_path)
             if actual != submodule_commit:
                 errors.append(
@@ -73,7 +85,7 @@ def validate(
             and isinstance(submodule_commit, str)
         ):
             try:
-                upstream_commit = github_tag_commit(source_name, submodule_tag)
+                upstream_commit = github_tag_commit(source_repository, submodule_tag)
             except Exception as error:
                 errors.append(
                     f"{source_name}: failed to resolve upstream tag {submodule_tag}: {error}"
@@ -91,10 +103,21 @@ def validate(
             if source is None:
                 errors.append(f"{platform}/{backend}: unknown source {source_name!r}")
                 continue
-            tag = source.get("tag")
-            validate_asset(errors, platform, backend, "runtime", entry, tag)
+            tag = source.get("release_tag")
+            release_repository = source.get("release_repository")
+            validate_asset(
+                errors, platform, backend, "runtime", entry, tag, release_repository
+            )
             for index, asset in enumerate(entry.get("companion_assets", []), start=1):
-                validate_asset(errors, platform, backend, f"companion {index}", asset, tag)
+                validate_asset(
+                    errors,
+                    platform,
+                    backend,
+                    f"companion {index}",
+                    asset,
+                    tag,
+                    release_repository,
+                )
     for platform, entries in catalog.get("python_runtimes", {}).items():
         for backend, entry in entries.items():
             required = ("source", "tag", "package", "python", "launcher")
@@ -327,6 +350,7 @@ def validate_asset(
     role: str,
     asset: dict[str, Any],
     tag: Any,
+    release_repository: Any = None,
 ) -> None:
     digest = asset.get("sha256")
     if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
@@ -334,8 +358,18 @@ def validate_asset(
     url = asset.get("url")
     if not isinstance(url, str) or not url.startswith("https://"):
         errors.append(f"{platform}/{backend} {role}: canonical HTTPS URL is required")
+    elif isinstance(tag, str) and isinstance(release_repository, str):
+        expected = f"https://github.com/{release_repository}/releases/download/{tag}/"
+        if not url.startswith(expected):
+            errors.append(
+                f"{platform}/{backend} {role}: URL does not match release {release_repository}@{tag}"
+            )
     elif isinstance(tag, str) and f"/download/{tag}/" not in url:
         errors.append(f"{platform}/{backend} {role}: URL does not match tag {tag}")
+
+
+def is_github_slug(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[^/\s]+/[^/\s]+", value) is not None
 
 
 def gitlink_commit(submodule_path: str) -> str:
@@ -409,20 +443,22 @@ def update_source(
     source = catalog.get("sources", {}).get(source_name)
     if source is None:
         raise SystemExit(f"unknown catalog source: {source_name}")
-    old_tag = source.get("tag")
+    old_tag = source.get("release_tag")
     if not isinstance(old_tag, str) or not old_tag:
         raise SystemExit(f"catalog source {source_name} has no current tag")
     if submodule_commit == "current":
         submodule_commit = gitlink_commit(source["submodule_path"])
     if not re.fullmatch(r"[0-9a-f]{40}", submodule_commit):
         raise SystemExit("--submodule-commit must be 'current' or a 40-character lowercase commit")
-    tag_commit = github_tag_commit(source_name, tag)
+    source_repository = source.get("source_repository", source_name)
+    release_repository = source.get("release_repository", source_name)
+    tag_commit = github_tag_commit(source_repository, tag)
     if tag_commit != submodule_commit:
         raise SystemExit(
             f"{source_name}: tag {tag} resolves to {tag_commit}, "
             f"but --submodule-commit resolved to {submodule_commit}"
         )
-    assets = release_assets(source_name, tag)
+    assets = release_assets(release_repository, tag)
     for platform, backend, role, asset in iter_source_release_assets(catalog, source_name):
         old_url = asset["url"]
         old_name = unquote(Path(urlparse(old_url).path).name)
@@ -437,7 +473,9 @@ def update_source(
             raise SystemExit(f"{platform}/{backend} {role}: upstream asset has no SHA256 digest")
         asset["url"] = upstream["browser_download_url"]
         asset["sha256"] = digest.removeprefix("sha256:")
+    source["release_tag"] = tag
     source["tag"] = tag
+    source["source_commit"] = submodule_commit
     source["submodule_tag"] = tag
     source["submodule_commit"] = submodule_commit
 

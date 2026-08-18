@@ -242,10 +242,12 @@ impl HostInfo {
 pub fn backend_priority(backend_id: &str) -> i32 {
     match backend_id {
         "llama.cpp-mac" => 0,
+        "omnicore-metal" => 0,
         "llama.cpp-mac-intel" => 1,
         "turboquant-mac" => 0,
         "mlx-mac" => 0,
         "llama.cpp-cuda" => 0,
+        "omnicore-cuda" => 0,
         "llama.cpp-vulkan" => 0,
         "llama.cpp-sycl" => 0,
         "llama.cpp-hip" => 0,
@@ -262,6 +264,7 @@ pub fn backend_priority(backend_id: &str) -> i32 {
         "vllm-wsl2-cuda" => 2,
         "vllm-wsl2-rocm" => 2,
         "llama.cpp-cpu" => 1,
+        "omnicore-cpu" => 1,
         "llama.cpp-windows-arm64" => 1,
         "llama.cpp-ios" => 0,
         "mlx-ios" => 0,
@@ -716,6 +719,7 @@ fn gpu_backend_ids(host: HostInfo) -> &'static [&'static str] {
             "vla.cpp-linux-cuda",
         ],
         HostSystem::Windows => &[
+            "omnicore-cuda",
             "llama.cpp-cuda",
             "llama.cpp-vulkan",
             "llama.cpp-sycl",
@@ -1006,6 +1010,46 @@ const LINUX_TEMPLATES: &[BackendTemplate] = &[
 
 const WINDOWS_TEMPLATES: &[BackendTemplate] = &[
     template(
+        "omnicore-cpu",
+        "OmniCore CPU",
+        "llama.cpp",
+        "omnicore-cpu",
+        Some("llama-server.exe"),
+        "OmniCore portable CPU backend managed by OmniInfer",
+        &[
+            "chat",
+            "vision",
+            "stream",
+            "cpu",
+            "windows",
+            "omnicore",
+            "turboquant",
+        ],
+        "OMNIINFER_OMNICORE_CPU",
+    ),
+    BackendTemplate {
+        default_ngl: Some("999"),
+        ..template(
+            "omnicore-cuda",
+            "OmniCore CUDA",
+            "llama.cpp",
+            "omnicore-cuda",
+            Some("llama-server.exe"),
+            "OmniCore CUDA backend managed by OmniInfer",
+            &[
+                "chat",
+                "vision",
+                "stream",
+                "gpu",
+                "cuda",
+                "windows",
+                "omnicore",
+                "turboquant",
+            ],
+            "OMNIINFER_OMNICORE_CUDA",
+        )
+    },
+    template(
         "llama.cpp-cpu",
         "llama.cpp cpu",
         "llama.cpp",
@@ -1158,6 +1202,30 @@ const WINDOWS_TEMPLATES: &[BackendTemplate] = &[
 ];
 
 const MAC_TEMPLATES: &[BackendTemplate] = &[
+    BackendTemplate {
+        default_ngl: Some("999"),
+        ..template(
+            "omnicore-metal",
+            "OmniCore Metal",
+            "llama.cpp",
+            "omnicore-metal",
+            Some("llama-server"),
+            "OmniCore Metal backend managed by OmniInfer on Apple silicon",
+            &[
+                "chat",
+                "vision",
+                "stream",
+                "gpu",
+                "metal",
+                "apple",
+                "arm64",
+                "shared-memory",
+                "omnicore",
+                "turboquant",
+            ],
+            "OMNIINFER_OMNICORE_METAL",
+        )
+    },
     BackendTemplate {
         default_ngl: Some("999"),
         ..template(
@@ -1530,6 +1598,55 @@ mod tests {
             backend_priority("llama.cpp-linux-cuda") < backend_priority("ik_llama.cpp-linux-cuda")
         );
         assert!(backend_priority("llama.cpp-cpu") < backend_priority("ik_llama.cpp-cpu"));
+    }
+
+    #[test]
+    fn omnicore_templates_use_the_llama_protocol_without_implicit_quantization() {
+        let windows = BackendRegistry::build(
+            HostInfo {
+                system: HostSystem::Windows,
+                machine: "x86_64",
+            },
+            "runtime",
+            &Value::Null,
+        );
+        for id in ["omnicore-cpu", "omnicore-cuda"] {
+            let backend = windows.get(id).unwrap();
+            assert_eq!(backend.family, "llama.cpp");
+            assert_eq!(
+                backend.external_server_protocol.as_deref(),
+                Some("llama.cpp-server")
+            );
+            assert!(backend.capabilities.iter().any(|value| value == "omnicore"));
+            assert!(
+                backend
+                    .capabilities
+                    .iter()
+                    .any(|value| value == "turboquant")
+            );
+            assert!(!backend.default_args.iter().any(|value| value == "turbo4"));
+        }
+        assert!(
+            gpu_backend_ids(windows.host)
+                .contains(&windows.get("omnicore-cuda").unwrap().id.as_str())
+        );
+
+        let mac = BackendRegistry::build(
+            HostInfo {
+                system: HostSystem::Mac,
+                machine: "arm64",
+            },
+            "runtime",
+            &Value::Null,
+        );
+        let metal = mac.get("omnicore-metal").unwrap();
+        assert_eq!(metal.family, "llama.cpp");
+        assert_eq!(
+            metal.external_server_protocol.as_deref(),
+            Some("llama.cpp-server")
+        );
+        assert!(is_hardware_compatible(mac.host, metal));
+        assert!(!metal.default_args.iter().any(|value| value == "turbo4"));
     }
 
     #[test]

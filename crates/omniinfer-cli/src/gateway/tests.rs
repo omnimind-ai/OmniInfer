@@ -5,8 +5,10 @@ static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(())
 use axum::Json;
 use axum::extract::Query;
 use axum::routing::{get, post};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Read;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -1113,6 +1115,265 @@ async fn public_models_requires_admin_key_for_remote_clients() {
 }
 
 #[tokio::test]
+async fn remote_backend_management_requires_admin_key_and_validates_backend() {
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway(
+        upstream.port,
+        GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            admin_api_key: "admin".to_string(),
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+    )
+    .await;
+    let port = gateway.port;
+
+    let denied = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/omni/advisor/system"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer inference")
+            .call()
+            .unwrap_err()
+    })
+    .await
+    .unwrap();
+    assert!(denied.to_string().contains("401"));
+
+    let advisor = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/omni/advisor/system"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer admin")
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(advisor.status().as_u16(), 200);
+    let advisor_body: Value = advisor.into_body().read_json().unwrap();
+    assert_eq!(advisor_body["object"], "advisor.system");
+
+    let invalid = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/backend/install"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer admin")
+            .send_json(json!({"backend": "not-a-real-backend"}))
+            .unwrap_err()
+    })
+    .await
+    .unwrap();
+    assert!(invalid.to_string().contains("400"));
+
+    let status = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/omni/backend/install"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer admin")
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let status_body: Value = status.into_body().read_json().unwrap();
+    assert_eq!(status_body["status"], "idle");
+
+    gateway.stop().await;
+    upstream.stop().await;
+}
+
+#[tokio::test]
+async fn backend_install_endpoint_completes_verified_prebuilt_install() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("rust-gateway-backend-install");
+    let backend = install_test_backend_id();
+    let catalog = write_gateway_prebuilt_fixture(&temp, backend);
+    let _root_guard = EnvGuard::set("OMNIINFER_RUST_REPO_ROOT", temp.display().to_string());
+    let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let _catalog_guard = EnvGuard::set("OMNIINFER_PREBUILT_CATALOG", catalog.display().to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway(
+        upstream.port,
+        GatewayAccessPolicy {
+            admin_api_keys: vec![
+                omniinfer_core::gateway_auth::GatewayAdminApiKey {
+                    id: "adminA".to_string(),
+                    key: "admin-a".to_string(),
+                },
+                omniinfer_core::gateway_auth::GatewayAdminApiKey {
+                    id: "adminB".to_string(),
+                    key: "admin-b".to_string(),
+                },
+            ],
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+    )
+    .await;
+    let port = gateway.port;
+    let backend_for_start = backend.to_string();
+    let started = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/backend/install"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer admin-a")
+            .send_json(json!({"backend": backend_for_start}))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(started.status().as_u16(), 202);
+
+    let mut final_snapshot = Value::Null;
+    for _ in 0..100 {
+        final_snapshot = tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{port}/omni/backend/install"))
+                .call()
+                .unwrap()
+                .into_body()
+                .read_json::<Value>()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        if matches!(
+            final_snapshot.get("status").and_then(Value::as_str),
+            Some("completed" | "failed" | "cancelled")
+        ) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(final_snapshot["status"], "completed", "{final_snapshot}");
+    assert_eq!(final_snapshot["latest_event"]["event"], "completed");
+    assert!(gateway_installed_launcher(&temp, backend).is_file());
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
+async fn backend_install_endpoint_cancels_before_runtime_activation() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("rust-gateway-backend-install-cancel");
+    std::fs::create_dir_all(&temp).unwrap();
+    let backend = install_test_backend_id();
+    let archive_server = spawn_slow_archive_server().await;
+    let catalog = write_gateway_remote_prebuilt_catalog(&temp, backend, archive_server.port);
+    let _root_guard = EnvGuard::set("OMNIINFER_RUST_REPO_ROOT", temp.display().to_string());
+    let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let _catalog_guard = EnvGuard::set("OMNIINFER_PREBUILT_CATALOG", catalog.display().to_string());
+
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway(
+        upstream.port,
+        GatewayAccessPolicy {
+            admin_api_keys: vec![
+                omniinfer_core::gateway_auth::GatewayAdminApiKey {
+                    id: "adminA".to_string(),
+                    key: "admin-a".to_string(),
+                },
+                omniinfer_core::gateway_auth::GatewayAdminApiKey {
+                    id: "adminB".to_string(),
+                    key: "admin-b".to_string(),
+                },
+            ],
+            allow_remote_management: true,
+            trust_proxy_headers: true,
+            ..GatewayAccessPolicy::default()
+        },
+    )
+    .await;
+    let port = gateway.port;
+    let backend_for_start = backend.to_string();
+    let started: Value = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/backend/install"))
+            .header("CF-Connecting-IP", "203.0.113.10")
+            .header("Authorization", "Bearer admin-a")
+            .send_json(json!({"backend": backend_for_start}))
+            .unwrap()
+            .into_body()
+            .read_json()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let task_id = started["task_id"].as_str().unwrap().to_string();
+
+    let mut observed_download = false;
+    for _ in 0..100 {
+        let snapshot = backend_install_status(port).await;
+        if snapshot
+            .get("latest_event")
+            .and_then(|event| event.get("event"))
+            .and_then(Value::as_str)
+            .is_some_and(|event| matches!(event, "download_started" | "download_progress"))
+        {
+            observed_download = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(observed_download, "install never entered download state");
+    let task_id_for_denied = task_id.clone();
+    let denied = tokio::task::spawn_blocking(move || {
+        ureq::post(format!(
+            "http://127.0.0.1:{port}/omni/backend/install/cancel"
+        ))
+        .header("CF-Connecting-IP", "203.0.113.10")
+        .header("Authorization", "Bearer admin-b")
+        .send_json(json!({"task_id": task_id_for_denied}))
+        .unwrap_err()
+    })
+    .await
+    .unwrap();
+    assert!(denied.to_string().contains("403"));
+
+    let stale_task = tokio::task::spawn_blocking(move || {
+        ureq::post(format!(
+            "http://127.0.0.1:{port}/omni/backend/install/cancel"
+        ))
+        .header("CF-Connecting-IP", "203.0.113.10")
+        .header("Authorization", "Bearer admin-a")
+        .send_json(json!({"task_id": "stale-task-id"}))
+        .unwrap_err()
+    })
+    .await
+    .unwrap();
+    assert!(stale_task.to_string().contains("409"));
+
+    let cancel = tokio::task::spawn_blocking(move || {
+        ureq::post(format!(
+            "http://127.0.0.1:{port}/omni/backend/install/cancel"
+        ))
+        .header("CF-Connecting-IP", "203.0.113.10")
+        .header("Authorization", "Bearer admin-a")
+        .send_json(json!({"task_id": task_id}))
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(cancel.status().as_u16(), 202);
+
+    let mut final_snapshot = Value::Null;
+    for _ in 0..200 {
+        final_snapshot = backend_install_status(port).await;
+        if final_snapshot.get("status").and_then(Value::as_str) == Some("cancelled") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(final_snapshot["status"], "cancelled", "{final_snapshot}");
+    assert!(!gateway_installed_launcher(&temp, backend).is_file());
+
+    gateway.stop().await;
+    upstream.stop().await;
+    archive_server.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
 async fn remote_public_model_select_resolves_model_id() {
     let _env_lock = TEST_ENV_LOCK.lock().await;
     let temp = temp_root("rust-gateway-public-model-select");
@@ -1657,6 +1918,49 @@ async fn spawn_test_upstream() -> TestServer {
     }
 }
 
+async fn spawn_slow_archive_server() -> TestServer {
+    let (tx, rx) = oneshot::channel();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let stopped_for_task = Arc::clone(&stopped);
+    let app = axum::Router::new().route(
+        "/runtime.zip",
+        get(|| async {
+            let (chunk_tx, chunk_rx) = mpsc::channel::<Result<HyperBytes, std::io::Error>>(1);
+            tokio::spawn(async move {
+                for _ in 0..1024 {
+                    if chunk_tx
+                        .send(Ok(HyperBytes::from(vec![0_u8; 64 * 1024])))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            });
+            Response::builder()
+                .header(CONTENT_LENGTH, (64_u64 * 1024 * 1024).to_string())
+                .body(Body::from_stream(ReceiverStream::new(chunk_rx)))
+                .unwrap()
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = rx.await;
+            })
+            .await;
+        stopped_for_task.store(true, Ordering::SeqCst);
+    });
+    TestServer {
+        port,
+        stop: Some(tx),
+        stopped,
+    }
+}
+
 async fn echo_chat_completion(
     headers: HeaderMap,
     Query(query): Query<HashMap<String, String>>,
@@ -1761,6 +2065,19 @@ async fn remote_admin_post(
     .unwrap()
 }
 
+async fn backend_install_status(port: u16) -> Value {
+    tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/omni/backend/install"))
+            .call()
+            .unwrap()
+            .into_body()
+            .read_json::<Value>()
+            .unwrap()
+    })
+    .await
+    .unwrap()
+}
+
 async fn remote_chat(port: u16, key: &'static str, model: &'static str) -> Value {
     tokio::task::spawn_blocking(move || {
         let response = ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
@@ -1836,6 +2153,140 @@ fn external_test_backend_id() -> &'static str {
     } else {
         "llama.cpp-linux-cuda"
     }
+}
+
+fn install_test_backend_id() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "llama.cpp-mac"
+    } else if cfg!(target_os = "windows") {
+        "llama.cpp-cpu"
+    } else {
+        "llama.cpp-linux"
+    }
+}
+
+fn gateway_runtime_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    }
+}
+
+fn write_gateway_prebuilt_fixture(root: &Path, backend: &str) -> PathBuf {
+    let fixture = root.join("gateway-prebuilt-fixture");
+    let payload = fixture.join("payload").join("runtime").join("bin");
+    std::fs::create_dir_all(&payload).unwrap();
+    let launcher_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+    let launcher = payload.join(launcher_name);
+    std::fs::write(&launcher, "#!/usr/bin/env bash\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&launcher).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&launcher, permissions).unwrap();
+    }
+
+    let archive = fixture.join(if cfg!(windows) {
+        "runtime.zip"
+    } else {
+        "runtime.tar.gz"
+    });
+    #[cfg(windows)]
+    {
+        let file = std::fs::File::create(&archive).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file(format!("runtime/bin/{launcher_name}"), options)
+            .unwrap();
+        std::io::Write::write_all(&mut zip, b"test launcher").unwrap();
+        zip.finish().unwrap();
+    }
+    #[cfg(not(windows))]
+    {
+        let file = std::fs::File::create(&archive).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut tar = tar::Builder::new(encoder);
+        tar.append_dir_all(".", fixture.join("payload")).unwrap();
+        tar.finish().unwrap();
+    }
+    let archive_sha = format!("{:x}", Sha256::digest(std::fs::read(&archive).unwrap()));
+    let catalog = fixture.join("catalog.json");
+    std::fs::write(
+        &catalog,
+        json!({
+            "schema_version": 2,
+            "platforms": {
+                gateway_runtime_platform(): {
+                    backend: {
+                        "source": "gateway-test",
+                        "tag": "test",
+                        "url": format!("file://{}", archive.display()),
+                        "archive": if cfg!(windows) { "zip" } else { "tar.gz" },
+                        "launcher": launcher_name,
+                        "sha256": archive_sha,
+                        "submodule_path": "framework/llama.cpp",
+                        "submodule_commit": "fixture"
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    catalog
+}
+
+fn write_gateway_remote_prebuilt_catalog(root: &Path, backend: &str, port: u16) -> PathBuf {
+    let catalog = root.join("slow-prebuilt-catalog.json");
+    let launcher_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+    std::fs::write(
+        &catalog,
+        json!({
+            "schema_version": 2,
+            "platforms": {
+                gateway_runtime_platform(): {
+                    backend: {
+                        "source": "gateway-cancel-test",
+                        "tag": "test",
+                        "url": format!("http://127.0.0.1:{port}/runtime.zip"),
+                        "archive": "zip",
+                        "launcher": launcher_name,
+                        "sha256": "0".repeat(64),
+                        "submodule_path": "framework/llama.cpp",
+                        "submodule_commit": "fixture"
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    catalog
+}
+
+fn gateway_installed_launcher(root: &Path, backend: &str) -> PathBuf {
+    root.join(".local")
+        .join("runtime")
+        .join(gateway_runtime_platform())
+        .join(backend)
+        .join("bin")
+        .join(if cfg!(windows) {
+            "llama-server.exe"
+        } else {
+            "llama-server"
+        })
 }
 
 fn embedded_test_backend_id() -> Option<&'static str> {
