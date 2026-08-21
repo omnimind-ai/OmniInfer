@@ -59,9 +59,7 @@ The terminal UI guides backend selection, model loading, and local chat.
 <table width="100%">
   <tr>
     <td width="100%">
-      <video autoplay muted loop playsinline width="100%" style="max-width: 100%;">
-        <source src="https://github.com/user-attachments/assets/4ac5329e-8c54-4ea9-8a51-02306c0607e9" type="video/mp4">
-      </video>
+      <video src="https://github.com/user-attachments/assets/4ac5329e-8c54-4ea9-8a51-02306c0607e9" autoplay muted loop playsinline width="100%" style="max-width: 100%;"></video>
     </td>
   </tr>
 </table>
