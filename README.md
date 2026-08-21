@@ -54,15 +54,34 @@ To run the local OpenAI- and Anthropic-compatible service, start `omniinfer serv
 
 ## Demo
 
-The terminal UI guides backend selection, model loading, and local chat.
+Short, focused recordings of the main entry points. Each demo covers one capability.
 
-<table width="100%">
-  <tr>
-    <td width="100%">
-      <video src="https://github.com/user-attachments/assets/4ac5329e-8c54-4ea9-8a51-02306c0607e9" controls="controls" style="max-width: 100%;"></video>
-    </td>
-  </tr>
-</table>
+### Terminal UI — choose a backend, load a model, chat locally
+
+Running `omniinfer` opens a terminal UI that recommends a compatible backend, loads a local model, and starts a fully local chat session.
+
+<p align="center">
+  <img src="docs/assets/demo/tui-chat.webp" width="720" alt="Terminal UI selecting a backend, loading a model, and chatting locally">
+</p>
+<p align="center"><sub>Static preview: <a href="docs/assets/demo/tui-chat-poster.webp">terminal UI screenshot</a></sub></p>
+
+### Local API — OpenAI-compatible endpoint
+
+`omniinfer serve` exposes an OpenAI-compatible HTTP API on localhost; any OpenAI SDK or client can stream chat completions from the same local model.
+
+<p align="center">
+  <img src="docs/assets/demo/local-api.webp" width="720" alt="OpenAI-compatible local API request and response">
+</p>
+<p align="center"><sub>Static preview: <a href="docs/assets/demo/local-api-poster.webp">API request and response screenshot</a></sub></p>
+
+### Browser VLA demo — SmolVLA on LIBERO
+
+The optional [vla-libero example](examples/vla-libero/README.md) runs a SmolVLA policy through a managed vla.cpp runtime in the LIBERO simulator, showing live camera views, the predicted action, and latency in a browser dashboard.
+
+<p align="center">
+  <img src="docs/assets/demo/vla-libero.webp" width="720" alt="SmolVLA LIBERO browser dashboard showing camera views, predicted actions, latency, and a successful rollout">
+</p>
+<p align="center"><sub>Static preview: <a href="docs/assets/demo/vla-libero-poster.webp">SmolVLA LIBERO dashboard screenshot</a></sub></p>
 
 ## News
 

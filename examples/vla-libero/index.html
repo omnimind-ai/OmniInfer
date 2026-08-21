@@ -195,7 +195,7 @@
             <div class="runtime-row"><span>Backend</span><code id="backend">-</code></div>
             <div class="runtime-row"><span>Model</span><code id="model">-</code></div>
             <div class="runtime-row"><span>Protocol</span><code>vla.cpp-zmq-server</code></div>
-            <div class="runtime-row"><span>Endpoint</span><code id="endpoint">-</code></div>
+            <div class="runtime-row"><span>Endpoint</span><code id="endpoint">Managed loopback</code></div>
           </div>
           <div id="error"></div>
         </section>
@@ -409,7 +409,7 @@
       $('failures').textContent = data.failures;
       $('backend').textContent = data.backend || '-';
       $('model').textContent = data.model || '-';
-      $('endpoint').textContent = data.client_endpoint || '-';
+      $('endpoint').textContent = data.client_endpoint || 'Managed loopback';
       $('call-kind').textContent = (data.call_kind || '-').replaceAll('_', ' ');
       renderActions(data.action);
       setMetric('prediction-latency', 'prediction-note', data.latency?.prediction, 'waiting for prediction');

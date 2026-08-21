@@ -132,24 +132,29 @@ drops intermediate display frames when action chunks advance faster than the
 page can render. A new rollout clears the previous image immediately, and stale
 requests from an older rollout cannot replace the current frame.
 
-The dashboard defaults to 512x512 rendering for each LIBERO camera and serves
-the live view as quality-92 4:2:2 JPEG at up to 30 FPS. This keeps encoding and
-SSH bandwidth moderate while avoiding the visibly lower detail of LIBERO's
-360px default. In multi-view mode the resulting browser frame is 1024x512 before
-CSS scaling. Override the square camera size or display/video rate when needed:
+The policy defaults to its validated 256x256 LIBERO camera observations. The
+dashboard separately samples the same simulator state at 512x512 for browser
+display and serves it as quality-92 4:2:2 JPEG at up to 30 FPS. Thus the
+multi-view browser frame is 1024x512 before CSS scaling, without changing the
+pixels sent to the model. Override the policy, display, or display/video rate
+only when needed:
 
 ```sh
-examples/vla-libero/run.sh -- --render-size 512 --fps 30 [other demo options]
+examples/vla-libero/run.sh -- \\
+  --render-size 256 \\
+  --display-render-size 512 \\
+  --fps 30 [other demo options]
 ```
 
-Higher rendering resolution also changes the pixels supplied to the policy,
-even though each model client still applies its architecture-specific resize.
-This is appropriate for the visual demo, but it is not an interchangeable
-benchmark setting. Use `--render-size 256` when reproducing the previous
-lower-resolution demo configuration, and record the selected value in any
-rollout comparison. Some wrist cameras include an uninformative lower border;
-`--wrist-display-crop-ratio 0.84` can crop it from the dashboard view without
-changing the observation sent to the policy.
+`--render-size` controls the raw policy observation and can change rollout
+behavior even though each client applies its architecture-specific resize. It
+is therefore a benchmark-relevant setting, not a visual-quality control. Keep
+it at 256 for the validated SmolVLA/LIBERO path and record any override in a
+rollout comparison. `--display-render-size` is browser-only. Some wrist cameras
+include an uninformative lower border, so the dashboard crops its display to
+the upper 84% by default before resizing it to the front-view height. Pass
+`--wrist-display-crop-ratio 1.0` to retain the full wrist frame. This crop never
+changes the observation sent to the policy.
 
 ## Prerequisites
 

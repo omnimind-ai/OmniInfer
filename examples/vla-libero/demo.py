@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 VLA_PROTOCOL = "vla.cpp-zmq-server"
@@ -46,14 +46,18 @@ LIBERO_OBJECT_TASKS = (
 )
 SUPPORTED_DEMO_ARCHES = ("smolvla", "pi05")
 MODEL_PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-DEFAULT_RENDER_SIZE = 512
+DEFAULT_RENDER_SIZE = 256
+DEFAULT_DISPLAY_RENDER_SIZE = 512
 MIN_RENDER_SIZE = 128
 MAX_RENDER_SIZE = 1024
 DEFAULT_FPS = 30
 DISPLAY_JPEG_QUALITY = 92
 DISPLAY_JPEG_SUBSAMPLING = 1
 DEFAULT_PI05_ACTION_STEPS = 10
-DEFAULT_WRIST_DISPLAY_CROP_RATIO = 1.0
+# The wrist view contains a fixed lower camera border that is not useful in a
+# presentation.  This is applied only after policy inference, in the browser
+# frame encoder.
+DEFAULT_WRIST_DISPLAY_CROP_RATIO = 0.84
 OMNIINFER_URL_REQUIREMENT = (
     "OmniInfer URL must be an HTTP loopback IP with an explicit nonzero port "
     "and no credentials, path, query, or fragment"
@@ -271,6 +275,7 @@ class DemoConfig:
     seed: int = 42
     fps: int = DEFAULT_FPS
     render_size: int = DEFAULT_RENDER_SIZE
+    display_render_size: int = DEFAULT_DISPLAY_RENDER_SIZE
     wrist_display_crop_ratio: float = DEFAULT_WRIST_DISPLAY_CROP_RATIO
     output_dir: str = field(default_factory=default_output_dir)
     view_mode: str = "multi-view"
@@ -622,7 +627,7 @@ class DemoState:
 
     def publish_frame(
         self,
-        observation: dict[str, Any],
+        observation: dict[str, Any] | Callable[[], dict[str, Any]],
         view_mode: str,
         *,
         wrist_display_crop_ratio: float = DEFAULT_WRIST_DISPLAY_CROP_RATIO,
@@ -635,6 +640,8 @@ class DemoState:
             if not force and now - self._last_frame_at < min_interval_seconds:
                 return False
             run_id = int(self._data["run_id"])
+        if callable(observation):
+            observation = observation()
         frame = encode_frame(observation, view_mode, wrist_display_crop_ratio)
         with self._lock:
             if int(self._data["run_id"]) != run_id:
@@ -738,6 +745,39 @@ def encode_frame(
         optimize=False,
     )
     return output.getvalue()
+
+
+def display_observation(
+    environment: Any,
+    observation: dict[str, Any],
+    *,
+    policy_render_size: int,
+    display_render_size: int,
+) -> dict[str, Any]:
+    """Render a browser-only view without changing the policy observation.
+
+    LIBERO's registered observation size feeds the VLA client.  The dashboard
+    can sample the same simulator state at a different size, but must retain
+    the original observation for action prediction.
+    """
+    if display_render_size == policy_render_size:
+        return observation
+    try:
+        libero_environment = environment.unwrapped
+        simulator = libero_environment._env.env.sim
+        pixels = {
+            libero_environment.camera_name_mapping[observation_camera_name]: simulator.render(
+                width=display_render_size,
+                height=display_render_size,
+                camera_name=observation_camera_name.removesuffix("_image"),
+            )
+            for observation_camera_name in libero_environment.camera_name
+        }
+    except (AttributeError, KeyError, TypeError) as error:
+        raise RuntimeError(
+            "LIBERO environment does not support independent dashboard rendering"
+        ) from error
+    return {**observation, "pixels": pixels}
 
 
 class _DemoPolicyAdapter:
@@ -896,9 +936,9 @@ class DemoController:
             message="Initializing VLA client and LIBERO simulator",
             backend=backend,
             model=profile.label,
-            client_endpoint=endpoint,
+            client_endpoint="managed loopback",
         )
-        self.state.event("info", f"OmniInfer runtime ready: {backend} at {endpoint}")
+        self.state.event("info", f"OmniInfer runtime ready: {backend}")
 
         import gymnasium as gym
         import sim.libero  # noqa: F401 - registers the LIBERO environments
@@ -907,14 +947,16 @@ class DemoController:
         environment = None
         try:
             protoc = configure_protoc(run_config.protoc)
-            self.state.event("info", f"Using protoc: {protoc}")
+            self.state.event("info", "Protobuf client ready")
             raw_client, policy = create_policy(run_config, endpoint)
             output_dir = Path(run_config.output_dir).resolve()
             run_dir = output_dir / (
                 f"run-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}-task-{task_id}"
             )
             run_dir.mkdir(parents=True, exist_ok=False)
-            self.state.event("info", f"Writing rollout video to {run_dir}")
+            # The dashboard is presentation-facing: do not expose a machine-local
+            # output location in its event stream.
+            self.state.event("info", "Writing rollout video")
             environment = gym.make(
                 f"{run_config.task}/task_{task_id}",
                 seed=run_config.seed,
@@ -935,7 +977,12 @@ class DemoController:
                 observation, _ = environment.reset()
                 frame_interval_seconds = 1.0 / run_config.fps
                 self.state.publish_frame(
-                    observation,
+                    lambda: display_observation(
+                        environment,
+                        observation,
+                        policy_render_size=run_config.render_size,
+                        display_render_size=run_config.display_render_size,
+                    ),
                     run_config.view_mode,
                     wrist_display_crop_ratio=run_config.wrist_display_crop_ratio,
                     force=True,
@@ -989,7 +1036,12 @@ class DemoController:
                     loop_ms = (time.perf_counter() - loop_start) * 1000.0
                     step += 1
                     self.state.publish_frame(
-                        observation,
+                        lambda: display_observation(
+                            environment,
+                            observation,
+                            policy_render_size=run_config.render_size,
+                            display_render_size=run_config.display_render_size,
+                        ),
                         run_config.view_mode,
                         wrist_display_crop_ratio=run_config.wrist_display_crop_ratio,
                         min_interval_seconds=frame_interval_seconds,
@@ -1262,8 +1314,17 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_RENDER_SIZE,
         help=(
-            "LIBERO camera width and height in pixels "
+            "LIBERO policy camera width and height in pixels "
             f"(default: {DEFAULT_RENDER_SIZE}; range: {MIN_RENDER_SIZE}-{MAX_RENDER_SIZE})"
+        ),
+    )
+    parser.add_argument(
+        "--display-render-size",
+        type=int,
+        default=DEFAULT_DISPLAY_RENDER_SIZE,
+        help=(
+            "browser-only LIBERO camera width and height in pixels "
+            f"(default: {DEFAULT_DISPLAY_RENDER_SIZE}; range: {MIN_RENDER_SIZE}-{MAX_RENDER_SIZE})"
         ),
     )
     parser.add_argument(
@@ -1310,6 +1371,7 @@ def parse_args() -> argparse.Namespace:
         parser.error("--fps must be >= 1")
     try:
         args.render_size = validate_render_size(args.render_size)
+        args.display_render_size = validate_render_size(args.display_render_size)
         args.wrist_display_crop_ratio = validate_wrist_display_crop_ratio(
             args.wrist_display_crop_ratio
         )
@@ -1346,6 +1408,7 @@ def main() -> int:
         seed=args.seed,
         fps=args.fps,
         render_size=args.render_size,
+        display_render_size=args.display_render_size,
         wrist_display_crop_ratio=args.wrist_display_crop_ratio,
         output_dir=args.output_dir,
         view_mode=args.view_mode,

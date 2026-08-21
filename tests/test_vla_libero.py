@@ -27,16 +27,64 @@ class RuntimeContractTests(unittest.TestCase):
     def test_demo_limits_architectures_to_validated_request_formats(self):
         self.assertEqual(DEMO.SUPPORTED_DEMO_ARCHES, ("smolvla", "pi05"))
 
-    def test_demo_defaults_to_high_resolution_libero_rendering(self):
-        self.assertEqual(DEMO.DemoConfig().render_size, 512)
+    def test_demo_separates_validated_policy_input_from_display_resolution(self):
+        self.assertEqual(DEMO.DemoConfig().render_size, 256)
+        self.assertEqual(DEMO.DemoConfig().display_render_size, 512)
         self.assertEqual(DEMO.DemoConfig().fps, 30)
-        self.assertEqual(DEMO.DemoConfig().wrist_display_crop_ratio, 1.0)
+        self.assertEqual(DEMO.DemoConfig().wrist_display_crop_ratio, 0.84)
         self.assertEqual(DEMO.DISPLAY_JPEG_QUALITY, 92)
         self.assertEqual(DEMO.DISPLAY_JPEG_SUBSAMPLING, 1)
-        self.assertEqual(DEMO.DEFAULT_WRIST_DISPLAY_CROP_RATIO, 1.0)
+        self.assertEqual(DEMO.DEFAULT_WRIST_DISPLAY_CROP_RATIO, 0.84)
         self.assertEqual(DEMO.DEFAULT_PI05_ACTION_STEPS, 10)
         self.assertEqual(DEMO.validate_render_size(256), 256)
         self.assertEqual(DEMO.validate_render_size(1024), 1024)
+
+    def test_display_rendering_does_not_mutate_the_policy_observation(self):
+        class Simulator:
+            def __init__(self):
+                self.calls = []
+
+            def render(self, **kwargs):
+                self.calls.append(kwargs)
+                return kwargs["camera_name"]
+
+        simulator = Simulator()
+        environment = type("Environment", (), {})()
+        environment.unwrapped = environment
+        environment._env = type("Wrapper", (), {})()
+        environment._env.env = type("Libero", (), {"sim": simulator})()
+        environment.camera_name = ("agentview_image", "robot0_eye_in_hand_image")
+        environment.camera_name_mapping = {
+            "agentview_image": "image",
+            "robot0_eye_in_hand_image": "image2",
+        }
+        observation = {"pixels": {"image": "policy-front", "image2": "policy-wrist"}}
+
+        display = DEMO.display_observation(
+            environment,
+            observation,
+            policy_render_size=256,
+            display_render_size=512,
+        )
+
+        self.assertEqual(observation["pixels"]["image"], "policy-front")
+        self.assertEqual(display["pixels"], {"image": "agentview", "image2": "robot0_eye_in_hand"})
+        self.assertEqual(
+            simulator.calls,
+            [
+                {"width": 512, "height": 512, "camera_name": "agentview"},
+                {"width": 512, "height": 512, "camera_name": "robot0_eye_in_hand"},
+            ],
+        )
+
+    def test_display_rendering_reuses_policy_observation_at_the_same_size(self):
+        observation = {"pixels": {"image": "policy-front"}}
+        self.assertIs(
+            DEMO.display_observation(
+                object(), observation, policy_render_size=256, display_render_size=256
+            ),
+            observation,
+        )
 
     def test_omniinfer_url_validator_canonicalizes_loopback_ips(self):
         for value, expected in (
@@ -73,6 +121,12 @@ class RuntimeContractTests(unittest.TestCase):
             with self.subTest(render_size=render_size):
                 with self.assertRaises(ValueError):
                     DEMO.validate_render_size(render_size)
+
+    def test_cli_defaults_keep_policy_and_display_rendering_separate(self):
+        with mock.patch.object(sys, "argv", ["demo.py"]):
+            args = DEMO.parse_args()
+        self.assertEqual(args.render_size, 256)
+        self.assertEqual(args.display_render_size, 512)
 
     def test_demo_validates_optional_wrist_display_crop(self):
         self.assertEqual(DEMO.validate_wrist_display_crop_ratio(0.84), 0.84)
@@ -348,9 +402,10 @@ class RuntimeContractTests(unittest.TestCase):
 
     def test_readme_documents_high_quality_rendering_and_benchmark_scope(self):
         readme = (REPOSITORY_ROOT / "examples" / "vla-libero" / "README.md").read_text()
-        self.assertIn("--render-size 512", readme)
+        self.assertIn("--display-render-size 512", readme)
         self.assertIn("--render-size 256", readme)
-        self.assertIn("changes the pixels supplied to the policy", readme)
+        self.assertIn("controls the raw policy observation", readme)
+        self.assertIn("is browser-only", readme)
 
     def test_readme_explains_smolvla_hub_cache_and_offline_behavior(self):
         readme = (REPOSITORY_ROOT / "examples" / "vla-libero" / "README.md").read_text()
@@ -377,6 +432,23 @@ class RuntimeContractTests(unittest.TestCase):
 
     def test_rollout_video_directory_uses_a_unique_run_identity(self):
         self.assertIn('time.time_ns()', DEMO_PATH.read_text())
+
+    def test_dashboard_events_do_not_expose_rollout_directory(self):
+        source = DEMO_PATH.read_text()
+        self.assertIn('self.state.event("info", "Writing rollout video")', source)
+        self.assertNotIn('f"Writing rollout video to {run_dir}"', source)
+
+    def test_dashboard_runtime_status_does_not_expose_its_loopback_port(self):
+        source = DEMO_PATH.read_text()
+        self.assertIn('client_endpoint="managed loopback"', source)
+        self.assertIn('self.state.event("info", f"OmniInfer runtime ready: {backend}")', source)
+        self.assertNotIn('f"OmniInfer runtime ready: {backend} at {endpoint}"', source)
+
+    def test_dashboard_events_do_not_expose_the_protoc_path(self):
+        source = DEMO_PATH.read_text()
+        self.assertIn('self.state.event("info", "Protobuf client ready")', source)
+        self.assertNotIn('self.state.event("info", f"Using protoc: {protoc}")', source)
+
     def test_setup_defaults_to_cpu_torch_and_exposes_cuda_override(self):
         setup = (REPOSITORY_ROOT / "examples" / "vla-libero" / "setup.sh").read_text()
         self.assertIn('TORCH_BACKEND="cpu"', setup)
@@ -961,9 +1033,28 @@ class MetricTests(unittest.TestCase):
                 )
             )
         self.assertEqual(encode.call_count, 2)
-        encode.assert_called_with(observation, "single-view", 1.0)
+        encode.assert_called_with(
+            observation, "single-view", DEMO.DEFAULT_WRIST_DISPLAY_CROP_RATIO
+        )
         self.assertEqual(state.frame(), (b"frame", 1, 2))
         self.assertEqual(state.snapshot()["telemetry"]["display_fps"], 16.7)
+
+    def test_display_frame_sampling_skips_lazy_rendering_until_interval_expires(self):
+        state = DEMO.DemoState(DEMO.DemoConfig())
+        observation = {"pixels": {"image": [[[0, 0, 0]]]}}
+        supplier = mock.Mock(return_value=observation)
+        state.begin(0)
+        with (
+            mock.patch.object(DEMO, "encode_frame", return_value=b"frame"),
+            mock.patch.object(DEMO.time, "monotonic", side_effect=[10.0, 10.01]),
+        ):
+            self.assertTrue(state.publish_frame(observation, "single-view", force=True))
+            self.assertFalse(
+                state.publish_frame(
+                    supplier, "single-view", min_interval_seconds=0.05
+                )
+            )
+        supplier.assert_not_called()
 
     def test_frame_encoded_for_an_old_run_is_discarded(self):
         state = DEMO.DemoState(DEMO.DemoConfig())
