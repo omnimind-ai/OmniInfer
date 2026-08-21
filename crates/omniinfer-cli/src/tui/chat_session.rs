@@ -110,7 +110,7 @@ fn send_chat_message(
         .entry("max_tokens")
         .or_insert(serde_json::json!(2048));
     println!();
-    println!("Assistant:");
+    print_message_header("Assistant", MessageKind::Assistant);
     let assistant_text = stream_chat_response(config, &Value::Object(payload), session)?;
     if !assistant_text.trim().is_empty() {
         session
@@ -151,7 +151,10 @@ fn stream_chat_response(
                     }
                     chat_stream::ChatStreamChunk::Reasoning(text) => {
                         if session.reasoning_visible && !text.trim().is_empty() {
-                            print!("\nReasoning:\n  {text}\nAssistant:\n");
+                            println!();
+                            print_message_header("Reasoning", MessageKind::Reasoning);
+                            print!("  {text}\n");
+                            print_message_header("Assistant", MessageKind::Assistant);
                             let _ = io::stdout().flush();
                         }
                     }
@@ -176,7 +179,7 @@ fn stream_chat_response(
         if let Some(usage) = payload.get("usage") {
             session.last_usage = Some(usage.clone());
         }
-        print_chat_performance(&payload);
+        print_tui_performance(&payload);
     }
     Ok(assistant_text)
 }
@@ -188,13 +191,14 @@ fn print_status(config: &config::AppConfig, session: &ChatSession) -> Result<()>
         "Backend",
         json_str(&state, "backend").unwrap_or(&session.backend),
     );
-    print_kv(
+    print_health_kv(
         "State",
         if json_bool(&state, "backend_ready").unwrap_or(false) {
             "ready"
         } else {
             "not ready"
         },
+        json_bool(&state, "backend_ready").unwrap_or(false),
     );
     print_kv("Model", json_str(&state, "model").unwrap_or("-"));
     print_kv(

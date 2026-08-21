@@ -24,7 +24,7 @@ pub(crate) use backend_commands::{
     print_backend_list, rust_backend_payload, select_backend, select_backend_for_config,
     select_backend_for_config_with_autostart,
 };
-use chat::{print_chat, print_chat_performance};
+use chat::print_chat;
 use cli::*;
 pub(crate) use local_gateway::{
     ensure_local_gateway_running, get_local_json, get_local_json_for_config, parse_http_error_body,
