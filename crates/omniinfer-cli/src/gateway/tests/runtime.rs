@@ -68,13 +68,21 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
         .collect::<Vec<_>>();
     assert_eq!(cache_ram_values, vec!["8192", "2048"]);
 
+    let thinking_response = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/thinking/select"))
+            .send_json(json!({"enabled": true}))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(thinking_response.status().as_u16(), 200);
+
     let chat_response = tokio::task::spawn_blocking(move || {
         ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
             .send_json(json!({
                 "model": "local",
                 "messages": [{"role": "user", "content": "Hello"}],
-                "stream": false,
-                "think": false
+                "stream": false
             }))
             .unwrap()
     })
@@ -86,6 +94,7 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
         chat_body["choices"][0]["message"]["content"],
         "fake backend"
     );
+    assert_eq!(chat_body["enable_thinking_echo"], true);
 
     let anthropic_response = tokio::task::spawn_blocking(move || {
         ureq::post(format!("http://127.0.0.1:{port}/v1/messages"))

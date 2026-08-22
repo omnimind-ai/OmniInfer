@@ -455,6 +455,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json({
             "choices": [{"message": {"content": "fake backend"}, "finish_reason": "stop"}],
             "model_echo": payload.get("model"),
+            "enable_thinking_echo": payload.get("chat_template_kwargs", {}).get("enable_thinking"),
             "max_tokens_echo": payload.get("max_tokens"),
             "temperature_echo": payload.get("temperature"),
             "top_p_echo": payload.get("top_p"),
@@ -703,9 +704,19 @@ fn response_payload(request_line: &str, body: &str) -> (String, &'static str) {
             .unwrap_or_else(|| "null".to_string());
         let top_p = extract_json_number(body, "top_p")
             .unwrap_or_else(|| "null".to_string());
+        let enable_thinking = if body
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+            .contains(r#""enable_thinking":true"#)
+        {
+            "true"
+        } else {
+            "false"
+        };
         return (
             format!(
-                r#"{{"choices":[{{"message":{{"content":"fake backend"}},"finish_reason":"stop"}}],"model_echo":{model},"max_tokens_echo":{max_tokens},"temperature_echo":{temperature},"top_p_echo":{top_p},"usage":{{"prompt_tokens":3,"completion_tokens":2}}}}"#
+                r#"{{"choices":[{{"message":{{"content":"fake backend"}},"finish_reason":"stop"}}],"model_echo":{model},"enable_thinking_echo":{enable_thinking},"max_tokens_echo":{max_tokens},"temperature_echo":{temperature},"top_p_echo":{top_p},"usage":{{"prompt_tokens":3,"completion_tokens":2}}}}"#
             ),
             "application/json",
         );

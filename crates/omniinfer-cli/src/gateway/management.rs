@@ -421,7 +421,7 @@ pub(super) async fn try_handle_rust_endpoint(
             let mut normalized_payload = match normalize_chat_request_with_defaults(
                 raw_payload.clone(),
                 &target.request_defaults,
-                false,
+                default_thinking_enabled(),
             ) {
                 Ok(payload) => payload,
                 Err(error) => {
@@ -565,7 +565,7 @@ pub(super) async fn try_handle_rust_endpoint(
             let mut normalized = match normalize_chat_request_with_defaults(
                 openai_payload,
                 &target.request_defaults,
-                false,
+                default_thinking_enabled(),
             ) {
                 Ok(payload) => payload,
                 Err(error) => {
