@@ -17,8 +17,8 @@ use crate::serve::{ForegroundCtrlCHandler, install_foreground_ctrl_c_handler, st
 use crate::{
     BackendScope, ServeArgs, advisor, backend_installer, get_local_json_for_config, json_bool,
     json_str, json_u64, load_model_with_request_for_config, post_local_json_for_config,
-    print_chat_performance, rust_backend_payload, select_backend_for_config, serve_orchestrated,
-    stop_serve, wait_for_gateway_ready,
+    rust_backend_payload, select_backend_for_config, serve_orchestrated, stop_serve,
+    wait_for_gateway_ready,
 };
 
 use models::{
@@ -26,9 +26,9 @@ use models::{
     model_provider_label, model_quant_label, model_size_label, prompt_model_path, same_path,
 };
 use render::{
-    ModelMenuContext, ModelMenuItem, NoticeKind, clear_screen, is_interactive, notice,
-    print_chat_header, print_header, print_help, print_kv, print_section, prompt_default,
-    select_menu, select_model_menu,
+    MessageKind, ModelMenuContext, ModelMenuItem, NoticeKind, clear_screen, is_interactive, notice,
+    print_chat_header, print_header, print_health_kv, print_help, print_kv, print_message_header,
+    print_section, print_tui_performance, prompt_default, select_menu, select_model_menu,
 };
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,36 @@
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamSection {
+    Assistant,
+    Reasoning,
+}
+
+fn enter_stream_section(active: &mut Option<StreamSection>, next: StreamSection) -> bool {
+    if *active == Some(next) {
+        return false;
+    }
+    *active = Some(next);
+    true
+}
+
+fn print_stream_section(active: &mut Option<StreamSection>, next: StreamSection) {
+    let had_active_section = active.is_some();
+    if !enter_stream_section(active, next) {
+        return;
+    }
+    if had_active_section {
+        println!();
+    }
+    match next {
+        StreamSection::Assistant => print_message_header("Assistant", MessageKind::Assistant),
+        StreamSection::Reasoning => {
+            print_message_header("Reasoning", MessageKind::Reasoning);
+            print!("  ");
+        }
+    }
+}
+
 pub(super) fn chat_loop(config: &config::AppConfig, backend: String) -> Result<()> {
     let mut session = ChatSession {
         backend,
@@ -109,8 +140,6 @@ fn send_chat_message(
     payload
         .entry("max_tokens")
         .or_insert(serde_json::json!(2048));
-    println!();
-    println!("Assistant:");
     let assistant_text = stream_chat_response(config, &Value::Object(payload), session)?;
     if !assistant_text.trim().is_empty() {
         session
@@ -132,6 +161,7 @@ fn stream_chat_response(
     let mut filter = chat_stream::StreamPrefixFilter::new();
     let mut final_payload = None;
     let mut assistant_text = String::new();
+    let mut active_section = None;
     let response = http_client::post_streaming_lines(
         &url,
         payload,
@@ -145,13 +175,15 @@ fn stream_chat_response(
                             && !text.is_empty()
                         {
                             assistant_text.push_str(&text);
+                            print_stream_section(&mut active_section, StreamSection::Assistant);
                             print!("{text}");
                             let _ = io::stdout().flush();
                         }
                     }
                     chat_stream::ChatStreamChunk::Reasoning(text) => {
                         if session.reasoning_visible && !text.trim().is_empty() {
-                            print!("\nReasoning:\n  {text}\nAssistant:\n");
+                            print_stream_section(&mut active_section, StreamSection::Reasoning);
+                            print!("{text}");
                             let _ = io::stdout().flush();
                         }
                     }
@@ -169,14 +201,17 @@ fn stream_chat_response(
         && !text.is_empty()
     {
         assistant_text.push_str(&text);
+        print_stream_section(&mut active_section, StreamSection::Assistant);
         print!("{text}");
     }
-    println!();
+    if active_section.is_some() {
+        println!();
+    }
     if let Some(payload) = final_payload {
         if let Some(usage) = payload.get("usage") {
             session.last_usage = Some(usage.clone());
         }
-        print_chat_performance(&payload);
+        print_tui_performance(&payload);
     }
     Ok(assistant_text)
 }
@@ -188,13 +223,14 @@ fn print_status(config: &config::AppConfig, session: &ChatSession) -> Result<()>
         "Backend",
         json_str(&state, "backend").unwrap_or(&session.backend),
     );
-    print_kv(
+    print_health_kv(
         "State",
         if json_bool(&state, "backend_ready").unwrap_or(false) {
             "ready"
         } else {
             "not ready"
         },
+        json_bool(&state, "backend_ready").unwrap_or(false),
     );
     print_kv("Model", json_str(&state, "model").unwrap_or("-"));
     print_kv(
@@ -306,4 +342,19 @@ fn set_reasoning_value(session: &mut ChatSession, enabled: bool) -> Result<()> {
         NoticeKind::Success,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_sections_group_contiguous_reasoning_chunks() {
+        let mut active = None;
+        assert!(enter_stream_section(&mut active, StreamSection::Reasoning));
+        assert!(!enter_stream_section(&mut active, StreamSection::Reasoning));
+        assert!(!enter_stream_section(&mut active, StreamSection::Reasoning));
+        assert!(enter_stream_section(&mut active, StreamSection::Assistant));
+        assert!(!enter_stream_section(&mut active, StreamSection::Assistant));
+    }
 }

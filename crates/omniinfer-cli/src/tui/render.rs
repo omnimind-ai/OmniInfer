@@ -7,6 +7,66 @@ use crossterm::{
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Brand,
+    Accent,
+    Frame,
+    Muted,
+    Success,
+    Warning,
+    User,
+    Assistant,
+    Reasoning,
+}
+
+const MAX_CONTENT_WIDTH: usize = 100;
+const MAX_MODEL_PANEL_CONTENT_WIDTH: usize = 120;
+
+impl Tone {
+    fn color(self) -> Color {
+        match self {
+            Self::Brand | Self::Accent => Color::Cyan,
+            Self::Frame => Color::Rgb {
+                r: 139,
+                g: 92,
+                b: 246,
+            },
+            Self::Muted | Self::Reasoning => Color::DarkGrey,
+            Self::Success => Color::Green,
+            Self::Warning => Color::Yellow,
+            Self::User => Color::Magenta,
+            Self::Assistant => Color::Blue,
+        }
+    }
+
+    fn bold(self) -> bool {
+        matches!(self, Self::Brand | Self::User | Self::Assistant)
+    }
+}
+
+fn colors_enabled() -> bool {
+    use std::io::IsTerminal;
+
+    std::env::var_os("NO_COLOR").is_none() && io::stdout().is_terminal()
+}
+
+fn paint(text: &str, tone: Tone) -> String {
+    paint_when(text, tone, colors_enabled())
+}
+
+fn paint_when(text: &str, tone: Tone, enabled: bool) -> String {
+    if !enabled {
+        return text.to_string();
+    }
+    let styled = style(text).with(tone.color());
+    if tone.bold() {
+        styled.bold().to_string()
+    } else {
+        styled.to_string()
+    }
+}
+
 pub(super) fn print_help() {
     print_section("Help", "Conversation commands");
     let rows = [
@@ -42,15 +102,16 @@ pub(super) fn select_menu(
     }
     print_section(title, subtitle);
     for (index, item) in items.iter().enumerate() {
-        let marker = if item.selected { "*" } else { " " };
-        let details = if item.details.is_empty() {
-            String::new()
-        } else {
-            format!("  {}", item.details.join(" | "))
-        };
-        println!("{:>2}. [{}] {}{}", index + 1, marker, item.label, details);
+        println!("{}", format_menu_item(index + 1, item, content_width()));
     }
-    println!("Press Enter to keep the default, or type q to cancel.");
+    println!(
+        "{}",
+        paint(
+            "Press Enter to keep the default, or type q to cancel.",
+            Tone::Muted
+        )
+    );
+    println!();
     loop {
         let choice = prompt_default("Select", &(default_index + 1).to_string())?;
         if matches!(
@@ -513,7 +574,9 @@ fn panel_top(title: &str, panel_width: usize) -> String {
 }
 
 fn panel_content_width(terminal_width: usize) -> usize {
-    terminal_width.saturating_sub(4).clamp(12, 220)
+    terminal_width
+        .saturating_sub(4)
+        .clamp(12, MAX_MODEL_PANEL_CONTENT_WIDTH)
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
@@ -549,15 +612,10 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 }
 
 fn accent_line(text: &str) -> String {
-    let accent = Color::Rgb {
-        r: 139,
-        g: 92,
-        b: 246,
-    };
     text.lines()
         .map(|line| {
             if line.starts_with('┌') || line.starts_with('└') {
-                style(line).with(accent).to_string()
+                paint(line, Tone::Frame)
             } else if line.starts_with('│') && line.ends_with('│') {
                 let inner = line
                     .strip_prefix('│')
@@ -565,9 +623,9 @@ fn accent_line(text: &str) -> String {
                     .unwrap_or(line);
                 format!(
                     "{}{}{}",
-                    style("│").with(accent),
-                    inner,
-                    style("│").with(accent)
+                    paint("│", Tone::Frame),
+                    style_backend_status(inner),
+                    paint("│", Tone::Frame)
                 )
             } else {
                 line.to_string()
@@ -575,6 +633,16 @@ fn accent_line(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn style_backend_status(text: &str) -> String {
+    if !text.contains("Backend:") || text.contains("not installed") {
+        return text.to_string();
+    }
+    let Some((before, after)) = text.split_once("installed") else {
+        return text.to_string();
+    };
+    format!("{before}{}{after}", paint("installed", Tone::Success))
 }
 
 fn buffered_model_index(number_buffer: &str, item_count: usize) -> Option<usize> {
@@ -602,10 +670,13 @@ impl Drop for ModelPickerTerminalMode {
         let mut stdout = io::stdout();
         let _ = execute!(
             stdout,
+            cursor::Show,
+            LeaveAlternateScreen,
+            // Clear the primary terminal after leaving the picker. Clearing the
+            // alternate screen first can leave the primary cursor far below the
+            // visible viewport in some SSH terminal combinations.
             terminal::Clear(ClearType::All),
             cursor::MoveTo(0, 0),
-            cursor::Show,
-            LeaveAlternateScreen
         );
         let _ = terminal::disable_raw_mode();
     }
@@ -643,11 +714,88 @@ fn truncate_cell_plain(value: &str, width: usize) -> String {
     value.chars().take(width).collect()
 }
 
+fn content_width() -> usize {
+    let terminal_width = terminal::size()
+        .ok()
+        .map(|(width, _)| width as usize)
+        .unwrap_or(80);
+    content_width_for_terminal(terminal_width)
+}
+
+fn content_width_for_terminal(terminal_width: usize) -> usize {
+    terminal_width.clamp(1, MAX_CONTENT_WIDTH)
+}
+
+fn truncate_text(value: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let mut chars = value.chars();
+    let mut text = String::new();
+    for _ in 0..width {
+        let Some(ch) = chars.next() else {
+            return text;
+        };
+        text.push(ch);
+    }
+    if chars.next().is_none() {
+        return text;
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+    text.pop();
+    text.push('…');
+    text
+}
+
+fn format_menu_item(index: usize, item: &MenuItem, width: usize) -> String {
+    let prefix = format!("{index:>2}. ");
+    let available = width.saturating_sub(prefix.len() + 2);
+    let detail_limit = available.min(32);
+    let detail = if item.details.is_empty() || detail_limit == 0 {
+        String::new()
+    } else {
+        truncate_text(&format!(" · {}", item.details.join(" · ")), detail_limit)
+    };
+    let label = truncate_text(
+        &item.label,
+        available.saturating_sub(detail.chars().count()),
+    );
+    let marker = if item.selected {
+        paint("●", Tone::Success)
+    } else {
+        paint("○", Tone::Muted)
+    };
+    let label = if item.selected {
+        paint(&label, Tone::Brand)
+    } else {
+        label
+    };
+    let details = if item.details.len() == 1 && item.details[0] == "installed" {
+        format!(
+            "{}{}",
+            paint(" · ", Tone::Muted),
+            paint(
+                &truncate_text(&item.details[0], detail_limit.saturating_sub(3)),
+                Tone::Success
+            )
+        )
+    } else {
+        paint(&detail, Tone::Muted)
+    };
+    format!("{prefix}{marker} {label}{details}")
+}
+
 pub(super) fn prompt_default(label: &str, default: &str) -> Result<String> {
     if default.is_empty() {
-        print!("{label}: ");
+        print!("{}: ", paint(label, Tone::User));
     } else {
-        print!("{label} [{default}]: ");
+        print!(
+            "{} {}: ",
+            paint(label, Tone::Accent),
+            paint(&format!("[{default}]"), Tone::Muted)
+        );
     }
     io::stdout().flush()?;
     let mut input = String::new();
@@ -661,28 +809,66 @@ pub(super) fn prompt_default(label: &str, default: &str) -> Result<String> {
 }
 
 pub(super) fn print_header(title: &str, subtitle: &str) {
-    println!("{title}");
-    println!("{subtitle}");
-    println!("{}", "-".repeat(64));
+    println!("{}", paint(title, Tone::Brand));
+    println!(
+        "{}",
+        paint(&truncate_text(subtitle, content_width()), Tone::Muted)
+    );
+    println!("{}", paint(&"─".repeat(content_width()), Tone::Muted));
     println!();
 }
 
 pub(super) fn print_section(title: &str, subtitle: &str) {
-    println!("{title}");
+    println!("{}", paint(title, Tone::Accent));
     if !subtitle.is_empty() {
-        println!("{subtitle}");
+        println!(
+            "{}",
+            paint(&truncate_text(subtitle, content_width()), Tone::Muted)
+        );
     }
-    println!("{}", "-".repeat(title.len().max(24)));
+    println!(
+        "{}",
+        paint(
+            &"─".repeat(title.chars().count().max(24).min(content_width())),
+            Tone::Muted
+        )
+    );
 }
 
 pub(super) fn print_chat_header(session: &ChatSession) {
     print_section("Chat", &format!("Backend: {}", session.backend));
-    println!("Commands: /backend /model /think /reasoning /status /clear /help /exit");
+    println!(
+        "{} {}",
+        paint("Commands", Tone::Muted),
+        paint(
+            "/backend /model /think /reasoning /status /clear /help /exit",
+            Tone::Accent
+        )
+    );
     println!();
 }
 
 pub(super) fn print_kv(label: &str, value: &str) {
-    println!("  {label}: {value}");
+    println!("{}", format_kv_line(label, value, content_width(), None));
+}
+
+pub(super) fn print_health_kv(label: &str, value: &str, healthy: bool) {
+    let tone = if healthy {
+        Tone::Success
+    } else {
+        Tone::Warning
+    };
+    println!(
+        "{}",
+        format_kv_line(label, value, content_width(), Some(tone))
+    );
+}
+
+fn format_kv_line(label: &str, value: &str, width: usize, value_tone: Option<Tone>) -> String {
+    let value_width = width.saturating_sub(label.chars().count() + 4);
+    let value = truncate_text(value, value_width);
+    let value = value_tone.map_or(value.clone(), |tone| paint(&value, tone));
+    format!("  {}: {value}", paint(label, Tone::Accent))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -692,11 +878,45 @@ pub(super) enum NoticeKind {
 }
 
 pub(super) fn notice(message: &str, kind: NoticeKind) {
-    let prefix = match kind {
-        NoticeKind::Success => "ok",
-        NoticeKind::Warning => "warn",
+    let (marker, tone) = match kind {
+        NoticeKind::Success => ("●", Tone::Success),
+        NoticeKind::Warning => ("▲", Tone::Warning),
     };
-    println!("  {prefix}: {message}");
+    println!("  {} {message}", paint(marker, tone));
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MessageKind {
+    Assistant,
+    Reasoning,
+}
+
+pub(super) fn print_message_header(label: &str, kind: MessageKind) {
+    let tone = match kind {
+        MessageKind::Assistant => Tone::Assistant,
+        MessageKind::Reasoning => Tone::Reasoning,
+    };
+    println!("{}:", paint(label, tone));
+}
+
+pub(super) fn print_tui_performance(response: &Value) {
+    print_section("Performance", "Latest completion");
+    print_kv("Model", json_str(response, "model").unwrap_or("-"));
+    if let Some(usage) = response.get("usage") {
+        let prompt = json_u64(usage, "prompt_tokens")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let completion = json_u64(usage, "completion_tokens")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let total = json_u64(usage, "total_tokens")
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        print_kv(
+            "Tokens",
+            &format!("prompt={prompt}, completion={completion}, total={total}"),
+        );
+    }
 }
 
 pub(super) fn clear_screen() {

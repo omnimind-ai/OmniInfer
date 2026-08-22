@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn visual_palette_preserves_legacy_tui_semantics() {
+    assert_eq!(Tone::Brand.color(), Color::Cyan);
+    assert_eq!(
+        Tone::Frame.color(),
+        Color::Rgb {
+            r: 139,
+            g: 92,
+            b: 246,
+        }
+    );
+    assert_eq!(Tone::Success.color(), Color::Green);
+    assert_eq!(Tone::Warning.color(), Color::Yellow);
+    assert_eq!(Tone::User.color(), Color::Magenta);
+    assert_eq!(Tone::Assistant.color(), Color::Blue);
+    assert_eq!(Tone::Reasoning.color(), Color::DarkGrey);
+    assert!(Tone::Brand.bold());
+    assert!(Tone::User.bold());
+    assert!(Tone::Assistant.bold());
+    assert!(!Tone::Success.bold());
+}
+
+#[test]
+fn visual_palette_has_a_plain_text_fallback() {
+    assert_eq!(paint_when("OmniInfer", Tone::Brand, false), "OmniInfer");
+    assert!(paint_when("OmniInfer", Tone::Brand, true).contains('\x1b'));
+}
+
+#[test]
+fn regular_tui_layout_caps_wide_terminals_without_expanding_narrow_ones() {
+    assert_eq!(content_width_for_terminal(160), MAX_CONTENT_WIDTH);
+    assert_eq!(content_width_for_terminal(80), 80);
+    assert_eq!(content_width_for_terminal(18), 18);
+    assert_eq!(panel_content_width(400), MAX_MODEL_PANEL_CONTENT_WIDTH);
+    assert_eq!(panel_content_width(80), 76);
+}
+
+#[test]
+fn regular_menu_rows_truncate_long_labels_and_details_to_the_content_width() {
+    let item = MenuItem {
+        label: "a-model-name-that-is-deliberately-long.gguf".to_string(),
+        details: vec!["installed runtime with extra metadata".to_string()],
+        selected: false,
+    };
+    let row = format_menu_item(1, &item, 40);
+    assert!(row.chars().count() <= 40);
+    assert!(row.contains('…'));
+    assert!(row.contains('○'));
+}
+
+#[test]
+fn truncate_text_marks_truncation_without_splitting_unicode_characters() {
+    assert_eq!(truncate_text("abcdef", 4), "abc…");
+    assert_eq!(truncate_text("模型推理", 3), "模型…");
+    assert_eq!(truncate_text("abc", 3), "abc");
+    assert_eq!(truncate_text("abc", 0), "");
+}
+
+#[test]
+fn key_value_rows_keep_values_within_the_content_width() {
+    let line = format_kv_line(
+        "Model",
+        "a-path-that-is-long-enough-to-require-a-readable-truncation.gguf",
+        32,
+        None,
+    );
+    assert!(line.chars().count() <= 32);
+    assert!(line.contains('…'));
+}
+
+#[test]
 fn format_model_menu_renders_core_columns() {
     let items = [ModelMenuItem {
         label: "qwen/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
@@ -59,6 +129,7 @@ fn model_menu_screen_renders_context_panels() {
     assert!(screen.contains('┌'));
     assert!(screen.contains('└'));
     assert!(!screen.contains("+--"));
+    assert!(!screen.contains('\x1b'));
 }
 
 #[test]

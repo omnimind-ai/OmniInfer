@@ -469,6 +469,7 @@ pub(super) fn evidence_label(evidence: Option<String>, confidence: Option<String
 
 pub(super) fn load_model_interactive(config: &config::AppConfig, model: &str) -> Result<String> {
     println!();
+    print_section("Load model", "Starting the selected runtime");
     print_kv("Model", model);
     let request = model_load::ModelLoadRequest {
         model: model.to_string(),
