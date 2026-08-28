@@ -99,6 +99,8 @@ Prebuilt versioning is explicit:
 - Windows `llama.cpp-cuda` requires the matching llama.cpp CUDA runtime companion asset. The three required CUDA DLLs are validated before activation, and an incomplete older install is repaired on the next `backend install` invocation.
 - Existing `prebuilt.json` archive digests are compared with newly pinned catalog digests before an installed runtime is accepted. A mismatched or malformed managed manifest triggers a transactional reinstall; an unmanaged/source-built runtime without `prebuilt.json` is not overwritten merely because it exists.
 
+The source checkout currently pins llama.cpp `b10665` (`ca3d5a3e`) for Qwen3.8-Flash-Next support, while the validated prebuilt catalog remains on `b10280`. Build a llama.cpp backend with `--from-source` when the newer model architecture is required.
+
 Validate catalog structure, URL/tag consistency, and complete SHA256 coverage before committing:
 
 ```bash
@@ -304,12 +306,12 @@ Linux backend script behavior:
 
 | Backend | Default action | Source build action |
 |---|---|---|
-| `llama.cpp-linux` | Downloads official `b10280` Linux CPU archive | `--from-source` builds pinned `framework/llama.cpp` commit `9b05354ec` with CPU settings |
-| `llama.cpp-linux-rocm` | Downloads official `b10280` ROCm archive | `--from-source` builds pinned `framework/llama.cpp` commit `9b05354ec` with ROCm settings |
-| `llama.cpp-linux-vulkan` | Downloads official `b10280` Vulkan archive | `--from-source` builds pinned `framework/llama.cpp` commit `9b05354ec` with Vulkan settings |
-| `llama.cpp-linux-s390x` | Downloads official `b10280` s390x archive | `--from-source` builds pinned `framework/llama.cpp` commit `9b05354ec` for s390x |
-| `llama.cpp-linux-openvino` | Downloads official `b10280` OpenVINO archive | `--from-source` builds pinned `framework/llama.cpp` commit `9b05354ec` with OpenVINO settings |
-| `llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message because upstream `b10280` has no Linux CUDA archive | `--from-source` builds pinned `framework/llama.cpp` commit `9b05354ec` with CUDA settings |
+| `llama.cpp-linux` | Downloads official `b10280` Linux CPU archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with CPU settings |
+| `llama.cpp-linux-rocm` | Downloads official `b10280` ROCm archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with ROCm settings |
+| `llama.cpp-linux-vulkan` | Downloads official `b10280` Vulkan archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with Vulkan settings |
+| `llama.cpp-linux-s390x` | Downloads official `b10280` s390x archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) for s390x |
+| `llama.cpp-linux-openvino` | Downloads official `b10280` OpenVINO archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with OpenVINO settings |
+| `llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message because upstream `b10280` has no Linux CUDA archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with CUDA settings |
 | `vllm-linux-cuda` | Creates an OmniInfer-managed venv and installs vLLM wheels | Not a C++ source build path |
 | `freetoken-linux-cuda` | Installs pinned FreeToken v0.1.2 CUDA 13 wheels | Not a C++ source build path |
 | `mnn-linux` | Creates an OmniInfer-managed venv and installs the official `MNN==3.5.0` wheel | `--from-source` builds PyMNN from `framework/mnn` |

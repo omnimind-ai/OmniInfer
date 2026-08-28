@@ -40,13 +40,17 @@ pub fn discover_llama_cpp_model_artifacts(
     if gguf_files.is_empty() {
         return Err(ModelArtifactError::NoGguf(model_dir.display().to_string()));
     }
-    let (mmproj_candidates, model_candidates): (Vec<_>, Vec<_>) =
+    let (mmproj_candidates, model_files): (Vec<_>, Vec<_>) =
         gguf_files.into_iter().partition(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
                 .map(|name| name.to_ascii_lowercase().contains("mmproj"))
                 .unwrap_or(false)
         });
+    let model_candidates = model_files
+        .into_iter()
+        .filter(|path| !is_secondary_gguf_shard(path))
+        .collect::<Vec<_>>();
     if model_candidates.is_empty() {
         return Err(ModelArtifactError::NoTextModel(
             model_dir.display().to_string(),
@@ -117,6 +121,32 @@ fn collect_gguf_files(root: &Path, output: &mut Vec<PathBuf>) {
     }
 }
 
+fn is_secondary_gguf_shard(path: &Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let Some((prefix, total)) = stem.rsplit_once("-of-") else {
+        return false;
+    };
+    let Some((_, index)) = prefix.rsplit_once('-') else {
+        return false;
+    };
+    if index.len() != 5
+        || total.len() != 5
+        || !index.bytes().all(|byte| byte.is_ascii_digit())
+        || !total.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return false;
+    }
+    let Ok(index) = index.parse::<u32>() else {
+        return false;
+    };
+    let Ok(total) = total.parse::<u32>() else {
+        return false;
+    };
+    index > 1 && index <= total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +169,38 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.gguf"), b"").unwrap();
         std::fs::write(root.join("b.gguf"), b"").unwrap();
+        let error = discover_llama_cpp_model_artifacts(&root).unwrap_err();
+        assert!(matches!(error, ModelArtifactError::MultipleTextModels(_)));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn discovers_first_shard_of_split_model() {
+        let root = temp_root("artifacts-split");
+        std::fs::create_dir_all(&root).unwrap();
+        for index in 1..=3 {
+            std::fs::write(root.join(format!("model-0000{index}-of-00003.gguf")), b"").unwrap();
+        }
+        std::fs::write(root.join("mmproj-F16.gguf"), b"").unwrap();
+        let resolved = discover_llama_cpp_model_artifacts(&root).unwrap();
+        assert!(resolved.model_path.ends_with("model-00001-of-00003.gguf"));
+        assert!(resolved.mmproj_path.unwrap().ends_with("mmproj-F16.gguf"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_multiple_split_model_sets() {
+        let root = temp_root("artifacts-multiple-split");
+        std::fs::create_dir_all(&root).unwrap();
+        for quantization in ["Q4", "Q8"] {
+            for index in 1..=2 {
+                std::fs::write(
+                    root.join(format!("model-{quantization}-0000{index}-of-00002.gguf")),
+                    b"",
+                )
+                .unwrap();
+            }
+        }
         let error = discover_llama_cpp_model_artifacts(&root).unwrap_err();
         assert!(matches!(error, ModelArtifactError::MultipleTextModels(_)));
         std::fs::remove_dir_all(root).ok();

@@ -54,6 +54,7 @@ To run the local OpenAI- and Anthropic-compatible service, start `omniinfer serv
 
 ## News
 
+- **2026-08-28** — **Qwen3.8-Flash-Next support.** OmniInfer now tracks llama.cpp `b10665` and can load split GGUF model directories directly. Use a source-built llama.cpp backend until the matching prebuilt runtime is published in OmniInfer.
 - **2026-08-14** — 🚀 **Day-0 support for Qwen3.8-27B.** OmniInfer is ready for Qwen's latest 27B vision-language model from day one.
 
 ## Demo
