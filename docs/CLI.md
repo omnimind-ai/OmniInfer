@@ -275,7 +275,7 @@ Default path:
 
 For `llama.cpp-*`, OmniInfer accepts either a model file or a model directory. If you pass a directory, OmniInfer auto-discovers:
 
-- the main text GGUF
+- the main text GGUF, including the first file of a standard `-00001-of-000NN.gguf` split set
 - the optional `mmproj` GGUF
 
 For `mlx-mac`, OmniInfer passes the model directory directly to the embedded backend.
