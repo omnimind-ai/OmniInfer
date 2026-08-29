@@ -53,19 +53,16 @@ const LINUX_TEMPLATES: &[BackendTemplate] = &[
         &["chat", "vision", "stream", "cpu", "linux"],
         "OMNIINFER_LLAMA_CPP_LINUX",
     ),
-    BackendTemplate {
-        default_ngl: Some("999"),
-        ..template(
-            "llama.cpp-linux-cuda",
-            "llama.cpp Linux CUDA",
-            "llama.cpp",
-            "llama.cpp-linux-cuda",
-            Some("llama-server"),
-            "llama.cpp Linux CUDA backend managed by OmniInfer",
-            &["chat", "vision", "stream", "gpu", "cuda", "linux"],
-            "OMNIINFER_LLAMA_CPP_LINUX_CUDA",
-        )
-    },
+    template(
+        "llama.cpp-linux-cuda",
+        "llama.cpp Linux CUDA",
+        "llama.cpp",
+        "llama.cpp-linux-cuda",
+        Some("llama-server"),
+        "llama.cpp Linux CUDA backend managed by OmniInfer",
+        &["chat", "vision", "stream", "gpu", "cuda", "linux"],
+        "OMNIINFER_LLAMA_CPP_LINUX_CUDA",
+    ),
     BackendTemplate {
         default_ngl: Some("999"),
         fallback_runtime_dir_names: &["llama.cpp-linux-ROCm"],
@@ -274,19 +271,16 @@ const WINDOWS_TEMPLATES: &[BackendTemplate] = &[
         &["chat", "vision", "stream", "cpu"],
         "OMNIINFER_LLAMA_CPP_CPU",
     ),
-    BackendTemplate {
-        default_ngl: Some("999"),
-        ..template(
-            "llama.cpp-cuda",
-            "llama.cpp CUDA",
-            "llama.cpp",
-            "llama.cpp-cuda",
-            Some("llama-server.exe"),
-            "llama.cpp CUDA backend managed by OmniInfer",
-            &["chat", "vision", "stream", "gpu", "cuda"],
-            "OMNIINFER_LLAMA_CPP_CUDA",
-        )
-    },
+    template(
+        "llama.cpp-cuda",
+        "llama.cpp CUDA",
+        "llama.cpp",
+        "llama.cpp-cuda",
+        Some("llama-server.exe"),
+        "llama.cpp CUDA backend managed by OmniInfer",
+        &["chat", "vision", "stream", "gpu", "cuda"],
+        "OMNIINFER_LLAMA_CPP_CUDA",
+    ),
     BackendTemplate {
         default_ngl: Some("999"),
         ..template(

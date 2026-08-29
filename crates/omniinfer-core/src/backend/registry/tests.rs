@@ -84,8 +84,6 @@ fn official_llama_backend_has_safe_cache_defaults() {
             "--slot-prompt-similarity",
             "0",
             "--cache-idle-slots",
-            "-ngl",
-            "999",
             "--cache-ram",
             "8192"
         ]
@@ -93,6 +91,17 @@ fn official_llama_backend_has_safe_cache_defaults() {
 
     let ik = registry.get("ik_llama.cpp-linux-cuda").unwrap();
     assert_eq!(ik.default_args, vec!["--jinja", "-ngl", "999"]);
+
+    let windows = BackendRegistry::build(
+        HostInfo {
+            system: HostSystem::Windows,
+            machine: "x86_64",
+        },
+        "runtime",
+        &Value::Null,
+    );
+    let windows_cuda = windows.get("llama.cpp-cuda").unwrap();
+    assert!(!windows_cuda.default_args.iter().any(|arg| arg == "-ngl"));
 }
 
 #[test]

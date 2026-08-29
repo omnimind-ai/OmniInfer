@@ -758,6 +758,8 @@ fn official_llama_launch_args_extend_defaults_with_user_overrides_last() {
         "--slot-prompt-similarity".to_string(),
         "0".to_string(),
         "--cache-idle-slots".to_string(),
+        "-ngl".to_string(),
+        "999".to_string(),
         "--cache-ram".to_string(),
         "8192".to_string(),
     ];
@@ -779,6 +781,8 @@ fn official_llama_launch_args_extend_defaults_with_user_overrides_last() {
             "--slot-prompt-similarity",
             "0",
             "--cache-idle-slots",
+            "-ngl",
+            "999",
             "--cache-ram",
             "8192",
             "-np",
@@ -790,6 +794,149 @@ fn official_llama_launch_args_extend_defaults_with_user_overrides_last() {
     assert_eq!(
         merged_launch_args("llama.cpp-linux-cuda", "llama.cpp", &defaults, None),
         defaults
+    );
+
+    let automatic = vec!["--gpu-layers=auto".to_string()];
+    assert_eq!(
+        merged_launch_args(
+            "llama.cpp-linux-cuda",
+            "llama.cpp",
+            &defaults,
+            Some(&automatic)
+        ),
+        vec![
+            "--slot-prompt-similarity",
+            "0",
+            "--cache-idle-slots",
+            "--cache-ram",
+            "8192"
+        ]
+    );
+
+    let partial = vec!["-ngl".to_string(), "12".to_string()];
+    let merged = merged_launch_args(
+        "llama.cpp-linux-cuda",
+        "llama.cpp",
+        &defaults,
+        Some(&partial),
+    );
+    assert_eq!(gpu_layers_value(&merged), Some("12"));
+}
+
+#[test]
+fn official_cuda_policy_covers_linux_and_windows_modes() {
+    for id in ["llama.cpp-linux-cuda", "llama.cpp-cuda"] {
+        let backend = speculative_test_backend(id, "llama.cpp", true);
+        assert_eq!(
+            llama_cpp_cuda_placement_policy(&backend, &[]).unwrap(),
+            Some(LlamaCppCudaPlacementPolicy::Auto)
+        );
+        assert_eq!(
+            llama_cpp_cuda_placement_policy(&backend, &["-ngl".to_string(), "24".to_string()])
+                .unwrap(),
+            Some(LlamaCppCudaPlacementPolicy::ExplicitPartial(24))
+        );
+        assert_eq!(
+            llama_cpp_cuda_placement_policy(&backend, &["--gpu-layers=999".to_string()]).unwrap(),
+            Some(LlamaCppCudaPlacementPolicy::ExplicitFull)
+        );
+        assert!(
+            llama_cpp_cuda_placement_policy(&backend, &["-ngl".to_string()]).is_err(),
+            "a dangling GPU-layer flag must fail before launch"
+        );
+    }
+}
+
+#[test]
+fn partial_offload_provisional_budget_guards_host_and_cuda() {
+    let cuda = MemoryDomain::Cuda("0".to_string());
+    let estimated = ResourceBudget::from_domains(BTreeMap::from([(cuda.clone(), 1_000)])).unwrap();
+    let snapshot = omniinfer_core::resource_ledger::ResourceLedgerSnapshot {
+        capacity_snapshot_id: 1,
+        capacities: BTreeMap::from([(MemoryDomain::Host, 2_000), (cuda.clone(), 600)]),
+        reserved: BTreeMap::new(),
+        committed: BTreeMap::new(),
+    };
+    let provisional = provisional_partial_offload_budget(&estimated, &snapshot).unwrap();
+    assert_eq!(provisional.domains()[&MemoryDomain::Host], 1_000);
+    assert_eq!(provisional.domains()[&cuda], 600);
+}
+
+#[test]
+fn parses_partial_llama_cpp_buffers_into_reconciled_domains() {
+    let placement = parse_llama_cpp_runtime_placement_text(
+        "\
+load_tensors: offloaded 20/41 layers to GPU
+load_tensors: CPU_Mapped model buffer size = 6000.00 MiB
+load_tensors: CUDA0 model buffer size = 12000.00 MiB
+llama_kv_cache: CPU KV buffer size = 64.00 MiB
+llama_kv_cache: CUDA0 KV buffer size = 256.00 MiB
+sched_reserve: CPU compute buffer size = 128.00 MiB
+sched_reserve: CUDA0 compute buffer size = 512.00 MiB
+",
+        "3",
+        LlamaCppCudaPlacementPolicy::Auto,
+    )
+    .unwrap();
+    assert_eq!(placement.mode, "partial");
+    assert_eq!(placement.offloaded_layers, Some(20));
+    assert_eq!(placement.total_layers, Some(41));
+    assert!(placement.reported_bytes[&MemoryDomain::Host] > 6 * GIB);
+    assert!(placement.reported_bytes[&MemoryDomain::Cuda("3".to_string())] > 12 * GIB);
+    assert!(
+        placement.reconciled_budget.domains()[&MemoryDomain::Host]
+            > placement.reported_bytes[&MemoryDomain::Host]
+    );
+}
+
+#[test]
+fn placement_parser_preserves_cuda_visible_device_order() {
+    let placement = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 2/4 layers to GPU\n\
+         load_tensors: CPU_Mapped model buffer size = 8.00 MiB\n\
+         load_tensors: CUDA0 model buffer size = 16.00 MiB\n\
+         load_tensors: CUDA1 model buffer size = 4.00 MiB\n",
+        "3,1",
+        LlamaCppCudaPlacementPolicy::Auto,
+    )
+    .unwrap();
+    assert_eq!(
+        placement.reported_bytes[&MemoryDomain::Cuda("3".to_string())],
+        16 * MIB
+    );
+    assert_eq!(
+        placement.reported_bytes[&MemoryDomain::Cuda("1".to_string())],
+        4 * MIB
+    );
+}
+
+#[test]
+fn automatic_placement_without_buffer_evidence_fails_closed() {
+    let error = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 2/4 layers to GPU\n",
+        "0",
+        LlamaCppCudaPlacementPolicy::Auto,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("did not report CPU/CUDA buffer"));
+}
+
+#[test]
+fn placement_parser_sums_persistent_buffers_and_uses_peak_scratch_buffers() {
+    let placement = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 2/4 layers to GPU\n\
+         load_tensors: CUDA0 model buffer size = 16.00 MiB\n\
+         load_tensors: CUDA0 model buffer size = 4.00 MiB\n\
+         sched_reserve: CUDA0 compute buffer size = 8.00 MiB\n\
+         sched_reserve: CUDA0 compute buffer size = 12.00 MiB\n\
+         llama_context: CUDA0  output buffer size = 2.00 MiB\n",
+        "0",
+        LlamaCppCudaPlacementPolicy::Auto,
+    )
+    .unwrap();
+    assert_eq!(
+        placement.reported_bytes[&MemoryDomain::Cuda("0".to_string())],
+        34 * MIB
     );
 }
 
