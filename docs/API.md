@@ -220,6 +220,7 @@ The active runtime and the persisted startup selection are reported separately:
 - `restore_completed` is true only when a loaded runtime matches the persisted backend, model, `mmproj`, and context size.
 - `generation` and `route_state` identify the currently routable runtime generation.
 - `resource_ledger` reports capacity, reserved, committed, and available bytes by host, CUDA-device, or unified-memory domain.
+- `runtime_placement` reports the effective llama.cpp CUDA policy, CPU/GPU layer placement, startup-log buffer totals, and reconciled budget. It is `null` for runtimes that do not use placement reconciliation.
 
 Example:
 
@@ -245,7 +246,27 @@ Example response:
   "runtime_mode": "external_server",
   "backend_port": 12894,
   "backend_pid": 45210,
-  "launch_args": ["-ngl", "999"],
+  "launch_args": [],
+  "runtime_placement": {
+    "source": "llama.cpp_startup_log",
+    "policy": "auto",
+    "requested_gpu_layers": null,
+    "mode": "partial",
+    "offloaded_layers": 28,
+    "total_layers": 41,
+    "reported_buffer_bytes": {"host": 1500000000, "cuda:0": 4939212390},
+    "reconciled_budget": {
+      "domains_bytes": {"host": 2147483648, "cuda:0": 5368709120},
+      "components": [
+        {"name": "reported_model_buffers", "domain": "host", "bytes": 1500000000},
+        {"name": "runtime_overhead", "domain": "host", "bytes": 402653184},
+        {"name": "reconciliation_slack", "domain": "host", "bytes": 244830464},
+        {"name": "reported_model_buffers", "domain": "cuda:0", "bytes": 4939212390},
+        {"name": "runtime_overhead", "domain": "cuda:0", "bytes": 134217728},
+        {"name": "reconciliation_slack", "domain": "cuda:0", "bytes": 295279002}
+      ]
+    }
+  },
   "restore_selection": {
     "backend": "llama.cpp-cuda",
     "model": "models/Qwen3.5-2B-Q4_K_M.gguf",
@@ -258,7 +279,7 @@ Example response:
   "backend_log": ".local/runtime/linux/llama.cpp-linux-cuda/logs/runtime.log",
   "effective_parameters": {
     "ctx_size": 4096,
-    "ngl": 999,
+    "ngl": null,
     "threads": null,
     "threads_batch": null,
     "batch_size": null,
@@ -477,7 +498,7 @@ Request body:
   "mmproj": "<optional-relative-or-absolute-mmproj-path>",
   "backend": "<optional-backend-id>",
   "ctx_size": 4096,
-  "launch_args": ["-ngl", "999"],
+  "launch_args": [],
   "strict_capabilities": false,
   "request_defaults": {
     "temperature": 0.2,
@@ -493,6 +514,7 @@ Notes:
 - `backend` is optional. If omitted, OmniInfer uses the selected backend or auto-selection logic.
 - `ctx_size` is optional and may also be sent as `ctx-size`.
 - `launch_args` is optional and intended for backend-native launch arguments.
+- Official Linux and Windows llama.cpp CUDA backends default to automatic placement by omitting `-ngl`. Use `-ngl 999` only to require strict full GPU offload.
 - `request_defaults` is merged into later inference requests after this model is loaded.
 - Effective request defaults are exposed in runtime state and retained when the selected model is restored.
 - `strict_capabilities` is optional. When true, unsupported load options fail instead of being ignored with warnings.
@@ -510,9 +532,35 @@ Example response:
   "selected_model": "models/Qwen3.5-2B-Q4_K_M.gguf",
   "selected_mmproj": null,
   "selected_ctx_size": 4096,
+  "runtime_placement": {
+    "source": "llama.cpp_startup_log",
+    "policy": "auto",
+    "requested_gpu_layers": null,
+    "mode": "partial",
+    "offloaded_layers": 28,
+    "total_layers": 41,
+    "reported_buffer_bytes": {"host": 1500000000, "cuda:0": 4939212390},
+    "reconciled_budget": {
+      "domains_bytes": {"host": 2147483648, "cuda:0": 5368709120},
+      "components": [
+        {"name": "reported_model_buffers", "domain": "host", "bytes": 1500000000},
+        {"name": "runtime_overhead", "domain": "host", "bytes": 402653184},
+        {"name": "reconciliation_slack", "domain": "host", "bytes": 244830464},
+        {"name": "reported_model_buffers", "domain": "cuda:0", "bytes": 4939212390},
+        {"name": "runtime_overhead", "domain": "cuda:0", "bytes": 134217728},
+        {"name": "reconciliation_slack", "domain": "cuda:0", "bytes": 295279002}
+      ]
+    }
+  },
   "warnings": []
 }
 ```
+
+For automatic or explicit partial llama.cpp CUDA placement, OmniInfer holds a
+provisional host/CUDA reservation during startup and atomically replaces it
+with the placement reported by llama.cpp after readiness. Missing or unsafe
+placement evidence returns `502`; the runtime process, listener, route, and
+ledger reservation are rolled back together.
 
 Selecting the same resolved model, backend, `mmproj`, context size, and effective launch arguments again is idempotent. OmniInfer returns `200` with `already_loaded: true`, `requires_reload: false`, and the existing backend PID instead of starting a second runtime. This also applies when a startup-restored path is selected again through its public model id.
 
@@ -548,6 +596,7 @@ Status codes:
 - `200` on success
 - `400` for invalid input or missing files
 - `409` when the selected model is already loaded with different runtime settings
+- `502` when backend startup or post-start resource reconciliation fails
 
 ### Streaming model load
 

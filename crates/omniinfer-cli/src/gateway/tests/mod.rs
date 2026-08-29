@@ -278,7 +278,7 @@ fn external_test_backend_id() -> &'static str {
     if cfg!(target_os = "macos") {
         "llama.cpp-mac"
     } else if cfg!(target_os = "windows") {
-        "llama.cpp-cpu"
+        "llama.cpp-cuda"
     } else {
         "llama.cpp-linux-cuda"
     }
@@ -388,6 +388,22 @@ while [ "$#" -gt 0 ]; do
 done
 delay_file="$(dirname "$0")/startup-delay-ms"
 delay_ms="$(cat "$delay_file" 2>/dev/null || printf 0)"
+placement_mode="$(cat "$(dirname "$0")/placement-mode" 2>/dev/null || printf partial)"
+if [ "$placement_mode" = "oversized" ]; then
+  printf '%s\n' \
+    'load_tensors: offloaded 2/4 layers to GPU' \
+    'load_tensors: CPU_Mapped model buffer size = 1000000.00 GiB' \
+    'load_tensors: CUDA0 model buffer size = 1000000.00 GiB'
+else
+  printf '%s\n' \
+    'load_tensors: offloaded 2/4 layers to GPU' \
+    'load_tensors: CPU_Mapped model buffer size = 8.00 MiB' \
+    'load_tensors: CUDA0 model buffer size = 16.00 MiB' \
+    'llama_kv_cache: CPU KV buffer size = 2.00 MiB' \
+    'llama_kv_cache: CUDA0 KV buffer size = 4.00 MiB' \
+    'sched_reserve: CPU compute buffer size = 2.00 MiB' \
+    'sched_reserve: CUDA0 compute buffer size = 4.00 MiB'
+fi
 exec python3 - "$port" "$delay_ms" <<'PY'
 import json
 import sys
@@ -624,6 +640,20 @@ fn main() {
             if let Ok(delay_ms) = raw.trim().parse::<u64>() {
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
+        }
+        let oversized = std::fs::read_to_string(executable.with_file_name("placement-mode"))
+            .is_ok_and(|value| value.trim() == "oversized");
+        println!("load_tensors: offloaded 2/4 layers to GPU");
+        if oversized {
+            println!("load_tensors: CPU_Mapped model buffer size = 1000000.00 GiB");
+            println!("load_tensors: CUDA0 model buffer size = 1000000.00 GiB");
+        } else {
+            println!("load_tensors: CPU_Mapped model buffer size = 8.00 MiB");
+            println!("load_tensors: CUDA0 model buffer size = 16.00 MiB");
+            println!("llama_kv_cache: CPU KV buffer size = 2.00 MiB");
+            println!("llama_kv_cache: CUDA0 KV buffer size = 4.00 MiB");
+            println!("sched_reserve: CPU compute buffer size = 2.00 MiB");
+            println!("sched_reserve: CUDA0 compute buffer size = 4.00 MiB");
         }
     }
     let listener = TcpListener::bind(format!("127.0.0.1:{port}")).unwrap();

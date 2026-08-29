@@ -396,13 +396,13 @@ fn backend_server_args(template: &BackendTemplate, override_value: &Value) -> Ve
             .iter()
             .map(|value| value.to_string()),
     );
-    if let Some(default_ngl) = template.default_ngl {
-        let ngl = env_value(&format!("{}_NGL", template.env_prefix))
-            .or_else(|| override_string(override_value, "ngl"))
-            .unwrap_or_else(|| default_ngl.to_string());
-        if !ngl.trim().is_empty() {
-            args.extend(["-ngl".to_string(), ngl]);
-        }
+    let ngl = env_value(&format!("{}_NGL", template.env_prefix))
+        .or_else(|| override_string(override_value, "ngl"))
+        .or_else(|| template.default_ngl.map(str::to_string));
+    if let Some(ngl) = ngl
+        && !ngl.trim().is_empty()
+    {
+        args.extend(["-ngl".to_string(), ngl]);
     }
     push_optional_int_arg(
         &mut args,

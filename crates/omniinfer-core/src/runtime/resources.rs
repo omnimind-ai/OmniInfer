@@ -245,6 +245,43 @@ impl ResourceLedger {
         Ok(allocation_id)
     }
 
+    /// Atomically replaces a provisional reservation with a reconciled budget.
+    ///
+    /// Capacity is checked while excluding the reservation being replaced, so a
+    /// runtime can safely shrink, grow, or move its budget across domains after
+    /// startup without briefly releasing its concurrency guard.
+    pub fn reconcile_reservation(
+        &mut self,
+        reservation_id: ReservationId,
+        budget: ResourceBudget,
+    ) -> Result<(), ResourceLedgerError> {
+        let current =
+            self.reserved
+                .get(&reservation_id)
+                .ok_or(ResourceLedgerError::UnknownReservation(
+                    reservation_id.get(),
+                ))?;
+        let mut other_usage = self.total_usage()?;
+        subtract_domains(&mut other_usage, current.budget.domains())?;
+        let mut available = self.capacity.domains.clone();
+        subtract_domains(&mut available, &other_usage)?;
+        for (domain, requested) in budget.domains() {
+            let remaining = available.get(domain).copied().unwrap_or(0);
+            if *requested > remaining {
+                return Err(ResourceLedgerError::InsufficientCapacity {
+                    domain: domain.key(),
+                    requested: *requested,
+                    available: remaining,
+                });
+            }
+        }
+        self.reserved
+            .get_mut(&reservation_id)
+            .expect("validated reservation must still exist")
+            .budget = budget;
+        Ok(())
+    }
+
     pub fn rollback(&mut self, reservation_id: ReservationId) -> bool {
         self.reserved.remove(&reservation_id).is_some()
     }
@@ -438,5 +475,55 @@ mod tests {
         ]);
 
         assert_eq!(result, Err(ResourceLedgerError::ArithmeticOverflow));
+    }
+
+    #[test]
+    fn reservation_reconciliation_is_atomic_across_domains() {
+        let cuda = MemoryDomain::Cuda("0".to_string());
+        let mut ledger = ledger(&[(MemoryDomain::Host, 10 * GIB), (cuda.clone(), 8 * GIB)]);
+        let owner = ledger
+            .reserve(
+                "owner",
+                budget(&[(MemoryDomain::Host, 8 * GIB), (cuda.clone(), 8 * GIB)]),
+            )
+            .unwrap();
+
+        ledger
+            .reconcile_reservation(
+                owner,
+                budget(&[(MemoryDomain::Host, 4 * GIB), (cuda.clone(), 6 * GIB)]),
+            )
+            .unwrap();
+        let snapshot = ledger.snapshot();
+        assert_eq!(snapshot.reserved[&MemoryDomain::Host], 4 * GIB);
+        assert_eq!(snapshot.reserved[&cuda], 6 * GIB);
+
+        let failed = ledger.reconcile_reservation(
+            owner,
+            budget(&[(MemoryDomain::Host, 11 * GIB), (cuda.clone(), GIB)]),
+        );
+        assert!(matches!(
+            failed,
+            Err(ResourceLedgerError::InsufficientCapacity { domain, .. }) if domain == "host"
+        ));
+        let unchanged = ledger.snapshot();
+        assert_eq!(unchanged.reserved[&MemoryDomain::Host], 4 * GIB);
+        assert_eq!(unchanged.reserved[&cuda], 6 * GIB);
+    }
+
+    #[test]
+    fn reconciliation_respects_other_reservations() {
+        let mut ledger = ledger(&[(MemoryDomain::Host, 10 * GIB)]);
+        let first = ledger
+            .reserve("first", budget(&[(MemoryDomain::Host, 4 * GIB)]))
+            .unwrap();
+        ledger
+            .reserve("second", budget(&[(MemoryDomain::Host, 5 * GIB)]))
+            .unwrap();
+
+        assert!(matches!(
+            ledger.reconcile_reservation(first, budget(&[(MemoryDomain::Host, 6 * GIB)])),
+            Err(ResourceLedgerError::InsufficientCapacity { available, .. }) if available == 5 * GIB
+        ));
     }
 }

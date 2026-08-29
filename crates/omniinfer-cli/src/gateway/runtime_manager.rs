@@ -92,6 +92,7 @@ struct LoadedRustRuntime {
     cuda_visible_devices: Option<String>,
     cuda_warning: Option<String>,
     speculative_admission: Option<SpeculativeAdmission>,
+    runtime_placement: Option<RuntimePlacement>,
     external_server_protocol: ExternalServerProtocol,
     client_endpoint: String,
     process: RuntimeProcess,
@@ -277,6 +278,9 @@ impl RustRuntimeManager {
             &backend.default_args,
             launch_args.as_deref(),
         );
+        let placement_policy = llama_cpp_cuda_placement_policy(backend, &effective_launch_args)?;
+        let effective_launch_args =
+            managed_placement_evidence_args(&effective_launch_args, placement_policy)?;
         let launch_args_have_ctx =
             launch_args_have_ctx_size(&backend.family, &effective_launch_args);
         let launch_args_ctx_size =
@@ -382,13 +386,31 @@ impl RustRuntimeManager {
             budget_cuda_devices.as_deref(),
             cuda_selection.is_none() && budget_cuda_devices.is_some(),
         )?;
-        let (reservation_id, speculative) = match self.reserve_runtime_resources(
-            &requested_model_key,
-            &resource_budget,
-            budget_cuda_devices.as_deref(),
-        ) {
+        let reconcile_policy = placement_policy.filter(|policy| {
+            policy.permits_partial_offload()
+                && resource_budget
+                    .domains()
+                    .keys()
+                    .filter(|domain| matches!(domain, MemoryDomain::Cuda(_)))
+                    .count()
+                    == 1
+        });
+        let initial_reservation = if reconcile_policy.is_some() {
+            self.reserve_partial_offload_resources(
+                &requested_model_key,
+                &resource_budget,
+                budget_cuda_devices.as_deref(),
+            )
+        } else {
+            self.reserve_runtime_resources(
+                &requested_model_key,
+                &resource_budget,
+                budget_cuda_devices.as_deref(),
+            )
+        };
+        let (reservation_id, speculative) = match initial_reservation {
             Ok(reservation_id) => (reservation_id, None),
-            Err(error) if is_cuda_capacity_exhaustion(&error) => {
+            Err(error) if reconcile_policy.is_none() && is_cuda_capacity_exhaustion(&error) => {
                 let decision = speculative_reservation(
                     backend,
                     &payload,
@@ -422,18 +444,71 @@ impl RustRuntimeManager {
                 speculative.available,
             );
         }
+        let log_start_offset = fs::metadata(&log_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
         let transaction = self.with_reservation(reservation_id, |manager| {
-            let process = start_runtime_with_cold_start_policy(
+            let mut process = start_runtime_with_cold_start_policy(
                 &backend.id,
                 &plan,
                 RuntimeProcessOptions {
-                    log_path,
+                    log_path: log_path.clone(),
                     env: runtime_env,
                     startup_timeout,
                     health_host: backend_host.clone(),
                 },
                 startup_cancelled,
             )?;
+            let runtime_placement = if let Some(policy) = reconcile_policy {
+                let placement = parse_llama_cpp_runtime_placement(
+                    &log_path,
+                    log_start_offset,
+                    budget_cuda_devices
+                        .as_deref()
+                        .expect("CUDA reconciliation requires selected devices"),
+                    policy,
+                );
+                let placement = match placement {
+                    Ok(placement) => placement,
+                    Err(error) => {
+                        let cleanup = process.stop(Duration::from_secs(8));
+                        return Err(match cleanup {
+                            Ok(()) => error.context(format!(
+                                "failed to reconcile llama.cpp placement (log: {})",
+                                log_path.display()
+                            )),
+                            Err(cleanup) => anyhow::anyhow!(
+                                "failed to reconcile llama.cpp placement: {error}; runtime cleanup failed: {cleanup}; log: {}",
+                                log_path.display()
+                            ),
+                        });
+                    }
+                };
+                if let Err(error) = manager
+                    .resource_ledger
+                    .as_mut()
+                    .expect("reservation requires a resource ledger")
+                    .reconcile_reservation(
+                        reservation_id,
+                        placement.reconciled_budget.clone(),
+                    )
+                {
+                    let cleanup = process.stop(Duration::from_secs(8));
+                    return Err(match cleanup {
+                        Ok(()) => anyhow::Error::new(error).context(format!(
+                            "llama.cpp placement exceeds safe reconciled capacity (log: {})",
+                            log_path.display()
+                        )),
+                        Err(cleanup) => anyhow::anyhow!(
+                            "llama.cpp placement exceeds safe reconciled capacity: {error}; runtime cleanup failed: {cleanup}; log: {}",
+                            log_path.display()
+                        ),
+                    });
+                }
+                Some(placement)
+            } else {
+                None
+            };
             local_state::save_selected_backend(&backend.id)?;
             local_state::save_selected_model_with_no_mmproj(
                 &resolved_model.model_path,
@@ -448,9 +523,13 @@ impl RustRuntimeManager {
                 .as_mut()
                 .expect("reservation requires a resource ledger")
                 .commit(reservation_id)?;
-            Ok((process, generation, allocation_id))
+            Ok((process, generation, allocation_id, runtime_placement))
         })?;
-        let (process, generation, allocation_id) = transaction;
+        let (process, generation, allocation_id, runtime_placement) = transaction;
+        let committed_budget = runtime_placement
+            .as_ref()
+            .map(|placement| placement.reconciled_budget.clone())
+            .unwrap_or_else(|| resource_budget.clone());
         if let Some(speculative) = speculative.as_ref() {
             self.speculative_domains.insert(
                 MemoryDomain::Cuda(speculative.device.clone()),
@@ -483,6 +562,7 @@ impl RustRuntimeManager {
                     shortfall: value.shortfall,
                     waived_allocator_slack: value.waived_slack,
                 }),
+                runtime_placement,
                 external_server_protocol: plan.protocol,
                 client_endpoint: plan.client_endpoint.clone(),
                 proxy_model_ref: plan.proxy_model_ref.clone(),
@@ -490,7 +570,7 @@ impl RustRuntimeManager {
                 generation,
                 route_state: RuntimeRouteState::Ready,
                 allocation_id,
-                resource_budget: resource_budget.clone(),
+                resource_budget: committed_budget,
             },
         );
         self.default_model_key = Some(requested_model_key.clone());
@@ -718,6 +798,7 @@ impl RustRuntimeManager {
                     "route_state": loaded.route_state.as_str(),
                     "allocation_id": loaded.allocation_id.get(),
                     "resource_budget": resource_budget_payload(&loaded.resource_budget),
+                    "runtime_placement": runtime_placement_payload(loaded.runtime_placement.as_ref()),
                     "speculative_admission": speculative_admission_payload(
                         loaded.speculative_admission.as_ref(),
                     ),
@@ -769,6 +850,7 @@ impl RustRuntimeManager {
                 "client_endpoint": null,
                 "openai_compatible": false,
                 "backend_log": null,
+                "runtime_placement": null,
                 "effective_parameters": {},
                 "runtime": null,
                 "loaded_models": loaded_models,
@@ -810,6 +892,39 @@ impl RustRuntimeManager {
         budget: &ResourceBudget,
         cuda_visible_devices: Option<&str>,
     ) -> Result<ReservationId> {
+        self.reject_exclusive_domains(budget)?;
+        self.refresh_resource_capacity(cuda_visible_devices)?;
+        Ok(self
+            .resource_ledger
+            .as_mut()
+            .expect("resource ledger was initialized")
+            .reserve(request_id, budget.clone())?)
+    }
+
+    fn reserve_partial_offload_resources(
+        &mut self,
+        request_id: &str,
+        estimated: &ResourceBudget,
+        cuda_visible_devices: Option<&str>,
+    ) -> Result<ReservationId> {
+        self.reject_exclusive_domains(estimated)?;
+        self.refresh_resource_capacity(cuda_visible_devices)?;
+        let provisional = provisional_partial_offload_budget(
+            estimated,
+            &self
+                .resource_ledger
+                .as_ref()
+                .expect("resource ledger was initialized")
+                .snapshot(),
+        )?;
+        Ok(self
+            .resource_ledger
+            .as_mut()
+            .expect("resource ledger was initialized")
+            .reserve(request_id, provisional)?)
+    }
+
+    fn reject_exclusive_domains(&self, budget: &ResourceBudget) -> Result<()> {
         for domain in budget.domains().keys() {
             if self.speculative_domains.contains_key(domain) {
                 anyhow::bail!(
@@ -818,6 +933,10 @@ impl RustRuntimeManager {
                 );
             }
         }
+        Ok(())
+    }
+
+    fn refresh_resource_capacity(&mut self, cuda_visible_devices: Option<&str>) -> Result<()> {
         let observed = detect_available_resources(cuda_visible_devices)?;
         let current_usage = self
             .resource_ledger
@@ -855,11 +974,7 @@ impl RustRuntimeManager {
             Some(ledger) => ledger.update_capacity(capacity)?,
             None => self.resource_ledger = Some(ResourceLedger::new(capacity)),
         }
-        Ok(self
-            .resource_ledger
-            .as_mut()
-            .expect("resource ledger was initialized")
-            .reserve(request_id, budget.clone())?)
+        Ok(())
     }
 
     fn reap_exited_runtimes(&mut self) {
@@ -1027,6 +1142,9 @@ use resources::*;
 mod model_config;
 
 use model_config::*;
+mod placement;
+
+use placement::*;
 pub(super) fn pick_runtime_port(host: &str) -> Result<u16> {
     let listener = std::net::TcpListener::bind((host, 0))?;
     Ok(listener.local_addr()?.port())

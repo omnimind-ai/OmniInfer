@@ -39,6 +39,24 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
     assert_eq!(load_body["backend_port"], backend_port);
     assert!(load_body["backend_pid"].as_u64().unwrap() > 0);
     assert_eq!(load_body["route_state"], "ready");
+    if backend_id.contains("cuda") {
+        assert_eq!(load_body["runtime_placement"]["policy"], "auto");
+        assert_eq!(load_body["runtime_placement"]["mode"], "partial");
+        assert_eq!(load_body["runtime_placement"]["offloaded_layers"], 2);
+        assert_eq!(load_body["runtime_placement"]["total_layers"], 4);
+        assert!(
+            load_body["runtime_placement"]["reconciled_budget"]["domains_bytes"]["host"]
+                .as_u64()
+                .is_some_and(|bytes| bytes > 0)
+        );
+        assert!(
+            load_body["runtime_placement"]["reconciled_budget"]["domains_bytes"]
+                .as_object()
+                .is_some_and(|domains| domains.iter().any(|(domain, bytes)| {
+                    domain.starts_with("cuda:") && bytes.as_u64().is_some_and(|bytes| bytes > 0)
+                }))
+        );
+    }
     let first_generation = load_body["generation"].as_u64().unwrap();
     assert!(first_generation > 0);
     assert!(load_body["allocation_id"].as_u64().unwrap() > 0);
@@ -61,6 +79,14 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
     );
     assert!(launch_command.contains(&"--cache-idle-slots"));
     assert!(launch_command.windows(2).any(|args| args == ["-np", "5"]));
+    if backend_id.contains("cuda") {
+        assert!(!launch_command.iter().any(|arg| {
+            matches!(*arg, "-ngl" | "--gpu-layers")
+                || arg.starts_with("-ngl=")
+                || arg.starts_with("--gpu-layers=")
+        }));
+        assert!(launch_command.windows(2).any(|args| args == ["-lv", "4"]));
+    }
     let cache_ram_values = launch_command
         .windows(2)
         .filter(|args| args[0] == "--cache-ram")
@@ -231,6 +257,159 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
 
     gateway.stop().await;
     upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[tokio::test]
+async fn partial_offload_reconciliation_failure_cleans_runtime_and_ledger() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("partial-offload-reconciliation-rollback");
+    let model = temp.join("model.gguf");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&model, b"gguf").unwrap();
+    let backend_id = external_test_backend_id();
+    install_fake_llama_server(&temp, backend_id);
+    let placement_mode = temp
+        .join(".local")
+        .join("runtime")
+        .join(test_runtime_platform_dir())
+        .join(backend_id)
+        .join("bin")
+        .join("placement-mode");
+    std::fs::write(placement_mode, "oversized").unwrap();
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
+    let port = gateway.port;
+    let backend_port = pick_runtime_port("127.0.0.1").unwrap();
+    let response = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/model/load"))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(json!({
+                "backend": backend_id,
+                "model": model.display().to_string(),
+                "ctx_size": 512,
+                "backend_port": backend_port
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.status().as_u16(), 502);
+    let body: Value = response.into_body().read_json().unwrap();
+    assert!(
+        body.to_string()
+            .contains("placement exceeds safe reconciled capacity"),
+        "unexpected failure response: {body}"
+    );
+    assert!(body.to_string().contains("log:"));
+
+    let state = gateway_state(port).await;
+    assert_eq!(resource_total(&state, "reserved_bytes"), 0);
+    assert_eq!(resource_total(&state, "committed_bytes"), 0);
+    assert!(state["loaded_models"].as_array().unwrap().is_empty());
+    assert_eq!(state["backend_ready"], false);
+    for _ in 0..40 {
+        if std::net::TcpStream::connect(("127.0.0.1", backend_port)).is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(std::net::TcpStream::connect(("127.0.0.1", backend_port)).is_err());
+
+    gateway.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[tokio::test]
+async fn explicit_full_offload_keeps_strict_cuda_admission() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("explicit-full-offload-admission");
+    let model = temp.join("model.gguf");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&model, b"gguf").unwrap();
+    let backend_id = external_test_backend_id();
+    install_fake_llama_server(&temp, backend_id);
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
+    let port = gateway.port;
+    let backend_port = pick_runtime_port("127.0.0.1").unwrap();
+    let response = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/model/load"))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(json!({
+                "backend": backend_id,
+                "model": model.display().to_string(),
+                "ctx_size": 512,
+                "backend_port": backend_port,
+                "launch_args": ["-ngl", "999"],
+                "resource_budget_bytes": 2_u64 * 1024 * 1024 * 1024 * 1024
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.status().as_u16(), 502);
+
+    let state = gateway_state(port).await;
+    assert_eq!(resource_total(&state, "reserved_bytes"), 0);
+    assert_eq!(resource_total(&state, "committed_bytes"), 0);
+    assert!(state["loaded_models"].as_array().unwrap().is_empty());
+    assert!(std::net::TcpStream::connect(("127.0.0.1", backend_port)).is_err());
+
+    gateway.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[tokio::test]
+async fn partial_offload_rejects_disabled_startup_logs_before_launch() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("partial-offload-disabled-logs");
+    let model = temp.join("model.gguf");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&model, b"gguf").unwrap();
+    let backend_id = external_test_backend_id();
+    install_fake_llama_server(&temp, backend_id);
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
+    let port = gateway.port;
+    let backend_port = pick_runtime_port("127.0.0.1").unwrap();
+    let response = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/model/load"))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(json!({
+                "backend": backend_id,
+                "model": model.display().to_string(),
+                "ctx_size": 512,
+                "backend_port": backend_port,
+                "launch_args": ["--log-disable"]
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.status().as_u16(), 502);
+    let body: Value = response.into_body().read_json().unwrap();
+    assert!(body.to_string().contains("remove --log-disable"));
+
+    let state = gateway_state(port).await;
+    assert_eq!(resource_total(&state, "reserved_bytes"), 0);
+    assert_eq!(resource_total(&state, "committed_bytes"), 0);
+    assert!(state["loaded_models"].as_array().unwrap().is_empty());
+    assert!(std::net::TcpStream::connect(("127.0.0.1", backend_port)).is_err());
+
+    gateway.stop().await;
     std::fs::remove_dir_all(temp).ok();
 }
 

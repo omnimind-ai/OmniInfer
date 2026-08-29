@@ -134,5 +134,57 @@ pub(super) fn merged_launch_args(
     if family != "llama.cpp" || !backend_id.starts_with("llama.cpp-") {
         return requested.to_vec();
     }
-    defaults.iter().chain(requested).cloned().collect()
+    let requested_placement = gpu_layers_value(requested).is_some();
+    let defaults = if requested_placement {
+        remove_gpu_layers_args(defaults)
+    } else {
+        defaults.to_vec()
+    };
+    let merged = defaults
+        .into_iter()
+        .chain(requested.iter().cloned())
+        .collect::<Vec<_>>();
+    if gpu_layers_value(&merged).is_some_and(|value| value.eq_ignore_ascii_case("auto")) {
+        remove_gpu_layers_args(&merged)
+    } else {
+        merged
+    }
+}
+
+pub(super) fn gpu_layers_value(args: &[String]) -> Option<&str> {
+    let mut value = None;
+    let mut index = 0;
+    while index < args.len() {
+        let token = args[index].as_str();
+        if let Some(inline) = token
+            .strip_prefix("-ngl=")
+            .or_else(|| token.strip_prefix("--gpu-layers="))
+        {
+            value = Some(inline);
+        } else if matches!(token, "-ngl" | "--gpu-layers") {
+            value = args.get(index + 1).map(String::as_str);
+            index += 1;
+        }
+        index += 1;
+    }
+    value
+}
+
+fn remove_gpu_layers_args(args: &[String]) -> Vec<String> {
+    let mut filtered = Vec::with_capacity(args.len());
+    let mut index = 0;
+    while index < args.len() {
+        let token = args[index].as_str();
+        if token.starts_with("-ngl=") || token.starts_with("--gpu-layers=") {
+            index += 1;
+            continue;
+        }
+        if matches!(token, "-ngl" | "--gpu-layers") {
+            index += usize::from(index + 1 < args.len()) + 1;
+            continue;
+        }
+        filtered.push(args[index].clone());
+        index += 1;
+    }
+    filtered
 }

@@ -75,9 +75,6 @@ pub(super) fn advisor_launch_args(
     if json_bool(backend, "supports_ctx_size").unwrap_or(true) {
         launch_args.extend(["--ctx-size".to_string(), ctx_size.to_string()]);
     }
-    if is_gpu_backend(backend) && json_str(backend, "id").is_some_and(|id| id.contains("cuda")) {
-        launch_args.extend(["-ngl".to_string(), "999".to_string()]);
-    }
     if let Some(mmproj) = json_str(model_info, "mmproj") {
         launch_args.extend(["--mmproj".to_string(), mmproj.to_string()]);
     }
