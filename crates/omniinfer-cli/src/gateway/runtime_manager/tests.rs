@@ -848,6 +848,38 @@ fn official_cuda_policy_covers_linux_and_windows_modes() {
 }
 
 #[test]
+fn partial_offload_manages_trace_verbosity_and_rejects_disabled_logs() {
+    let automatic = managed_placement_evidence_args(
+        &["--jinja".to_string()],
+        Some(LlamaCppCudaPlacementPolicy::Auto),
+    )
+    .unwrap();
+    assert!(automatic.ends_with(&["-lv".to_string(), "4".to_string()]));
+    assert_eq!(
+        managed_placement_evidence_args(&automatic, Some(LlamaCppCudaPlacementPolicy::Auto))
+            .unwrap(),
+        automatic,
+        "managed launch arguments must remain idempotent"
+    );
+    let error = managed_placement_evidence_args(
+        &["--log-disable".to_string()],
+        Some(LlamaCppCudaPlacementPolicy::ExplicitPartial(12)),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("remove --log-disable"));
+
+    let explicit_full = vec!["--log-disable".to_string()];
+    assert_eq!(
+        managed_placement_evidence_args(
+            &explicit_full,
+            Some(LlamaCppCudaPlacementPolicy::ExplicitFull)
+        )
+        .unwrap(),
+        explicit_full
+    );
+}
+
+#[test]
 fn partial_offload_provisional_budget_guards_host_and_cuda() {
     let cuda = MemoryDomain::Cuda("0".to_string());
     let estimated = ResourceBudget::from_domains(BTreeMap::from([(cuda.clone(), 1_000)])).unwrap();
@@ -887,6 +919,36 @@ sched_reserve: CUDA0 compute buffer size = 512.00 MiB
         placement.reconciled_budget.domains()[&MemoryDomain::Host]
             > placement.reported_bytes[&MemoryDomain::Host]
     );
+}
+
+#[test]
+fn host_model_buffer_takes_precedence_over_all_layers_offloaded() {
+    let placement = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 41/41 layers to GPU\n\
+         load_tensors: CPU_Mapped model buffer size = 20699.72 MiB\n\
+         load_tensors: CUDA0 model buffer size = 9340.14 MiB\n\
+         llama_kv_cache: CUDA0 KV buffer size = 80.00 MiB\n",
+        "5",
+        LlamaCppCudaPlacementPolicy::Auto,
+    )
+    .unwrap();
+    assert_eq!(placement.mode, "partial");
+    assert_eq!(placement.offloaded_layers, Some(41));
+    assert_eq!(placement.total_layers, Some(41));
+}
+
+#[test]
+fn host_scratch_buffer_does_not_make_cuda_model_partial() {
+    let placement = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 41/41 layers to GPU\n\
+         load_tensors: CUDA0 model buffer size = 9340.14 MiB\n\
+         sched_reserve: CPU compute buffer size = 24.93 MiB\n\
+         sched_reserve: CUDA0 compute buffer size = 497.00 MiB\n",
+        "5",
+        LlamaCppCudaPlacementPolicy::Auto,
+    )
+    .unwrap();
+    assert_eq!(placement.mode, "full");
 }
 
 #[test]

@@ -279,6 +279,8 @@ impl RustRuntimeManager {
             launch_args.as_deref(),
         );
         let placement_policy = llama_cpp_cuda_placement_policy(backend, &effective_launch_args)?;
+        let effective_launch_args =
+            managed_placement_evidence_args(&effective_launch_args, placement_policy)?;
         let launch_args_have_ctx =
             launch_args_have_ctx_size(&backend.family, &effective_launch_args);
         let launch_args_ctx_size =

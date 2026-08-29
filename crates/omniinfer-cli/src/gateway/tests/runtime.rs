@@ -85,6 +85,7 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
                 || arg.starts_with("-ngl=")
                 || arg.starts_with("--gpu-layers=")
         }));
+        assert!(launch_command.windows(2).any(|args| args == ["-lv", "4"]));
     }
     let cache_ram_values = launch_command
         .windows(2)
@@ -356,6 +357,51 @@ async fn explicit_full_offload_keeps_strict_cuda_admission() {
     .await
     .unwrap();
     assert_eq!(response.status().as_u16(), 502);
+
+    let state = gateway_state(port).await;
+    assert_eq!(resource_total(&state, "reserved_bytes"), 0);
+    assert_eq!(resource_total(&state, "committed_bytes"), 0);
+    assert!(state["loaded_models"].as_array().unwrap().is_empty());
+    assert!(std::net::TcpStream::connect(("127.0.0.1", backend_port)).is_err());
+
+    gateway.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[tokio::test]
+async fn partial_offload_rejects_disabled_startup_logs_before_launch() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("partial-offload-disabled-logs");
+    let model = temp.join("model.gguf");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&model, b"gguf").unwrap();
+    let backend_id = external_test_backend_id();
+    install_fake_llama_server(&temp, backend_id);
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
+    let port = gateway.port;
+    let backend_port = pick_runtime_port("127.0.0.1").unwrap();
+    let response = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/model/load"))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(json!({
+                "backend": backend_id,
+                "model": model.display().to_string(),
+                "ctx_size": 512,
+                "backend_port": backend_port,
+                "launch_args": ["--log-disable"]
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.status().as_u16(), 502);
+    let body: Value = response.into_body().read_json().unwrap();
+    assert!(body.to_string().contains("remove --log-disable"));
 
     let state = gateway_state(port).await;
     assert_eq!(resource_total(&state, "reserved_bytes"), 0);

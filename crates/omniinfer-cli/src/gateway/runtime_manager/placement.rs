@@ -34,6 +34,30 @@ impl LlamaCppCudaPlacementPolicy {
     }
 }
 
+pub(super) fn managed_placement_evidence_args(
+    launch_args: &[String],
+    policy: Option<LlamaCppCudaPlacementPolicy>,
+) -> Result<Vec<String>> {
+    let Some(policy) = policy.filter(|policy| policy.permits_partial_offload()) else {
+        return Ok(launch_args.to_vec());
+    };
+    if launch_args
+        .iter()
+        .any(|arg| arg.split_once('=').map(|(flag, _)| flag).unwrap_or(arg) == "--log-disable")
+    {
+        anyhow::bail!(
+            "{} llama.cpp placement requires startup logging; remove --log-disable",
+            policy.as_str()
+        );
+    }
+    if launch_args.ends_with(&["-lv".to_string(), "4".to_string()]) {
+        return Ok(launch_args.to_vec());
+    }
+    let mut managed = launch_args.to_vec();
+    managed.extend(["-lv".to_string(), "4".to_string()]);
+    Ok(managed)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RuntimePlacement {
     pub(super) policy: LlamaCppCudaPlacementPolicy,
@@ -186,6 +210,20 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
             .checked_add(bytes)
             .ok_or_else(|| anyhow::anyhow!("llama.cpp placement byte count overflow"))?;
     }
+    let host_model_bytes = categorized
+        .get(&(MemoryDomain::Host, "model"))
+        .copied()
+        .unwrap_or(0);
+    let cuda_model_bytes = categorized
+        .iter()
+        .filter(|((domain, category), _)| {
+            matches!(domain, MemoryDomain::Cuda(_)) && *category == "model"
+        })
+        .try_fold(0_u64, |total, (_, bytes)| {
+            total
+                .checked_add(*bytes)
+                .ok_or_else(|| anyhow::anyhow!("llama.cpp placement byte count overflow"))
+        })?;
     let mut reported = BTreeMap::<MemoryDomain, u64>::new();
     let mut components = Vec::new();
     for ((domain, category), bytes) in categorized {
@@ -220,11 +258,17 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
         .keys()
         .any(|domain| matches!(domain, MemoryDomain::Cuda(_)));
     let (offloaded_layers, total_layers) = layers.unzip();
-    let mode = match (has_host, has_cuda, offloaded_layers, total_layers) {
-        (_, true, Some(offloaded), Some(total)) if offloaded >= total => "full",
+    let mode = match (
+        host_model_bytes > 0,
+        cuda_model_bytes > 0,
+        has_host,
+        has_cuda,
+    ) {
         (true, true, _, _) => "partial",
+        (true, false, _, true) => "partial",
         (false, true, _, _) => "full",
-        (true, false, _, _) => "cpu",
+        (false, false, _, true) => "full",
+        (_, _, true, false) => "cpu",
         _ => "unknown",
     }
     .to_string();

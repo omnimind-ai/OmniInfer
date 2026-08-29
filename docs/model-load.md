@@ -148,9 +148,18 @@ Automatic and explicit partial-offload loads first reserve a conservative host
 ceiling and the available memory on the selected CUDA device. After the runtime
 is ready, OmniInfer reads llama.cpp's layer and buffer-placement lines from this
 startup only, maps logical `CUDA0` to the selected physical device, adds runtime
-overhead and safety slack, and atomically reconciles the reservation. The final
-values appear in `resource_budget` and `runtime_placement` in the load response,
-`GET /omni/state`, and loaded-model payloads.
+overhead and safety slack, and atomically reconciles the reservation. To make
+that safety evidence available consistently, OmniInfer appends the managed
+trace setting `-lv 4` to automatic and explicit partial-offload launches;
+`--log-disable` is rejected for those policies. The final values appear in
+`resource_budget` and `runtime_placement` in the load response, `GET
+/omni/state`, and loaded-model payloads.
+
+Placement mode is derived from the reported model buffers, not only the layer
+counter. A runtime that reports both CPU and CUDA model buffers is `partial`
+even when llama.cpp reports every repeating layer as offloaded, as can happen
+with overflowed tensors in MoE models. Host-only compute or output buffers do
+not by themselves make an otherwise CUDA-resident model partial.
 
 An explicit full-offload request such as `-ngl 999`, `--gpu-layers=all`, or
 `--gpu-layers=max` keeps strict pre-launch CUDA admission and fails fast when it
