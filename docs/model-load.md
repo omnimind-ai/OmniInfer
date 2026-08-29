@@ -13,7 +13,7 @@ This document defines the stable gateway contract for loading a model through
   "no_mmproj": false,
   "ctx_size": 4096,
   "resource_budget_bytes": 7516192768,
-  "launch_args": ["-ngl", "999"],
+  "launch_args": [],
   "request_defaults": {
     "temperature": 0.2,
     "max_tokens": 128,
@@ -96,10 +96,35 @@ Common generation defaults include:
   "route_state": "ready",
   "allocation_id": 1,
   "resource_budget": {
-    "domains_bytes": {"cuda:0": 7516192768},
+    "domains_bytes": {"host": 2147483648, "cuda:0": 5368709120},
     "components": [
-      {"name": "weights", "domain": "cuda:0", "bytes": 5368709120}
+      {"name": "reported_model_buffers", "domain": "host", "bytes": 1500000000},
+      {"name": "runtime_overhead", "domain": "host", "bytes": 402653184},
+      {"name": "reconciliation_slack", "domain": "host", "bytes": 244830464},
+      {"name": "reported_model_buffers", "domain": "cuda:0", "bytes": 4939212390},
+      {"name": "runtime_overhead", "domain": "cuda:0", "bytes": 134217728},
+      {"name": "reconciliation_slack", "domain": "cuda:0", "bytes": 295279002}
     ]
+  },
+  "runtime_placement": {
+    "source": "llama.cpp_startup_log",
+    "policy": "auto",
+    "requested_gpu_layers": null,
+    "mode": "partial",
+    "offloaded_layers": 28,
+    "total_layers": 41,
+    "reported_buffer_bytes": {"host": 1500000000, "cuda:0": 4939212390},
+    "reconciled_budget": {
+      "domains_bytes": {"host": 2147483648, "cuda:0": 5368709120},
+      "components": [
+        {"name": "reported_model_buffers", "domain": "host", "bytes": 1500000000},
+        {"name": "runtime_overhead", "domain": "host", "bytes": 402653184},
+        {"name": "reconciliation_slack", "domain": "host", "bytes": 244830464},
+        {"name": "reported_model_buffers", "domain": "cuda:0", "bytes": 4939212390},
+        {"name": "runtime_overhead", "domain": "cuda:0", "bytes": 134217728},
+        {"name": "reconciliation_slack", "domain": "cuda:0", "bytes": 295279002}
+      ]
+    }
   },
   "warnings": []
 }
@@ -110,6 +135,28 @@ allocation only after readiness and local-state persistence succeed, and rolls
 it back on failure. For an explicit multi-GPU mapping that cannot be attributed
 reliably, the full budget is reserved on every candidate device rather than
 risk oversubscription.
+
+### Official llama.cpp CUDA placement
+
+On Linux and Windows, official llama.cpp CUDA backends leave the GPU-layer
+argument unset by default. This preserves llama.cpp's automatic fitter, which
+may place model tensors in both host memory and CUDA memory when full GPU
+offload does not fit. Sending `-ngl auto` or `--gpu-layers=auto` has the same
+effect: OmniInfer removes the argument before launch.
+
+Automatic and explicit partial-offload loads first reserve a conservative host
+ceiling and the available memory on the selected CUDA device. After the runtime
+is ready, OmniInfer reads llama.cpp's layer and buffer-placement lines from this
+startup only, maps logical `CUDA0` to the selected physical device, adds runtime
+overhead and safety slack, and atomically reconciles the reservation. The final
+values appear in `resource_budget` and `runtime_placement` in the load response,
+`GET /omni/state`, and loaded-model payloads.
+
+An explicit full-offload request such as `-ngl 999`, `--gpu-layers=all`, or
+`--gpu-layers=max` keeps strict pre-launch CUDA admission and fails fast when it
+cannot fit. If automatic placement cannot be parsed or its reconciled host/CUDA
+budget exceeds capacity, the load fails and OmniInfer stops the process tree,
+closes the listener, withholds the route, and rolls back the reservation.
 
 ## Idempotency and Reloads
 
