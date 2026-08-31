@@ -132,9 +132,19 @@ Common generation defaults include:
 
 OmniInfer reserves the reported budget before starting the backend, commits the
 allocation only after readiness and local-state persistence succeed, and rolls
-it back on failure. For an explicit multi-GPU mapping that cannot be attributed
-reliably, the full budget is reserved on every candidate device rather than
-risk oversubscription.
+it back on failure. Resource domains are reported as `host`, `cuda:<index>`,
+`vulkan:<index>`, or `unified:<id>`. For an explicit multi-GPU mapping that
+cannot be attributed reliably, the full budget is reserved on every candidate
+device rather than risk oversubscription.
+
+For stable-diffusion.cpp, denoiser, text-encoder, and VAE weights are budgeted
+separately from runtime workspace and safety overhead. Weight domains follow
+the effective `--params-backend` assignment; when it is unset they follow the
+corresponding `--backend` module. Vulkan capacity comes from
+`VK_EXT_memory_budget`. If parameter storage and execution use different
+domains, the runtime-side weight staging copy is reserved as well. OmniInfer
+rejects unknown or dynamic placement, dynamic model directories, and weight
+type overrides before launch rather than guessing a host/GPU split.
 
 ### Official llama.cpp CUDA placement
 

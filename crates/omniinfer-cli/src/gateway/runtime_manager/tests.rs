@@ -194,6 +194,7 @@ fn explicit_budget_cannot_understate_local_estimate() {
         model.to_str().unwrap(),
         None,
         512,
+        &[],
         None,
         false,
     );
@@ -242,6 +243,7 @@ fn visual_projector_does_not_change_model_context_components() {
         model.to_str().unwrap(),
         None,
         2048,
+        &[],
         Some("0"),
         false,
     )
@@ -252,6 +254,7 @@ fn visual_projector_does_not_change_model_context_components() {
         model.to_str().unwrap(),
         Some(projector.to_str().unwrap()),
         2048,
+        &[],
         Some("0"),
         false,
     )
@@ -307,7 +310,7 @@ fn visual_projector_does_not_change_model_context_components() {
 }
 
 #[test]
-fn diffusion_budget_includes_h3_component_files() {
+fn diffusion_budget_splits_h3_components_by_effective_placement() {
     let root = std::env::temp_dir().join(format!(
         "omniinfer-diffusion-budget-{}-{:?}",
         std::process::id(),
@@ -347,31 +350,296 @@ fn diffusion_budget_includes_h3_component_files() {
         external_server_protocol: Some("stable-diffusion.cpp-server".to_string()),
         log_file_name: "stable-diffusion-server.log".to_string(),
     };
+    let launch_args = [
+        format!("--llm={}", llm_old.display()),
+        "--qwen2vl".to_string(),
+        llm.display().to_string(),
+        "--vae".to_string(),
+        vae.display().to_string(),
+        "--audio-vae".to_string(),
+        audio_vae.display().to_string(),
+        "--backend".to_string(),
+        "te=cpu".to_string(),
+    ];
     let budget = build_runtime_resource_budget(
-        &json!({
-            "launch_args": [
-                format!("--llm={}", llm_old.display()),
-                "--llm", llm.display().to_string(),
-                "--vae", vae.display().to_string(),
-                "--audio-vae", audio_vae.display().to_string()
-            ]
-        }),
+        &json!({}),
         &backend,
         model.to_str().unwrap(),
         None,
         DEFAULT_LOAD_CONTEXT_SIZE,
+        &launch_args,
         None,
         false,
     )
     .unwrap();
-    let component = budget
+    for (name, bytes, domain) in [
+        (
+            "diffusion_weights",
+            10 * MIB,
+            MemoryDomain::Vulkan("0".to_string()),
+        ),
+        ("text_encoder_weights", 11 * MIB, MemoryDomain::Host),
+        (
+            "video_vae_weights",
+            5 * MIB,
+            MemoryDomain::Vulkan("0".to_string()),
+        ),
+        (
+            "audio_vae_weights",
+            2 * MIB,
+            MemoryDomain::Vulkan("0".to_string()),
+        ),
+    ] {
+        let component = budget
+            .components()
+            .iter()
+            .find(|component| component.name == name)
+            .unwrap();
+        assert_eq!(component.bytes, bytes, "component {name}");
+        assert_eq!(component.domain, domain, "component {name}");
+    }
+    assert!(budget.components().iter().any(|component| {
+        component.name == "runtime_workspace" && component.domain == MemoryDomain::Host
+    }));
+    assert!(budget.components().iter().any(|component| {
+        component.name == "runtime_workspace"
+            && component.domain == MemoryDomain::Vulkan("0".to_string())
+    }));
+
+    let mut offloaded_args = launch_args.to_vec();
+    offloaded_args.push("--offload-to-cpu".to_string());
+    let offloaded = build_runtime_resource_budget(
+        &json!({}),
+        &backend,
+        model.to_str().unwrap(),
+        None,
+        DEFAULT_LOAD_CONTEXT_SIZE,
+        &offloaded_args,
+        None,
+        false,
+    )
+    .unwrap();
+    for component in offloaded
         .components()
         .iter()
-        .find(|component| component.name == "diffusion_components")
-        .unwrap();
-    assert_eq!(component.bytes, 18 * MIB);
-    assert_eq!(component.domain, MemoryDomain::Host);
+        .filter(|component| component.name.ends_with("_weights"))
+    {
+        assert_eq!(component.domain, MemoryDomain::Host);
+    }
+    assert_eq!(
+        offloaded
+            .components()
+            .iter()
+            .filter(|component| component.name.ends_with("_runtime_staging"))
+            .map(|component| {
+                assert_eq!(component.domain, MemoryDomain::Vulkan("0".to_string()));
+                component.bytes
+            })
+            .sum::<u64>(),
+        17 * MIB
+    );
+
+    let mut explicit_params_args = offloaded_args.clone();
+    explicit_params_args.extend(["--params-backend".to_string(), "te=vulkan0".to_string()]);
+    let explicit_params = build_runtime_resource_budget(
+        &json!({}),
+        &backend,
+        model.to_str().unwrap(),
+        None,
+        DEFAULT_LOAD_CONTEXT_SIZE,
+        &explicit_params_args,
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        explicit_params
+            .components()
+            .iter()
+            .find(|component| component.name == "text_encoder_weights")
+            .unwrap()
+            .domain,
+        MemoryDomain::Vulkan("0".to_string())
+    );
+
+    let mut explicit_runtime_args = launch_args.to_vec();
+    explicit_runtime_args.extend([
+        "--clip-on-cpu".to_string(),
+        "--backend".to_string(),
+        "te=vulkan0".to_string(),
+    ]);
+    let explicit_runtime = build_runtime_resource_budget(
+        &json!({}),
+        &backend,
+        model.to_str().unwrap(),
+        None,
+        DEFAULT_LOAD_CONTEXT_SIZE,
+        &explicit_runtime_args,
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        explicit_runtime
+            .components()
+            .iter()
+            .find(|component| component.name == "text_encoder_weights")
+            .unwrap()
+            .domain,
+        MemoryDomain::Vulkan("0".to_string())
+    );
     fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn diffusion_budget_rejects_dynamic_or_unknown_placement() {
+    let root = std::env::temp_dir().join(format!(
+        "omniinfer-diffusion-placement-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let model = root.join("model.gguf");
+    fs::File::create(&model).unwrap().set_len(GIB).unwrap();
+    let backend = backend_registry::BackendSpec {
+        id: "stable-diffusion.cpp-vulkan".to_string(),
+        label: "test".to_string(),
+        family: "stable-diffusion.cpp".to_string(),
+        runtime_dir: root.display().to_string(),
+        launcher_path: None,
+        models_dir: None,
+        catalog_url: None,
+        description: "test".to_string(),
+        capabilities: vec!["vulkan".to_string()],
+        default_args: Vec::new(),
+        runtime_mode: "external_server".to_string(),
+        model_artifact: "diffusion-model".to_string(),
+        supports_mmproj: false,
+        supports_ctx_size: false,
+        python_modules: Vec::new(),
+        external_server_protocol: Some("stable-diffusion.cpp-server".to_string()),
+        log_file_name: "stable-diffusion-server.log".to_string(),
+    };
+    for args in [
+        vec!["--auto-fit".to_string()],
+        vec!["--params-backend=diffusion=disk".to_string()],
+        vec!["--backend=diffusion=vulkan0&vulkan1".to_string()],
+        vec!["--max-vram=8".to_string()],
+        vec!["--rpc-servers=127.0.0.1:50052".to_string()],
+        vec!["--embd-dir".to_string(), root.display().to_string()],
+        vec!["--lora-model-dir".to_string(), root.display().to_string()],
+        vec!["--type".to_string(), "f32".to_string()],
+        vec!["--tensor-type-rules".to_string(), "model=f32".to_string()],
+        vec!["--backend".to_string()],
+    ] {
+        assert!(
+            build_runtime_resource_budget(
+                &json!({}),
+                &backend,
+                model.to_str().unwrap(),
+                None,
+                DEFAULT_LOAD_CONTEXT_SIZE,
+                &args,
+                None,
+                false,
+            )
+            .is_err(),
+            "args {args:?}"
+        );
+    }
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn diffusion_budget_tracks_auxiliary_module_assignments() {
+    let root = std::env::temp_dir().join(format!(
+        "omniinfer-diffusion-detector-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let model = root.join("model.gguf");
+    let detector = root.join("detector.gguf");
+    let llm_vision = root.join("llm-vision.gguf");
+    let connectors = root.join("connectors.safetensors");
+    fs::File::create(&model).unwrap().set_len(GIB).unwrap();
+    fs::File::create(&detector)
+        .unwrap()
+        .set_len(128 * MIB)
+        .unwrap();
+    fs::File::create(&llm_vision)
+        .unwrap()
+        .set_len(96 * MIB)
+        .unwrap();
+    fs::File::create(&connectors)
+        .unwrap()
+        .set_len(64 * MIB)
+        .unwrap();
+    let backend = backend_registry::BackendSpec {
+        id: "stable-diffusion.cpp-vulkan".to_string(),
+        label: "test".to_string(),
+        family: "stable-diffusion.cpp".to_string(),
+        runtime_dir: root.display().to_string(),
+        launcher_path: None,
+        models_dir: None,
+        catalog_url: None,
+        description: "test".to_string(),
+        capabilities: vec!["vulkan".to_string()],
+        default_args: Vec::new(),
+        runtime_mode: "external_server".to_string(),
+        model_artifact: "diffusion-model".to_string(),
+        supports_mmproj: false,
+        supports_ctx_size: false,
+        python_modules: Vec::new(),
+        external_server_protocol: Some("stable-diffusion.cpp-server".to_string()),
+        log_file_name: "stable-diffusion-server.log".to_string(),
+    };
+    let budget = build_runtime_resource_budget(
+        &json!({}),
+        &backend,
+        model.to_str().unwrap(),
+        None,
+        DEFAULT_LOAD_CONTEXT_SIZE,
+        &[
+            "--ad-model".to_string(),
+            detector.display().to_string(),
+            "--llm_vision".to_string(),
+            llm_vision.display().to_string(),
+            "--embeddings-connectors".to_string(),
+            connectors.display().to_string(),
+            "--backend".to_string(),
+            "te=cpu,detector=cpu,clipvision=vulkan0".to_string(),
+        ],
+        None,
+        false,
+    )
+    .unwrap();
+    let detector_component = budget
+        .components()
+        .iter()
+        .find(|component| component.name == "detector_weights")
+        .unwrap();
+    assert_eq!(detector_component.bytes, 128 * MIB);
+    assert_eq!(detector_component.domain, MemoryDomain::Host);
+    for (name, bytes) in [
+        ("llm_vision_weights", 96 * MIB),
+        ("embedding_connector_weights", 64 * MIB),
+    ] {
+        let component = budget
+            .components()
+            .iter()
+            .find(|component| component.name == name)
+            .unwrap();
+        assert_eq!(component.bytes, bytes);
+        assert_eq!(component.domain, MemoryDomain::Host);
+    }
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn vulkan_capacity_probe_returns_requested_domain() {
+    let available = vulkan_available_bytes(&["0".to_string()]).unwrap();
+    assert!(available[&MemoryDomain::Vulkan("0".to_string())] > 0);
 }
 
 #[test]
@@ -409,6 +677,7 @@ fn freetoken_reserves_host_model_and_elastic_cuda_pool() {
         model.to_str().unwrap(),
         None,
         8192,
+        &["--memory-ratio".to_string(), "0.5".to_string()],
         Some("0"),
         false,
     )
@@ -448,6 +717,7 @@ fn freetoken_remote_reference_requires_host_budget() {
         "Qwen/Qwen3.6-35B-A3B",
         None,
         8192,
+        &[],
         Some("0"),
         false,
     )
@@ -737,7 +1007,7 @@ fn speculative_domain_exclusivity_survives_refresh_and_releases_by_owner() {
     }])
     .unwrap();
     let error = manager
-        .reserve_runtime_resources("same-device", &cuda0, Some("0"))
+        .reserve_runtime_resources("same-device", &cuda0, Some("0"), &[])
         .unwrap_err();
     assert!(
         error
@@ -785,7 +1055,7 @@ fn speculative_domain_exclusivity_survives_refresh_and_releases_by_owner() {
     }])
     .unwrap();
     let other_reservation = manager
-        .reserve_runtime_resources("other-device", &cuda1, Some("1"))
+        .reserve_runtime_resources("other-device", &cuda1, Some("1"), &[])
         .unwrap();
     manager
         .resource_ledger
@@ -795,7 +1065,7 @@ fn speculative_domain_exclusivity_survives_refresh_and_releases_by_owner() {
 
     manager.clear_speculative_owner(owner_allocation);
     let released_reservation = manager
-        .reserve_runtime_resources("after-release", &cuda0, Some("0"))
+        .reserve_runtime_resources("after-release", &cuda0, Some("0"), &[])
         .unwrap();
     assert!(
         manager

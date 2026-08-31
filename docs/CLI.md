@@ -303,12 +303,18 @@ flash attention:
   --vae /models/MiniMax-H3-FL2VA-Q4/vae/minimax_h3_video_vae_fp16.safetensors \
   --audio-vae /models/MiniMax-H3-FL2VA-Q4/vae/minimax_h3_audio_vae_fp32.safetensors \
   --cfg-scale 1.0 --diffusion-fa --backend te=cpu \
-  --offload-to-cpu --rng cpu
+  --rng cpu
 ```
 
 On Windows, use `stable-diffusion.cpp-vulkan` and native Windows paths for all
 four files. After loading, query `/sdcpp/v1/capabilities` before submitting a
 job because supported modes and defaults depend on the loaded checkpoint.
+The example keeps the text encoder's computation and parameters in host memory
+while the denoiser and VAEs use Vulkan memory. Do not add
+`--offload-to-cpu` on a machine whose host-visible RAM cannot hold all four
+weight files; that flag changes the effective parameter assignment to
+`*=cpu`. Use explicit `--backend` and `--params-backend` assignments when a
+different split is required.
 
 Explicit file path:
 

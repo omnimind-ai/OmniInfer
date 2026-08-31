@@ -739,11 +739,27 @@ MiniMax H3 example load request:
     "--cfg-scale", "1.0",
     "--diffusion-fa",
     "--backend", "te=cpu",
-    "--offload-to-cpu",
     "--rng", "cpu"
   ]
 }
 ```
+
+OmniInfer budgets stable-diffusion.cpp artifacts by module before launch. The
+denoiser is assigned to `diffusion`, `--llm` to `te`, and both `--vae` and
+`--audio-vae` to `vae`. Parameter bytes follow `--params-backend` (or the
+module's runtime backend when no parameter override exists), while workspace
+and safety overhead follow `--backend`. `--offload-to-cpu` is treated exactly
+as upstream treats it: an effective default `*=cpu` parameter assignment.
+When a module's parameter and runtime domains differ, OmniInfer also reserves a
+full runtime-side staging copy because stable-diffusion.cpp copies those
+parameters to the compute backend while that module runs.
+
+Vulkan reservations use a `vulkan:<index>` memory domain and the selected
+driver's `VK_EXT_memory_budget` free-memory report. Unknown device names,
+missing component sizes, unavailable memory-budget evidence, dynamic model
+directories, weight type overrides, and `--auto-fit` placement fail closed
+before the runtime starts. Use explicit `cpu` or `vulkan<index>` assignments
+when overriding placement.
 
 The model-load endpoint remains local-only by default. Once loaded, an
 authenticated inference client can submit a short validation job:
