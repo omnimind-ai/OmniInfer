@@ -725,6 +725,10 @@ supported modes are checkpoint-dependent. Submissions return `202` with an
 `id` and `poll_url`; poll until `status` becomes `completed`, `failed`, or
 `cancelled`. A completed video job returns the encoded container in
 `result.b64_json` together with its MIME type, FPS, and frame count.
+MiniMax H3 normalizes every requested frame count to the smallest supported
+value at or above it: at least 5 frames and `video_frames % 17 == 5`. For
+example, a request for 25 frames produces 39 frames. Treat
+`result.frame_count` as the authoritative output count.
 
 MiniMax H3 example load request:
 

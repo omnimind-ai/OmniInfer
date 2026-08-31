@@ -309,6 +309,9 @@ flash attention:
 On Windows, use `stable-diffusion.cpp-vulkan` and native Windows paths for all
 four files. After loading, query `/sdcpp/v1/capabilities` before submitting a
 job because supported modes and defaults depend on the loaded checkpoint.
+MiniMax H3 aligns requested frame counts upward to at least 5 frames with
+`video_frames % 17 == 5`; use the completed job's `result.frame_count` as the
+actual output count.
 The example keeps the text encoder's computation and parameters in host memory
 while the denoiser and VAEs use Vulkan memory. Do not add
 `--offload-to-cpu` on a machine whose host-visible RAM cannot hold all four
