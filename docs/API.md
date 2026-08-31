@@ -63,6 +63,7 @@ Only inference-facing endpoints are exposed to remote clients by default:
 | `POST` | `/v1/messages` |
 | `POST` | `/tokenize` |
 | `POST` | `/detokenize` |
+| `GET`, `POST` | `/sdcpp/v1/*` |
 
 Management endpoints under `/omni/*`, including model loading, backend switching, backend stop, and gateway shutdown, remain local-only unless the gateway is started with `--allow-remote-management` and an API key. Keep OmniStudio and other local controllers pointed at `http://127.0.0.1:<port>`.
 
@@ -122,10 +123,15 @@ Quick Tunnel is intended for demos and short-lived testing. For best compatibili
 | `POST` | `/omni/detokenize` | Local-only alias for `/detokenize` |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions |
 | `POST` | `/v1/messages` | Anthropic-compatible Messages API adapter |
+| `GET` | `/sdcpp/v1/capabilities` | stable-diffusion.cpp capabilities and defaults |
+| `POST` | `/sdcpp/v1/img_gen` | Submit an asynchronous image job |
+| `POST` | `/sdcpp/v1/vid_gen` | Submit an asynchronous video/audio job |
+| `GET` | `/sdcpp/v1/jobs/{id}` | Poll a diffusion job |
+| `POST` | `/sdcpp/v1/jobs/{id}/cancel` | Cancel a diffusion job |
 
-The two generation endpoints require an OpenAI-compatible loaded backend. A
-loaded `vla.cpp-*` backend uses a loopback-only ZeroMQ/protobuf action protocol
-instead; both endpoints return `422` with
+The two chat generation endpoints require an OpenAI-compatible loaded backend.
+A loaded `vla.cpp-*` or `stable-diffusion.cpp-*` backend uses a different
+protocol; both chat endpoints return `422` with
 `error.code=backend_protocol_not_supported` and report its local client
 endpoint rather than proxying an incompatible request.
 
@@ -139,7 +145,10 @@ Unknown paths return `404`:
 }
 ```
 
-Request bodies are limited to 100 MiB. Invalid JSON is treated as an empty object by the current gateway implementation.
+General request bodies are limited to 100 MiB. Native diffusion requests use a
+stricter 16 MiB limit and return `413` when it is exceeded. Invalid JSON is
+treated as an empty object by the current gateway implementation unless the
+selected upstream protocol rejects it.
 
 ## Health
 
@@ -694,6 +703,93 @@ Status codes:
 - `409` if no external backend is running or the backend rejects cache clearing
 
 Multimodal llama.cpp loads may reject KV cache clearing; reload the model instead.
+
+## stable-diffusion.cpp Native API
+
+When a `stable-diffusion.cpp-*` backend is loaded, OmniInfer keeps `sd-server`
+bound to loopback and proxies its native asynchronous API through the gateway.
+Remote LAN and Cloudflare clients use the normal OmniInfer inference API key;
+they do not need remote-management access. The gateway does not forward client
+authorization headers to the loopback runtime.
+
+The stable endpoints are:
+
+- `GET /sdcpp/v1/capabilities`
+- `POST /sdcpp/v1/img_gen`
+- `POST /sdcpp/v1/vid_gen`
+- `GET /sdcpp/v1/jobs/{id}`
+- `POST /sdcpp/v1/jobs/{id}/cancel`
+
+Query capabilities after each model load. Defaults, output formats, and
+supported modes are checkpoint-dependent. Submissions return `202` with an
+`id` and `poll_url`; poll until `status` becomes `completed`, `failed`, or
+`cancelled`. A completed video job returns the encoded container in
+`result.b64_json` together with its MIME type, FPS, and frame count.
+MiniMax H3 normalizes every requested frame count to the smallest supported
+value at or above it: at least 5 frames and `video_frames % 17 == 5`. For
+example, a request for 25 frames produces 39 frames. Treat
+`result.frame_count` as the authoritative output count.
+
+MiniMax H3 example load request:
+
+```json
+{
+  "backend": "stable-diffusion.cpp-vulkan",
+  "model": "C:\\models\\MiniMax-H3-FL2VA-Q4\\minimax_h3_fl2va_pruned-Q4_K.gguf",
+  "launch_args": [
+    "--llm", "C:\\models\\MiniMax-H3-FL2VA-Q4\\qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
+    "--vae", "C:\\models\\MiniMax-H3-FL2VA-Q4\\vae\\minimax_h3_video_vae_fp16.safetensors",
+    "--audio-vae", "C:\\models\\MiniMax-H3-FL2VA-Q4\\vae\\minimax_h3_audio_vae_fp32.safetensors",
+    "--cfg-scale", "1.0",
+    "--diffusion-fa",
+    "--backend", "te=cpu",
+    "--rng", "cpu"
+  ]
+}
+```
+
+OmniInfer budgets stable-diffusion.cpp artifacts by module before launch. The
+denoiser is assigned to `diffusion`, `--llm` to `te`, and both `--vae` and
+`--audio-vae` to `vae`. Parameter bytes follow `--params-backend` (or the
+module's runtime backend when no parameter override exists), while workspace
+and safety overhead follow `--backend`. `--offload-to-cpu` is treated exactly
+as upstream treats it: an effective default `*=cpu` parameter assignment.
+When a module's parameter and runtime domains differ, OmniInfer also reserves a
+full runtime-side staging copy because stable-diffusion.cpp copies those
+parameters to the compute backend while that module runs.
+
+Vulkan reservations use a `vulkan:<index>` memory domain and the selected
+driver's `VK_EXT_memory_budget` free-memory report. Unknown device names,
+missing component sizes, unavailable memory-budget evidence, dynamic model
+directories, weight type overrides, and `--auto-fit` placement fail closed
+before the runtime starts. Use explicit `cpu` or `vulkan<index>` assignments
+when overriding placement.
+
+The model-load endpoint remains local-only by default. Once loaded, an
+authenticated inference client can submit a short validation job:
+
+```bash
+curl -sS http://127.0.0.1:9000/sdcpp/v1/capabilities \
+  -H 'Authorization: Bearer <api-key>'
+
+curl -sS http://127.0.0.1:9000/sdcpp/v1/vid_gen \
+  -H 'Authorization: Bearer <api-key>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prompt":"A silver tabby kitten surfing on a sunny wave",
+    "width":640,
+    "height":384,
+    "video_frames":25,
+    "fps":24,
+    "sample_params":{"sample_steps":4},
+    "output_format":"webm"
+  }'
+```
+
+Native diffusion request bodies are capped at 16 MiB. Upstream status codes,
+content type, and safe response headers pass through. Loading a non-diffusion
+backend makes `/sdcpp/v1/*` return structured `422`; calling chat or Messages
+with a diffusion backend loaded likewise returns structured `422`.
 
 ## OpenAI-Compatible API
 

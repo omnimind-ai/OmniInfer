@@ -8,6 +8,7 @@ use thiserror::Error;
 pub enum MemoryDomain {
     Host,
     Cuda(String),
+    Vulkan(String),
     Unified(String),
 }
 
@@ -16,6 +17,7 @@ impl MemoryDomain {
         match self {
             Self::Host => "host".to_string(),
             Self::Cuda(id) => format!("cuda:{id}"),
+            Self::Vulkan(id) => format!("vulkan:{id}"),
             Self::Unified(id) => format!("unified:{id}"),
         }
     }

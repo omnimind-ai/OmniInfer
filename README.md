@@ -88,7 +88,7 @@ OmniInfer is a high-performance, cross-platform inference engine for running Lar
 OmniInfer is fast with:
 
 - Optimized token generation speed and minimal memory footprint
-- Multiple backend engines, including llama.cpp, ik_llama.cpp, MNN, MLX, TurboQuant, LiteRT-LM, ExecuTorch QNN, and OmniInfer Native where supported
+- Multiple backend engines, including llama.cpp, stable-diffusion.cpp, ik_llama.cpp, MNN, MLX, TurboQuant, LiteRT-LM, ExecuTorch QNN, and OmniInfer Native where supported
 - Hardware-aware adaptation and optimization
 
 OmniInfer is flexible and easy to use with:
@@ -108,9 +108,9 @@ OmniInfer runs everywhere:
 
 | Platform | Distribution | Representative runtimes |
 |---|---|---|
-| Linux x64 | Release CLI and source checkout | llama.cpp, ik_llama.cpp, vLLM, vla.cpp |
+| Linux x64 | Release CLI and source checkout | llama.cpp, stable-diffusion.cpp, ik_llama.cpp, vLLM, vla.cpp |
 | macOS arm64 | Release CLI and source checkout | llama.cpp, MLX, TurboQuant |
-| Windows x64 | Release CLI and source checkout | llama.cpp, vLLM through WSL2 |
+| Windows x64 | Release CLI and source checkout | llama.cpp, stable-diffusion.cpp, vLLM through WSL2 |
 | Android | Gradle module | llama.cpp, MNN, LiteRT-LM, ExecuTorch QNN |
 | iOS | Swift package | Embedded native inference service |
 

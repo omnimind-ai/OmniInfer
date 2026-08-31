@@ -226,6 +226,9 @@ fn bearer_token(request: &RequestAuthContext) -> Option<&str> {
 }
 
 fn is_public_endpoint(method: &str, path: &str) -> bool {
+    if path.starts_with("/sdcpp/v1/") {
+        return matches!(method.to_ascii_uppercase().as_str(), "GET" | "POST");
+    }
     match method.to_ascii_uppercase().as_str() {
         "GET" => matches!(path, "/health" | "/v1/models"),
         "POST" => matches!(
@@ -436,6 +439,51 @@ mod tests {
 
         assert_eq!(decision.admin_id.as_deref(), Some("adminA"));
         assert!(!decision.management_endpoint);
+    }
+
+    #[test]
+    fn remote_diffusion_endpoints_require_inference_key() {
+        let policy = GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            ..GatewayAccessPolicy::default()
+        };
+        for (method, path) in [
+            ("GET", "/sdcpp/v1/capabilities"),
+            ("POST", "/sdcpp/v1/img_gen"),
+            ("POST", "/sdcpp/v1/vid_gen"),
+            ("GET", "/sdcpp/v1/jobs/job-42"),
+            ("POST", "/sdcpp/v1/jobs/job-42/cancel"),
+        ] {
+            let mut request = request(method, path);
+            assert_eq!(
+                authorize_request(&policy, &request).unwrap_err(),
+                GatewayAuthError::MissingOrInvalidApiKey,
+                "{method} {path} must reject a remote request without a key"
+            );
+            request.authorization = Some("Bearer inference".to_string());
+            let decision = authorize_request_with_identity(&policy, &request).unwrap();
+            assert!(!decision.management_endpoint, "{method} {path}");
+        }
+    }
+
+    #[test]
+    fn diffusion_prefix_does_not_expose_management_or_unknown_methods() {
+        let policy = GatewayAccessPolicy {
+            api_key: "inference".to_string(),
+            ..GatewayAccessPolicy::default()
+        };
+        for (method, path) in [
+            ("DELETE", "/sdcpp/v1/jobs/job-42"),
+            ("POST", "/omni/model/select"),
+        ] {
+            let mut request = request(method, path);
+            request.authorization = Some("Bearer inference".to_string());
+            assert_eq!(
+                authorize_request(&policy, &request).unwrap_err(),
+                GatewayAuthError::RemoteManagementForbidden,
+                "{method} {path} must remain management-only"
+            );
+        }
     }
 
     #[test]

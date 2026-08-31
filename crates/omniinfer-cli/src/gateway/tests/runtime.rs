@@ -755,6 +755,185 @@ async fn vla_runtime_exposes_zmq_contract_and_rejects_openai_proxying() {
         );
     }
 
+    let diffusion_response = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/sdcpp/v1/capabilities"))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(diffusion_response.status().as_u16(), 422);
+    let body: Value = diffusion_response.into_body().read_json().unwrap();
+    assert_eq!(body["error"]["code"], "backend_protocol_not_supported");
+
+    gateway.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn diffusion_runtime_proxies_native_async_api_and_rejects_chat() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("diffusion-runtime-protocol-contract");
+    std::fs::create_dir_all(&temp).unwrap();
+    let model = temp.join("minimax_h3_fl2va_pruned-Q4_K.gguf");
+    let llm = temp.join("qwen3vl_32b_minimax_h3-Q4_K_M.gguf");
+    let vae = temp.join("minimax_h3_video_vae_fp16.safetensors");
+    let audio_vae = temp.join("minimax_h3_audio_vae_fp32.safetensors");
+    for path in [&model, &llm, &vae, &audio_vae] {
+        std::fs::write(path, b"test").unwrap();
+    }
+    install_fake_stable_diffusion_server(&temp);
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+
+    let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
+    let port = gateway.port;
+    let backend_port = pick_runtime_port("127.0.0.1").unwrap();
+    let load = tokio::task::spawn_blocking({
+        let model = model.clone();
+        let llm = llm.clone();
+        let vae = vae.clone();
+        let audio_vae = audio_vae.clone();
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+                .send_json(json!({
+                    "backend": "stable-diffusion.cpp-linux-vulkan",
+                    "model": model.display().to_string(),
+                    "backend_port": backend_port,
+                    "launch_args": [
+                        "--llm", llm.display().to_string(),
+                        "--vae", vae.display().to_string(),
+                        "--audio-vae", audio_vae.display().to_string(),
+                        "--cfg-scale", "1.0",
+                        "--diffusion-fa",
+                        "--backend", "te=cpu"
+                    ]
+                }))
+                .unwrap()
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(load.status().as_u16(), 200);
+    let load: Value = load.into_body().read_json().unwrap();
+    assert_eq!(
+        load["external_server_protocol"],
+        "stable-diffusion.cpp-server"
+    );
+    assert_eq!(load["openai_compatible"], false);
+    assert_eq!(
+        load["client_endpoint"],
+        format!("http://127.0.0.1:{backend_port}")
+    );
+
+    let capabilities = tokio::task::spawn_blocking(move || {
+        ureq::get(format!(
+            "http://127.0.0.1:{port}/sdcpp/v1/capabilities?detail=1"
+        ))
+        .call()
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(capabilities.status().as_u16(), 200);
+    assert_eq!(
+        capabilities
+            .headers()
+            .get("x-sdcpp-test")
+            .and_then(|value| value.to_str().ok()),
+        Some("passthrough")
+    );
+    let capabilities: Value = capabilities.into_body().read_json().unwrap();
+    assert_eq!(capabilities["backend"], "fake-sdcpp");
+    assert_eq!(capabilities["path"], "/sdcpp/v1/capabilities?detail=1");
+
+    let submit = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/sdcpp/v1/vid_gen"))
+            .send_json(json!({
+                "prompt": "a silver tabby surfing",
+                "width": 640,
+                "height": 384,
+                "video_frames": 25,
+                "steps": 4
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(submit.status().as_u16(), 202);
+    let submit: Value = submit.into_body().read_json().unwrap();
+    assert_eq!(submit["id"], "job-42");
+    assert_eq!(submit["request"]["steps"], 4);
+
+    let poll = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/sdcpp/v1/jobs/job-42"))
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(poll.status().as_u16(), 200);
+    let poll: Value = poll.into_body().read_json().unwrap();
+    assert_eq!(poll["status"], "completed");
+
+    let cancel = tokio::task::spawn_blocking(move || {
+        ureq::post(format!(
+            "http://127.0.0.1:{port}/sdcpp/v1/jobs/job-42/cancel"
+        ))
+        .send_json(json!({}))
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(cancel.status().as_u16(), 200);
+    let cancel: Value = cancel.into_body().read_json().unwrap();
+    assert_eq!(cancel["status"], "cancelled");
+
+    for endpoint in ["/v1/chat/completions", "/v1/messages"] {
+        let chat = tokio::task::spawn_blocking(move || {
+            ureq::post(format!("http://127.0.0.1:{port}{endpoint}"))
+                .config()
+                .http_status_as_error(false)
+                .build()
+                .send_json(json!({
+                    "model": "omniinfer",
+                    "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "Hello"}]
+                }))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(chat.status().as_u16(), 422);
+        let chat: Value = chat.into_body().read_json().unwrap();
+        assert_eq!(chat["error"]["code"], "backend_protocol_not_supported");
+        assert_eq!(
+            chat["error"]["external_server_protocol"],
+            "stable-diffusion.cpp-server"
+        );
+    }
+
+    let too_large = tokio::task::spawn_blocking(move || {
+        let payload = json!({"prompt": "x".repeat(16 * 1024 * 1024)});
+        ureq::post(format!("http://127.0.0.1:{port}/sdcpp/v1/vid_gen"))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(payload)
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(too_large.status().as_u16(), 413);
+    let too_large: Value = too_large.into_body().read_json().unwrap();
+    assert_eq!(
+        too_large["error"]["message"],
+        "diffusion request body exceeds 16 MiB"
+    );
+
     gateway.stop().await;
     std::fs::remove_dir_all(temp).ok();
 }

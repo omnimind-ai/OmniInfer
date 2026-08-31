@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+ash.workspace = true
 axum.workspace = true
 base64.workspace = true
 bytes.workspace = true

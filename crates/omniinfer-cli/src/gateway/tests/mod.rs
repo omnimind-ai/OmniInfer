@@ -538,6 +538,77 @@ PY
 }
 
 #[cfg(target_os = "linux")]
+fn install_fake_stable_diffusion_server(root: &std::path::Path) {
+    let launcher = root
+        .join(".local")
+        .join("runtime")
+        .join(test_runtime_platform_dir())
+        .join("stable-diffusion.cpp-linux-vulkan")
+        .join("bin")
+        .join("sd-server");
+    std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    std::fs::write(
+        &launcher,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+host=""
+port=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --listen-ip) host="$2"; shift 2 ;;
+    --listen-port) port="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf 'listening on: http://%s:%s\n' "$host" "$port"
+exec python3 - "$host" "$port" <<'PY'
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+host, port = sys.argv[1], int(sys.argv[2])
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+    def _json(self, payload, status=200):
+        raw = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("X-Sdcpp-Test", "passthrough")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+    def do_GET(self):
+        if self.path.startswith("/sdcpp/v1/capabilities"):
+            self._json({"backend": "fake-sdcpp", "path": self.path})
+        elif self.path.startswith("/sdcpp/v1/jobs/job-42"):
+            self._json({"id": "job-42", "status": "completed"})
+        else:
+            self._json({"error": "not found"}, 404)
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else b"{}"
+        payload = json.loads(body.decode() or "{}")
+        if self.path == "/sdcpp/v1/vid_gen":
+            self._json({"id": "job-42", "status": "queued", "request": payload}, 202)
+        elif self.path == "/sdcpp/v1/jobs/job-42/cancel":
+            self._json({"id": "job-42", "status": "cancelled"})
+        else:
+            self._json({"error": "not found"}, 404)
+
+HTTPServer((host, port), Handler).serve_forever()
+PY
+"#,
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = std::fs::metadata(&launcher).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&launcher, permissions).unwrap();
+}
+
+#[cfg(target_os = "linux")]
 fn install_fake_vllm_server(root: &std::path::Path) {
     let launcher = root
         .join(".local")

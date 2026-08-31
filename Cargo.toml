@@ -13,6 +13,7 @@ repository = "https://github.com/omnimind-ai/OmniInfer"
 
 [workspace.dependencies]
 anyhow = "1.0"
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
 axum = "0.8"
 base64 = "0.22"
 bytes = "1.0"

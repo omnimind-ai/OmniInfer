@@ -383,9 +383,18 @@ impl RustRuntimeManager {
             &resolved_model.model_path,
             mmproj_path.as_deref(),
             plan.ctx_size.unwrap_or(DEFAULT_LOAD_CONTEXT_SIZE),
+            &effective_launch_args,
             budget_cuda_devices.as_deref(),
             cuda_selection.is_none() && budget_cuda_devices.is_some(),
         )?;
+        let budget_vulkan_devices = resource_budget
+            .domains()
+            .keys()
+            .filter_map(|domain| match domain {
+                MemoryDomain::Vulkan(device) => Some(device.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let reconcile_policy = placement_policy.filter(|policy| {
             policy.permits_partial_offload()
                 && resource_budget
@@ -400,12 +409,14 @@ impl RustRuntimeManager {
                 &requested_model_key,
                 &resource_budget,
                 budget_cuda_devices.as_deref(),
+                &budget_vulkan_devices,
             )
         } else {
             self.reserve_runtime_resources(
                 &requested_model_key,
                 &resource_budget,
                 budget_cuda_devices.as_deref(),
+                &budget_vulkan_devices,
             )
         };
         let (reservation_id, speculative) = match initial_reservation {
@@ -664,7 +675,7 @@ impl RustRuntimeManager {
         Some(RuntimeProxyTarget {
             base_url: loaded
                 .external_server_protocol
-                .is_openai_compatible()
+                .is_http_transport()
                 .then(|| loaded.client_endpoint.clone()),
             client_endpoint: loaded.client_endpoint.clone(),
             protocol: loaded.external_server_protocol,
@@ -891,9 +902,10 @@ impl RustRuntimeManager {
         request_id: &str,
         budget: &ResourceBudget,
         cuda_visible_devices: Option<&str>,
+        vulkan_devices: &[String],
     ) -> Result<ReservationId> {
         self.reject_exclusive_domains(budget)?;
-        self.refresh_resource_capacity(cuda_visible_devices)?;
+        self.refresh_resource_capacity(cuda_visible_devices, vulkan_devices)?;
         Ok(self
             .resource_ledger
             .as_mut()
@@ -906,9 +918,10 @@ impl RustRuntimeManager {
         request_id: &str,
         estimated: &ResourceBudget,
         cuda_visible_devices: Option<&str>,
+        vulkan_devices: &[String],
     ) -> Result<ReservationId> {
         self.reject_exclusive_domains(estimated)?;
-        self.refresh_resource_capacity(cuda_visible_devices)?;
+        self.refresh_resource_capacity(cuda_visible_devices, vulkan_devices)?;
         let provisional = provisional_partial_offload_budget(
             estimated,
             &self
@@ -936,8 +949,12 @@ impl RustRuntimeManager {
         Ok(())
     }
 
-    fn refresh_resource_capacity(&mut self, cuda_visible_devices: Option<&str>) -> Result<()> {
-        let observed = detect_available_resources(cuda_visible_devices)?;
+    fn refresh_resource_capacity(
+        &mut self,
+        cuda_visible_devices: Option<&str>,
+        vulkan_devices: &[String],
+    ) -> Result<()> {
+        let observed = detect_available_resources(cuda_visible_devices, vulkan_devices)?;
         let current_usage = self
             .resource_ledger
             .as_ref()

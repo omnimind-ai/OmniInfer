@@ -127,6 +127,117 @@ fn builds_vla_cpp_zmq_server_shape() {
 }
 
 #[test]
+fn builds_minimax_h3_diffusion_server_shape() {
+    let root = std::env::temp_dir().join(format!("omniinfer-h3-plan-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let model = root.join("minimax_h3_fl2va_pruned-Q4_K.gguf");
+    let llm = root.join("qwen3vl_32b_minimax_h3-Q4_K_M.gguf");
+    let vae = root.join("minimax_h3_video_vae_fp16.safetensors");
+    let audio_vae = root.join("minimax_h3_audio_vae_fp32.safetensors");
+    for path in [&model, &llm, &vae, &audio_vae] {
+        std::fs::write(path, []).unwrap();
+    }
+    let backend = json!({
+        "id": "stable-diffusion.cpp-linux-vulkan",
+        "launcher_path": "/runtime/stable-diffusion.cpp-linux-vulkan/bin/sd-server",
+        "runtime_dir": "/runtime/stable-diffusion.cpp-linux-vulkan",
+        "external_server_protocol": "stable-diffusion.cpp-server",
+        "log_file_name": "stable-diffusion-server.log"
+    });
+    let plan = build_external_runtime_plan(&ExternalRuntimeRequest {
+        backend,
+        model_path: model.display().to_string(),
+        mmproj_path: None,
+        host: "127.0.0.1".to_string(),
+        port: 14567,
+        ctx_size: Some(8192),
+        launch_args: Some(vec![
+            "--llm".to_string(),
+            llm.display().to_string(),
+            "--vae".to_string(),
+            vae.display().to_string(),
+            "--audio-vae".to_string(),
+            audio_vae.display().to_string(),
+            "--cfg-scale".to_string(),
+            "1.0".to_string(),
+            "--diffusion-fa".to_string(),
+            "--backend".to_string(),
+            "te=cpu".to_string(),
+        ]),
+    })
+    .unwrap();
+    assert_eq!(plan.ctx_size, None);
+    assert_eq!(
+        plan.protocol,
+        ExternalServerProtocol::StableDiffusionCppServer
+    );
+    assert!(plan.protocol.is_http_transport());
+    assert!(!plan.protocol.is_openai_compatible());
+    assert!(!plan.protocol.supports_chat());
+    assert_eq!(plan.client_endpoint, "http://127.0.0.1:14567");
+    assert_eq!(
+        plan.readiness_probe,
+        RuntimeReadinessProbe::TcpConnectAndLog {
+            marker: "listening on: http://127.0.0.1:14567".to_string(),
+        }
+    );
+    assert_eq!(
+        plan.command[1..7],
+        [
+            "--diffusion-model",
+            model.to_str().unwrap(),
+            "--listen-ip",
+            "127.0.0.1",
+            "--listen-port",
+            "14567",
+        ]
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn rejects_incomplete_or_public_h3_diffusion_server_plan() {
+    let root =
+        std::env::temp_dir().join(format!("omniinfer-h3-invalid-plan-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let model = root.join("minimax_h3_fl2va_pruned-Q4_K.gguf");
+    std::fs::write(&model, []).unwrap();
+    let backend = json!({
+        "id": "stable-diffusion.cpp-vulkan",
+        "launcher_path": "C:/runtime/sd-server.exe",
+        "runtime_dir": "C:/runtime",
+        "external_server_protocol": "stable-diffusion.cpp-server"
+    });
+    let missing = build_external_runtime_plan(&ExternalRuntimeRequest {
+        backend: backend.clone(),
+        model_path: model.display().to_string(),
+        mmproj_path: None,
+        host: "127.0.0.1".to_string(),
+        port: 14567,
+        ctx_size: None,
+        launch_args: Some(Vec::new()),
+    })
+    .unwrap_err();
+    assert_eq!(missing, RuntimePlanError::MissingH3Component("--llm"));
+
+    let public_bind = build_external_runtime_plan(&ExternalRuntimeRequest {
+        backend,
+        model_path: model.display().to_string(),
+        mmproj_path: None,
+        host: "0.0.0.0".to_string(),
+        port: 14567,
+        ctx_size: None,
+        launch_args: Some(Vec::new()),
+    })
+    .unwrap_err();
+    assert_eq!(
+        public_bind,
+        RuntimePlanError::NonLoopbackDiffusionBind("0.0.0.0".to_string())
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn rejects_vla_cpp_context_launch_arg() {
     let backend = json!({
         "id": "vla.cpp-linux",

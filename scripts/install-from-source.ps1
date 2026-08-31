@@ -645,23 +645,29 @@ if ($Prebuilt) {
 
 if (-not $Prebuilt) {
     # Windows build scripts do NOT auto-bootstrap submodules.
-    $llamaCppDir = Join-Path $InstallDir "framework\llama.cpp"
-    if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
-        Write-Info "Initializing llama.cpp submodule ..."
-        git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
+    $sourceSubmodule = if ($SelectedBackend.StartsWith("stable-diffusion.cpp")) {
+        "framework/stable-diffusion.cpp"
+    } else {
+        "framework/llama.cpp"
+    }
+    $sourceLabel = Split-Path $sourceSubmodule -Leaf
+    $sourceDir = Join-Path $InstallDir ($sourceSubmodule.Replace('/', '\'))
+    if (-not (Test-Path (Join-Path $sourceDir "CMakeLists.txt"))) {
+        Write-Info "Initializing $sourceLabel submodule ..."
+        git -C $InstallDir submodule update --init --recursive --depth 1 --progress $sourceSubmodule
         if ($LASTEXITCODE -ne 0) {
             Write-Warn "SSH submodule clone failed, retrying with HTTPS ..."
             $converted = Set-GitHubSubmodulesToHttps $InstallDir
             if ($converted -eq 0) {
-                Stop-Fatal "Failed to initialize llama.cpp submodule and no GitHub SSH submodule URLs could be converted to HTTPS."
+                Stop-Fatal "Failed to initialize $sourceLabel submodule and no GitHub SSH submodule URLs could be converted to HTTPS."
             }
-            git -C $InstallDir submodule update --init --recursive --depth 1 --progress framework/llama.cpp
+            git -C $InstallDir submodule update --init --recursive --depth 1 --progress $sourceSubmodule
             if ($LASTEXITCODE -ne 0) {
-                Stop-Fatal "Failed to initialize llama.cpp submodule via SSH and HTTPS. Check network access to GitHub and retry."
+                Stop-Fatal "Failed to initialize $sourceLabel submodule via SSH and HTTPS. Check network access to GitHub and retry."
             }
         }
-        if (-not (Test-Path (Join-Path $llamaCppDir "CMakeLists.txt"))) {
-            Stop-Fatal "llama.cpp submodule initialized but CMakeLists.txt is missing in $llamaCppDir"
+        if (-not (Test-Path (Join-Path $sourceDir "CMakeLists.txt"))) {
+            Stop-Fatal "$sourceLabel submodule initialized but CMakeLists.txt is missing in $sourceDir"
         }
         Write-Ok "Submodule ready"
         Write-Host ""

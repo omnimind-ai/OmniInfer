@@ -39,6 +39,17 @@ fn linux_registry_includes_primary_backends() {
     assert!(registry.get("vllm-linux-cuda").is_some());
     assert!(registry.get("freetoken-linux-cuda").is_some());
     assert!(registry.get("mnn-linux").is_some());
+    let diffusion = registry
+        .get("stable-diffusion.cpp-linux-vulkan")
+        .expect("Linux diffusion backend");
+    assert_eq!(diffusion.family, "stable-diffusion.cpp");
+    assert_eq!(diffusion.model_artifact, "diffusion-model");
+    assert!(!diffusion.supports_mmproj);
+    assert!(!diffusion.supports_ctx_size);
+    assert_eq!(
+        diffusion.external_server_protocol.as_deref(),
+        Some("stable-diffusion.cpp-server")
+    );
 }
 
 #[test]
@@ -201,6 +212,42 @@ fn windows_registry_exposes_managed_wsl2_vllm_backend() {
         gpu_backend_ids(registry.host).contains(&rocm.id.as_str()),
         "managed WSL2 ROCm vLLM must participate in Windows GPU detection"
     );
+}
+
+#[test]
+fn windows_registry_exposes_vulkan_diffusion_backend() {
+    let registry = BackendRegistry::build(
+        HostInfo {
+            system: HostSystem::Windows,
+            machine: "x86_64",
+        },
+        "runtime",
+        &Value::Null,
+    );
+    let backend = registry
+        .get("stable-diffusion.cpp-vulkan")
+        .expect("Windows diffusion backend");
+    assert_eq!(backend.family, "stable-diffusion.cpp");
+    assert_eq!(backend.model_artifact, "diffusion-model");
+    assert!(!backend.supports_mmproj);
+    assert!(!backend.supports_ctx_size);
+    assert_eq!(
+        backend.external_server_protocol.as_deref(),
+        Some("stable-diffusion.cpp-server")
+    );
+    for capability in [
+        "image-generation",
+        "video-generation",
+        "native-audio",
+        "vulkan",
+        "async-jobs",
+    ] {
+        assert!(
+            backend.capabilities.iter().any(|value| value == capability),
+            "missing capability {capability}"
+        );
+    }
+    assert!(gpu_backend_ids(registry.host).contains(&backend.id.as_str()));
 }
 
 #[test]
