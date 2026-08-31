@@ -579,9 +579,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+    def _bytes(self, payload, content_type):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("X-Preview-Revision", "1")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
     def do_GET(self):
         if self.path.startswith("/sdcpp/v1/capabilities"):
             self._json({"backend": "fake-sdcpp", "path": self.path})
+        elif self.path == "/sdcpp/v1/jobs/job-42/preview":
+            self._bytes(b"RIFF\x04\x00\x00\x00WEBP", "image/webp")
         elif self.path.startswith("/sdcpp/v1/jobs/job-42"):
             self._json({"id": "job-42", "status": "completed"})
         else:

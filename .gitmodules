@@ -39,4 +39,4 @@
 	url = https://github.com/VinRobotics/vla.cpp.git
 [submodule "framework/stable-diffusion.cpp"]
 	path = framework/stable-diffusion.cpp
-	url = https://github.com/leejet/stable-diffusion.cpp.git
+	url = https://github.com/omnimind-ai/stable-diffusion.cpp.git

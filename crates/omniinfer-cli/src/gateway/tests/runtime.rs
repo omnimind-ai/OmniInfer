@@ -879,6 +879,28 @@ async fn diffusion_runtime_proxies_native_async_api_and_rejects_chat() {
     let poll: Value = poll.into_body().read_json().unwrap();
     assert_eq!(poll["status"], "completed");
 
+    let preview = tokio::task::spawn_blocking(move || {
+        ureq::get(format!(
+            "http://127.0.0.1:{port}/sdcpp/v1/jobs/job-42/preview"
+        ))
+        .call()
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(preview.status().as_u16(), 200);
+    assert_eq!(
+        preview
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("image/webp")
+    );
+    assert_eq!(
+        preview.into_body().read_to_vec().unwrap(),
+        b"RIFF\x04\x00\x00\x00WEBP"
+    );
+
     let cancel = tokio::task::spawn_blocking(move || {
         ureq::post(format!(
             "http://127.0.0.1:{port}/sdcpp/v1/jobs/job-42/cancel"

@@ -718,6 +718,7 @@ The stable endpoints are:
 - `POST /sdcpp/v1/img_gen`
 - `POST /sdcpp/v1/vid_gen`
 - `GET /sdcpp/v1/jobs/{id}`
+- `GET /sdcpp/v1/jobs/{id}/preview`
 - `POST /sdcpp/v1/jobs/{id}/cancel`
 
 Query capabilities after each model load. Defaults, output formats, and
@@ -725,6 +726,12 @@ supported modes are checkpoint-dependent. Submissions return `202` with an
 `id` and `poll_url`; poll until `status` becomes `completed`, `failed`, or
 `cancelled`. A completed video job returns the encoded container in
 `result.b64_json` together with its MIME type, FPS, and frame count.
+While a job is generating, supported runtimes also return sampling `progress`
+and a lightweight `preview` descriptor. Fetch the descriptor's same-origin URL
+to receive the latest latent-projection preview as animated WebP (or PNG when
+WebP support is unavailable). The preview endpoint is authenticated, returns
+`Cache-Control: no-store`, and is intended for explicitly labelled generation
+feedback; it is not the final decoded or moderated output.
 MiniMax H3 normalizes every requested frame count to the smallest supported
 value at or above it: at least 5 frames and `video_frames % 17 == 5`. For
 example, a request for 25 frames produces 39 frames. Treat

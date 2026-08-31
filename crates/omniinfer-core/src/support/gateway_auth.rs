@@ -452,6 +452,7 @@ mod tests {
             ("POST", "/sdcpp/v1/img_gen"),
             ("POST", "/sdcpp/v1/vid_gen"),
             ("GET", "/sdcpp/v1/jobs/job-42"),
+            ("GET", "/sdcpp/v1/jobs/job-42/preview"),
             ("POST", "/sdcpp/v1/jobs/job-42/cancel"),
         ] {
             let mut request = request(method, path);
