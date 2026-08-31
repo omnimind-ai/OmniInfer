@@ -65,7 +65,12 @@ pub(super) fn runtime_env_for_backend(
         env.push(("VLLM_USE_FLASHINFER_SAMPLER".to_string(), "0".to_string()));
     }
     let mut cuda_selection = None;
-    if backend.capabilities.iter().any(|cap| cap == "cuda") {
+    if backend.capabilities.iter().any(|cap| cap == "cuda")
+        && !backend
+            .capabilities
+            .iter()
+            .any(|cap| cap == "shared-memory")
+    {
         cuda_selection = select_cuda_visible_devices(launch_args);
     }
     if let Some(selection) = cuda_selection.as_ref() {

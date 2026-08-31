@@ -262,6 +262,7 @@ pub fn backend_priority(backend_id: &str) -> i32 {
         "llama.cpp-linux-s390x" => 1,
         "vla.cpp-linux-cuda" => 1,
         "vla.cpp-linux" => 2,
+        "omniinfer-vla-linux-cuda" => 1,
         "vllm-linux-cuda" => 2,
         "freetoken-linux-cuda" => 3,
         "vllm-wsl2-cuda" => 2,

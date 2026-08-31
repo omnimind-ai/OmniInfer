@@ -13,6 +13,7 @@ pub(super) fn gpu_backend_ids(host: HostInfo) -> &'static [&'static str] {
             "vllm-linux-cuda",
             "freetoken-linux-cuda",
             "vla.cpp-linux-cuda",
+            "omniinfer-vla-linux-cuda",
         ],
         HostSystem::Windows => &[
             "llama.cpp-cuda",

@@ -31,7 +31,15 @@ pub(super) fn build_runtime_resource_budget(
         .get("resource_budget_bytes")
         .and_then(Value::as_u64)
         .filter(|bytes| *bytes > 0);
-    let weights = artifact_size_bytes(&PathBuf::from(model))?;
+    // A VLA checkpoint directory may also contain a GGUF deployment copy for another runtime.
+    // OmniInfer VLA Runtime loads safetensors files, so counting both formats would overstate
+    // formats would reserve the same model parameters twice and can reject a
+    // valid Jetson unified-memory deployment before launch.
+    let weights = if backend.id == "omniinfer-vla-linux-cuda" {
+        omniinfer_vla_artifact_size_bytes(&PathBuf::from(model))?
+    } else {
+        artifact_size_bytes(&PathBuf::from(model))?
+    };
     let projector = mmproj
         .map(|path| artifact_size_bytes(&PathBuf::from(path)))
         .transpose()?
@@ -226,6 +234,46 @@ pub(super) fn artifact_size_bytes(path: &PathBuf) -> Result<Option<u64>> {
             if file_type.is_dir() {
                 pending.push(entry.path());
             } else if file_type.is_file() {
+                total = total
+                    .checked_add(entry.metadata()?.len())
+                    .ok_or_else(|| anyhow::anyhow!("model artifact size overflow"))?;
+            }
+        }
+    }
+    Ok((total > 0).then_some(total))
+}
+
+fn omniinfer_vla_artifact_size_bytes(path: &PathBuf) -> Result<Option<u64>> {
+    let Ok(metadata) = fs::metadata(path) else {
+        return Ok(None);
+    };
+    if metadata.is_file() {
+        return Ok(
+            (path.extension().and_then(|ext| ext.to_str()) == Some("safetensors"))
+                .then_some(metadata.len()),
+        );
+    }
+    if !metadata.is_dir() {
+        return Ok(None);
+    }
+    let mut total = 0_u64;
+    let mut pending = vec![path.clone()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                pending.push(entry.path());
+            } else if file_type.is_file()
+                && entry
+                    .path()
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("safetensors"))
+            {
                 total = total
                     .checked_add(entry.metadata()?.len())
                     .ok_or_else(|| anyhow::anyhow!("model artifact size overflow"))?;

@@ -127,6 +127,50 @@ fn builds_vla_cpp_zmq_server_shape() {
 }
 
 #[test]
+fn builds_omniinfer_vla_zmq_server_shape() {
+    let backend = json!({
+        "id": "omniinfer-vla-linux-cuda",
+        "launcher_path": "/runtime/omniinfer-vla-linux-cuda/bin/omniinfer-vla-server",
+        "runtime_dir": "/runtime/omniinfer-vla-linux-cuda",
+        "default_args": ["--arch", "pi05"],
+        "external_server_protocol": "omniinfer-vla-zmq-server",
+        "log_file_name": "omniinfer-vla-server.log"
+    });
+    let plan = build_external_runtime_plan(&ExternalRuntimeRequest {
+        backend,
+        model_path: "/models/pi05_libero_finetuned_v044".to_string(),
+        mmproj_path: None,
+        host: "127.0.0.1".to_string(),
+        port: 15556,
+        ctx_size: Some(8192),
+        launch_args: None,
+    })
+    .unwrap();
+    assert_eq!(plan.ctx_size, None);
+    assert_eq!(plan.protocol, ExternalServerProtocol::OmniInferVlaZmqServer);
+    assert_eq!(plan.client_endpoint, "tcp://127.0.0.1:15556");
+    assert!(!plan.protocol.is_openai_compatible());
+    assert_eq!(
+        plan.readiness_probe,
+        RuntimeReadinessProbe::TcpConnectAndLog {
+            marker: "omniinfer-vla-server: bound to tcp://127.0.0.1:15556. ready.".to_string(),
+        }
+    );
+    assert_eq!(
+        plan.command,
+        vec![
+            "/runtime/omniinfer-vla-linux-cuda/bin/omniinfer-vla-server".to_string(),
+            "--bind".to_string(),
+            "tcp://127.0.0.1:15556".to_string(),
+            "--checkpoint".to_string(),
+            "/models/pi05_libero_finetuned_v044".to_string(),
+            "--arch".to_string(),
+            "pi05".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn rejects_vla_cpp_context_launch_arg() {
     let backend = json!({
         "id": "vla.cpp-linux",
@@ -172,6 +216,30 @@ fn rejects_unauthenticated_non_loopback_vla_bind() {
             RuntimePlanError::NonLoopbackVlaBind(host.to_string())
         );
     }
+}
+
+#[test]
+fn rejects_non_loopback_omniinfer_vla_bind() {
+    let backend = json!({
+        "id": "omniinfer-vla-linux-cuda",
+        "launcher_path": "/runtime/omniinfer-vla-linux-cuda/bin/omniinfer-vla-server",
+        "runtime_dir": "/runtime/omniinfer-vla-linux-cuda",
+        "external_server_protocol": "omniinfer-vla-zmq-server"
+    });
+    let error = build_external_runtime_plan(&ExternalRuntimeRequest {
+        backend,
+        model_path: "/models/pi05_libero_finetuned_v044".to_string(),
+        mmproj_path: None,
+        host: "0.0.0.0".to_string(),
+        port: 15556,
+        ctx_size: None,
+        launch_args: None,
+    })
+    .unwrap_err();
+    assert_eq!(
+        error,
+        RuntimePlanError::NonLoopbackOmniInferVlaBind("0.0.0.0".to_string())
+    );
 }
 
 #[test]

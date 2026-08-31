@@ -25,6 +25,7 @@ pub enum RuntimeReadinessProbe {
 pub enum ExternalServerProtocol {
     LlamaCppServer,
     VlaCppZmqServer,
+    OmniInferVlaZmqServer,
     FreeTokenOpenAiServer,
     VllmOpenAiServer,
     VllmWsl2OpenAiServer,
@@ -35,6 +36,7 @@ impl ExternalServerProtocol {
         match value {
             "llama.cpp-server" => Some(Self::LlamaCppServer),
             "vla.cpp-zmq-server" => Some(Self::VlaCppZmqServer),
+            "omniinfer-vla-zmq-server" => Some(Self::OmniInferVlaZmqServer),
             "freetoken-openai-server" => Some(Self::FreeTokenOpenAiServer),
             "vllm-openai-server" => Some(Self::VllmOpenAiServer),
             "vllm-wsl2-openai-server" => Some(Self::VllmWsl2OpenAiServer),
@@ -46,6 +48,7 @@ impl ExternalServerProtocol {
         match self {
             Self::LlamaCppServer => "llama.cpp-server",
             Self::VlaCppZmqServer => "vla.cpp-zmq-server",
+            Self::OmniInferVlaZmqServer => "omniinfer-vla-zmq-server",
             Self::FreeTokenOpenAiServer => "freetoken-openai-server",
             Self::VllmOpenAiServer => "vllm-openai-server",
             Self::VllmWsl2OpenAiServer => "vllm-wsl2-openai-server",
@@ -53,7 +56,7 @@ impl ExternalServerProtocol {
     }
 
     pub fn is_openai_compatible(self) -> bool {
-        !matches!(self, Self::VlaCppZmqServer)
+        !matches!(self, Self::VlaCppZmqServer | Self::OmniInferVlaZmqServer)
     }
 
     pub fn client_endpoint(self, host: &str, port: u16) -> String {
@@ -63,7 +66,7 @@ impl ExternalServerProtocol {
             .filter(std::net::IpAddr::is_ipv6)
             .map(|_| format!("[{host}]"))
             .unwrap_or_else(|| host.to_string());
-        if matches!(self, Self::VlaCppZmqServer) {
+        if matches!(self, Self::VlaCppZmqServer | Self::OmniInferVlaZmqServer) {
             format!("tcp://{endpoint_host}:{port}")
         } else {
             format!("http://{endpoint_host}:{port}")
@@ -99,6 +102,8 @@ pub enum RuntimePlanError {
     InvalidPort,
     #[error("vla.cpp ZeroMQ runtime must bind to a loopback host, got: {0}")]
     NonLoopbackVlaBind(String),
+    #[error("OmniInfer VLA Runtime ZeroMQ runtime must bind to a loopback host, got: {0}")]
+    NonLoopbackOmniInferVlaBind(String),
     #[error("invalid WSL2 launcher manifest {path}: {message}")]
     InvalidWslLauncherManifest { path: String, message: String },
     #[error("WSL2 vLLM does not support this Windows model path: {0}")]
@@ -169,6 +174,9 @@ pub fn build_external_runtime_plan(
             effective_ctx_size,
             log_file_name,
         ),
+        ExternalServerProtocol::OmniInferVlaZmqServer => {
+            build_omniinfer_vla_plan(&launcher_path, request, server_args, log_file_name)
+        }
         ExternalServerProtocol::FreeTokenOpenAiServer => build_freetoken_plan(
             &launcher_path,
             request,
@@ -341,6 +349,47 @@ fn build_vla_cpp_plan(
     })
 }
 
+fn build_omniinfer_vla_plan(
+    launcher_path: &Path,
+    request: &ExternalRuntimeRequest,
+    mut server_args: Vec<String>,
+    log_file_name: String,
+) -> Result<ExternalRuntimePlan, RuntimePlanError> {
+    if !is_loopback_host(&request.host) {
+        return Err(RuntimePlanError::NonLoopbackOmniInferVlaBind(
+            request.host.clone(),
+        ));
+    }
+    validate_omniinfer_vla_launch_args(&server_args)?;
+    let client_endpoint =
+        ExternalServerProtocol::OmniInferVlaZmqServer.client_endpoint(&request.host, request.port);
+    let mut command = vec![
+        launcher_path.display().to_string(),
+        "--bind".to_string(),
+        client_endpoint.clone(),
+        "--checkpoint".to_string(),
+        request.model_path.clone(),
+    ];
+    command.append(&mut server_args);
+    Ok(ExternalRuntimePlan {
+        command,
+        stop_command: None,
+        cwd: launcher_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(".")),
+        port: request.port,
+        ctx_size: None,
+        log_file_name,
+        proxy_model_ref: None,
+        protocol: ExternalServerProtocol::OmniInferVlaZmqServer,
+        client_endpoint: client_endpoint.clone(),
+        readiness_probe: RuntimeReadinessProbe::TcpConnectAndLog {
+            marker: format!("omniinfer-vla-server: bound to {client_endpoint}. ready."),
+        },
+    })
+}
+
 fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
         || host
@@ -352,6 +401,19 @@ fn validate_vla_cpp_launch_args(args: &[String]) -> Result<(), RuntimePlanError>
     for token in args {
         let flag = token.split_once('=').map(|(flag, _)| flag).unwrap_or(token);
         if matches!(flag, "-c" | "--ctx-size" | "--max-model-len") {
+            return Err(RuntimePlanError::ReservedLaunchArg(flag.to_string()));
+        }
+    }
+    Ok(())
+}
+
+fn validate_omniinfer_vla_launch_args(args: &[String]) -> Result<(), RuntimePlanError> {
+    for token in args {
+        let flag = token.split_once('=').map(|(flag, _)| flag).unwrap_or(token);
+        if matches!(
+            flag,
+            "-m" | "--model" | "--checkpoint" | "--bind" | "--host" | "--port"
+        ) {
             return Err(RuntimePlanError::ReservedLaunchArg(flag.to_string()));
         }
     }
@@ -582,7 +644,7 @@ fn ctx_size_flags(protocol: &str) -> [&'static str; 2] {
     match protocol {
         "freetoken-openai-server" => ["--max-seq-len-override", ""],
         "vllm-openai-server" | "vllm-wsl2-openai-server" => ["--max-model-len", ""],
-        "vla.cpp-zmq-server" => ["", ""],
+        "vla.cpp-zmq-server" | "omniinfer-vla-zmq-server" => ["", ""],
         _ => ["-c", "--ctx-size"],
     }
 }

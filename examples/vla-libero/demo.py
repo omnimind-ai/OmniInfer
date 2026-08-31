@@ -30,6 +30,7 @@ from typing import Any, Callable
 
 
 VLA_PROTOCOL = "vla.cpp-zmq-server"
+OMNIINFER_VLA_PROTOCOL = "omniinfer-vla-zmq-server"
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost"}
 ACTION_LABELS = ["dx", "dy", "dz", "droll", "dpitch", "dyaw", "gripper"]
 LIBERO_OBJECT_TASKS = (
@@ -239,12 +240,16 @@ def validate_vla_runtime(payload: dict[str, Any]) -> tuple[str, str, str | None]
     backend = payload.get("selected_backend") or payload.get("backend")
     model = payload.get("selected_model") or payload.get("model_path") or payload.get("model")
 
-    if protocol != VLA_PROTOCOL:
+    if protocol not in {VLA_PROTOCOL, OMNIINFER_VLA_PROTOCOL}:
         raise ValueError(
-            f"OmniInfer runtime protocol is {protocol!r}; expected {VLA_PROTOCOL!r}."
+            f"OmniInfer runtime protocol is {protocol!r}; expected {VLA_PROTOCOL!r} "
+            f"or {OMNIINFER_VLA_PROTOCOL!r}."
         )
-    if not isinstance(backend, str) or not backend.startswith("vla.cpp-"):
-        raise ValueError(f"OmniInfer selected a non-VLA backend: {backend!r}.")
+    expected_prefix = "omniinfer-vla-" if protocol == OMNIINFER_VLA_PROTOCOL else "vla.cpp-"
+    if not isinstance(backend, str) or not backend.startswith(expected_prefix):
+        raise ValueError(
+            f"OmniInfer selected an incompatible backend for {protocol}: {backend!r}."
+        )
     if not isinstance(endpoint, str):
         raise ValueError("OmniInfer did not report a VLA client_endpoint.")
 
@@ -388,7 +393,7 @@ def load_model_profiles(path: str, base: DemoConfig) -> dict[str, ModelProfile]:
             if model_value is not None
             else None
         )
-        if model is not None and not Path(model).is_file():
+        if model is not None and not Path(model).exists():
             raise ValueError(f"model profile {identifier!r} model does not exist: {model}")
         mmproj = entry.get("mmproj")
         if mmproj is not None:
@@ -413,8 +418,22 @@ def load_model_profiles(path: str, base: DemoConfig) -> dict[str, ModelProfile]:
                 f"model profile {identifier!r} n_action_steps must be an integer >= 1"
             )
         backend = entry.get("backend", base.backend)
-        if not isinstance(backend, str) or not backend.startswith("vla.cpp-"):
-            raise ValueError(f"model profile {identifier!r} backend must be a vla.cpp backend")
+        if not isinstance(backend, str) or not (
+            backend.startswith("vla.cpp-") or backend.startswith("omniinfer-vla-")
+        ):
+            raise ValueError(
+                f"model profile {identifier!r} backend must be a vla.cpp or OmniInfer VLA Runtime backend"
+            )
+        if model is not None:
+            model_path = Path(model)
+            if backend.startswith("omniinfer-vla-") and not model_path.is_dir():
+                raise ValueError(
+                    f"model profile {identifier!r} OmniInfer VLA Runtime model must be a directory: {model}"
+                )
+            if backend.startswith("vla.cpp-") and not model_path.is_file():
+                raise ValueError(
+                    f"model profile {identifier!r} vla.cpp model must be a file: {model}"
+                )
         omniinfer_url = validate_omniinfer_url(
             entry.get("omniinfer_url", base.omniinfer_url)
         )
@@ -493,7 +512,7 @@ class OmniInferAPI:
             payload = self._request("/omni/state")
             if not payload.get("backend_ready"):
                 raise RuntimeError(
-                    "No managed runtime is ready. Pass --model or load a vla.cpp backend first."
+                    "No managed runtime is ready. Pass --model or load a vla.cpp/OmniInfer VLA Runtime backend first."
                 )
         return validate_vla_runtime(payload)
 
@@ -922,10 +941,16 @@ class DemoController:
 
     def _run(self, task_id: int, profile: ModelProfile) -> None:
         run_config = profile.config
-        eval_root = self.repository_root / "framework" / "vla.cpp" / "eval"
+        configured_vla_root = os.environ.get("OMNIINFER_VLA_CPP_ROOT")
+        eval_roots = [self.repository_root / "framework" / "vla.cpp" / "eval"]
+        if configured_vla_root:
+            eval_roots.append(Path(configured_vla_root).expanduser() / "eval")
+        eval_roots.append(Path.home() / "vla.cpp" / "eval")
+        eval_root = next((candidate for candidate in eval_roots if candidate.is_dir()), eval_roots[0])
         if not (eval_root / "client" / "vla_cpp_client.py").is_file():
             raise RuntimeError(
-                "framework/vla.cpp is not initialized; run git submodule update --init framework/vla.cpp"
+                "vla.cpp eval client is not initialized; run git submodule update --init "
+                "framework/vla.cpp or set OMNIINFER_VLA_CPP_ROOT"
             )
         sys.path.insert(0, str(eval_root))
 

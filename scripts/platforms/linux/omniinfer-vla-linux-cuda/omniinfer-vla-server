@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${PACKAGE_ROOT}/../../../.." && pwd)"
+RUNTIME_HOME="${OMNIINFER_VLA_RUNTIME_HOME:-}"
+
+if [[ -z "${RUNTIME_HOME}" ]]; then
+    for candidate in "${REPO_ROOT}"/framework/*; do
+        if [[ -f "${candidate}/omniinfer_server.py" ]]; then
+            RUNTIME_HOME="${candidate}"
+            break
+        fi
+    done
+fi
+[[ -n "${RUNTIME_HOME}" ]] || {
+    printf 'Set OMNIINFER_VLA_RUNTIME_HOME to the provisioned VLA runtime home.\n' >&2
+    exit 1
+}
+VLA_PYTHON="${OMNIINFER_VLA_RUNTIME_PYTHON:-${RUNTIME_HOME}/.venv/bin/python}"
+
+[[ -x "${VLA_PYTHON}" ]] || {
+    printf 'Runtime Python is not executable: %s\n' "${VLA_PYTHON}" >&2
+    exit 1
+}
+
+export OMNIINFER_VLA_RUNTIME_HOME="${RUNTIME_HOME}"
+export OMNIINFER_VLA_PROTO="${OMNIINFER_VLA_PROTO:-${PACKAGE_ROOT}/vla.proto}"
+exec "${VLA_PYTHON}" "${PACKAGE_ROOT}/omniinfer_vla_server.py" "$@"

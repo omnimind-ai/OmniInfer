@@ -241,6 +241,57 @@ class RuntimeContractTests(unittest.TestCase):
             )
             self.assertNotIn(str(root), json.dumps(public))
 
+    def test_model_profiles_accept_omniinfer_vla_checkpoint_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "pi05_libero_finetuned_v044"
+            checkpoint.mkdir()
+            (checkpoint / "config.json").write_text("{}")
+            manifest = root / "models.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "models": {
+                            "pi05": {
+                                "label": "π0.5 OmniInfer VLA Runtime",
+                                "arch": "pi05",
+                                "backend": "omniinfer-vla-linux-cuda",
+                                "model": checkpoint.name,
+                            }
+                        }
+                    }
+                )
+            )
+            profiles = DEMO.load_model_profiles(
+                str(manifest), DEMO.DemoConfig(backend="omniinfer-vla-linux-cuda")
+            )
+            self.assertEqual(profiles["pi05"].config.model, str(checkpoint.resolve()))
+
+    def test_model_profiles_reject_file_for_omniinfer_vla_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = root / "pi05.safetensors"
+            model.write_text("not a directory")
+            manifest = root / "models.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "models": {
+                            "pi05": {
+                                "label": "π0.5 OmniInfer VLA Runtime",
+                                "arch": "pi05",
+                                "backend": "omniinfer-vla-linux-cuda",
+                                "model": model.name,
+                            }
+                        }
+                    }
+                )
+            )
+            with self.assertRaisesRegex(ValueError, "OmniInfer VLA Runtime model must be a directory"):
+                DEMO.load_model_profiles(
+                    str(manifest), DEMO.DemoConfig(backend="omniinfer-vla-linux-cuda")
+                )
+
     def test_model_profile_can_use_an_already_loaded_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest = Path(directory) / "models.json"
@@ -782,6 +833,19 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(endpoint, "tcp://127.0.0.1:15555")
         self.assertEqual(backend, "vla.cpp-linux-cuda")
         self.assertEqual(model, "/models/smolvla.gguf")
+
+    def test_accepts_managed_loopback_omniinfer_vla_runtime(self):
+        endpoint, backend, model = DEMO.validate_vla_runtime(
+            {
+                "external_server_protocol": "omniinfer-vla-zmq-server",
+                "client_endpoint": "tcp://127.0.0.1:15556",
+                "selected_backend": "omniinfer-vla-linux-cuda",
+                "selected_model": "/models/pi05_libero_finetuned_v044",
+            }
+        )
+        self.assertEqual(endpoint, "tcp://127.0.0.1:15556")
+        self.assertEqual(backend, "omniinfer-vla-linux-cuda")
+        self.assertEqual(model, "/models/pi05_libero_finetuned_v044")
 
     def test_rejects_openai_runtime_protocol(self):
         with self.assertRaisesRegex(ValueError, "expected 'vla.cpp-zmq-server'"):

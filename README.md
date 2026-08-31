@@ -1,162 +1,173 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/omniinfer-logo-dark.svg">
-    <img src="docs/assets/omniinfer-logo-light.svg" alt="OmniInfer logo" width="520">
-  </picture>
-</p>
+# OmniInfer-VLA（Jetson 部署与 Benchmark）
 
-# OmniInfer
+OmniInfer-VLA 在 Jetson CUDA 设备上运行 Pi0.5 和 GR00T N1.7 VLA 模型，
+提供一个本地 ZeroMQ/Protobuf 服务端，以及固定输入的延迟测试脚本。
 
-<p align="center">Easy, fast, and private LLM &amp; VLM inference for every device.</p>
+本文档对应当前 Jetson 部署目录：
 
-<p align="center">
-  <a href="https://github.com/omnimind-ai/OmniInfer/actions/workflows/main-platform-ci.yml"><img alt="Main Platform CI" src="https://github.com/omnimind-ai/OmniInfer/actions/workflows/main-platform-ci.yml/badge.svg"></a>
-  <a href="https://github.com/omnimind-ai/OmniInfer/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/omnimind-ai/OmniInfer?display_name=tag&amp;sort=semver"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/omnimind-ai/OmniInfer"></a>
-</p>
-
-<p align="center">
-  <a href="#quick-start"><strong>Quick Start</strong></a> ·
-  <a href="#documentation"><strong>Documentation</strong></a> ·
-  <a href="https://github.com/omnimind-ai/OmniInfer/releases"><strong>Releases</strong></a>
-</p>
-
-## Quick Start
-
-### Install OmniInfer
-
-<table>
-  <thead>
-    <tr>
-      <th>Linux x64</th>
-      <th>macOS arm64</th>
-      <th>Windows x64 PowerShell</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash</code></td>
-      <td><code>curl -fsSL https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.sh | bash</code></td>
-      <td><code>irm https://raw.githubusercontent.com/omnimind-ai/OmniInfer/main/scripts/install.ps1 | iex</code></td>
-    </tr>
-  </tbody>
-</table>
-
-The installers download the latest CLI-only GitHub Release, verify its SHA-256 checksum, and install it for the current user. For fixed versions, custom paths, manual installation, source setup, and removal, see [Installation](docs/installation.md).
-
-### Start in three steps
-
-1. Run `omniinfer` in a terminal.
-2. Choose a compatible backend. The TUI can install an available prebuilt runtime for you.
-3. Select a local model and start chatting.
-
-To run the local OpenAI- and Anthropic-compatible service, start `omniinfer serve` and follow the [CLI Guide](docs/CLI.md) or [API Reference](docs/API.md). Source builds and mobile embedding are documented separately.
-
-## News
-
-- **2026-08-28** — **Qwen3.8-Flash-Next support.** OmniInfer now tracks llama.cpp `b10665` and can load split GGUF model directories directly. Use a source-built llama.cpp backend until the matching prebuilt runtime is published in OmniInfer.
-- **2026-08-14** — 🚀 **Day-0 support for Qwen3.8-27B.** OmniInfer is ready for Qwen's latest 27B vision-language model from day one.
-
-## Demo
-
-Short, focused recordings of the main entry points. Each demo covers one capability.
-
-### Terminal UI — choose a backend, load a model, chat locally
-
-Running `omniinfer` opens a terminal UI that recommends a compatible backend, loads a local model, and starts a fully local chat session.
-
-<p align="center">
-  <img src="docs/assets/demo/tui-chat.webp" width="720" alt="Terminal UI selecting a backend, loading a model, and chatting locally">
-</p>
-<p align="center"><sub>Static preview: <a href="docs/assets/demo/tui-chat-poster.webp">terminal UI screenshot</a></sub></p>
-
-### Browser VLA demo — SmolVLA on LIBERO
-
-The optional [vla-libero example](examples/vla-libero/README.md) runs a SmolVLA policy through a managed vla.cpp runtime in the LIBERO simulator, showing live camera views, the predicted action, and latency in a browser dashboard.
-
-<p align="center">
-  <img src="docs/assets/demo/vla-libero.webp" width="720" alt="SmolVLA LIBERO browser dashboard showing camera views, predicted actions, latency, and a successful rollout">
-</p>
-<p align="center"><sub>Static preview: <a href="docs/assets/demo/vla-libero-poster.webp">SmolVLA LIBERO dashboard screenshot</a></sub></p>
-
-## About
-
-OmniInfer is a high-performance, cross-platform inference engine for running Large Language Models (LLM) and Vision-Language Models (VLM) locally. It abstracts away model compilation, hardware adaptation, and deployment complexity, enabling efficient local inference with minimal configuration.
-
-> OmniInfer powers the inference layer of [Omni Studio](https://omnimind.com.cn/omnistudio), a unified model orchestration platform.
-
-OmniInfer is fast with:
-
-- Optimized token generation speed and minimal memory footprint
-- Multiple backend engines, including llama.cpp, ik_llama.cpp, MNN, MLX, TurboQuant, LiteRT-LM, ExecuTorch QNN, and OmniInfer Native where supported
-- Hardware-aware adaptation and optimization
-
-OmniInfer is flexible and easy to use with:
-
-- Seamless multi-backend switching for the best available engine on each device
-- OpenAI-compatible and Anthropic-compatible local API endpoints
-- Support for text and vision-language workloads
-- Fine-grained parameter control for context length, GPU offloading, KV cache, and backend-native launch options
-
-OmniInfer runs everywhere:
-
-- Linux, macOS, Windows — desktop and server
-- Android and iOS — mobile and edge devices
-- One codebase across CLI, HTTP gateway, and mobile modules
-
-## Platform Support
-
-| Platform | Distribution | Representative runtimes |
-|---|---|---|
-| Linux x64 | Release CLI and source checkout | llama.cpp, ik_llama.cpp, vLLM, vla.cpp |
-| macOS arm64 | Release CLI and source checkout | llama.cpp, MLX, TurboQuant |
-| Windows x64 | Release CLI and source checkout | llama.cpp, vLLM through WSL2 |
-| Android | Gradle module | llama.cpp, MNN, LiteRT-LM, ExecuTorch QNN |
-| iOS | Swift package | Embedded native inference service |
-
-Runtime availability depends on the device and accelerator. Use `omniinfer backend list` for the current machine and see the [Build Guide](docs/build.md) for the full platform matrix.
-
-## Documentation
-
-### Start here
-
-- [Installation](docs/installation.md): Release installers, version pinning, source setup, manual installation, and removal
-- [CLI Guide](docs/CLI.md): Backend installation, model loading, chat, serving, and desktop integration
-- [API Reference](docs/API.md): Local OpenAI- and Anthropic-compatible HTTP APIs
-
-### Operate and integrate
-
-- [Model Loading](docs/model-load.md): Model discovery, parameters, and backend-specific behavior
-- [Remote Access](docs/remote-access.md): LAN access, Cloudflare Quick Tunnel, reverse proxies, and security
-- [Benchmark Results](docs/benchmark.md): Generate and archive submission-compatible benchmark JSON
-
-### Build and embed
-
-- [Build Guide](docs/build.md): Source checkout, backend builds, and platform packaging
-- [Android Integration](docs/android/integration.md): Embed OmniInfer in an Android application
-- [Android Backend Reference](docs/android/backends.md): Android runtime choices and requirements
-- [Android Smoke Tests](docs/android/smoke-tests.md) and [Troubleshooting](docs/android/troubleshooting.md)
-
-## Architecture
-
-![OmniInfer architecture](docs/assets/architecture.drawio.svg)
-
-## Contributing
-
-We welcome contributions and collaborations. See [Contributing to OmniInfer](CONTRIBUTING.md) to get involved.
-
-## Citation
-
-If you use OmniInfer in research, cite this repository. GitHub can generate additional formats from [CITATION.cff](CITATION.cff).
-
-```bibtex
-@software{omniinfer,
-  author = {{Omnimind AI}},
-  title = {OmniInfer},
-  url = {https://github.com/omnimind-ai/OmniInfer}
-}
+```text
+~/OmniInfer/framework/OmniInfer-VLA
 ```
 
-## License
+## 1. 目录与组件
 
-OmniInfer is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+```text
+OmniInfer-VLA/
+├── omniinfer_server.py             # ZeroMQ/Protobuf VLA 服务端
+├── omniinfer-vla/src/               # 主 Python 包：omniinfer_vla
+├── omniinfer-vla-kernel/            # CUDA/Triton 内核
+├── omniinfer-vla-ext/               # TVM-FFI C++ 扩展
+├── omniinfer-vla-utils/             # Pi0.5 / GR00T Processor 与工具
+├── omniinfer-vla-model-optimizer/   # 模型优化工具
+└── vla.proto                        # 服务协议
+```
+
+## 2. 环境配置
+
+开始前，请确认 Jetson 已安装与当前 JetPack 匹配的 CUDA 驱动，以及 Rust/Cargo、`uv`、
+C/C++ 编译器、CMake 和 Ninja。
+
+### 2.1 编译 OmniInfer CLI
+
+CLI 属于 OmniInfer 根仓库，必须先进入根目录再执行 Cargo 命令：
+
+```bash
+cd "$HOME/OmniInfer"
+cargo build -p omniinfer-cli
+```
+
+生成的可执行文件为：
+
+```text
+~/OmniInfer/target/debug/omniinfer
+```
+
+### 2.2 配置 OmniInfer-VLA Python 环境
+
+VLA Python workspace 位于 `framework/OmniInfer-VLA`。进入该目录后执行一次 `uv sync`，
+即可创建隔离环境、安装全部 workspace 依赖，并自动构建 `omniinfer-vla-ext` 的 C++ 扩展。
+
+
+## 3. 模型与本地资源
+
+默认 benchmark 使用以下目录，可通过环境变量覆盖：
+
+| 资源 | 默认路径 | 用途 |
+|---|---|---|
+| Pi0.5 checkpoint | `~/models/pi05_libero_finetuned_v044` | Pi0.5 权重 |
+| PaliGemma tokenizer | `~/models/paligemma-3b-pt-224` | Pi0.5 native Processor |
+| GR00T checkpoint | `~/models/GR00T-N1.7-LIBERO/libero_object` | GR00T LIBERO 权重 |
+| Cosmos/Qwen resources | `~/models/Cosmos-Reason2-2B` | GR00T native Processor |
+
+验证资源：
+
+```bash
+test -d "$HOME/models/pi05_libero_finetuned_v044"
+test -d "$HOME/models/paligemma-3b-pt-224"
+test -d "$HOME/models/GR00T-N1.7-LIBERO/libero_object"
+test -d "$HOME/models/Cosmos-Reason2-2B"
+```
+
+## 4. 启动服务
+
+服务只能绑定 loopback 地址。客户端通过 `vla.proto` 的 ZeroMQ 请求发送图像、语言和机器人
+状态，返回 action chunk。
+
+### Pi0.5：native Processor
+
+```bash
+uv run --project "$VLA_ROOT" python "$VLA_ROOT/omniinfer_server.py" \
+  --bind tcp://127.0.0.1:5555 \
+  --checkpoint "$HOME/models/pi05_libero_finetuned_v044" \
+  --arch pi05 \
+  --num-images 3 \
+  --params-dtype bfloat16 \
+  --vision-dtype float32 \
+  --processor-mode native \
+  --pi05-tokenizer "$HOME/models/paligemma-3b-pt-224"
+```
+
+### GR00T：prepared / engine-only 模式
+
+此模式跳过原生 Processor、tokenizer 和图像预处理。客户端必须提供已准备好的输入；它适合
+测 Engine 延迟，不应标为完整端到端延迟。
+
+```bash
+uv run --project "$VLA_ROOT" python "$VLA_ROOT/omniinfer_server.py" \
+  --bind tcp://127.0.0.1:5556 \
+  --checkpoint "$HOME/models/GR00T-N1.7-LIBERO/libero_object" \
+  --arch gr00t_n17 \
+  --num-images 2 \
+  --params-dtype bfloat16 \
+  --processor-mode prepared
+```
+
+GR00T native 模式还需要：
+
+```text
+--processor-mode native
+--processor-model-name-or-path ~/models/Cosmos-Reason2-2B
+--embodiment-tag LIBERO_PANDA
+```
+
+## 5. 一键 Benchmark
+
+脚本会自动：启动服务器 → 等待 CUDA Graph / 模型 ready → 执行预热和计时 → 输出 JSON 与汇总 →
+关闭它启动的服务器。
+
+```bash
+cd ~/OmniInfer
+
+export OMNIINFER_VLA_RUNTIME_HOME="$HOME/OmniInfer/framework/OmniInfer-VLA"
+
+# 默认：2 次预热、3 次正式计时，Pi0.5 + GR00T native
+./scripts/benchmark_omniinfer_vla.sh
+
+# Pi0.5 native 端到端（Processor + Engine + decode）
+WARMUP=2 TIMED=3 ./scripts/benchmark_omniinfer_vla.sh pi05
+
+# GR00T native 端到端；要求 torchvision 与 Jetson torch ABI 匹配
+WARMUP=2 TIMED=3 ./scripts/benchmark_omniinfer_vla.sh gr00t
+
+# GR00T prepared / engine-only；跳过 tokenizer 和视觉 Processor
+NATIVE=0 WARMUP=2 TIMED=3 ./scripts/benchmark_omniinfer_vla.sh gr00t
+```
+
+可覆盖的常用路径和参数：
+
+```bash
+PI_CHECKPOINT=/path/to/pi05 \
+PI05_TOKENIZER=/path/to/paligemma \
+GROOT_CHECKPOINT=/path/to/gr00t/libero_object \
+GROOT_PROCESSOR=/path/to/cosmos-qwen \
+GROOT_EMBODIMENT_TAG=LIBERO_PANDA \
+WARMUP=10 TIMED=50 \
+./scripts/benchmark_omniinfer_vla.sh pi05
+```
+
+默认固定输入：
+
+| 模型 | 参数 / 图像 | 文本长度 | Diffusion | 输出 |
+|---|---|---:|---:|---|
+| Pi0.5 | BF16 参数、F32 vision、3 × 224 图像 | 48 tokens | 10 steps | `50 × 7` LIBERO actions |
+| GR00T N1.7 | BF16、2 × 256 图像 | 156 tokens | 固定 noise | `40 × 132` 内部动作张量 |
+
+结果及服务日志写入：
+
+```text
+~/OmniInfer/.local/benchmarks/<model>-<timestamp>.json
+~/OmniInfer/.local/benchmarks/<model>-<timestamp>.server.log
+```
+
+输出指标含义：
+
+| 指标 | 含义 |
+|---|---|
+| `processor` | native 模型 Processor；prepared 模式不会包含这部分 |
+| `engine` | 已 CUDA 同步的核心引擎推理 |
+| `postprocess` | action decode / 返回前处理 |
+| `server total` | 服务端完整请求处理时间 |
+| `ZMQ RTT` | 客户端到服务端往返时间 |
+
+仅比较 engine 时，所有实现必须使用 prepared 输入；比较机器人真实部署延迟时，所有实现必须包含
+同样的图像、语言、状态处理和 decode。

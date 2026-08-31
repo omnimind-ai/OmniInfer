@@ -369,7 +369,12 @@ impl RustRuntimeManager {
             ));
         let (runtime_env, cuda_selection) =
             runtime_env_for_backend(backend, &effective_launch_args);
-        let budget_cuda_devices = if backend.capabilities.iter().any(|value| value == "cuda") {
+        let budget_cuda_devices = if backend.capabilities.iter().any(|value| value == "cuda")
+            && !backend
+                .capabilities
+                .iter()
+                .any(|value| value == "shared-memory")
+        {
             match cuda_selection.as_ref() {
                 Some(selection) => Some(selection.visible_devices.clone()),
                 None => Some(detect_cuda_device_ids()?.join(",")),

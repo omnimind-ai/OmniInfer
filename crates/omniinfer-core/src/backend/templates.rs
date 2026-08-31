@@ -258,6 +258,33 @@ const LINUX_TEMPLATES: &[BackendTemplate] = &[
             "OMNIINFER_VLA_CPP_LINUX_CUDA",
         )
     },
+    BackendTemplate {
+        model_artifact: "directory",
+        supports_mmproj: false,
+        supports_ctx_size: false,
+        external_server_protocol: Some("omniinfer-vla-zmq-server"),
+        log_file_name: "omniinfer-vla-server.log",
+        ..template(
+            "omniinfer-vla-linux-cuda",
+            "OmniInfer VLA Runtime (CUDA)",
+            "omniinfer-vla",
+            "omniinfer-vla-linux-cuda",
+            Some("omniinfer-vla-server"),
+            "Managed OmniInfer VLA Runtime for Pi0.5 and GR00T models on Linux CUDA",
+            &[
+                "vision",
+                "action",
+                "robotics",
+                "gpu",
+                "cuda",
+                "shared-memory",
+                "linux",
+                "zeromq",
+                "protobuf",
+            ],
+            "OMNIINFER_VLA_LINUX_CUDA",
+        )
+    },
 ];
 
 const WINDOWS_TEMPLATES: &[BackendTemplate] = &[
