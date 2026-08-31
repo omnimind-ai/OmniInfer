@@ -41,6 +41,11 @@ impl TestServer {
 }
 
 async fn spawn_test_upstream() -> TestServer {
+    spawn_test_upstream_with_model_id(Arc::new(std::sync::Mutex::new("test-model".to_string())))
+        .await
+}
+
+async fn spawn_test_upstream_with_model_id(model_id: Arc<std::sync::Mutex<String>>) -> TestServer {
     let (tx, rx) = oneshot::channel();
     let stopped = Arc::new(AtomicBool::new(false));
     let stopped_for_task = Arc::clone(&stopped);
@@ -48,6 +53,22 @@ async fn spawn_test_upstream() -> TestServer {
         .route(
             "/health",
             get(|| async { axum::Json(json!({"status": "ok"})) }),
+        )
+        .route(
+            "/v1/models",
+            get(move || {
+                let model_id = Arc::clone(&model_id);
+                async move {
+                    let model_id = model_id
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
+                    axum::Json(json!({
+                        "object": "list",
+                        "data": [{"id": model_id, "object": "model"}],
+                    }))
+                }
+            }),
         )
         .route("/v1/chat/completions", post(echo_chat_completion))
         .route("/omni/model/select", post(echo_model_select))
@@ -76,12 +97,24 @@ async fn echo_chat_completion(
     headers: HeaderMap,
     Query(query): Query<HashMap<String, String>>,
     Json(body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
+) -> Response<Body> {
+    if body.get("stream") == Some(&json!(true)) {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"external\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\" runtime\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            )))
+            .unwrap();
+    }
     Json(json!({
         "trace": query.get("trace").cloned().unwrap_or_default(),
         "auth": header_text(&headers, "authorization").unwrap_or_default(),
         "body": body,
     }))
+    .into_response()
 }
 
 async fn echo_model_select(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {

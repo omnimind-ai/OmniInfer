@@ -78,6 +78,39 @@ fn no_mmproj_gateway_payload_is_strictly_boolean() {
 }
 
 #[test]
+fn external_attachment_endpoint_requires_a_plain_loopback_origin() {
+    for endpoint in [
+        "https://127.0.0.1:18080",
+        "http://user@127.0.0.1:18080",
+        "http://127.0.0.1:18080/v1",
+        "http://127.0.0.1:18080?target=other",
+        "http://127.0.0.1:18080#fragment",
+        "http://192.0.2.10:18080",
+        "http://example.com:18080",
+    ] {
+        assert!(
+            normalize_attach_endpoint(endpoint, 19157).is_err(),
+            "endpoint should be rejected: {endpoint}"
+        );
+    }
+    assert_eq!(
+        normalize_attach_endpoint("http://127.0.0.1:18080", 19157).unwrap(),
+        ("http://127.0.0.1:18080".to_string(), 18080)
+    );
+    assert_eq!(
+        normalize_attach_endpoint("http://[::1]:18080", 19157).unwrap(),
+        ("http://[::1]:18080".to_string(), 18080)
+    );
+}
+
+#[test]
+fn external_attachment_endpoint_rejects_the_gateway_itself() {
+    let error = normalize_attach_endpoint("http://localhost:19157", 19157).unwrap_err();
+    assert_eq!(error.kind, AttachRuntimeErrorKind::Conflict);
+    assert!(error.message.contains("current OmniInfer gateway"));
+}
+
+#[test]
 fn restore_selection_exposes_persisted_no_mmproj_and_legacy_default() {
     let mut payload = json!({});
     let selected = omniinfer_core::local_state::SelectedModel {
