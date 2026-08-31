@@ -9,6 +9,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $MinimumVulkanHeaderVersion = 301
+$WindowsTargetVersion = "0x0A00"
 
 if ($Prebuilt) {
     throw "No prebuilt install path is configured for stable-diffusion.cpp-vulkan. Build from the pinned source submodule."
@@ -136,7 +137,8 @@ $configureArgs = @(
     "-DSD_BUILD_SHARED_GGML_LIB=OFF",
     "-DSD_WEBM=ON",
     "-DSD_WEBP=ON",
-    "-DGGML_NATIVE=$(if ($Native) { 'ON' } else { 'OFF' })"
+    "-DGGML_NATIVE=$(if ($Native) { 'ON' } else { 'OFF' })",
+    "-DCMAKE_CXX_FLAGS=-D_WIN32_WINNT=$WindowsTargetVersion -DWINVER=$WindowsTargetVersion"
 )
 
 $runtimeDllSource = $null

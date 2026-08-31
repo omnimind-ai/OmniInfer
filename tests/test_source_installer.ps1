@@ -25,6 +25,24 @@ if (-not $installerText.Contains('Invoke-OmniInfer serve --detach --port $OmniPo
     throw "Source installer backend activation must not restore a previous model"
 }
 
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$diffusionBuildScript = Join-Path $repoRoot "scripts\platforms\windows\stable-diffusion.cpp-vulkan\build.ps1"
+$diffusionTokens = $null
+$diffusionErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    (Resolve-Path $diffusionBuildScript),
+    [ref]$diffusionTokens,
+    [ref]$diffusionErrors
+) | Out-Null
+if ($diffusionErrors.Count -gt 0) {
+    throw "Windows stable-diffusion.cpp build script has parse errors: $($diffusionErrors -join '; ')"
+}
+$diffusionBuildText = [IO.File]::ReadAllText((Resolve-Path $diffusionBuildScript))
+if (-not $diffusionBuildText.Contains('$WindowsTargetVersion = "0x0A00"') -or
+    -not $diffusionBuildText.Contains('-D_WIN32_WINNT=$WindowsTargetVersion -DWINVER=$WindowsTargetVersion')) {
+    throw "Windows stable-diffusion.cpp must target Windows 10 for cpp-httplib"
+}
+
 $waitFunction = $ast.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
