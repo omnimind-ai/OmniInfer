@@ -12,6 +12,7 @@ This document defines the stable gateway contract for loading a model through
   "mmproj": "<optional-mmproj-path>",
   "no_mmproj": false,
   "ctx_size": 4096,
+  "backend_port": 18080,
   "resource_budget_bytes": 7516192768,
   "launch_args": [],
   "request_defaults": {
@@ -32,6 +33,7 @@ This document defines the stable gateway contract for loading a model through
 | `mmproj` | string | load | yes | Optional multimodal projector override. |
 | `no_mmproj` | boolean | load | yes | Defaults to `false`. Conflicts with `mmproj`; when `true`, disables explicit and automatic projector selection. |
 | `ctx_size` / `ctx-size` | integer | load | yes | Optional context length override. |
+| `backend_port` | integer | managed runtime | yes | Optional explicit listen port. It must be available before OmniInfer starts the child process; an occupied port is rejected instead of being treated as readiness evidence. Use `/omni/runtime/attach` to route to an independently started server. |
 | `resource_budget_bytes` | positive integer | admission | yes | Optional explicit runtime memory budget. It is required when a reference backend cannot resolve the model to a local file or directory, and it cannot be lower than OmniInfer's local estimate when one is available. |
 | `launch_args` | string array or shell string | load | yes | Optional backend-native launch arguments for external server backends. |
 | `request_defaults` | object | generation defaults | no | Stored with the loaded runtime and merged into later inference requests. |
@@ -217,6 +219,12 @@ unload or stop first:
 `POST /omni/backend/stop` only stops the current runtime and preserves the
 startup selection. `POST /omni/model/clear-selection` disables future restore
 without stopping a runtime that is currently loaded.
+
+`POST /omni/model/select` always creates and owns a managed runtime. It never
+infers attachment from an occupied `backend_port`. To use a manually started
+llama.cpp server, call `POST /omni/runtime/attach`; the external attachment is
+not added to the resource ledger or ordinary startup restore state, and
+detach/stop/shutdown leave its process running.
 
 When the gateway accepts a request but drops a load option that the selected
 backend cannot use, the response includes a warning:

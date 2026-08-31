@@ -112,6 +112,8 @@ Quick Tunnel is intended for demos and short-lived testing. For best compatibili
 | `GET` | `/v1/models` | OpenAI-compatible loaded-model list |
 | `POST` | `/omni/backend/select` | Select a backend |
 | `POST` | `/omni/backend/stop` | Stop current backend runtime |
+| `POST` | `/omni/runtime/attach` | Attach an independently started llama.cpp server |
+| `POST` | `/omni/runtime/detach` | Remove an external runtime route without stopping its process |
 | `POST` | `/omni/cache/clear` | Clear backend KV cache |
 | `POST` | `/omni/shutdown` | Stop the gateway |
 | `POST` | `/omni/thinking/select` | Update default thinking setting |
@@ -393,6 +395,9 @@ Status codes:
 
 Stops the currently loaded backend runtime process. The selected backend and persisted model selection are preserved, so a later direct `serve` can restore the model. Use `/omni/model/clear-selection` when the next startup must remain unloaded.
 
+For externally attached runtimes, this endpoint only removes the routes and
+health monitors. It never stops the independently owned processes.
+
 Example response:
 
 ```json
@@ -404,6 +409,73 @@ Example response:
   "restore_status": "pending"
 }
 ```
+
+## External Runtime Attachment
+
+External attachment lets the gateway route requests to a `llama-server` that
+was started independently. Unlike `/omni/model/select`, attachment never
+spawns, adopts, or terminates the upstream process.
+
+Both endpoints in this section are management endpoints. They are available to
+loopback clients by default. Remote use requires the existing explicit
+`--allow-remote-management` mode and a valid admin API key.
+
+### `POST /omni/runtime/attach`
+
+The upstream must be an HTTP origin on an explicit loopback host, without URL
+credentials, a path, query, or fragment. OmniInfer probes `/health` and
+`/v1/models` before publishing the route. The requested `model` must exactly
+match one of the upstream model IDs.
+
+```json
+{
+  "client_endpoint": "http://127.0.0.1:18080",
+  "external_server_protocol": "llama.cpp-server",
+  "model": "qwen3.5-2b-fvt",
+  "backend": "llama.cpp-cpu",
+  "request_defaults": {
+    "temperature": 0.2
+  }
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "already_attached": false,
+  "model": "qwen3.5-2b-fvt",
+  "selected_backend": "llama.cpp-cpu",
+  "backend_pid": null,
+  "backend_port": 18080,
+  "route_state": "ready",
+  "runtime_ownership": "external",
+  "process_owned": false,
+  "client_endpoint": "http://127.0.0.1:18080",
+  "persisted_for_restore": false
+}
+```
+
+The gateway monitors both health and the complete upstream model-ID set. If
+the server disappears or its identity changes, OmniInfer marks the attachment
+failed, removes it from `/v1/models`, rejects new inference requests with an
+actionable `503` error, and requires an explicit reattach. External
+attachments do not reserve resource-ledger capacity and are not persisted as
+managed restore selections.
+
+### `POST /omni/runtime/detach`
+
+```json
+{
+  "model": "qwen3.5-2b-fvt"
+}
+```
+
+Detaching invalidates the route generation and stops its health monitor. The
+response includes `process_left_running: true`; model unload, backend stop,
+gateway shutdown, and application exit follow the same non-ownership rule for
+external runtimes.
 
 ### `POST /omni/model/clear-selection`
 
@@ -521,6 +593,7 @@ Notes:
 
 - `model` is required.
 - `backend` is optional. If omitted, OmniInfer uses the selected backend or auto-selection logic.
+- `backend_port` is optional. When explicitly set, OmniInfer requires the host/port to be available before spawning a managed runtime. An occupied port fails deterministically; use `/omni/runtime/attach` for a pre-existing server.
 - `ctx_size` is optional and may also be sent as `ctx-size`.
 - `launch_args` is optional and intended for backend-native launch arguments.
 - Official Linux and Windows llama.cpp CUDA backends default to automatic placement by omitting `-ngl`. Use `-ngl 999` only to require strict full GPU offload.
@@ -810,7 +883,9 @@ Example response when a model is loaded:
       "owned_by": "omniinfer",
       "permission": [],
       "root": "models/Qwen3.5-2B-Q4_K_M.gguf",
-      "parent": null
+      "parent": null,
+      "runtime_ownership": "managed",
+      "client_endpoint": "http://127.0.0.1:12894"
     }
   ]
 }
