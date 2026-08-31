@@ -90,6 +90,31 @@ const LINUX_TEMPLATES: &[BackendTemplate] = &[
             "OMNIINFER_LLAMA_CPP_LINUX_VULKAN",
         )
     },
+    BackendTemplate {
+        model_artifact: "diffusion-model",
+        supports_mmproj: false,
+        supports_ctx_size: false,
+        external_server_protocol: Some("stable-diffusion.cpp-server"),
+        log_file_name: "stable-diffusion-server.log",
+        ..template(
+            "stable-diffusion.cpp-linux-vulkan",
+            "stable-diffusion.cpp Linux Vulkan",
+            "stable-diffusion.cpp",
+            "stable-diffusion.cpp-linux-vulkan",
+            Some("sd-server"),
+            "stable-diffusion.cpp image/video generation server managed by OmniInfer on Linux Vulkan",
+            &[
+                "image-generation",
+                "video-generation",
+                "native-audio",
+                "gpu",
+                "vulkan",
+                "linux",
+                "async-jobs",
+            ],
+            "OMNIINFER_STABLE_DIFFUSION_CPP_LINUX_VULKAN",
+        )
+    },
     template(
         "llama.cpp-linux-s390x",
         "llama.cpp Linux s390x",
@@ -292,6 +317,31 @@ const WINDOWS_TEMPLATES: &[BackendTemplate] = &[
             "llama.cpp Vulkan backend managed by OmniInfer",
             &["chat", "vision", "stream", "gpu", "vulkan"],
             "OMNIINFER_LLAMA_CPP_VULKAN",
+        )
+    },
+    BackendTemplate {
+        model_artifact: "diffusion-model",
+        supports_mmproj: false,
+        supports_ctx_size: false,
+        external_server_protocol: Some("stable-diffusion.cpp-server"),
+        log_file_name: "stable-diffusion-server.log",
+        ..template(
+            "stable-diffusion.cpp-vulkan",
+            "stable-diffusion.cpp Vulkan",
+            "stable-diffusion.cpp",
+            "stable-diffusion.cpp-vulkan",
+            Some("sd-server.exe"),
+            "stable-diffusion.cpp image/video generation server managed by OmniInfer on Windows Vulkan",
+            &[
+                "image-generation",
+                "video-generation",
+                "native-audio",
+                "gpu",
+                "vulkan",
+                "windows",
+                "async-jobs",
+            ],
+            "OMNIINFER_STABLE_DIFFUSION_CPP_VULKAN",
         )
     },
     template(

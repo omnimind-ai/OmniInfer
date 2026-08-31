@@ -8,6 +8,7 @@ pub(super) fn gpu_backend_ids(host: HostInfo) -> &'static [&'static str] {
             "llama.cpp-linux-cuda",
             "llama.cpp-linux-rocm",
             "llama.cpp-linux-vulkan",
+            "stable-diffusion.cpp-linux-vulkan",
             "omniinfer-native-linux",
             "ik_llama.cpp-linux-cuda",
             "vllm-linux-cuda",
@@ -17,6 +18,7 @@ pub(super) fn gpu_backend_ids(host: HostInfo) -> &'static [&'static str] {
         HostSystem::Windows => &[
             "llama.cpp-cuda",
             "llama.cpp-vulkan",
+            "stable-diffusion.cpp-vulkan",
             "llama.cpp-sycl",
             "llama.cpp-hip",
             "ik_llama.cpp-cuda",

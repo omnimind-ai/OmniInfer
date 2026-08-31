@@ -45,6 +45,11 @@ pub(super) fn build_runtime_resource_budget(
             cuda_visible_devices,
         );
     }
+    let diffusion_components = if backend.family == "stable-diffusion.cpp" {
+        stable_diffusion_component_bytes(payload)?
+    } else {
+        0
+    };
     let Some(weights) = weights else {
         let total = explicit_total.ok_or_else(|| {
             anyhow::anyhow!(
@@ -61,9 +66,13 @@ pub(super) fn build_runtime_resource_budget(
     let weights = weights.max(1);
     let base = weights
         .checked_add(projector)
+        .and_then(|bytes| bytes.checked_add(diffusion_components))
         .ok_or_else(|| anyhow::anyhow!("model artifact size overflow"))?;
     // Projector bytes affect framework/slack, not model KV or activation sizing.
-    let parameter_proxy = weights.saturating_mul(2).max(GIB);
+    let parameter_proxy = weights
+        .saturating_add(diffusion_components)
+        .saturating_mul(2)
+        .max(GIB);
     let ctx = u64::from(ctx_size.max(1));
     let kv_cache = checked_scaled(parameter_proxy, 3, 100)?
         .checked_mul(ctx)
@@ -101,6 +110,14 @@ pub(super) fn build_runtime_resource_budget(
             replicate_across_domains,
         )?);
     }
+    if diffusion_components > 0 {
+        components.extend(assign_component(
+            "diffusion_components",
+            diffusion_components,
+            &domains,
+            replicate_across_domains,
+        )?);
+    }
     let estimated = ResourceBudget::from_components(components)?;
     if let Some(explicit_total) = explicit_total {
         let estimated_minimum = if replicate_across_domains {
@@ -125,6 +142,41 @@ pub(super) fn build_runtime_resource_budget(
         )?)?);
     }
     Ok(estimated)
+}
+
+fn stable_diffusion_component_bytes(payload: &Value) -> Result<u64> {
+    let args = payload
+        .get("launch_args")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    let mut total = 0_u64;
+    for flag in ["--llm", "--vae", "--audio-vae"] {
+        let mut selected = None;
+        let mut index = 0;
+        while index < args.len() {
+            let token = args[index];
+            if let Some(value) = token.strip_prefix(&format!("{flag}=")) {
+                selected = Some(value);
+            } else if token == flag {
+                selected = args.get(index + 1).copied();
+                index += 1;
+            }
+            index += 1;
+        }
+        let Some(path) = selected else {
+            continue;
+        };
+        let bytes = artifact_size_bytes(&PathBuf::from(path))?.ok_or_else(|| {
+            anyhow::anyhow!("stable-diffusion.cpp component size is unknown for {flag}: {path}")
+        })?;
+        total = total
+            .checked_add(bytes)
+            .ok_or_else(|| anyhow::anyhow!("diffusion component size overflow"))?;
+    }
+    Ok(total)
 }
 
 fn build_freetoken_resource_budget(

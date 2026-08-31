@@ -664,7 +664,7 @@ impl RustRuntimeManager {
         Some(RuntimeProxyTarget {
             base_url: loaded
                 .external_server_protocol
-                .is_openai_compatible()
+                .is_http_transport()
                 .then(|| loaded.client_endpoint.clone()),
             client_endpoint: loaded.client_endpoint.clone(),
             protocol: loaded.external_server_protocol,

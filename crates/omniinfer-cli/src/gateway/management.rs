@@ -34,6 +34,7 @@ pub(super) async fn should_handle_rust_endpoint(
         ) => true,
         (&Method::POST, "/omni/thinking/select") => true,
         (&Method::POST, "/v1/chat/completions" | "/v1/messages") => true,
+        (&Method::GET | &Method::POST, path) if path.starts_with("/sdcpp/v1/") => true,
         (
             &Method::POST,
             "/tokenize" | "/detokenize" | "/omni/tokenize" | "/omni/detokenize"
@@ -418,6 +419,12 @@ pub(super) async fn try_handle_rust_endpoint(
                     json!({"error": {"message": message}}),
                 )));
             };
+            if !target.protocol.supports_chat() {
+                return Ok(Some(backend_protocol_not_supported(
+                    &target,
+                    "/v1/chat/completions",
+                )));
+            }
             let mut normalized_payload = match normalize_chat_request_with_defaults(
                 raw_payload.clone(),
                 &target.request_defaults,
@@ -562,6 +569,12 @@ pub(super) async fn try_handle_rust_endpoint(
                     json!({"error": {"message": "no model is loaded"}}),
                 )));
             };
+            if !target.protocol.supports_chat() {
+                return Ok(Some(backend_protocol_not_supported(
+                    &target,
+                    "/v1/messages",
+                )));
+            }
             let mut normalized = match normalize_chat_request_with_defaults(
                 openai_payload,
                 &target.request_defaults,
@@ -595,6 +608,45 @@ pub(super) async fn try_handle_rust_endpoint(
                     .unwrap_or(false),
             )
             .await?;
+            Ok(Some(response))
+        }
+        (&Method::GET | &Method::POST, path) if path.starts_with("/sdcpp/v1/") => {
+            const MAX_DIFFUSION_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
+            let target = state.runtime.lock().await.proxy_target_for_model(None);
+            let Some(target) = target else {
+                return Ok(Some(json_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    json!({"error": {"message": "no diffusion model is loaded"}}),
+                )));
+            };
+            if target.protocol
+                != omniinfer_core::runtime_plan::ExternalServerProtocol::StableDiffusionCppServer
+            {
+                return Ok(Some(backend_protocol_not_supported(&target, path)));
+            }
+            let method = request.method().clone();
+            let content_type = request.headers().get(CONTENT_TYPE).cloned();
+            let path_and_query = request
+                .uri()
+                .path_and_query()
+                .map(|value| value.as_str())
+                .unwrap_or(path);
+            let upstream = format!("{}{}", target.client_endpoint, path_and_query);
+            let body =
+                match axum::body::to_bytes(request.into_body(), MAX_DIFFUSION_REQUEST_BODY_BYTES)
+                    .await
+                {
+                    Ok(body) => body,
+                    Err(_) => {
+                        return Ok(Some(json_response(
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            json!({"error": {"message": "diffusion request body exceeds 16 MiB"}}),
+                        )));
+                    }
+                };
+            let response =
+                proxy_passthrough_to_runtime(&state.client, method, &upstream, content_type, body)
+                    .await?;
             Ok(Some(response))
         }
         _ => Ok(None),

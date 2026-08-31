@@ -307,6 +307,74 @@ fn visual_projector_does_not_change_model_context_components() {
 }
 
 #[test]
+fn diffusion_budget_includes_h3_component_files() {
+    let root = std::env::temp_dir().join(format!(
+        "omniinfer-diffusion-budget-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let model = root.join("minimax_h3_fl2va_pruned-Q4_K.gguf");
+    let llm_old = root.join("old-llm.gguf");
+    let llm = root.join("qwen3vl_32b_minimax_h3-Q4_K_M.gguf");
+    let vae = root.join("minimax_h3_video_vae_fp16.safetensors");
+    let audio_vae = root.join("minimax_h3_audio_vae_fp32.safetensors");
+    for (path, bytes) in [
+        (&model, 10 * MIB),
+        (&llm_old, 99 * MIB),
+        (&llm, 11 * MIB),
+        (&vae, 5 * MIB),
+        (&audio_vae, 2 * MIB),
+    ] {
+        fs::File::create(path).unwrap().set_len(bytes).unwrap();
+    }
+    let backend = backend_registry::BackendSpec {
+        id: "stable-diffusion.cpp-linux-vulkan".to_string(),
+        label: "test".to_string(),
+        family: "stable-diffusion.cpp".to_string(),
+        runtime_dir: root.display().to_string(),
+        launcher_path: None,
+        models_dir: None,
+        catalog_url: None,
+        description: "test".to_string(),
+        capabilities: vec!["vulkan".to_string()],
+        default_args: Vec::new(),
+        runtime_mode: "external_server".to_string(),
+        model_artifact: "diffusion-model".to_string(),
+        supports_mmproj: false,
+        supports_ctx_size: false,
+        python_modules: Vec::new(),
+        external_server_protocol: Some("stable-diffusion.cpp-server".to_string()),
+        log_file_name: "stable-diffusion-server.log".to_string(),
+    };
+    let budget = build_runtime_resource_budget(
+        &json!({
+            "launch_args": [
+                format!("--llm={}", llm_old.display()),
+                "--llm", llm.display().to_string(),
+                "--vae", vae.display().to_string(),
+                "--audio-vae", audio_vae.display().to_string()
+            ]
+        }),
+        &backend,
+        model.to_str().unwrap(),
+        None,
+        DEFAULT_LOAD_CONTEXT_SIZE,
+        None,
+        false,
+    )
+    .unwrap();
+    let component = budget
+        .components()
+        .iter()
+        .find(|component| component.name == "diffusion_components")
+        .unwrap();
+    assert_eq!(component.bytes, 18 * MIB);
+    assert_eq!(component.domain, MemoryDomain::Host);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn freetoken_reserves_host_model_and_elastic_cuda_pool() {
     let root = std::env::temp_dir().join(format!(
         "omniinfer-freetoken-budget-{}-{:?}",
