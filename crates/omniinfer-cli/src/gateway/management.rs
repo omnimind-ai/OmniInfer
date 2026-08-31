@@ -27,6 +27,8 @@ pub(super) async fn should_handle_rust_endpoint(
             &Method::POST,
             "/omni/backend/select"
             | "/omni/backend/stop"
+            | "/omni/runtime/attach"
+            | "/omni/runtime/detach"
             | "/omni/model/clear-selection"
             | "/omni/model/select"
             | "/omni/model/load"
@@ -204,6 +206,7 @@ pub(super) async fn try_handle_rust_endpoint(
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
+                .filter(|item| item.get("route_state") == Some(&json!("ready")))
                 .map(|item| {
                     let id = item
                         .get("id")
@@ -218,6 +221,8 @@ pub(super) async fn try_handle_rust_endpoint(
                         "permission": [],
                         "root": id,
                         "parent": null,
+                        "runtime_ownership": item["runtime_ownership"],
+                        "client_endpoint": item["client_endpoint"],
                     })
                 })
                 .collect::<Vec<_>>();
@@ -252,6 +257,68 @@ pub(super) async fn try_handle_rust_endpoint(
             })
             .await??;
             Ok(Some(json_response(StatusCode::OK, result)))
+        }
+        (&Method::POST, "/omni/runtime/attach") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let payload: Value = serde_json::from_slice(&body)?;
+            let runtime = Arc::clone(&state.runtime);
+            let gateway_port = state.listen_port;
+            let result = tokio::task::spawn_blocking(move || {
+                let handle = tokio::runtime::Handle::current();
+                handle.block_on(async move {
+                    runtime.lock().await.attach_runtime(
+                        payload,
+                        auth.admin_id.clone(),
+                        gateway_port,
+                    )
+                })
+            })
+            .await?;
+            Ok(Some(match result {
+                Ok(payload) => json_response(StatusCode::OK, payload),
+                Err(error) => json_response(
+                    match error.kind {
+                        AttachRuntimeErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+                        AttachRuntimeErrorKind::Conflict => StatusCode::CONFLICT,
+                        AttachRuntimeErrorKind::Unavailable => StatusCode::BAD_GATEWAY,
+                    },
+                    json!({"error": {"message": error.message}}),
+                ),
+            }))
+        }
+        (&Method::POST, "/omni/runtime/detach") => {
+            let body = request.into_body().collect().await?.to_bytes();
+            let payload: Value = if body.is_empty() {
+                json!({})
+            } else {
+                serde_json::from_slice(&body)?
+            };
+            let model = payload
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let runtime = Arc::clone(&state.runtime);
+            let result = tokio::task::spawn_blocking(move || {
+                let handle = tokio::runtime::Handle::current();
+                handle.block_on(async move {
+                    runtime
+                        .lock()
+                        .await
+                        .detach_runtime(model.as_deref(), auth.admin_id.as_deref())
+                })
+            })
+            .await?;
+            Ok(Some(match result {
+                Ok(payload) => json_response(StatusCode::OK, payload),
+                Err(error) => json_response(
+                    match error.kind {
+                        AttachRuntimeErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+                        AttachRuntimeErrorKind::Conflict => StatusCode::CONFLICT,
+                        AttachRuntimeErrorKind::Unavailable => StatusCode::BAD_GATEWAY,
+                    },
+                    json!({"error": {"message": error.message}}),
+                ),
+            }))
         }
         (&Method::POST, "/omni/model/clear-selection") => {
             let mut runtime = state.runtime.lock().await;
@@ -401,17 +468,27 @@ pub(super) async fn try_handle_rust_endpoint(
                 .get("model")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let target = {
+            let (target, unavailable_message) = {
                 let mut runtime = state.runtime.lock().await;
-                runtime.proxy_target_for_model(requested_model.as_deref())
+                let target = runtime.proxy_target_for_model(requested_model.as_deref());
+                let unavailable = target
+                    .is_none()
+                    .then(|| runtime.unavailable_route_message(requested_model.as_deref()))
+                    .flatten();
+                (target, unavailable)
             };
             let Some(target) = target else {
-                let message = requested_model
-                    .as_deref()
-                    .map(|model| format!("model is not loaded: {model}"))
-                    .unwrap_or_else(|| "no model is loaded".to_string());
+                let route_unavailable = unavailable_message.is_some();
+                let message = unavailable_message.unwrap_or_else(|| {
+                    requested_model
+                        .as_deref()
+                        .map(|model| format!("model is not loaded: {model}"))
+                        .unwrap_or_else(|| "no model is loaded".to_string())
+                });
                 return Ok(Some(json_response(
-                    if requested_model.is_some() {
+                    if route_unavailable {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    } else if requested_model.is_some() {
                         StatusCode::NOT_FOUND
                     } else {
                         StatusCode::SERVICE_UNAVAILABLE
@@ -556,17 +633,22 @@ pub(super) async fn try_handle_rust_endpoint(
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let openai_payload = anthropic_request_to_openai(&payload);
-            let mut target = {
+            let (mut target, unavailable_message) = {
                 let mut runtime = state.runtime.lock().await;
-                runtime.proxy_target_for_model(response_model.as_deref())
+                let target = runtime.proxy_target_for_model(response_model.as_deref());
+                let unavailable = target
+                    .is_none()
+                    .then(|| runtime.unavailable_route_message(response_model.as_deref()))
+                    .flatten();
+                (target, unavailable)
             };
-            if target.is_none() && response_model.is_some() {
+            if target.is_none() && unavailable_message.is_none() && response_model.is_some() {
                 target = state.runtime.lock().await.proxy_target_for_model(None);
             }
             let Some(target) = target else {
                 return Ok(Some(json_response(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    json!({"error": {"message": "no model is loaded"}}),
+                    json!({"error": {"message": unavailable_message.unwrap_or_else(|| "no model is loaded".to_string())}}),
                 )));
             };
             if !target.protocol.supports_chat() {

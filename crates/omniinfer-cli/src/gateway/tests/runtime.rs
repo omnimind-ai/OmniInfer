@@ -1165,3 +1165,390 @@ async fn model_selection_is_idempotent_and_restore_state_is_explicit() {
     upstream.stop().await;
     std::fs::remove_dir_all(temp).ok();
 }
+
+#[tokio::test]
+async fn external_attachment_proxies_and_all_detach_paths_leave_upstream_running() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("external-attachment-lifecycle");
+    std::fs::create_dir_all(&temp).unwrap();
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let upstream = spawn_test_upstream().await;
+    let upstream_endpoint = format!("http://127.0.0.1:{}", upstream.port);
+    let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+    let port = gateway.port;
+    let attach_payload = json!({
+        "client_endpoint": upstream_endpoint,
+        "external_server_protocol": "llama.cpp-server",
+        "model": "test-model",
+        "backend": external_test_backend_id(),
+        "request_defaults": {"temperature": 0.25},
+    });
+
+    let attach = tokio::task::spawn_blocking({
+        let payload = attach_payload.clone();
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/runtime/attach"))
+                .send_json(payload)
+                .unwrap()
+        }
+    })
+    .await
+    .unwrap();
+    let attach: Value = attach.into_body().read_json().unwrap();
+    assert_eq!(attach["runtime_ownership"], "external");
+    assert_eq!(attach["process_owned"], false);
+    assert_eq!(attach["backend_pid"], Value::Null);
+    assert_eq!(attach["persisted_for_restore"], false);
+
+    let state = gateway_state(port).await;
+    assert_eq!(state["backend_ready"], true, "state: {state}");
+    assert_eq!(state["model"], "test-model");
+    assert_eq!(state["runtime_ownership"], "external");
+    assert_eq!(state["runtime"]["pid"], Value::Null);
+    assert_eq!(state["restore_status"], "not_configured");
+    assert_eq!(state["resource_ledger"], Value::Null);
+
+    let models = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/v1/models"))
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let models: Value = models.into_body().read_json().unwrap();
+    assert_eq!(models["data"][0]["id"], "test-model");
+    assert_eq!(models["data"][0]["runtime_ownership"], "external");
+    assert_eq!(models["data"][0]["client_endpoint"], upstream_endpoint);
+
+    let chat = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .send_json(json!({
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": false,
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let chat: Value = chat.into_body().read_json().unwrap();
+    assert_eq!(chat["body"]["model"], "test-model");
+    assert_eq!(chat["body"]["temperature"], 0.25);
+
+    let stream = tokio::task::spawn_blocking(move || {
+        let response = ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .send_json(json!({
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": true,
+            }))
+            .unwrap();
+        let mut text = String::new();
+        response
+            .into_body()
+            .into_reader()
+            .read_to_string(&mut text)
+            .unwrap();
+        text
+    })
+    .await
+    .unwrap();
+    assert!(stream.contains("external"));
+    assert!(stream.contains("[DONE]"));
+
+    let detach = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/runtime/detach"))
+            .send_json(json!({"model": "test-model"}))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let detach: Value = detach.into_body().read_json().unwrap();
+    assert_eq!(detach["process_left_running"], true);
+    assert!(
+        tokio::task::spawn_blocking({
+            let upstream_endpoint = upstream_endpoint.clone();
+            move || {
+                ureq::get(format!("{upstream_endpoint}/health"))
+                    .call()
+                    .is_ok()
+            }
+        })
+        .await
+        .unwrap()
+    );
+
+    tokio::task::spawn_blocking({
+        let payload = attach_payload.clone();
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/runtime/attach"))
+                .send_json(payload)
+                .unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let stop = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/backend/stop"))
+            .send_json(json!({}))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let stop: Value = stop.into_body().read_json().unwrap();
+    assert_eq!(stop["detached_external_runtimes"], 1);
+    assert!(
+        tokio::task::spawn_blocking({
+            let upstream_endpoint = upstream_endpoint.clone();
+            move || {
+                ureq::get(format!("{upstream_endpoint}/health"))
+                    .call()
+                    .is_ok()
+            }
+        })
+        .await
+        .unwrap()
+    );
+
+    tokio::task::spawn_blocking({
+        let payload = attach_payload;
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/runtime/attach"))
+                .send_json(payload)
+                .unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/shutdown"))
+            .send_json(json!({}))
+            .unwrap();
+    })
+    .await
+    .unwrap();
+    assert!(gateway.wait_stopped().await);
+    assert!(
+        tokio::task::spawn_blocking(move || {
+            ureq::get(format!("{upstream_endpoint}/health"))
+                .call()
+                .is_ok()
+        })
+        .await
+        .unwrap()
+    );
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
+async fn external_attachment_rejects_model_mismatch_and_withdraws_failed_route() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("external-attachment-failure");
+    std::fs::create_dir_all(&temp).unwrap();
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let upstream = spawn_test_upstream().await;
+    let endpoint = format!("http://127.0.0.1:{}", upstream.port);
+    let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+    let port = gateway.port;
+
+    let mismatch = tokio::task::spawn_blocking({
+        let endpoint = endpoint.clone();
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/runtime/attach"))
+                .config()
+                .http_status_as_error(false)
+                .build()
+                .send_json(json!({
+                    "client_endpoint": endpoint,
+                    "external_server_protocol": "llama.cpp-server",
+                    "model": "wrong-model",
+                    "backend": external_test_backend_id(),
+                }))
+                .unwrap()
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(mismatch.status().as_u16(), 409);
+
+    tokio::task::spawn_blocking({
+        let endpoint = endpoint.clone();
+        move || {
+            ureq::post(format!("http://127.0.0.1:{port}/omni/runtime/attach"))
+                .send_json(json!({
+                    "client_endpoint": endpoint,
+                    "external_server_protocol": "llama.cpp-server",
+                    "model": "test-model",
+                    "backend": external_test_backend_id(),
+                }))
+                .unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    upstream.stop().await;
+
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = gateway_state(port).await;
+            if state["backend_ready"] == false {
+                break state;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("external runtime route should be withdrawn after health monitoring fails");
+    assert_eq!(state["backend_ready"], false);
+    assert!(
+        state["runtime_error"]
+            .as_str()
+            .unwrap()
+            .contains("route withdrawn")
+    );
+    assert_eq!(state["loaded_models"][0]["route_state"], "failed");
+
+    let chat = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(json!({
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "Hello"}],
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(chat.status().as_u16(), 503);
+    let chat: Value = chat.into_body().read_json().unwrap();
+    assert!(
+        chat["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("attach it again")
+    );
+
+    gateway.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
+async fn external_attachment_withdraws_route_when_upstream_identity_changes() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("external-attachment-identity-change");
+    std::fs::create_dir_all(&temp).unwrap();
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let model_id = Arc::new(std::sync::Mutex::new("test-model".to_string()));
+    let upstream = spawn_test_upstream_with_model_id(Arc::clone(&model_id)).await;
+    let endpoint = format!("http://127.0.0.1:{}", upstream.port);
+    let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+    let port = gateway.port;
+
+    tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/runtime/attach"))
+            .send_json(json!({
+                "client_endpoint": endpoint,
+                "external_server_protocol": "llama.cpp-server",
+                "model": "test-model",
+                "backend": external_test_backend_id(),
+            }))
+            .unwrap();
+    })
+    .await
+    .unwrap();
+    *model_id
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = "replacement-model".to_string();
+
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = gateway_state(port).await;
+            if state["backend_ready"] == false {
+                break state;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("external runtime route should be withdrawn after its identity changes");
+    assert!(
+        state["runtime_error"]
+            .as_str()
+            .unwrap()
+            .contains("identity changed")
+    );
+
+    let models = tokio::task::spawn_blocking(move || {
+        ureq::get(format!("http://127.0.0.1:{port}/v1/models"))
+            .call()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let models: Value = models.into_body().read_json().unwrap();
+    assert!(models["data"].as_array().unwrap().is_empty());
+
+    gateway.stop().await;
+    upstream.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[tokio::test]
+async fn managed_load_rejects_an_occupied_backend_port_without_spawning() {
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("occupied-managed-port");
+    let model = temp.join("model.gguf");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&model, "").unwrap();
+    let backend_id = external_test_backend_id();
+    install_fake_llama_server(&temp, backend_id);
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let existing = spawn_test_upstream().await;
+    let backend_port = existing.port;
+    let gateway = spawn_test_gateway(existing.port, GatewayAccessPolicy::default()).await;
+    let port = gateway.port;
+
+    let response = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(json!({
+                "backend": backend_id,
+                "model": model.display().to_string(),
+                "backend_port": backend_port,
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.status().as_u16(), 502);
+    let response: Value = response.into_body().read_json().unwrap();
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("already occupied or unavailable")
+    );
+    assert!(
+        tokio::task::spawn_blocking(move || {
+            ureq::get(format!("http://127.0.0.1:{backend_port}/health"))
+                .call()
+                .is_ok()
+        })
+        .await
+        .unwrap()
+    );
+    let state = gateway_state(port).await;
+    assert_eq!(state["backend_ready"], false);
+    assert!(state["loaded_models"].as_array().unwrap().is_empty());
+
+    gateway.stop().await;
+    existing.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}

@@ -47,7 +47,9 @@ use access_policy::DynamicAccessPolicy;
 use gpu_status::{gpu_status_payload, query_nvidia_smi_gpu_status};
 use request_history::{RequestHistoryRecord, query_from_pairs};
 use response::{add_cors_headers, cors_response, json_response, should_forward_response_header};
-use runtime_manager::{LoadModelOutcome, RuntimeProxyTarget, RustRuntimeManager};
+use runtime_manager::{
+    AttachRuntimeErrorKind, LoadModelOutcome, RuntimeProxyTarget, RustRuntimeManager,
+};
 
 const MAX_STREAM_HISTORY_CAPTURE_CHARS: usize = 12_000;
 
@@ -70,6 +72,7 @@ pub struct GatewayConfig {
 #[derive(Clone)]
 struct GatewayState {
     backend_host: String,
+    listen_port: u16,
     runtime_startup_timeout: Duration,
     access_policy: Arc<tokio::sync::Mutex<DynamicAccessPolicy>>,
     public_model_root: Option<PathBuf>,
@@ -97,6 +100,7 @@ async fn run_gateway_with_listener(config: GatewayConfig, listener: TcpListener)
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let state = GatewayState {
         backend_host: "127.0.0.1".to_string(),
+        listen_port: config.listen_port,
         runtime_startup_timeout: config.runtime_startup_timeout,
         access_policy: Arc::new(tokio::sync::Mutex::new(DynamicAccessPolicy::new(
             config.access_policy,

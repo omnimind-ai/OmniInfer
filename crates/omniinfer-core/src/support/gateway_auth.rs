@@ -475,6 +475,8 @@ mod tests {
         for (method, path) in [
             ("DELETE", "/sdcpp/v1/jobs/job-42"),
             ("POST", "/omni/model/select"),
+            ("POST", "/omni/runtime/attach"),
+            ("POST", "/omni/runtime/detach"),
         ] {
             let mut request = request(method, path);
             request.authorization = Some("Bearer inference".to_string());
