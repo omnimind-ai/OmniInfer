@@ -11,10 +11,10 @@
       "submodule_commit": "61881b1f7f0b13d9e46d561fc25afcd6bbaec479"
     },
     "vllm-project/vllm": {
-      "tag": "v0.27.1",
-      "submodule_tag": "v0.27.1",
+      "tag": "v0.28.0",
+      "submodule_tag": "v0.28.0",
       "submodule_path": "framework/vllm",
-      "submodule_commit": "6e448d0ea9bf3d88d898b65449ca6dc2aec170ac"
+      "submodule_commit": "2cf0a6915ce544dc493a0990f2ea38d81601128a"
     }
   },
   "python_runtimes": {
