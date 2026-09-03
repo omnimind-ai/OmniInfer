@@ -5,10 +5,13 @@ use std::time::Duration;
 
 fn main() {
     let mut port = None;
+    let mut model = "test-model".to_string();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--port" {
             port = args.next();
+        } else if matches!(arg.as_str(), "-m" | "--model") {
+            model = args.next().expect("model value is required");
         }
     }
     let port = port.expect("--port is required");
@@ -37,11 +40,11 @@ fn main() {
         }
     }
     for stream in listener.incoming().flatten() {
-        handle(stream);
+        handle(stream, &model);
     }
 }
 
-fn handle(mut stream: TcpStream) {
+fn handle(mut stream: TcpStream, model: &str) {
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).is_err() {
@@ -65,11 +68,13 @@ fn handle(mut stream: TcpStream) {
         return;
     }
     let response = if request_line.starts_with("GET /health") {
-        r#"{"status":"ok"}"#
+        r#"{"status":"ok"}"#.to_string()
+    } else if request_line.starts_with("GET /v1/models") {
+        format!(r#"{{"object":"list","data":[{{"id":"{model}"}}]}}"#)
     } else if request_line.starts_with("POST /v1/chat/completions") {
-        r#"{"choices":[{"message":{"content":"fake backend"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2}}"#
+        r#"{"choices":[{"message":{"content":"fake backend"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2}}"#.to_string()
     } else {
-        r#"{"ok":true}"#
+        r#"{"ok":true}"#.to_string()
     };
     let headers = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

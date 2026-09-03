@@ -324,6 +324,125 @@ fn serve_detach_external_backend_runs_without_python_upstream() {
 }
 
 #[test]
+fn serve_stop_detaches_external_runtime_and_restarts_immediately() {
+    let backend_id = test_external_backend_id();
+    let source_root = temp_repo_root("serve-stop-external-source");
+    let state_root = temp_repo_root("serve-stop-external-state");
+    let runtime_root = temp_repo_root("serve-stop-external-runtime");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    let gateway_port = free_port();
+    let upstream_port = free_port();
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        format!(
+            r#"{{"host":"127.0.0.1","port":{gateway_port},"startup_timeout":10,"default_backend":"{backend_id}"}}"#,
+        ),
+    )
+    .expect("write config");
+    install_fake_backend(&state_root, backend_id);
+    install_fake_runtime_server_in_root(&runtime_root, backend_id);
+    let runtime_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+    let runtime = runtime_root.join(backend_id).join("bin").join(runtime_name);
+    let mut upstream = StdCommand::new(runtime)
+        .args(["--host", "127.0.0.1", "--port"])
+        .arg(upstream_port.to_string())
+        .args(["--model", "external-test-model"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start external runtime");
+    let upstream_health = wait_for_http_json(upstream_port, "/health");
+    assert_eq!(upstream_health["status"], "ok");
+
+    let start_serve = || {
+        let mut command = StdCommand::new(assert_cmd::cargo::cargo_bin("omniinfer"));
+        command
+            .env("OMNIINFER_RUST_STRICT", "1")
+            .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+            .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+            .args(["serve", "--detach", "--port"])
+            .arg(gateway_port.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("start detached serve")
+    };
+    assert!(start_serve().success());
+    let health = wait_for_http_json(gateway_port, "/health");
+    assert_eq!(health["status"], "ok");
+
+    let attach = http_client::post_json(
+        &format!("http://127.0.0.1:{gateway_port}/omni/runtime/attach"),
+        &serde_json::json!({
+            "client_endpoint": format!("http://127.0.0.1:{upstream_port}"),
+            "external_server_protocol": "llama.cpp-server",
+            "model": "external-test-model",
+            "backend": backend_id,
+        }),
+        Duration::from_secs(5),
+    )
+    .expect("attach external runtime");
+    assert_eq!(attach.status, 200, "attach: {:?}", attach.body);
+    assert_eq!(attach.body["process_owned"], false);
+
+    let state_path = state_root
+        .join(".local")
+        .join("run")
+        .join(format!("serve-{gateway_port}.json"));
+    let mut recorded: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_path).expect("read serve state"))
+            .expect("parse serve state");
+    recorded["backend_ready"] = serde_json::json!(true);
+    recorded["backend"] = serde_json::json!(backend_id);
+    recorded["model"] = serde_json::json!("external-test-model");
+    recorded["backend_pid"] = serde_json::Value::Null;
+    recorded["backend_port"] = serde_json::json!(upstream_port);
+    recorded
+        .as_object_mut()
+        .expect("serve state object")
+        .remove("backend_process_owned");
+    fs::write(
+        &state_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&recorded).expect("serialize serve state")
+        ),
+    )
+    .expect("write v0.3.29-compatible serve state");
+
+    let mut stop = Command::cargo_bin("omniinfer").expect("binary exists");
+    stop.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .args(["serve", "stop", "--port"])
+        .arg(gateway_port.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "OmniInfer service stopped on port {gateway_port}"
+        )));
+    assert!(wait_for_port_closed(gateway_port));
+    assert!(!state_path.exists());
+    assert_eq!(wait_for_http_json(upstream_port, "/health")["status"], "ok");
+
+    assert!(start_serve().success());
+    assert_eq!(wait_for_http_json(gateway_port, "/health")["status"], "ok");
+    stop_rust_serve(&source_root, &state_root, gateway_port);
+    assert_eq!(wait_for_http_json(upstream_port, "/health")["status"], "ok");
+
+    upstream.kill().expect("stop external runtime");
+    upstream.wait().expect("wait external runtime");
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+    fs::remove_dir_all(runtime_root).ok();
+}
+
+#[test]
 fn serve_explicit_roots_reach_gateway_model_load_lifecycle() {
     let backend_id = test_external_backend_id();
     let source_root = temp_repo_root("serve-explicit-roots-source");

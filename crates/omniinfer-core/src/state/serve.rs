@@ -89,6 +89,8 @@ pub struct ServePidInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_process: Option<ProcessIdentity>,
     pub backend_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_process_owned: Option<bool>,
 }
 
 pub struct ServePortLock {
@@ -380,6 +382,7 @@ mod tests {
             backend_pid: Some(456),
             backend_process: None,
             backend_port: Some(12345),
+            backend_process_owned: Some(true),
         };
         let value = serde_json::to_value(&info).unwrap();
         assert_eq!(value["pid"], 123);
@@ -391,6 +394,7 @@ mod tests {
             "https://example.trycloudflare.com/v1"
         );
         assert_eq!(value["backend_ready"], true);
+        assert_eq!(value["backend_process_owned"], true);
     }
 
     #[test]
@@ -473,5 +477,6 @@ mod tests {
         assert_eq!(info.cloudflared_pid, Some(124));
         assert!(info.run_id.is_none());
         assert!(info.gateway_process.is_none());
+        assert!(info.backend_process_owned.is_none());
     }
 }
