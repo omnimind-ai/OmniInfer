@@ -231,7 +231,7 @@ The active runtime and the persisted startup selection are reported separately:
 - `restore_completed` is true only when a loaded runtime matches the persisted backend, model, `mmproj`, and context size.
 - `generation` and `route_state` identify the currently routable runtime generation.
 - `resource_ledger` reports capacity, reserved, committed, and available bytes by host, CUDA-device, or unified-memory domain.
-- `runtime_placement` reports the effective llama.cpp CUDA policy, CPU/GPU layer placement, startup-log buffer totals, and reconciled budget. It is `null` for runtimes that do not use placement reconciliation.
+- `runtime_placement` reports the effective llama.cpp CUDA policy, CPU/GPU layer placement, per-device startup-log buffer totals, and reconciled budget. Official single- and multi-GPU llama.cpp CUDA loads report it; it is `null` for runtimes that do not use placement reconciliation.
 
 Example:
 

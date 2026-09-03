@@ -1239,14 +1239,23 @@ fn partial_offload_manages_trace_verbosity_and_rejects_disabled_logs() {
     .unwrap_err();
     assert!(error.to_string().contains("remove --log-disable"));
 
-    let explicit_full = vec!["--log-disable".to_string()];
+    let error = managed_placement_evidence_args(
+        &["--log-disable".to_string()],
+        Some(LlamaCppCudaPlacementPolicy::ExplicitFull),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("remove --log-disable"));
     assert_eq!(
         managed_placement_evidence_args(
-            &explicit_full,
-            Some(LlamaCppCudaPlacementPolicy::ExplicitFull)
+            &["--gpu-layers=999".to_string()],
+            Some(LlamaCppCudaPlacementPolicy::ExplicitFull),
         )
         .unwrap(),
-        explicit_full
+        vec![
+            "--gpu-layers=999".to_string(),
+            "-lv".to_string(),
+            "4".to_string(),
+        ]
     );
 }
 
@@ -1260,9 +1269,32 @@ fn partial_offload_provisional_budget_guards_host_and_cuda() {
         reserved: BTreeMap::new(),
         committed: BTreeMap::new(),
     };
-    let provisional = provisional_partial_offload_budget(&estimated, &snapshot).unwrap();
+    let provisional = provisional_llama_cpp_placement_budget(&estimated, &snapshot).unwrap();
     assert_eq!(provisional.domains()[&MemoryDomain::Host], 1_000);
     assert_eq!(provisional.domains()[&cuda], 600);
+}
+
+#[test]
+fn multi_gpu_provisional_budget_guards_any_tensor_split() {
+    let cuda0 = MemoryDomain::Cuda("0".to_string());
+    let cuda1 = MemoryDomain::Cuda("1".to_string());
+    let estimated =
+        ResourceBudget::from_domains(BTreeMap::from([(cuda0.clone(), 700), (cuda1.clone(), 300)]))
+            .unwrap();
+    let snapshot = omniinfer_core::resource_ledger::ResourceLedgerSnapshot {
+        capacity_snapshot_id: 1,
+        capacities: BTreeMap::from([
+            (MemoryDomain::Host, 2_000),
+            (cuda0.clone(), 800),
+            (cuda1.clone(), 600),
+        ]),
+        reserved: BTreeMap::new(),
+        committed: BTreeMap::new(),
+    };
+    let provisional = provisional_llama_cpp_placement_budget(&estimated, &snapshot).unwrap();
+    assert_eq!(provisional.domains()[&MemoryDomain::Host], 1_000);
+    assert_eq!(provisional.domains()[&cuda0], 800);
+    assert_eq!(provisional.domains()[&cuda1], 600);
 }
 
 #[test]
@@ -1306,6 +1338,36 @@ fn host_model_buffer_takes_precedence_over_all_layers_offloaded() {
     assert_eq!(placement.mode, "partial");
     assert_eq!(placement.offloaded_layers, Some(41));
     assert_eq!(placement.total_layers, Some(41));
+}
+
+#[test]
+fn small_cpu_mapping_does_not_misclassify_full_moe_offload() {
+    let placement = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 42/42 layers to GPU\n\
+         load_tensors: CPU_Mapped model buffer size = 272.81 MiB\n\
+         load_tensors: CUDA0 model buffer size = 20113.06 MiB\n\
+         llama_kv_cache: CUDA0 KV buffer size = 80.00 MiB\n\
+         sched_reserve: CUDA0 compute buffer size = 72.02 MiB\n",
+        "0",
+        LlamaCppCudaPlacementPolicy::ExplicitFull,
+    )
+    .unwrap();
+    assert_eq!(placement.mode, "full");
+    assert_eq!(placement.offloaded_layers, Some(42));
+    assert_eq!(placement.total_layers, Some(42));
+}
+
+#[test]
+fn explicit_full_offload_rejects_material_host_placement() {
+    let error = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 41/41 layers to GPU\n\
+         load_tensors: CPU_Mapped model buffer size = 20699.72 MiB\n\
+         load_tensors: CUDA0 model buffer size = 9340.14 MiB\n",
+        "0",
+        LlamaCppCudaPlacementPolicy::ExplicitFull,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("did not satisfy"));
 }
 
 #[test]

@@ -504,6 +504,20 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
+placement_mode="$(cat "$(dirname "$0")/placement-mode" 2>/dev/null || printf partial)"
+if [ "$placement_mode" = "full" ]; then
+  printf '%s\n' \
+    'load_tensors: offloaded 42/42 layers to GPU' \
+    'load_tensors: CPU_Mapped model buffer size = 32.00 MiB' \
+    'load_tensors: CUDA0 model buffer size = 2048.00 MiB' \
+    'llama_kv_cache: CUDA0 KV buffer size = 80.00 MiB' \
+    'sched_reserve: CUDA0 compute buffer size = 72.00 MiB'
+else
+  printf '%s\n' \
+    'load_tensors: offloaded 2/4 layers to GPU' \
+    'load_tensors: CPU_Mapped model buffer size = 8.00 MiB' \
+    'load_tensors: CUDA0 model buffer size = 16.00 MiB'
+fi
 exec python3 - "$port" <<'PY'
 import json
 import sys

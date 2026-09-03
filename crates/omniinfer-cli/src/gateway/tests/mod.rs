@@ -413,20 +413,45 @@ fn install_fake_llama_server(root: &std::path::Path, backend_id: &str) {
     {
         let script = r#"#!/usr/bin/env bash
 port=""
+gpu_layers=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --port) port="$2"; shift 2 ;;
+    -ngl|--gpu-layers) gpu_layers="$2"; shift 2 ;;
+    -ngl=*|--gpu-layers=*) gpu_layers="${1#*=}"; shift ;;
     *) shift ;;
   esac
 done
 delay_file="$(dirname "$0")/startup-delay-ms"
 delay_ms="$(cat "$delay_file" 2>/dev/null || printf 0)"
-placement_mode="$(cat "$(dirname "$0")/placement-mode" 2>/dev/null || printf partial)"
+placement_mode="$(cat "$(dirname "$0")/placement-mode" 2>/dev/null || true)"
+if [ -z "$placement_mode" ]; then
+  case "${gpu_layers,,}" in
+    999|all|max) placement_mode="full" ;;
+    *) placement_mode="partial" ;;
+  esac
+fi
 if [ "$placement_mode" = "oversized" ]; then
   printf '%s\n' \
     'load_tensors: offloaded 2/4 layers to GPU' \
     'load_tensors: CPU_Mapped model buffer size = 1000000.00 GiB' \
     'load_tensors: CUDA0 model buffer size = 1000000.00 GiB'
+elif [ "$placement_mode" = "multi" ]; then
+  printf '%s\n' \
+    'load_tensors: offloaded 4/4 layers to GPU' \
+    'load_tensors: CUDA0 model buffer size = 16.00 MiB' \
+    'load_tensors: CUDA1 model buffer size = 12.00 MiB' \
+    'llama_kv_cache: CUDA0 KV buffer size = 4.00 MiB' \
+    'llama_kv_cache: CUDA1 KV buffer size = 3.00 MiB' \
+    'sched_reserve: CUDA0 compute buffer size = 4.00 MiB' \
+    'sched_reserve: CUDA1 compute buffer size = 3.00 MiB'
+elif [ "$placement_mode" = "full" ]; then
+  printf '%s\n' \
+    'load_tensors: offloaded 42/42 layers to GPU' \
+    'load_tensors: CPU_Mapped model buffer size = 32.00 MiB' \
+    'load_tensors: CUDA0 model buffer size = 2048.00 MiB' \
+    'llama_kv_cache: CUDA0 KV buffer size = 80.00 MiB' \
+    'sched_reserve: CUDA0 compute buffer size = 72.00 MiB'
 else
   printf '%s\n' \
     'load_tensors: offloaded 2/4 layers to GPU' \
@@ -733,10 +758,20 @@ use std::net::{TcpListener, TcpStream};
 
 fn main() {
     let mut port = String::new();
+    let mut gpu_layers = String::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--port" {
-            port = args.next().unwrap_or_default();
+        match arg.as_str() {
+            "--port" => port = args.next().unwrap_or_default(),
+            "-ngl" | "--gpu-layers" => gpu_layers = args.next().unwrap_or_default(),
+            _ => {
+                if let Some(value) = arg
+                    .strip_prefix("-ngl=")
+                    .or_else(|| arg.strip_prefix("--gpu-layers="))
+                {
+                    gpu_layers = value.to_string();
+                }
+            }
         }
     }
     if let Ok(executable) = std::env::current_exe() {
@@ -745,13 +780,23 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
         }
-        let oversized = std::fs::read_to_string(executable.with_file_name("placement-mode"))
-            .is_ok_and(|value| value.trim() == "oversized");
-        println!("load_tensors: offloaded 2/4 layers to GPU");
-        if oversized {
+        let placement_mode = std::fs::read_to_string(executable.with_file_name("placement-mode"))
+            .unwrap_or_else(|_| match gpu_layers.to_ascii_lowercase().as_str() {
+                "999" | "all" | "max" => "full".to_string(),
+                _ => "partial".to_string(),
+            });
+        if placement_mode.trim() == "oversized" {
+            println!("load_tensors: offloaded 2/4 layers to GPU");
             println!("load_tensors: CPU_Mapped model buffer size = 1000000.00 GiB");
             println!("load_tensors: CUDA0 model buffer size = 1000000.00 GiB");
+        } else if placement_mode.trim() == "full" {
+            println!("load_tensors: offloaded 42/42 layers to GPU");
+            println!("load_tensors: CPU_Mapped model buffer size = 32.00 MiB");
+            println!("load_tensors: CUDA0 model buffer size = 2048.00 MiB");
+            println!("llama_kv_cache: CUDA0 KV buffer size = 80.00 MiB");
+            println!("sched_reserve: CUDA0 compute buffer size = 72.00 MiB");
         } else {
+            println!("load_tensors: offloaded 2/4 layers to GPU");
             println!("load_tensors: CPU_Mapped model buffer size = 8.00 MiB");
             println!("load_tensors: CUDA0 model buffer size = 16.00 MiB");
             println!("llama_kv_cache: CPU KV buffer size = 2.00 MiB");

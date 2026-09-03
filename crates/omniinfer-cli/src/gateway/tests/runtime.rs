@@ -260,6 +260,72 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
     std::fs::remove_dir_all(temp).ok();
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn multi_gpu_llama_placement_reconciles_physical_devices() {
+    const TEST_MIB: u64 = 1024 * 1024;
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("multi-gpu-llama-placement");
+    let model = temp.join("model.gguf");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&model, b"gguf").unwrap();
+    let backend_id = external_test_backend_id();
+    install_fake_llama_server(&temp, backend_id);
+    let placement_mode = temp
+        .join(".local")
+        .join("runtime")
+        .join(test_runtime_platform_dir())
+        .join(backend_id)
+        .join("bin")
+        .join("placement-mode");
+    std::fs::write(placement_mode, "multi").unwrap();
+    let _state_guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let _cuda_guard = EnvGuard::set("OMNIINFER_CUDA_VISIBLE_DEVICES", "3,1".to_string());
+
+    let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
+    let port = gateway.port;
+    let backend_port = pick_runtime_port("127.0.0.1").unwrap();
+    let response = tokio::task::spawn_blocking(move || {
+        ureq::post(format!("http://127.0.0.1:{port}/omni/model/load"))
+            .send_json(json!({
+                "backend": backend_id,
+                "model": model.display().to_string(),
+                "ctx_size": 512,
+                "backend_port": backend_port
+            }))
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let body: Value = response.into_body().read_json().unwrap();
+    assert_eq!(body["cuda_visible_devices"], "3,1");
+    assert_eq!(body["runtime_placement"]["mode"], "full");
+    assert_eq!(
+        body["runtime_placement"]["reported_buffer_bytes"]["cuda:3"],
+        24 * TEST_MIB
+    );
+    assert_eq!(
+        body["runtime_placement"]["reported_buffer_bytes"]["cuda:1"],
+        18 * TEST_MIB
+    );
+    let state = gateway_state(port).await;
+    assert_eq!(resource_total(&state, "reserved_bytes"), 0);
+    assert!(
+        state["resource_ledger"]["committed_bytes"]["cuda:3"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 24 * TEST_MIB)
+    );
+    assert!(
+        state["resource_ledger"]["committed_bytes"]["cuda:1"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 18 * TEST_MIB)
+    );
+
+    gateway.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 #[tokio::test]
 async fn partial_offload_reconciliation_failure_cleans_runtime_and_ledger() {

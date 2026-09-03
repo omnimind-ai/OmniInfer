@@ -255,10 +255,11 @@ curl -X POST http://127.0.0.1:9000/omni/model/select \
 ```
 
 官方 llama.cpp CUDA 后端默认使用自动放置。省略 GPU layer 参数后，显存无法容纳
-完整模型时 llama.cpp 可以把部分张量放到主机内存。只有明确要求全部 GPU 卸载、并希望
-容量不足时在启动前失败，才使用 `"launch_args": ["-ngl", "999"]`。自动或部分卸载
-成功后，响应和 `GET /omni/state` 都会返回 `runtime_placement` 及对账后的 host/CUDA
-预算；若启动后的资源对账不安全，接口返回 `502` 并完整回滚运行时。
+完整模型时 llama.cpp 可以把部分张量放到主机内存。只有明确要求全部 GPU 卸载时，才使用
+`"launch_args": ["-ngl", "999"]`。自动、显式和多 GPU 加载成功后，响应与
+`GET /omni/state` 都会返回 `runtime_placement` 及按设备对账后的 host/CUDA 预算；
+若缺少放置证据、显式 full 请求实际存在显著 host 权重，或启动后资源对账不安全，接口
+返回 `502` 并完整回滚运行时。
 
 重复选择相同的已解析模型、后端、`mmproj`、上下文大小和启动参数时，接口幂等成功并返回 `already_loaded: true`。如果运行时参数不同，OmniInfer 返回 `409`、`requires_reload: true` 以及当前和请求配置，且不会修改正在运行的模型。
 

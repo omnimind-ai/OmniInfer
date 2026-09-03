@@ -135,9 +135,9 @@ Common generation defaults include:
 OmniInfer reserves the reported budget before starting the backend, commits the
 allocation only after readiness and local-state persistence succeed, and rolls
 it back on failure. Resource domains are reported as `host`, `cuda:<index>`,
-`vulkan:<index>`, or `unified:<id>`. For an explicit multi-GPU mapping that
-cannot be attributed reliably, the full budget is reserved on every candidate
-device rather than risk oversubscription.
+`vulkan:<index>`, or `unified:<id>`. Official llama.cpp CUDA loads reserve a
+conservative ceiling on every selected GPU until startup logs identify the
+actual tensor split; reconciliation then releases unused capacity atomically.
 
 For stable-diffusion.cpp, denoiser, text-encoder, and VAE weights are budgeted
 separately from runtime workspace and safety overhead. Weight domains follow
@@ -156,16 +156,15 @@ may place model tensors in both host memory and CUDA memory when full GPU
 offload does not fit. Sending `-ngl auto` or `--gpu-layers=auto` has the same
 effect: OmniInfer removes the argument before launch.
 
-Automatic and explicit partial-offload loads first reserve a conservative host
-ceiling and the available memory on the selected CUDA device. After the runtime
-is ready, OmniInfer reads llama.cpp's layer and buffer-placement lines from this
-startup only, maps logical `CUDA0` to the selected physical device, adds runtime
-overhead and safety slack, and atomically reconciles the reservation. To make
-that safety evidence available consistently, OmniInfer appends the managed
-trace setting `-lv 4` to automatic and explicit partial-offload launches;
-`--log-disable` is rejected for those policies. The final values appear in
-`resource_budget` and `runtime_placement` in the load response, `GET
-/omni/state`, and loaded-model payloads.
+Automatic, explicit partial-offload, and multi-GPU loads first reserve a
+conservative host ceiling and per-device CUDA ceilings. After the runtime is
+ready, OmniInfer reads llama.cpp's layer and buffer-placement lines from this
+startup only, maps logical `CUDA0`, `CUDA1`, and later devices through
+`CUDA_VISIBLE_DEVICES`, adds runtime overhead and safety slack, and atomically
+reconciles every domain. OmniInfer appends the managed trace setting `-lv 4` to
+all official llama.cpp CUDA placement policies; `--log-disable` is rejected.
+The final values appear in `resource_budget` and `runtime_placement` in the
+load response, `GET /omni/state`, and loaded-model payloads.
 
 Placement mode is derived from the reported model buffers, not only the layer
 counter. A runtime that reports both CPU and CUDA model buffers is `partial`
@@ -174,10 +173,13 @@ with overflowed tensors in MoE models. Host-only compute or output buffers do
 not by themselves make an otherwise CUDA-resident model partial.
 
 An explicit full-offload request such as `-ngl 999`, `--gpu-layers=all`, or
-`--gpu-layers=max` keeps strict pre-launch CUDA admission and fails fast when it
-cannot fit. If automatic placement cannot be parsed or its reconciled host/CUDA
-budget exceeds capacity, the load fails and OmniInfer stops the process tree,
-closes the listener, withholds the route, and rolls back the reservation.
+`--gpu-layers=max` must reconcile to a full placement. A single-GPU near-fit
+load may waive only bounded allocator slack while holding that device
+exclusively; multi-GPU loads hold conservative ceilings on every selected
+device until the reported tensor split is known. Material host model placement,
+missing evidence, or a reconciled budget above capacity fails closed: OmniInfer
+stops the process tree, closes the listener, withholds the route, and rolls back
+the reservation.
 
 ## Idempotency and Reloads
 

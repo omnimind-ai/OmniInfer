@@ -38,7 +38,7 @@ pub(super) fn managed_placement_evidence_args(
     launch_args: &[String],
     policy: Option<LlamaCppCudaPlacementPolicy>,
 ) -> Result<Vec<String>> {
-    let Some(policy) = policy.filter(|policy| policy.permits_partial_offload()) else {
+    let Some(policy) = policy else {
         return Ok(launch_args.to_vec());
     };
     if launch_args
@@ -103,7 +103,7 @@ pub(super) fn llama_cpp_cuda_placement_policy(
     }))
 }
 
-pub(super) fn provisional_partial_offload_budget(
+pub(super) fn provisional_llama_cpp_placement_budget(
     estimated: &ResourceBudget,
     snapshot: &omniinfer_core::resource_ledger::ResourceLedgerSnapshot,
 ) -> Result<ResourceBudget> {
@@ -112,30 +112,35 @@ pub(super) fn provisional_partial_offload_budget(
         .iter()
         .filter(|(domain, _)| matches!(domain, MemoryDomain::Cuda(_)))
         .collect::<Vec<_>>();
-    if cuda.len() != 1 {
-        anyhow::bail!(
-            "automatic llama.cpp partial offload requires exactly one selected CUDA device"
-        );
+    if cuda.is_empty() {
+        anyhow::bail!("llama.cpp placement reconciliation requires a selected CUDA device");
     }
-    let (cuda_domain, estimated_total) = cuda[0];
+    let estimated_total = cuda.iter().try_fold(0_u64, |total, (_, bytes)| {
+        total
+            .checked_add(**bytes)
+            .ok_or_else(|| anyhow::anyhow!("llama.cpp placement budget overflow"))
+    })?;
     let available = snapshot.available()?;
-    let cuda_available = available.get(cuda_domain).copied().unwrap_or(0);
-    if cuda_available == 0 {
-        anyhow::bail!("automatic llama.cpp partial offload requires available CUDA memory");
-    }
-    ResourceBudget::from_components(vec![
-        BudgetComponent {
-            name: "partial_offload_host_ceiling".to_string(),
-            domain: MemoryDomain::Host,
-            bytes: *estimated_total,
-        },
-        BudgetComponent {
-            name: "partial_offload_cuda_ceiling".to_string(),
+    let mut components = vec![BudgetComponent {
+        name: "llama_cpp_host_ceiling".to_string(),
+        domain: MemoryDomain::Host,
+        bytes: estimated_total,
+    }];
+    for (cuda_domain, _) in cuda {
+        let cuda_available = available.get(cuda_domain).copied().unwrap_or(0);
+        if cuda_available == 0 {
+            anyhow::bail!(
+                "llama.cpp placement reconciliation requires available memory on {}",
+                cuda_domain.key(),
+            );
+        }
+        components.push(BudgetComponent {
+            name: "llama_cpp_cuda_ceiling".to_string(),
             domain: cuda_domain.clone(),
-            bytes: (*estimated_total).min(cuda_available),
-        },
-    ])
-    .map_err(Into::into)
+            bytes: estimated_total.min(cuda_available),
+        });
+    }
+    ResourceBudget::from_components(components).map_err(Into::into)
 }
 
 pub(super) fn parse_llama_cpp_runtime_placement(
@@ -258,12 +263,19 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
         .keys()
         .any(|domain| matches!(domain, MemoryDomain::Cuda(_)));
     let (offloaded_layers, total_layers) = layers.unzip();
+    let all_layers_offloaded = matches!(
+        (offloaded_layers, total_layers),
+        (Some(offloaded), Some(total)) if total > 0 && offloaded == total
+    );
+    let incidental_host_mapping_limit = (cuda_model_bytes / 20).max(512 * MIB);
+    let host_model_is_material = host_model_bytes > incidental_host_mapping_limit;
     let mode = match (
         host_model_bytes > 0,
         cuda_model_bytes > 0,
         has_host,
         has_cuda,
     ) {
+        (true, true, _, _) if all_layers_offloaded && !host_model_is_material => "full",
         (true, true, _, _) => "partial",
         (true, false, _, true) => "partial",
         (false, true, _, _) => "full",
@@ -274,6 +286,11 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
     .to_string();
     if policy.permits_partial_offload() && mode == "unknown" {
         anyhow::bail!("llama.cpp startup log reported an indeterminate placement");
+    }
+    if matches!(policy, LlamaCppCudaPlacementPolicy::ExplicitFull) && mode != "full" {
+        anyhow::bail!(
+            "llama.cpp did not satisfy the requested full CUDA offload (observed mode: {mode})"
+        );
     }
     Ok(RuntimePlacement {
         policy,
