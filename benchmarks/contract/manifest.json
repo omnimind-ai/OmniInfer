@@ -1,0 +1,23 @@
+{
+  "artifact_base_url": "https://omnistudio.omnimind.com.cn/benchmarks/contract",
+  "catalog_schema_version": 1,
+  "contract_version": "1.0.0",
+  "files": {
+    "catalog-index.json": {
+      "bytes": 96893,
+      "sha256": "f1732339376a21f616b271961b063fb47cfb5563ef066e643bb3c0415fc29baf"
+    },
+    "schema.json": {
+      "bytes": 15417,
+      "sha256": "24a92888c500ff0b9d16eb2efe339dba43439cdbb867d55e760698776f299f98"
+    }
+  },
+  "policy_version": "benchmark-intake-v1.4",
+  "schema_version": "1.4.0",
+  "source": {
+    "catalog_url": "https://omnistudio.omnimind.com.cn/models/data.json",
+    "schema_url": "https://omnistudio.omnimind.com.cn/benchmarks/schema.json",
+    "source_commit": "449582c2e0a7e6ce8cb38a73e9ff1e2547867a34",
+    "source_timestamp": "2026-08-26T19:03:54+08:00"
+  }
+}

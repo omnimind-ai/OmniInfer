@@ -49,6 +49,7 @@ struct Measurement {
 
 pub(crate) fn run(args: &BenchRunArgs) -> Result<()> {
     validate_metadata(args)?;
+    let contract = BenchmarkContract::load_embedded()?;
     let config = config::load_app_config().unwrap_or_default();
     let state = get_local_json("/omni/state", Duration::from_secs(10))?;
     if !json_bool(&state, "backend_ready").unwrap_or(false) {
@@ -74,6 +75,14 @@ pub(crate) fn run(args: &BenchRunArgs) -> Result<()> {
     let launch_args = command_array(&state, "launch_command")?;
     validate_cache_isolation(loaded_backend, &launch_args, &state)?;
     let (device_name, soc) = resolve_device(args, loaded_backend, &state)?;
+    contract.validate_references(
+        &args.catalog_model_id,
+        &args.model_format,
+        &args.quantization,
+        loaded_backend,
+        &soc,
+        benchmark_platform(),
+    )?;
     let (backend_version, build_command) =
         resolve_runtime_provenance(args, loaded_backend, &state)?;
     let detected = detect_optimizations(loaded_backend, &launch_args);
@@ -218,6 +227,7 @@ pub(crate) fn run(args: &BenchRunArgs) -> Result<()> {
         pp,
         tg,
     })?;
+    contract.validate_submission(&payload)?;
     let destination = result_path(args.output.as_deref(), &benchmark_id)?;
     write_result_atomic(&destination, &payload)?;
 
@@ -294,6 +304,8 @@ mod validation;
 use validation::*;
 mod cache;
 use cache::*;
+mod contract;
+use contract::*;
 mod environment;
 use environment::*;
 mod result;
