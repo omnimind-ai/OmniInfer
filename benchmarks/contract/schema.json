@@ -1,0 +1,653 @@
+{
+  "$id": "https://omnistudio.omnimind.com.cn/benchmarks/schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "protocol": {
+            "properties": {
+              "profile": {
+                "const": "text-pp-tg-standard-v1"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "workload": {
+            "properties": {
+              "task": {
+                "const": "text_generation"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "protocol": {
+            "properties": {
+              "profile": {
+                "const": "vision-language-pp-tg-standard-v1"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "workload": {
+            "properties": {
+              "task": {
+                "const": "vision_language_generation"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "accelerator": {
+      "enum": [
+        "cpu",
+        "gpu",
+        "npu",
+        "htp",
+        "ane",
+        "other"
+      ],
+      "type": "string"
+    },
+    "backend": {
+      "additionalProperties": false,
+      "properties": {
+        "build_options": {
+          "items": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "catalog_backend_id": {
+          "$ref": "#/definitions/catalogId"
+        },
+        "dependencies": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "$ref": "#/definitions/safeText"
+              },
+              "version": {
+                "$ref": "#/definitions/safeText"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "type": "object"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "name": {
+          "$ref": "#/definitions/safeText"
+        },
+        "version": {
+          "$ref": "#/definitions/safeText"
+        }
+      },
+      "required": [
+        "catalog_backend_id",
+        "version"
+      ],
+      "type": "object"
+    },
+    "byteMetricArray": {
+      "items": {
+        "maximum": 1152921504606846976,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxItems": 100,
+      "minItems": 3,
+      "type": "array"
+    },
+    "catalogId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "commandText": {
+      "description": "An archival command line. It is stored as text and is never executed by the submission service.",
+      "maxLength": 16384,
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "device": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/safeText"
+        },
+        "soc": {
+          "$ref": "#/definitions/safeText"
+        }
+      },
+      "required": [
+        "name",
+        "soc"
+      ],
+      "type": "object"
+    },
+    "execution": {
+      "additionalProperties": false,
+      "description": "The compute placement used by the measured phases. Backend identity remains independent from accelerator placement.",
+      "properties": {
+        "compute_mode": {
+          "enum": [
+            "single",
+            "mixed"
+          ],
+          "type": "string"
+        },
+        "decode_accelerator": {
+          "$ref": "#/definitions/accelerator"
+        },
+        "prefill_accelerator": {
+          "$ref": "#/definitions/accelerator"
+        },
+        "privilege_level": {
+          "enum": [
+            "standard",
+            "elevated"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "compute_mode",
+        "prefill_accelerator",
+        "decode_accelerator",
+        "privilege_level"
+      ],
+      "type": "object"
+    },
+    "model": {
+      "additionalProperties": false,
+      "properties": {
+        "catalog_model_id": {
+          "$ref": "#/definitions/catalogId"
+        },
+        "download_url": {
+          "format": "uri",
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "GGUF",
+            "MLX",
+            "Safetensors",
+            "MNN",
+            "TFLite",
+            "LiteRT",
+            "LITERTLM",
+            "ONNX",
+            "ExecuTorch",
+            "Other"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/definitions/safeText"
+        },
+        "quantization": {
+          "$ref": "#/definitions/safeText",
+          "description": "The canonical weight precision or quantization declared by the catalog, such as BF16, F16, Q4_K_M, or int4."
+        }
+      },
+      "required": [
+        "catalog_model_id",
+        "format",
+        "quantization",
+        "download_url"
+      ],
+      "type": "object"
+    },
+    "nonnegativeMetricArray": {
+      "items": {
+        "maximum": 1000000000,
+        "minimum": 0,
+        "type": "number"
+      },
+      "maxItems": 100,
+      "minItems": 3,
+      "type": "array"
+    },
+    "optimization": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "baseline"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "methods": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "optimized"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "methods": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "methods": {
+          "description": "Optional optimization methods confirmed active during the measured runs. Compute placement belongs in execution, not this list.",
+          "items": {
+            "not": {
+              "enum": [
+                "none",
+                "baseline",
+                "default"
+              ]
+            },
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "mode": {
+          "enum": [
+            "baseline",
+            "optimized"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "methods"
+      ],
+      "type": "object"
+    },
+    "positiveMetricArray": {
+      "items": {
+        "exclusiveMinimum": 0,
+        "maximum": 1000000000,
+        "type": "number"
+      },
+      "maxItems": 100,
+      "minItems": 3,
+      "type": "array"
+    },
+    "producer": {
+      "additionalProperties": false,
+      "description": "The program that generated this JSON. External producers are accepted when the complete submission passes the same validation policy.",
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/safeText"
+        },
+        "source_url": {
+          "format": "uri",
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "type": "string"
+        },
+        "version": {
+          "$ref": "#/definitions/safeText"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "protocol": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_policy": {
+          "const": "cleared_each_run"
+        },
+        "notes": {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "profile": {
+          "enum": [
+            "text-pp-tg-standard-v1",
+            "vision-language-pp-tg-standard-v1"
+          ],
+          "type": "string"
+        },
+        "run_mode": {
+          "const": "steady_state"
+        },
+        "started_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "maximum": 86400,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "profile",
+        "run_mode",
+        "cache_policy",
+        "started_at"
+      ],
+      "type": "object"
+    },
+    "provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "notes": {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "organization": {
+          "$ref": "#/definitions/safeText"
+        },
+        "source_url": {
+          "format": "uri",
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "type": "string"
+        },
+        "submitter_name": {
+          "$ref": "#/definitions/safeText"
+        }
+      },
+      "required": [
+        "submitter_name"
+      ],
+      "type": "object"
+    },
+    "quality": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "$ref": "#/definitions/safeText"
+        },
+        "dataset_revision": {
+          "$ref": "#/definitions/safeText"
+        },
+        "metric": {
+          "$ref": "#/definitions/safeText"
+        },
+        "sample_count": {
+          "maximum": 1000000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "unit": {
+          "$ref": "#/definitions/safeText"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "metric",
+        "value",
+        "unit",
+        "dataset",
+        "dataset_revision",
+        "sample_count"
+      ],
+      "type": "object"
+    },
+    "runs": {
+      "additionalProperties": false,
+      "properties": {
+        "decode_duration_ms": {
+          "$ref": "#/definitions/positiveMetricArray"
+        },
+        "decode_tps": {
+          "$ref": "#/definitions/positiveMetricArray"
+        },
+        "energy_joules": {
+          "$ref": "#/definitions/nonnegativeMetricArray"
+        },
+        "peak_accelerator_memory_bytes": {
+          "$ref": "#/definitions/byteMetricArray"
+        },
+        "peak_rss_bytes": {
+          "$ref": "#/definitions/byteMetricArray"
+        },
+        "prefill_duration_ms": {
+          "$ref": "#/definitions/positiveMetricArray"
+        },
+        "prefill_tps": {
+          "$ref": "#/definitions/positiveMetricArray"
+        },
+        "ttft_ms": {
+          "$ref": "#/definitions/nonnegativeMetricArray"
+        },
+        "wall_time_ms": {
+          "$ref": "#/definitions/positiveMetricArray"
+        }
+      },
+      "required": [
+        "prefill_tps",
+        "decode_tps",
+        "prefill_duration_ms",
+        "decode_duration_ms"
+      ],
+      "type": "object"
+    },
+    "runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "build_command": {
+          "$ref": "#/definitions/commandText",
+          "description": "The exact command used to build or install the measured runtime. Use a shell wrapper in the text when multiple build steps are required."
+        },
+        "run_command": {
+          "$ref": "#/definitions/commandText",
+          "description": "The effective command used to start the measured runtime, including performance-relevant arguments and any privilege wrapper."
+        }
+      },
+      "required": [
+        "build_command",
+        "run_command"
+      ],
+      "type": "object"
+    },
+    "safeText": {
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    },
+    "workload": {
+      "additionalProperties": false,
+      "properties": {
+        "batch_size": {
+          "maximum": 1048576,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "concurrency": {
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "context_size": {
+          "maximum": 4194304,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "pp": {
+          "maximum": 1048576,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "prompt": {
+          "additionalProperties": false,
+          "properties": {
+            "sha256": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/definitions/safeText"
+            }
+          },
+          "required": [
+            "source",
+            "sha256"
+          ],
+          "type": "object"
+        },
+        "scored_tokens": {
+          "additionalProperties": false,
+          "description": "Token counts used as the throughput numerators. They normally equal PP/TG; record exclusions such as an unscored first sampled token explicitly.",
+          "properties": {
+            "decode": {
+              "maximum": 1048576,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "prefill": {
+              "maximum": 1048576,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "prefill",
+            "decode"
+          ],
+          "type": "object"
+        },
+        "task": {
+          "enum": [
+            "text_generation",
+            "vision_language_generation"
+          ],
+          "type": "string"
+        },
+        "tg": {
+          "maximum": 1048576,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task",
+        "pp",
+        "tg",
+        "scored_tokens",
+        "context_size",
+        "batch_size",
+        "concurrency",
+        "prompt"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "A compact, reproducible autoregressive inference benchmark submitted for human review.",
+  "properties": {
+    "backend": {
+      "$ref": "#/definitions/backend"
+    },
+    "benchmark_id": {
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,127}$",
+      "type": "string"
+    },
+    "device": {
+      "$ref": "#/definitions/device"
+    },
+    "execution": {
+      "$ref": "#/definitions/execution"
+    },
+    "model": {
+      "$ref": "#/definitions/model"
+    },
+    "optimization": {
+      "$ref": "#/definitions/optimization"
+    },
+    "producer": {
+      "$ref": "#/definitions/producer"
+    },
+    "protocol": {
+      "$ref": "#/definitions/protocol"
+    },
+    "provenance": {
+      "$ref": "#/definitions/provenance"
+    },
+    "quality": {
+      "$ref": "#/definitions/quality"
+    },
+    "runs": {
+      "$ref": "#/definitions/runs"
+    },
+    "runtime": {
+      "$ref": "#/definitions/runtime"
+    },
+    "schema_version": {
+      "const": "1.4.0"
+    },
+    "workload": {
+      "$ref": "#/definitions/workload"
+    }
+  },
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "model",
+    "device",
+    "backend",
+    "execution",
+    "runtime",
+    "producer",
+    "optimization",
+    "workload",
+    "protocol",
+    "runs",
+    "provenance"
+  ],
+  "title": "OmniInfer benchmark submission",
+  "type": "object"
+}

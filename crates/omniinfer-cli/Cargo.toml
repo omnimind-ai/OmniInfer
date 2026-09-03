@@ -22,6 +22,7 @@ flate2.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+jsonschema.workspace = true
 omniinfer-core = { path = "../omniinfer-core" }
 rand.workspace = true
 serde.workspace = true

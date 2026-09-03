@@ -1,0 +1,16 @@
+{
+  "artifact_base_url": "https://omnistudio.omnimind.com.cn/benchmarks/contract",
+  "catalog_schema_version": 1,
+  "contract_version": "1.0.0",
+  "manifest": {
+    "bytes": 799,
+    "sha256": "68bf4d84d11deecbb2382a8772082b3889ed42534aec9250a3520fae758ec537"
+  },
+  "schema_version": "1.4.0",
+  "source": {
+    "catalog_url": "https://omnistudio.omnimind.com.cn/models/data.json",
+    "schema_url": "https://omnistudio.omnimind.com.cn/benchmarks/schema.json",
+    "source_commit": "449582c2e0a7e6ce8cb38a73e9ff1e2547867a34",
+    "source_timestamp": "2026-08-26T19:03:54+08:00"
+  }
+}
