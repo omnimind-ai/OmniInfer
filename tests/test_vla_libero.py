@@ -466,7 +466,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("the port still shares OmniInfer state", readme)
         self.assertIn("same host as the gateway", readme)
         self.assertIn(
-            "scripts/platforms/linux/vla.cpp-linux-cuda/build.sh --from-source",
+            "./omniinfer build vla.cpp-linux-cuda --from-source",
             readme,
         )
         self.assertIn(
@@ -1100,7 +1100,8 @@ class MetricTests(unittest.TestCase):
         ).read_text()
         self.assertIn("current prebuilt catalog", readme)
         self.assertIn("`backend install` is not available", readme)
-        self.assertIn("source-build dependencies", readme)
+        self.assertIn("does not repack", readme)
+        self.assertIn("source dependencies", readme)
 
     def test_state_exposes_only_the_ten_predefined_object_tasks(self):
         state = DEMO.DemoState(DEMO.DemoConfig())

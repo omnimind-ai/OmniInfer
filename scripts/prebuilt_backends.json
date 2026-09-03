@@ -15,6 +15,12 @@
       "submodule_tag": "v0.28.0",
       "submodule_path": "framework/vllm",
       "submodule_commit": "2cf0a6915ce544dc493a0990f2ea38d81601128a"
+    },
+    "VinRobotics/vla.cpp": {
+      "tag": "v0.3.0",
+      "submodule_tag": "v0.3.0",
+      "submodule_path": "framework/vla.cpp",
+      "submodule_commit": "52439f7c6c362d7bee218b400b9080cc32d75cc3"
     }
   },
   "python_runtimes": {
@@ -329,6 +335,44 @@
       }
     }
   },
+  "excluded_release_assets": [
+    {
+      "source": "VinRobotics/vla.cpp",
+      "platform": "linux",
+      "backend": "vla.cpp-linux",
+      "architecture": "x86_64",
+      "url": "https://github.com/VinRobotics/vla.cpp/releases/download/v0.3.0/vla.cpp-v0.3.0-linux-x86_64-cpu.tar.gz",
+      "sha256": "cbb6cb487563933663de2bb8f208007905f782a2a4f4d8fef15d53c93e6e82a5",
+      "reason": "the official archive omits libvla_core.so and other required shared libraries, embeds a build-runner RUNPATH, and requires GLIBC 2.38"
+    },
+    {
+      "source": "VinRobotics/vla.cpp",
+      "platform": "linux",
+      "backend": "vla.cpp-linux",
+      "architecture": "aarch64",
+      "url": "https://github.com/VinRobotics/vla.cpp/releases/download/v0.3.0/vla.cpp-v0.3.0-linux-aarch64-cpu.tar.gz",
+      "sha256": "4e2d4de9f4df00b70fa5e67bf042fd4ab9df5e3d0e3b4578612b962c3931b5d1",
+      "reason": "the official archive omits libvla_core.so and other required shared libraries, embeds a build-runner RUNPATH, and requires GLIBC 2.38"
+    },
+    {
+      "source": "VinRobotics/vla.cpp",
+      "platform": "linux",
+      "backend": "vla.cpp-linux-cuda",
+      "architecture": "x86_64",
+      "url": "https://github.com/VinRobotics/vla.cpp/releases/download/v0.3.0/vla.cpp-v0.3.0-linux-x86_64-cuda.tar.gz",
+      "sha256": "bfc44f06dad1eb22d028308779279a3fe7719dc901a4ec8b5a622d90ade4608f",
+      "reason": "the official archive omits libvla_core.so and other required shared libraries, embeds a build-runner RUNPATH, and requires GLIBC 2.38"
+    },
+    {
+      "source": "VinRobotics/vla.cpp",
+      "platform": "macos",
+      "backend": "vla.cpp-mac",
+      "architecture": "aarch64",
+      "url": "https://github.com/VinRobotics/vla.cpp/releases/download/v0.3.0/vla.cpp-v0.3.0-macos-arm64-metal.tar.gz",
+      "sha256": "59dfd423f3e8a44cf1231c3643b7bbc26f3a661108ca81cd84eb6bd8732e07c4",
+      "reason": "the official archive omits libvla_core and GGML dylibs and records absolute Homebrew protobuf and ZeroMQ paths"
+    }
+  ],
   "platforms": {
     "linux": {
       "llama.cpp-linux": {

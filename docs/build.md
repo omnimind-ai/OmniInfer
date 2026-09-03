@@ -83,6 +83,10 @@ For example:
 Direct source build scripts are also available by convention under `scripts/platforms/<platform>/<backend>/build.sh`. For vla.cpp on Linux:
 
 ```bash
+./omniinfer build vla.cpp-linux --from-source
+./omniinfer build vla.cpp-linux-cuda --from-source -- --jobs 4 --smoke-test
+
+# Direct script equivalents:
 bash scripts/platforms/linux/vla.cpp-linux/build.sh --from-source
 bash scripts/platforms/linux/vla.cpp-linux-cuda/build.sh --from-source
 ```
@@ -113,6 +117,26 @@ Prebuilt versioning is explicit:
 - Each prebuilt install writes `.local/runtime/<platform>/<backend>/prebuilt.json` with the source tag and all downloaded URLs and digests.
 - Windows `llama.cpp-cuda` requires the matching llama.cpp CUDA runtime companion asset. The three required CUDA DLLs are validated before activation, and an incomplete older install is repaired on the next `backend install` invocation.
 - Existing `prebuilt.json` archive digests are compared with newly pinned catalog digests before an installed runtime is accepted. A mismatched or malformed managed manifest triggers a transactional reinstall; an unmanaged/source-built runtime without `prebuilt.json` is not overwritten merely because it exists.
+
+### vla.cpp official release status
+
+OmniInfer only consumes official `VinRobotics/vla.cpp` release artifacts. It
+does not rebuild, supplement, or republish them as prebuilt runtimes. The
+official v0.3.0 archives and their GitHub SHA256 digests are recorded under
+`excluded_release_assets` in the catalog because the published archives are
+not self-contained:
+
+- Linux archives omit `libvla_core.so`, protobuf, and ZeroMQ runtime libraries,
+  retain an absolute GitHub Actions runner `RUNPATH`, and require GLIBC 2.38.
+- The macOS archive omits `libvla_core` and GGML dylibs and records absolute
+  Homebrew paths for protobuf and ZeroMQ.
+
+Consequently, `backend install vla.cpp-*` fails closed with the audited reason
+instead of installing a runtime that cannot start. Use the source-checkout
+command `./omniinfer build vla.cpp-linux[-cuda] --from-source` until an official
+release publishes a complete, portable dependency closure. A future official
+archive must pass checksum, extraction, launcher, dependency, real action, and
+cleanup validation before it becomes an installable catalog entry.
 
 The source checkout currently pins llama.cpp `b10665` (`ca3d5a3e`) for Qwen3.8-Flash-Next support, while the validated prebuilt catalog remains on `b10280`. Build a llama.cpp backend with `--from-source` when the newer model architecture is required.
 

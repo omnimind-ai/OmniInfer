@@ -728,6 +728,30 @@ fn linux_cuda_prebuilt_install_explains_from_source() {
     fs::remove_dir_all(root).ok();
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn vla_prebuilt_reports_official_asset_exclusion() {
+    let root = temp_repo_root("vla-official-prebuilt-excluded");
+    fs::create_dir_all(root.join("config")).expect("create config dir");
+    fs::write(root.join("config").join("omniinfer.json"), r#"{"port":1}"#).expect("write config");
+
+    let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
+    cmd.env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["backend", "install", "vla.cpp-linux-cuda"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "official prebuilt archive for linux/vla.cpp-linux-cuda",
+        ))
+        .stderr(predicate::str::contains("intentionally unavailable"))
+        .stderr(predicate::str::contains("omits libvla_core.so"))
+        .stderr(predicate::str::contains(
+            "omniinfer build vla.cpp-linux-cuda --from-source",
+        ));
+    fs::remove_dir_all(root).ok();
+}
+
 #[test]
 fn packaged_backend_install_uses_rust_prebuilt_path() {
     let root = temp_repo_root("packaged-backend-install");
