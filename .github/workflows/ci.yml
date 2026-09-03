@@ -34,6 +34,16 @@ jobs:
       - name: Run core unit tests
         run: cargo test -p omniinfer-core
 
+      - name: Verify benchmark producer contract
+        run: |
+          python3 scripts/sync_benchmark_contract.py --check
+          python3 -m unittest tests/test_benchmark_contract.py
+
+      - name: Run benchmark contract tests
+        run: |
+          cargo test -p omniinfer-cli --bin omniinfer benchmark::
+          cargo test -p omniinfer-cli --test cli_smoke bench_
+
       - name: Run gateway unit tests
         run: "cargo test -p omniinfer-cli --bin omniinfer gateway::tests::"
 
