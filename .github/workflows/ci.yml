@@ -34,6 +34,9 @@ jobs:
       - name: Run core unit tests
         run: cargo test -p omniinfer-core
 
+      - name: Validate model catalog assets
+        run: python3 -m unittest tests/test_model_catalog_assets.py
+
       - name: Verify benchmark producer contract
         run: |
           python3 scripts/sync_benchmark_contract.py --check

@@ -1,0 +1,21 @@
+name: Model Catalog Asset Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-remote-assets:
+    name: Verify remote asset bytes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compare pinned catalog assets with their remote byte lengths
+        run: python3 scripts/validate_model_catalog_assets.py --remote

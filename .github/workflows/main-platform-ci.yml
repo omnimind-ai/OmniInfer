@@ -46,6 +46,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 -m unittest tests/test_readme.py
 
+      - name: Validate model catalog assets
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 -m unittest tests/test_model_catalog_assets.py
+
       - name: Test Unix installer contracts
         if: runner.os != 'Windows'
         shell: bash
