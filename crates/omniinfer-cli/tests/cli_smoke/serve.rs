@@ -1443,6 +1443,139 @@ fn speculative_load_failure_rolls_back_real_backend_and_cuda_reservation() {
     fs::remove_dir_all(fake_bin_root).ok();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn near_fit_full_offload_reconciles_and_releases_exclusive_domain() {
+    let backend_id = "llama.cpp-linux-cuda";
+    let source_root = temp_repo_root("serve-near-fit-success-source");
+    let state_root = temp_repo_root("serve-near-fit-success-state");
+    let fake_bin_root = temp_repo_root("serve-near-fit-success-tools");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(state_root.join("config")).expect("create state config");
+    fs::write(
+        state_root.join("config").join("omniinfer.json"),
+        r#"{"host":"127.0.0.1","startup_timeout":3}"#,
+    )
+    .expect("write config");
+    install_fake_runtime_server(&state_root, backend_id);
+    let runtime_dir = state_root
+        .join(".local")
+        .join("runtime")
+        .join(test_runtime_platform_dir())
+        .join(backend_id)
+        .join("bin");
+    fs::write(runtime_dir.join("placement-mode"), "full").expect("write placement mode");
+    let fake_nvidia_smi = install_fake_nvidia_smi(&fake_bin_root, 2900);
+    let model = state_root.join("near-fit.gguf");
+    fs::File::create(&model)
+        .expect("create near-fit model")
+        .set_len(2 * 1024 * 1024 * 1024)
+        .expect("size near-fit model");
+    let second_model = state_root.join("second.gguf");
+    fs::write(&second_model, b"gguf").expect("write second model");
+    let gateway_port = free_port();
+    let backend_port = free_port();
+    let gateway_path = assert_cmd::cargo::cargo_bin("omniinfer");
+    let existing_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!(
+        "{}:{}",
+        fake_nvidia_smi.parent().unwrap().display(),
+        existing_path.to_string_lossy()
+    );
+    let mut gateway = StdCommand::new(gateway_path)
+        .env("OMNIINFER_RUST_STRICT", "1")
+        .env("OMNIINFER_RUST_REPO_ROOT", &source_root)
+        .env("OMNIINFER_RUST_STATE_ROOT", &state_root)
+        .env("OMNIINFER_CUDA_VISIBLE_DEVICES", "0")
+        .env("PATH", path)
+        .args(["gateway", "--host", "127.0.0.1", "--port"])
+        .arg(gateway_port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start gateway");
+    assert_eq!(wait_for_http_json(gateway_port, "/health")["status"], "ok");
+
+    let first = http_client::post_json(
+        &format!("http://127.0.0.1:{gateway_port}/omni/model/select"),
+        &serde_json::json!({
+            "backend": backend_id,
+            "model": model.display().to_string(),
+            "backend_port": backend_port,
+            "launch_args": ["-ngl", "999"],
+        }),
+        Duration::from_secs(10),
+    )
+    .expect("near-fit model-select response");
+    assert_eq!(first.status, 200, "first response: {:?}", first.body);
+    assert_eq!(first.body["runtime_placement"]["mode"], "full");
+    assert_eq!(first.body["runtime_placement"]["offloaded_layers"], 42);
+    assert_eq!(first.body["runtime_placement"]["total_layers"], 42);
+    assert_eq!(first.body["speculative_admission"]["speculative"], true);
+    assert!(
+        first.body["speculative_admission"]["shortfall_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0)
+    );
+
+    let blocked = http_client::post_json(
+        &format!("http://127.0.0.1:{gateway_port}/omni/model/select"),
+        &serde_json::json!({
+            "backend": backend_id,
+            "model": second_model.display().to_string(),
+            "backend_port": free_port(),
+        }),
+        Duration::from_secs(5),
+    )
+    .expect("exclusive-domain response");
+    assert_eq!(blocked.status, 502, "blocked response: {:?}", blocked.body);
+    assert!(
+        blocked.body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("exclusively held by a speculative runtime")
+    );
+
+    let unload = http_client::post_json(
+        &format!("http://127.0.0.1:{gateway_port}/omni/model/unload"),
+        &serde_json::json!({"model": model.display().to_string()}),
+        Duration::from_secs(5),
+    )
+    .expect("unload near-fit model");
+    assert_eq!(unload.status, 200, "unload response: {:?}", unload.body);
+    let second_port = free_port();
+    let after_release = http_client::post_json(
+        &format!("http://127.0.0.1:{gateway_port}/omni/model/select"),
+        &serde_json::json!({
+            "backend": backend_id,
+            "model": second_model.display().to_string(),
+            "backend_port": second_port,
+        }),
+        Duration::from_secs(10),
+    )
+    .expect("post-release model-select response");
+    assert_eq!(
+        after_release.status, 200,
+        "post-release response: {:?}",
+        after_release.body
+    );
+
+    let shutdown = http_client::post_json(
+        &format!("http://127.0.0.1:{gateway_port}/omni/shutdown"),
+        &serde_json::json!({}),
+        Duration::from_secs(5),
+    )
+    .expect("gateway shutdown response");
+    assert_eq!(shutdown.status, 200);
+    assert!(gateway.wait().expect("wait gateway").success());
+    assert!(wait_for_port_closed(gateway_port));
+    assert!(wait_for_port_closed(backend_port));
+    assert!(wait_for_port_closed(second_port));
+    fs::remove_dir_all(source_root).ok();
+    fs::remove_dir_all(state_root).ok();
+    fs::remove_dir_all(fake_bin_root).ok();
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_vllm_wsl2_install_and_smoke_cover_managed_lifecycle() {

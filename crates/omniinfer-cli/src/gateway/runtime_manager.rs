@@ -514,6 +514,8 @@ impl RustRuntimeManager {
         } else {
             None
         };
+        let replicate_across_domains =
+            cuda_selection.is_none() && budget_cuda_devices.is_some() && placement_policy.is_none();
         let resource_budget = build_runtime_resource_budget(
             &payload,
             backend,
@@ -522,7 +524,7 @@ impl RustRuntimeManager {
             plan.ctx_size.unwrap_or(DEFAULT_LOAD_CONTEXT_SIZE),
             &effective_launch_args,
             budget_cuda_devices.as_deref(),
-            cuda_selection.is_none() && budget_cuda_devices.is_some(),
+            replicate_across_domains,
         )?;
         let budget_vulkan_devices = resource_budget
             .domains()
@@ -532,17 +534,16 @@ impl RustRuntimeManager {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        let reconcile_policy = placement_policy.filter(|policy| {
-            policy.permits_partial_offload()
-                && resource_budget
-                    .domains()
-                    .keys()
-                    .filter(|domain| matches!(domain, MemoryDomain::Cuda(_)))
-                    .count()
-                    == 1
-        });
-        let initial_reservation = if reconcile_policy.is_some() {
-            self.reserve_partial_offload_resources(
+        let reconcile_policy = placement_policy;
+        let selected_cuda_devices = resource_budget
+            .domains()
+            .keys()
+            .filter(|domain| matches!(domain, MemoryDomain::Cuda(_)))
+            .count();
+        let use_provisional_reservation = reconcile_policy
+            .is_some_and(|policy| policy.permits_partial_offload() || selected_cuda_devices > 1);
+        let initial_reservation = if use_provisional_reservation {
+            self.reserve_llama_cpp_placement_resources(
                 &requested_model_key,
                 &resource_budget,
                 budget_cuda_devices.as_deref(),
@@ -558,12 +559,12 @@ impl RustRuntimeManager {
         };
         let (reservation_id, speculative) = match initial_reservation {
             Ok(reservation_id) => (reservation_id, None),
-            Err(error) if reconcile_policy.is_none() && is_cuda_capacity_exhaustion(&error) => {
+            Err(error) if !use_provisional_reservation && is_cuda_capacity_exhaustion(&error) => {
                 let decision = speculative_reservation(
                     backend,
                     &payload,
                     &resource_budget,
-                    cuda_selection.is_none() && budget_cuda_devices.is_some(),
+                    replicate_across_domains,
                     self.resource_ledger
                         .as_ref()
                         .map(|ledger| ledger.snapshot()),
@@ -1265,7 +1266,7 @@ impl RustRuntimeManager {
             .reserve(request_id, budget.clone())?)
     }
 
-    fn reserve_partial_offload_resources(
+    fn reserve_llama_cpp_placement_resources(
         &mut self,
         request_id: &str,
         estimated: &ResourceBudget,
@@ -1274,7 +1275,7 @@ impl RustRuntimeManager {
     ) -> Result<ReservationId> {
         self.reject_exclusive_domains(estimated)?;
         self.refresh_resource_capacity(cuda_visible_devices, vulkan_devices)?;
-        let provisional = provisional_partial_offload_budget(
+        let provisional = provisional_llama_cpp_placement_budget(
             estimated,
             &self
                 .resource_ledger
