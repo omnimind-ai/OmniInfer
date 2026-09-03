@@ -74,6 +74,15 @@ class BenchmarkContractTests(unittest.TestCase):
         with self.assertRaisesRegex(CONTRACT.ContractError, "must use HTTPS"):
             CONTRACT.validate_base_url("http://omnistudio.example/contract")
 
+    def test_offline_validation_bounds_the_manifest(self):
+        oversized = self.manifest + b" " * CONTRACT.MAX_MANIFEST_BYTES
+        with self.assertRaisesRegex(CONTRACT.ContractError, "exceeds"):
+            CONTRACT.validate_contract(
+                oversized,
+                self.artifacts,
+                CONTRACT.DEFAULT_BASE_URL,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

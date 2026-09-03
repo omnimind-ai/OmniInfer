@@ -98,6 +98,8 @@ def validate_contract(
     base_url: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     base_url = validate_base_url(base_url)
+    if len(manifest_raw) > MAX_MANIFEST_BYTES:
+        raise ContractError(f"manifest.json exceeds {MAX_MANIFEST_BYTES} bytes")
     manifest = parse_json(manifest_raw, "manifest.json")
     expected_manifest_keys = {
         "artifact_base_url",
