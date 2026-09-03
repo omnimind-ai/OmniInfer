@@ -496,9 +496,9 @@ mod tests {
             .unwrap();
         assert_eq!(quant["required_memory_gib"], json!(0.49));
         assert_eq!(quant["memory_estimate_gib"], json!(0.49));
-        assert_eq!(quant["size_bytes"], Value::Null);
-        assert_eq!(quant["size_gib"], Value::Null);
-        assert_eq!(quant["size"], Value::Null);
+        assert_eq!(quant["size_bytes"], json!(491_400_032_u64));
+        assert_eq!(quant["size_gib"], json!(0.46));
+        assert_eq!(quant["size"], json!(0.46));
         assert!(quant.get("suitable").and_then(Value::as_bool).is_some());
         assert!(quant.get("memory_status").and_then(Value::as_str).is_some());
     }
@@ -595,18 +595,19 @@ mod tests {
             .and_then(|value| value.get("Gemma4"))
             .and_then(|value| value.get("gemma-4-12B-it"))
             .unwrap();
+        let model_url = model["quantization"]["Q4_K_M"]["download"]
+            .as_str()
+            .unwrap();
+        let vision_url = model["vision"]["download"].as_str().unwrap();
+        assert!(model_url.ends_with("/gemma-4-12b-it-Q4_K_M.gguf"));
+        assert!(vision_url.ends_with("/mmproj-F16.gguf"));
+        assert!(!model_url.contains("/resolve/master/"));
+        assert!(!vision_url.contains("/resolve/master/"));
         assert_eq!(
-            model["quantization"]["Q4_K_M"]["download"],
-            json!(
-                "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q4_K_M.gguf"
-            )
+            model["quantization"]["Q4_K_M"]["size_bytes"],
+            json!(7_121_861_440_u64)
         );
-        assert_eq!(
-            model["vision"]["download"],
-            json!(
-                "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/mmproj-F16.gguf"
-            )
-        );
+        assert_eq!(model["vision"]["size_bytes"], json!(175_115_840_u64));
     }
 
     #[test]
