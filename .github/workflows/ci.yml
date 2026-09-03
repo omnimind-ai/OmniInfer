@@ -81,7 +81,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Test benchmark contract integrity
-        run: cargo test -p omniinfer-cli --bin omniinfer benchmark::contract::tests::
+        run: "cargo test -p omniinfer-cli --bin omniinfer benchmark::contract::tests::"
 
       - name: Test desktop serve lifecycle
         run: |
