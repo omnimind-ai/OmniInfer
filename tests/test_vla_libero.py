@@ -486,6 +486,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("--llama-source <path>", build_script)
         self.assertIn('LLAMA_SOURCE="$(cd "${LLAMA_SOURCE}" && pwd -P)"', build_script)
         self.assertIn('-DFETCHCONTENT_SOURCE_DIR_LLAMA="${LLAMA_SOURCE}"', build_script)
+        self.assertIn("CUDA llama.cpp source is missing the vla.cpp extension hook", build_script)
 
     def test_readme_explains_torch_backend_changes_need_a_fresh_venv(self):
         readme = (REPOSITORY_ROOT / "examples" / "vla-libero" / "README.md").read_text()

@@ -145,6 +145,12 @@ if [[ -n "${LLAMA_SOURCE}" ]]; then
     exit 1
   fi
   LLAMA_SOURCE="$(cd "${LLAMA_SOURCE}" && pwd -P)"
+  if [[ ${ENABLE_CUDA} -eq 1 ]] &&
+    ! grep -Fq 'vla.cpp: CUDA extension hook' "${LLAMA_SOURCE}/ggml/src/ggml-cuda/ggml-cuda.cu"; then
+    echo "CUDA llama.cpp source is missing the vla.cpp extension hook: ${LLAMA_SOURCE}" >&2
+    echo "Reuse a llama-src directory previously prepared by the vla.cpp FetchContent build." >&2
+    exit 1
+  fi
 fi
 
 if [[ -n "${DEPENDENCY_PREFIX}" ]]; then
