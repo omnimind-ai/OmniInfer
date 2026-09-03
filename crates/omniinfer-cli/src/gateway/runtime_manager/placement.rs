@@ -80,8 +80,7 @@ pub(super) fn llama_cpp_cuda_placement_policy(
     launch_args: &[String],
 ) -> Result<Option<LlamaCppCudaPlacementPolicy>> {
     let is_llama_cpp_family = backend.family == "llama.cpp"
-        && (backend.id.starts_with("llama.cpp-")
-            || backend.id.starts_with("ik_llama.cpp-"));
+        && (backend.id.starts_with("llama.cpp-") || backend.id.starts_with("ik_llama.cpp-"));
     if !is_llama_cpp_family || !backend.capabilities.iter().any(|cap| cap == "cuda") {
         return Ok(None);
     }
@@ -206,8 +205,7 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
                 let Some(domain) = buffer_domain(label, &devices) else {
                     continue;
                 };
-                let Some(bytes) = parse_buffer_bytes(&line[marker_index + marker.len()..])?
-                else {
+                let Some(bytes) = parse_buffer_bytes(&line[marker_index + marker.len()..])? else {
                     continue;
                 };
                 let key = (domain, "model", label.to_string());

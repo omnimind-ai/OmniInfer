@@ -1270,7 +1270,11 @@ fn partial_offload_manages_trace_verbosity_and_rejects_disabled_logs() {
 #[test]
 fn ik_cpu_moe_uses_native_logging_and_auto_partial_policy() {
     let backend = speculative_test_backend("ik_llama.cpp-linux-cuda", "llama.cpp", true);
-    let args = vec!["-ngl".to_string(), "999".to_string(), "--cpu-moe".to_string()];
+    let args = vec![
+        "-ngl".to_string(),
+        "999".to_string(),
+        "--cpu-moe".to_string(),
+    ];
     assert_eq!(
         llama_cpp_cuda_placement_policy(&backend, &args).unwrap(),
         Some(LlamaCppCudaPlacementPolicy::Auto)
