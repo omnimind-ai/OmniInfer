@@ -166,6 +166,38 @@ async fn proxy_serves_model_catalog_without_upstream() {
 }
 
 #[tokio::test]
+async fn proxy_serves_exact_catalog_bytes_without_upstream() {
+    let upstream = spawn_test_upstream().await;
+    let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;
+    let port = gateway.port;
+    let response = tokio::task::spawn_blocking(move || {
+        ureq::get(format!(
+            "http://127.0.0.1:{port}/omni/supported-models?system=mac"
+        ))
+        .call()
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let value: Value = response.into_body().read_json().unwrap();
+    let model = &value["llama.cpp-mac"]["Qwen3.5"]["Qwen3.5-4B"];
+    let quant = &model["quantization"]["Q4_K_M"];
+    assert_eq!(quant["size_bytes"], serde_json::json!(2_740_937_888_u64));
+    assert_eq!(
+        model["vision"]["size_bytes"],
+        serde_json::json!(672_423_616_u64)
+    );
+    assert_eq!(
+        quant["bundle_size_bytes"],
+        serde_json::json!(3_413_361_504_u64)
+    );
+    assert_eq!(quant["required_memory_gib"], serde_json::json!(3.18));
+    gateway.stop().await;
+    upstream.stop().await;
+}
+
+#[tokio::test]
 async fn proxy_serves_empty_openai_models_without_loaded_runtime() {
     let upstream = spawn_test_upstream().await;
     let gateway = spawn_test_gateway(upstream.port, GatewayAccessPolicy::default()).await;

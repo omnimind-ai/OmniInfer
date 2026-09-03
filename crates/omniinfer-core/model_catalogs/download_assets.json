@@ -1,0 +1,481 @@
+{
+  "schema_version": 1,
+  "assets": {
+    "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/2e50b77b0eee3083842019e257b74854323d880a/qwen2.5-0.5b-instruct-q4_k_m.gguf": {
+      "size_bytes": 491400032,
+      "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
+    },
+    "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/2e50b77b0eee3083842019e257b74854323d880a/qwen2.5-0.5b-instruct-q6_k.gguf": {
+      "size_bytes": 650379104,
+      "sha256": "2f82233630c349ccf6b8daccf48f9a7865713d9f08a2eadfa456cebe9b97c7f5"
+    },
+    "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/2e50b77b0eee3083842019e257b74854323d880a/qwen2.5-0.5b-instruct-q8_0.gguf": {
+      "size_bytes": 675710816,
+      "sha256": "ca59ca7f13d0e15a8cfa77bd17e65d24f6844b554a7b6c12e07a5f89ff76844e"
+    },
+    "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/e8b19c78f775ccbcf6df15ceace6bb5276f09765/qwen2.5-1.5b-instruct-q4_k_m.gguf": {
+      "size_bytes": 1117320736,
+      "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"
+    },
+    "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/e8b19c78f775ccbcf6df15ceace6bb5276f09765/qwen2.5-1.5b-instruct-q6_k.gguf": {
+      "size_bytes": 1464178720,
+      "sha256": "e16d94f3b1eb243f6f6be9eee51090ef5dfd741324394fd5b6e0e425c33df5c7"
+    },
+    "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/e8b19c78f775ccbcf6df15ceace6bb5276f09765/qwen2.5-1.5b-instruct-q8_0.gguf": {
+      "size_bytes": 1894532128,
+      "sha256": "d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8"
+    },
+    "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/4f524e37fc494cea95ce8868029df33b64b0f67b/qwen2.5-3b-instruct-q4_k_m.gguf": {
+      "size_bytes": 2104932768,
+      "sha256": "626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d"
+    },
+    "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/4f524e37fc494cea95ce8868029df33b64b0f67b/qwen2.5-3b-instruct-q6_k.gguf": {
+      "size_bytes": 2793410976,
+      "sha256": "12da1a5d3fa6905111d8798b00ed49e0f6425441598c8c41bb37a2c36d49d0f3"
+    },
+    "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/4f524e37fc494cea95ce8868029df33b64b0f67b/qwen2.5-3b-instruct-q8_0.gguf": {
+      "size_bytes": 3616088480,
+      "sha256": "6dcc22694c8654b045ec40bbe350212b88893fd9010e8474bae5b19a43578ba1"
+    },
+    "https://modelscope.cn/models/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/9c63b87cdc7dc0d7f29eb3197110df6f3d1c8684/gemma-4-26B-A4B-it-Q8_0.gguf": {
+      "size_bytes": 26859860992,
+      "sha256": "b5108fd13147d1c866bb595295bc9d56f5fe744d7209f18421031d0cc47009c6"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/6c8d030ecd6fcdf709b49ba1d1495421d1a0308e/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf": {
+      "size_bytes": 5027785216,
+      "sha256": "a86349a4180c4e6bb43f874c29c404fa2be3f90b15509bd6d86f697dba724ec1"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/6c8d030ecd6fcdf709b49ba1d1495421d1a0308e/DeepSeek-R1-0528-Qwen3-8B-Q6_K.gguf": {
+      "size_bytes": 6725900800,
+      "sha256": "a012051e59aec617951defa167d3e3658196fe32a8842df4f2d1e2678b30ab40"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/6c8d030ecd6fcdf709b49ba1d1495421d1a0308e/DeepSeek-R1-0528-Qwen3-8B-Q8_0.gguf": {
+      "size_bytes": 8709519872,
+      "sha256": "8d6f3bdd8853aa5af98412f2d001c4cc4d33e1ffb85a8361963e79b5573f4856"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/fa0539ea11c2f7ce5b540004ce6e8ed20d462f77/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf": {
+      "size_bytes": 1117321312,
+      "sha256": "f3bdf9cf31dee4b57ae4e455a1cb0d01b5c2c1b50d72d3112141c195506c2840"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/fa0539ea11c2f7ce5b540004ce6e8ed20d462f77/DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf": {
+      "size_bytes": 1464179296,
+      "sha256": "59c0f22fefab54a627a094809de1d2487886d4c6e405a035c8b453eba3096ce7"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/fa0539ea11c2f7ce5b540004ce6e8ed20d462f77/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf": {
+      "size_bytes": 1894532416,
+      "sha256": "068a721e47419ccfc94b6420118f772478544e1a0d4fad7118212774b3f9ba9e"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/82a888e26b9e44f1b7264ae5e9e815dfa6d65976/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf": {
+      "size_bytes": 8988109984,
+      "sha256": "67a7933cf2ad596a393c8e13b30bc4da2d50b283e250b78554aed18817eca31c"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/82a888e26b9e44f1b7264ae5e9e815dfa6d65976/DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf": {
+      "size_bytes": 12124683424,
+      "sha256": "278c3d9ff5710f9e54db3b09dff5aa7c3f969526241284e36a1eb73119b30d2d"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/82a888e26b9e44f1b7264ae5e9e815dfa6d65976/DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf": {
+      "size_bytes": 15701597344,
+      "sha256": "9be78e224d99535ad81f192bf993bdd01f78e7cc611642b64fd545e10fdb3fc4"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/035cb6d68544759a34239b70465cb7647187e987/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf": {
+      "size_bytes": 19851335584,
+      "sha256": "ca171ca03554ee20cf67ad6b540610ae7eabb95af00c0abd36bb73542e140fb5"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/035cb6d68544759a34239b70465cb7647187e987/DeepSeek-R1-Distill-Qwen-32B-Q6_K.gguf": {
+      "size_bytes": 26886154144,
+      "sha256": "1da08f75e205e607ed6a504dfcb1006548d1182553cb0e5d755c69d5179fa57c"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/035cb6d68544759a34239b70465cb7647187e987/DeepSeek-R1-Distill-Qwen-32B-Q8_0.gguf": {
+      "size_bytes": 34820884384,
+      "sha256": "e74588a163eb2f861e5b298c0975101cf02ec7b10784832b8feab2abbf3090a7"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/282f395a1d3e46c9fca376c4143061120bd038d6/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf": {
+      "size_bytes": 4683073248,
+      "sha256": "78272d8d32084548bd450394a560eb2d70de8232ab96a725769b1f9171235c1c"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/282f395a1d3e46c9fca376c4143061120bd038d6/DeepSeek-R1-Distill-Qwen-7B-Q6_K.gguf": {
+      "size_bytes": 6254198496,
+      "sha256": "b18730fc1e8aa76fb7f1362e3a64569d552bded540c256f11940ecfd5df6522c"
+    },
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/282f395a1d3e46c9fca376c4143061120bd038d6/DeepSeek-R1-Distill-Qwen-7B-Q8_0.gguf": {
+      "size_bytes": 8098524896,
+      "sha256": "7307bfbb539fd2e8ed636315440781fed23140dc7f911f64b33418f5b978281b"
+    },
+    "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/25c393191d24643d54cf94a78b6245c5c666596c/GLM-4-9B-0414-Q4_K_M.gguf": {
+      "size_bytes": 6166574944,
+      "sha256": "8027e1089273e8817b2df0d91c9aa17c5ea467246dcdacac34989f8919fe6540"
+    },
+    "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/25c393191d24643d54cf94a78b6245c5c666596c/GLM-4-9B-0414-Q6_K.gguf": {
+      "size_bytes": 8266643296,
+      "sha256": "96f6872f023e5ddccc707fc25fa49761f1810aec075997adafdb9d3632155af8"
+    },
+    "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/25c393191d24643d54cf94a78b6245c5c666596c/GLM-4-9B-0414-Q8_0.gguf": {
+      "size_bytes": 9999611744,
+      "sha256": "a7444e4ca2785a021394479a16212f1a6603613361fe5e06abec29e4042510dd"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/b90f951fb222d0028a33da90b651919a354a6a08/mmproj-F16.gguf": {
+      "size_bytes": 1378753376,
+      "sha256": "32fd2b63811efbf7e7406e42dbc830c60c89639abe3bc0769f61c51f53fae7f8"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/bd160d8e6718fd009b6f9b515c4d64b8c093d656/Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf": {
+      "size_bytes": 19851335200,
+      "sha256": "292b39eab9089d5195182d6d1e35e907181bb0d4d2a0b5e73ab4e7938ecefdf6"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/bd160d8e6718fd009b6f9b515c4d64b8c093d656/Qwen2.5-VL-32B-Instruct-Q5_K_M.gguf": {
+      "size_bytes": 23262156320,
+      "sha256": "cb400d7a35393426b9e5b8f97c9f85ddef07f53a6ed9069beaad1184fffd55d7"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/bd160d8e6718fd009b6f9b515c4d64b8c093d656/Qwen2.5-VL-32B-Instruct-Q6_K.gguf": {
+      "size_bytes": 26886153760,
+      "sha256": "7953e8ebf6605ec81d0bb0d050d7925b77d60aeea0b376ad2c1d15b17d6b329e"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/45c3db007adfae103f9d0f5813538196075957db/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf": {
+      "size_bytes": 1929901408,
+      "sha256": "c47e8c1f6fb3e8cff6ec58909baff16dbeffb64a5bb3b746b96e05e6334c129f"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/45c3db007adfae103f9d0f5813538196075957db/Qwen2.5-VL-3B-Instruct-Q6_K.gguf": {
+      "size_bytes": 2538157408,
+      "sha256": "ac76fdaa8e3c2455de02802e000a526c80fc8f83cb65b5590ec0bd203537f50b"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/45c3db007adfae103f9d0f5813538196075957db/Qwen2.5-VL-3B-Instruct-Q8_0.gguf": {
+      "size_bytes": 3285474656,
+      "sha256": "05d1f9831a9379ee7717475dcaa8849b3cacff46bf6997b5e1fdd048c692eec3"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/45c3db007adfae103f9d0f5813538196075957db/mmproj-F16.gguf": {
+      "size_bytes": 1338428256,
+      "sha256": "4c1240f514de94c81b70709b0f9a80c7e3297598ea7c83f39dc00b18ee5be60c"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/6e17021fb3e06b2a89e2d795fcd6dadf41cbee74/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf": {
+      "size_bytes": 4683072384,
+      "sha256": "d16776dcd9a28d42758c2958ed3a752aabf20a305252cd64ff2be72b4a78c503"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/6e17021fb3e06b2a89e2d795fcd6dadf41cbee74/Qwen2.5-VL-7B-Instruct-Q6_K.gguf": {
+      "size_bytes": 6254197632,
+      "sha256": "15f3ccbef1e7020939d8c32501d66a777df46b1b3ace9ddec37b5d2df102a89f"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/6e17021fb3e06b2a89e2d795fcd6dadf41cbee74/Qwen2.5-VL-7B-Instruct-Q8_0.gguf": {
+      "size_bytes": 8098524032,
+      "sha256": "ee770c700d7429cc6f0c74d6c7ab3c063bf521312fc36e80776d1d79bc9fa4ad"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/6e17021fb3e06b2a89e2d795fcd6dadf41cbee74/mmproj-F16.gguf": {
+      "size_bytes": 1354163040,
+      "sha256": "987dd0733033fb5dd9b124d1ca926ae865572e432384eee7618b2eec3e735e17"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/6091bc857fe0dffa19c581a7ccc7def1b126ff54/Qwen3-0.6B-Q4_K_M.gguf": {
+      "size_bytes": 396705472,
+      "sha256": "ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/6091bc857fe0dffa19c581a7ccc7def1b126ff54/Qwen3-0.6B-Q6_K.gguf": {
+      "size_bytes": 495107776,
+      "sha256": "1c15a88244c9e852516e5ba0e394fc97f2182f1f2757413fb99fe6a9214c033b"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/6091bc857fe0dffa19c581a7ccc7def1b126ff54/Qwen3-0.6B-Q8_0.gguf": {
+      "size_bytes": 639447744,
+      "sha256": "e150ed544dfe6016930c026a93913a5e3184181ebfe6ab2223ae01dd0491784c"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/75e6c3eb4235b337eb5cd7337cbcddee3aaeac35/Qwen3-14B-Q4_K_M.gguf": {
+      "size_bytes": 9001753984,
+      "sha256": "5eaa0870bd81ed3b58a630a271234cfa604e43ffb3a19cd68e54a80dd9d52a66"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/75e6c3eb4235b337eb5cd7337cbcddee3aaeac35/Qwen3-14B-Q6_K.gguf": {
+      "size_bytes": 12121938304,
+      "sha256": "c34d749069d5f19b998498ce84884975c551529548fa6a56b883345d166289c2"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/75e6c3eb4235b337eb5cd7337cbcddee3aaeac35/Qwen3-14B-Q8_0.gguf": {
+      "size_bytes": 15698534784,
+      "sha256": "90224247d4a8076c0a689e833910f4291bce05dec81f472ebcba321607168ea1"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/7d92195354ca709ed5f997eee306822ed5eb2cf7/Qwen3-32B-Q4_K_M.gguf": {
+      "size_bytes": 19762150048,
+      "sha256": "8df67573b2c23484e02ec7af295e39bed7ee774f3771d5fda2978265b59370e7"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/7d92195354ca709ed5f997eee306822ed5eb2cf7/Qwen3-32B-Q6_K.gguf": {
+      "size_bytes": 26883307168,
+      "sha256": "47eb3b57d774b7c4f730d3ca1d63c987e03a4c19c925145b777fdd530da4c447"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/7d92195354ca709ed5f997eee306822ed5eb2cf7/Qwen3-32B-Q8_0.gguf": {
+      "size_bytes": 34817719968,
+      "sha256": "893a858c12e891a53219e59dab3238de0db61567e2fbd0487d2c6348572d78ff"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/e203c6a745e2376a680765554c1ae470a01c0af4/Qwen3-4B-Q4_K_M.gguf": {
+      "size_bytes": 2497281312,
+      "sha256": "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/e203c6a745e2376a680765554c1ae470a01c0af4/Qwen3-4B-Q6_K.gguf": {
+      "size_bytes": 3306261792,
+      "sha256": "002b8b61c298976afc2c9c3ca65f9dbb28deba22c4b6381853dfaa92b5690022"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/e203c6a745e2376a680765554c1ae470a01c0af4/Qwen3-4B-Q8_0.gguf": {
+      "size_bytes": 4280405792,
+      "sha256": "eed555233267a33c7e8ee31682762cc7751b3f6d224039086e0e846f05fffa5d"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/c2f559f08ee5632ae0584b99606fd90a4922a805/Qwen3-8B-Q4_K_M.gguf": {
+      "size_bytes": 5027784512,
+      "sha256": "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/c2f559f08ee5632ae0584b99606fd90a4922a805/Qwen3-8B-Q6_K.gguf": {
+      "size_bytes": 6725900096,
+      "sha256": "0eaec718fdeab0f429dfa0ec481c090388811f5e63785ddb582292f4ef3c3827"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/c2f559f08ee5632ae0584b99606fd90a4922a805/Qwen3-8B-Q8_0.gguf": {
+      "size_bytes": 8709519168,
+      "sha256": "0cfbf745760f07a76ddeb358dd025a27f2e11d1ca9c9a4169a373d52990fe86e"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/6dcc6c46b4f9b722d781111d088ee4213fec3fce/Qwen3-VL-2B-Instruct-Q4_K_M.gguf": {
+      "size_bytes": 1107410624,
+      "sha256": "858fcf2a39dc73b26dd86592cb0a5f949b59d1edb365d1dea98e46b02e955e56"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/6dcc6c46b4f9b722d781111d088ee4213fec3fce/Qwen3-VL-2B-Instruct-Q6_K.gguf": {
+      "size_bytes": 1417756352,
+      "sha256": "2793722f776c5b2b896f0d668654201978967a71c6d2309cba281c74a8b8496a"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/6dcc6c46b4f9b722d781111d088ee4213fec3fce/Qwen3-VL-2B-Instruct-Q8_0.gguf": {
+      "size_bytes": 1834428096,
+      "sha256": "6b10b387ce3406788b501699ccb131c12c3550211ee2dbe06dc741d77d8bd9d0"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/6dcc6c46b4f9b722d781111d088ee4213fec3fce/mmproj-F16.gguf": {
+      "size_bytes": 819395232,
+      "sha256": "cd5a851d3928697fa1bd76d459d2cc409b6cf40c9d9682b2f5c8e7c6a9f9630f"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/dba7c079df5a13ba93d427743e1c92d1063c59e6/Qwen3-VL-32B-Instruct-Q4_K_M.gguf": {
+      "size_bytes": 19762151200,
+      "sha256": "92d605566f8661b296251c535ed028ecf81c32e14e06948a3d8bef829e96a804"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/dba7c079df5a13ba93d427743e1c92d1063c59e6/Qwen3-VL-32B-Instruct-Q6_K.gguf": {
+      "size_bytes": 26883308320,
+      "sha256": "665305ae1c9af46536360178602b7858c59db992457ee505d2f5678e776d2fb6"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/dba7c079df5a13ba93d427743e1c92d1063c59e6/Qwen3-VL-32B-Instruct-Q8_0.gguf": {
+      "size_bytes": 34817721120,
+      "sha256": "968ac869a67c8fde33a2f5fd497c5fb03223bbdc3afc113e0a8f322e581b52e7"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/dba7c079df5a13ba93d427743e1c92d1063c59e6/mmproj-F16.gguf": {
+      "size_bytes": 1196795552,
+      "sha256": "dde7e407cf72e601455976c2d0daa960d16ee34ba3f0c78718c881d8cd8c1052"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/5da8ed1858d076b51222062cd3724e154bbd13e3/Qwen3-VL-4B-Instruct-Q4_K_M.gguf": {
+      "size_bytes": 2497282336,
+      "sha256": "d4dcd426bfba75752a312b266b80fec8136fbaca13c62d93b7ac41fa67f0492b"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/5da8ed1858d076b51222062cd3724e154bbd13e3/Qwen3-VL-4B-Instruct-Q6_K.gguf": {
+      "size_bytes": 3306262816,
+      "sha256": "43d166b36806df8fd788e53d8d63e0f7d383688ba683a5ea31b5bf2df37314cb"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/5da8ed1858d076b51222062cd3724e154bbd13e3/Qwen3-VL-4B-Instruct-Q8_0.gguf": {
+      "size_bytes": 4280406816,
+      "sha256": "e30b41d2f2cc48149dfbba1b3fb2c023c7e6bf2def75833d4d43820df75efeb3"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/5da8ed1858d076b51222062cd3724e154bbd13e3/mmproj-F16.gguf": {
+      "size_bytes": 836180640,
+      "sha256": "1b9f4e92f0fbda14d7d7b58baed86039b8a980fe503d9d6a9393f25c0028f1fc"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/4e2066f88dd47d2862aaf0a83b60cbf1eb784b4a/Qwen3-VL-8B-Instruct-Q4_K_M.gguf": {
+      "size_bytes": 5027785568,
+      "sha256": "108e7ff92b78eefd3db4741885104acba514255c11b617d3c7b197a5f46efe89"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/4e2066f88dd47d2862aaf0a83b60cbf1eb784b4a/Qwen3-VL-8B-Instruct-Q6_K.gguf": {
+      "size_bytes": 6725901152,
+      "sha256": "2f963d09b4c7485df9bfd4ac4d7ce192cc9cc004a45555b605eeb0a7a83f0057"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/4e2066f88dd47d2862aaf0a83b60cbf1eb784b4a/Qwen3-VL-8B-Instruct-Q8_0.gguf": {
+      "size_bytes": 8709520224,
+      "sha256": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/4e2066f88dd47d2862aaf0a83b60cbf1eb784b4a/mmproj-F16.gguf": {
+      "size_bytes": 1159030336,
+      "sha256": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/88467eb7c8e3b6e7894c794f373050d4dbc6ae8a/Qwen3.5-0.8B-Q4_K_M.gguf": {
+      "size_bytes": 532517120,
+      "sha256": "bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/88467eb7c8e3b6e7894c794f373050d4dbc6ae8a/Qwen3.5-0.8B-Q6_K.gguf": {
+      "size_bytes": 639029504,
+      "sha256": "8408c5c222111cec253682b49eece2a02ed641ded68490001ec4ee160e71098e"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/88467eb7c8e3b6e7894c794f373050d4dbc6ae8a/Qwen3.5-0.8B-Q8_0.gguf": {
+      "size_bytes": 811843840,
+      "sha256": "0ad885ffd4bb022fc4f0d33a3308fa108ef8613159d3b3a67e23abca056b7a6c"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/88467eb7c8e3b6e7894c794f373050d4dbc6ae8a/mmproj-F16.gguf": {
+      "size_bytes": 204987232,
+      "sha256": "56e4c6cfe73b0c82e3e82bc518d7591997e61d81f723fc41a586f4fa69ea2453"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-122B-A10B-GGUF/resolve/e46f7873048002b50016547afab584cacee0fdcf/mmproj-F16.gguf": {
+      "size_bytes": 908724960,
+      "sha256": "691af71bd41d437ce4a1d989f589c4b492237d702b33819ed8f897f9fae6e725"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/423f1c4258b5cf0b9013ab7ae3fdce0337ca94a3/Qwen3.5-27B-Q4_K_M.gguf": {
+      "size_bytes": 16740812704,
+      "sha256": "84b5f7f112156d63836a01a69dc3f11a6ba63b10a23b8ca7a7efaf52d5a2d806"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/423f1c4258b5cf0b9013ab7ae3fdce0337ca94a3/Qwen3.5-27B-Q6_K.gguf": {
+      "size_bytes": 22453933984,
+      "sha256": "69e0f8527e0d937097cbcd486b51e2effaed963f49ef7962c9ef3eab45164ff8"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/423f1c4258b5cf0b9013ab7ae3fdce0337ca94a3/Qwen3.5-27B-Q8_0.gguf": {
+      "size_bytes": 28595763104,
+      "sha256": "6b0a101b0a86697fe11eabcc1a7db72699a9f3d4b18b6a1ac75ea3fb2c26c450"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/423f1c4258b5cf0b9013ab7ae3fdce0337ca94a3/mmproj-F16.gguf": {
+      "size_bytes": 927607040,
+      "sha256": "458bc46d8f275866fde5d88c9c554d9d462a6e8e3a028090d9850e17ab6a1217"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/90057e31161eb95cc0bc1413c4f53b44de9b49c8/Qwen3.5-2B-Q4_K_M.gguf": {
+      "size_bytes": 1280835840,
+      "sha256": "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/90057e31161eb95cc0bc1413c4f53b44de9b49c8/Qwen3.5-2B-Q6_K.gguf": {
+      "size_bytes": 1574961408,
+      "sha256": "fc90339420b4298887aafb307a4291c55440b730133bbffe6ba9630503dcb548"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/90057e31161eb95cc0bc1413c4f53b44de9b49c8/Qwen3.5-2B-Q8_0.gguf": {
+      "size_bytes": 2012012800,
+      "sha256": "1b04acba824817554f4ce23639bc8495ff70453b8fcb047900c731521021f2c1"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/90057e31161eb95cc0bc1413c4f53b44de9b49c8/mmproj-F16.gguf": {
+      "size_bytes": 668227264,
+      "sha256": "7035e9cb8d7c6a9681d07eef9a364783e86ea4cd73faab2eabb4f43a101830c7"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/167b4afc359863325cb4164418c715421b4e9118/Qwen3.5-4B-Q4_K_M.gguf": {
+      "size_bytes": 2740937888,
+      "sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/167b4afc359863325cb4164418c715421b4e9118/Qwen3.5-4B-Q6_K.gguf": {
+      "size_bytes": 3525956768,
+      "sha256": "fdedd781c9ce676ab66b018ca247ff78e8a33c98098a822c1e2d5075e7718f66"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/167b4afc359863325cb4164418c715421b4e9118/Qwen3.5-4B-Q8_0.gguf": {
+      "size_bytes": 4482403488,
+      "sha256": "10cc391b403021dd11c614679d2fd92f611c3681d29e29651b717316965d61e1"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/167b4afc359863325cb4164418c715421b4e9118/mmproj-F16.gguf": {
+      "size_bytes": 672423616,
+      "sha256": "cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/ae90f0d1c1be2b9250b0ef68265615f6fe3c777b/Qwen3.5-9B-Q4_K_M.gguf": {
+      "size_bytes": 5680522464,
+      "sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/ae90f0d1c1be2b9250b0ef68265615f6fe3c777b/Qwen3.5-9B-Q6_K.gguf": {
+      "size_bytes": 7458301152,
+      "sha256": "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/ae90f0d1c1be2b9250b0ef68265615f6fe3c777b/Qwen3.5-9B-Q8_0.gguf": {
+      "size_bytes": 9527502048,
+      "sha256": "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/ae90f0d1c1be2b9250b0ef68265615f6fe3c777b/mmproj-F16.gguf": {
+      "size_bytes": 918166080,
+      "sha256": "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/05cf9eafdddff86866fc5aba71b47f65690d5159/Qwen3.6-35B-A3B-Q8_0.gguf": {
+      "size_bytes": 36903140320,
+      "sha256": "d1a395809f65a43a13ad119eb4e7acdef1ac6d68120f39902c8ab96e72794a59"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/a2a9fd3585d658243e64acd133f247980392f82b/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf": {
+      "size_bytes": 22134528992,
+      "sha256": "ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/a2a9fd3585d658243e64acd133f247980392f82b/mmproj-F16.gguf": {
+      "size_bytes": 899283680,
+      "sha256": "8971ee4f331ff0a4c609374f32984b3d4e6dc086c0aa35f1d637fad1829e887f"
+    },
+    "https://modelscope.cn/models/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/dbb9111525a94e9f9301f3c5d0d09c6afb2fa5b8/Qwen3.6-35B-A3B-UD-Q6_K.gguf": {
+      "size_bytes": 29308320736,
+      "sha256": "4fe53b148b46f9b88830e2a3055c5b15c3a4d1e3ddc9a1384a108d8b9d59f043"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/2c17e1ddbcbee1e973f9467a75e660fd185df5a0/mmproj-F16.gguf": {
+      "size_bytes": 175115840,
+      "sha256": "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/42f2608b7b99f91f615379d16af2c01e19b17d71/gemma-4-12b-it-Q6_K.gguf": {
+      "size_bytes": 9786022720,
+      "sha256": "6f394336500bb5409bd68c31aa9d75097b5e6104f6cf30c82a09a7b64df41faf"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/66eb60e10e75635df3842b9043d919bfed0a571d/gemma-4-12b-it-Q8_0.gguf": {
+      "size_bytes": 12669647680,
+      "sha256": "f20e7ff1be28c283eeeb18fc895733791c56a5851d5cd3fe9691b7f7d12afa72"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/d4ebba378c514edd07905ce52da1e03d05587df3/gemma-4-12b-it-Q4_K_M.gguf": {
+      "size_bytes": 7121861440,
+      "sha256": "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/4ec49d45bf04320dd480500f2f9a3734f02eb619/gemma-4-26B-A4B-it-UD-Q6_K.gguf": {
+      "size_bytes": 23172478688,
+      "sha256": "76bf3eee49cca5b076b34a4b575ecd505dabc470512b46f1207b4f9da08385f0"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/7425cee93a8a8dd4162094f379f4e37b6423587d/gemma-4-26B-A4B-it-Q8_0.gguf": {
+      "size_bytes": 26859861728,
+      "sha256": "5f7cbd0f4564e84342fc34321a09acb54b1a3da9215124e5bf444baa6dda152c"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/7ea37a09171e3d28490b3e138a9e648299d66e1a/mmproj-F16.gguf": {
+      "size_bytes": 1193058784,
+      "sha256": "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/be9a5cf3f885eea0a44addf7ec49ba82737c6292/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf": {
+      "size_bytes": 16947541728,
+      "sha256": "f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/ef02ccfbdc150b7c9394ff1464ccda7963c868fb/mmproj-F16.gguf": {
+      "size_bytes": 1198957024,
+      "sha256": "6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/fe0edf3f21539d03ac7cf97f0f2448a825d5e7b1/gemma-4-31B-it-Q4_K_M.gguf": {
+      "size_bytes": 18323733440,
+      "sha256": "38bd64c852c4b460434cc7162fa9bdcf242faf86502581a754cb72956bb17f84"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/fe0edf3f21539d03ac7cf97f0f2448a825d5e7b1/gemma-4-31B-it-Q6_K.gguf": {
+      "size_bytes": 25201486784,
+      "sha256": "4660692bca96f1d9d19c550641088789c8c0c25bb07965a1e2798e3cb16885fb"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/fe0edf3f21539d03ac7cf97f0f2448a825d5e7b1/gemma-4-31B-it-Q8_0.gguf": {
+      "size_bytes": 32635677632,
+      "sha256": "d5808e5874e660a85ab45b2da00c9e3b4a003621249a333772232d1a703e4d67"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/0de1add99d3a6fe6460de5b1f947ca448873693d/gemma-4-E2B-it-Q8_0.gguf": {
+      "size_bytes": 5048352864,
+      "sha256": "605d3c2647d7c58c1e4b5375ccb5702acf94c2611b4c8d4877812f8fdd32d053"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/1c9c1cafbd02c60d2eed92cc5d814be2777f6d32/mmproj-F16.gguf": {
+      "size_bytes": 985654080,
+      "sha256": "140be8d7849741f88c50757d529b84373ee8e27052cc2236855b537f4a8215fa"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/3cf5e9a744cbddd4b09b641c16bac325627ab83d/gemma-4-E2B-it-Q4_K_M.gguf": {
+      "size_bytes": 3106738272,
+      "sha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/a352a90aa39133d4ef42cb8e871633de42b8898e/gemma-4-E2B-it-Q6_K.gguf": {
+      "size_bytes": 4501721184,
+      "sha256": "f7b8980ecc1c115898fd8d9a3d421d90becbac984194a44b478669c26815843d"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/0c79d73b1b8496e05fcd467288ab1bf8ca6d0b94/gemma-4-E4B-it-Q4_K_M.gguf": {
+      "size_bytes": 4977171584,
+      "sha256": "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/73f5a5d82f84d16011fec0b55cbf512831fba63c/mmproj-F16.gguf": {
+      "size_bytes": 990372672,
+      "sha256": "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/bb93ac83cfc91fdf113ab7bbf462e9b15e29b4d4/gemma-4-E4B-it-Q6_K.gguf": {
+      "size_bytes": 7074929792,
+      "sha256": "fd83f3ef44d22e00ff0f638753dde9a66a83e8ccf79c11024f47d383c489531b"
+    },
+    "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/d2b070a71443662ab038fe3f2f5b0b2aa6b6766d/gemma-4-E4B-it-Q8_0.gguf": {
+      "size_bytes": 8192953472,
+      "sha256": "f8854aa4480df62585a279e7ca0a881554fc18a41c59c4f62642d16a2ae47012"
+    },
+    "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/6a01edae730afdbaa070f9c747bd2cffdbef81d4/gpt-oss-20b-Q4_K_M.gguf": {
+      "size_bytes": 11624759488,
+      "sha256": "c27536640e410032865dc68781d80a08b98f8db5e93575919af8ccc0568aeb4f"
+    },
+    "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/6a01edae730afdbaa070f9c747bd2cffdbef81d4/gpt-oss-20b-Q6_K.gguf": {
+      "size_bytes": 12041000128,
+      "sha256": "f2ead52a7842a556ea10d5edd91a88e5af974856d2485ecaad3aade679832935"
+    },
+    "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/6a01edae730afdbaa070f9c747bd2cffdbef81d4/gpt-oss-20b-Q8_0.gguf": {
+      "size_bytes": 12109567168,
+      "sha256": "bcd455d4034ec02f71a875b46cb17df44a97911d7258291973be4d21f98329f3"
+    }
+  }
+}

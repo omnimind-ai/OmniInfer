@@ -37,6 +37,11 @@ Key endpoints:
 | `/v1/messages` | POST | Anthropic-compatible Messages API adapter |
 | `/omni/shutdown` | POST | Shut down the gateway |
 
+Model-catalog download metadata uses exact `size_bytes` and complete
+`bundle_size_bytes` values when every revision-pinned asset is verified. Unknown
+download lengths are `null`; `required_memory_gib` is an independent resource
+estimate and must not be calculated from download-size fields.
+
 For the full API reference, see [API.md](https://github.com/omnimind-ai/OmniInfer/blob/main/docs/API.md).
 
 ---

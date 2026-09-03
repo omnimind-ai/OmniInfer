@@ -37,6 +37,10 @@ API 服务运行在 `http://<host>:<port>`（默认 `http://127.0.0.1:9000`）�
 | `/v1/messages` | POST | Anthropic Messages 兼容接口 |
 | `/omni/shutdown` | POST | 关闭网关服务 |
 
+模型目录仅在固定 revision 的全部资产均已验证时提供精确的
+`size_bytes` 和完整 `bundle_size_bytes`；未知下载长度返回 `null`。
+`required_memory_gib` 是独立资源估算，不得由下载体积字段推导。
+
 完整 API 参考文档请见 [API.md](https://github.com/omnimind-ai/OmniInfer/blob/main/docs/API.md)。
 
 ---

@@ -521,22 +521,41 @@ Response shape:
 {
   "llama.cpp-cpu": {
     "Qwen3.5": {
-      "Qwen3.5-2B": {
+      "Qwen3.5-4B": {
         "tag": ["..."],
         "quantization": {
           "Q4_K_M": {
             "download": "https://modelscope.cn/...",
-            "size": 1.28,
-            "required_memory_gib": 1.28,
+            "size_bytes": 2740937888,
+            "size_gib": 2.55,
+            "size": 2.55,
+            "bundle_size_bytes": 3413361504,
+            "bundle_size_gib": 3.18,
+            "memory_estimate_gib": 2.55,
+            "required_memory_gib": 3.18,
             "suitable": true
           }
         },
-        "README": "readme/Qwen3.5-2B.md"
+        "README": "readme/Qwen3.5-4B.md",
+        "vision": {
+          "size_bytes": 672423616,
+          "size_gib": 0.63,
+          "memory_estimate_gib": 0.63
+        }
       }
     }
   }
 }
 ```
+
+Download sizes and memory estimates are separate contracts:
+
+- `size_bytes` is the exact main-file byte length from the shared, revision-pinned asset manifest, or `null` when it has not been verified.
+- `size_gib` is a two-decimal display conversion of `size_bytes`; legacy `size` mirrors it for compatibility and is also `null` when the exact byte length is unknown.
+- `bundle_size_bytes` and `bundle_size_gib` include the main file and every required sidecar such as `vision`; both are `null` unless all component byte lengths are known.
+- `memory_estimate_gib` is the main artifact's independent resource estimate. `required_memory_gib` combines explicit main and sidecar memory estimates and never reads the download-size fields.
+
+Exact asset metadata is shared across platform catalogs in `download_assets.json`. Maintainers can run `python3 scripts/validate_model_catalog_assets.py --remote` to follow redirects and compare every pinned URL's `Content-Range` total with `size_bytes` without downloading the asset.
 
 Status codes:
 
@@ -549,6 +568,9 @@ Returns a merged catalog where each quantization chooses the best installed back
 
 The response is grouped by model family and model name. Each quantization includes:
 
+- `size_bytes`, `size_gib`, and compatibility `size` for the main download
+- `bundle_size_bytes` and `bundle_size_gib` for the complete download
+- `memory_estimate_gib` for the main artifact's independent resource estimate
 - `required_memory_gib`
 - `available_memory_gib` (or `null` when unavailable)
 - `memory_status`: `sufficient`, `insufficient`, or `unknown`

@@ -821,17 +821,20 @@ else
             fi
 
             CATALOG_PATH="${INSTALL_DIR}/crates/omniinfer-core/model_catalogs/${CATALOG_SYSTEM}.json"
+            ASSET_CATALOG_PATH="${INSTALL_DIR}/crates/omniinfer-core/model_catalogs/download_assets.json"
 
             # Use embedded Python to parse catalog and present choices
             MODEL_INFO=$(
-python3 - "${CATALOG_PATH}" <<'PY' 2>/dev/null
+python3 - "${CATALOG_PATH}" "${ASSET_CATALOG_PATH}" <<'PY' 2>/dev/null
 import json, sys
 from pathlib import Path
 
 raw = Path(sys.argv[1]).read_bytes()
 data = json.loads(raw.decode('utf-8-sig'))
+asset_raw = Path(sys.argv[2]).read_bytes()
+assets = json.loads(asset_raw.decode('utf-8-sig')).get('assets', {})
 
-# Collect small models (< 6 GiB) across all backends
+# Collect models with a small memory estimate across all backends.
 models = []
 seen = set()
 for backend, families in data.items():
@@ -852,26 +855,34 @@ for backend, families in data.items():
                 if not q or not isinstance(q, dict):
                     continue
                 dl = q.get('download', '')
-                size_str = q.get('size', '0')
+                if not isinstance(dl, str):
+                    continue
+                memory_str = q.get('memory_estimate_gib', '0')
                 try:
-                    size_gib = float(size_str)
+                    memory_gib = float(memory_str)
                 except (ValueError, TypeError):
                     continue
-                if size_gib > 6.0 or size_gib < 0.1 or not dl:
+                if memory_gib > 6.0 or memory_gib < 0.1 or not dl:
                     continue
+                size_bytes = assets.get(dl, {}).get('size_bytes')
+                download_size = (
+                    f'{size_bytes / 1024**3:.2f} GiB'
+                    if isinstance(size_bytes, int) and size_bytes > 0
+                    else 'size unknown'
+                )
                 key = f'{model_name}|{qname}'
                 if key in seen:
                     continue
                 seen.add(key)
-                models.append((model_name, qname, size_gib, dl))
+                models.append((model_name, qname, memory_gib, download_size, dl))
                 break  # one quant per model
 
-# Sort by size
+# Sort by the independent resource estimate.
 models.sort(key=lambda x: x[2])
 
 # Take top 6
-for i, (name, quant, size, url) in enumerate(models[:6]):
-    print(f'{i+1}|{name}|{quant}|{size:.2f}|{url}')
+for i, (name, quant, _memory, download_size, url) in enumerate(models[:6]):
+    print(f'{i+1}|{name}|{quant}|{download_size}|{url}')
 PY
             ) || true
 
@@ -885,9 +896,9 @@ PY
                 # Build menu labels from catalog
                 declare -a DL_LABELS=()
                 declare -a DL_LINES=()
-                while IFS='|' read -r num name quant size url; do
-                    DL_LABELS+=("$(printf '%-32s %-10s %s GiB' "${name}" "${quant}" "${size}")")
-                    DL_LINES+=("${num}|${name}|${quant}|${size}|${url}")
+                while IFS='|' read -r num name quant download_size url; do
+                    DL_LABELS+=("$(printf '%-32s %-10s download %s' "${name}" "${quant}" "${download_size}")")
+                    DL_LINES+=("${num}|${name}|${quant}|${download_size}|${url}")
                 done <<< "${MODEL_INFO}"
 
                 dl_idx=$(select_menu 0 "${DL_LABELS[@]}")
@@ -904,7 +915,7 @@ PY
                 if [[ -f "${MODEL_PATH}" ]]; then
                     ok "Model already downloaded: ${MODEL_PATH}"
                 else
-                    info "Downloading ${dl_name} (${dl_quant}, ${dl_size} GiB) ..."
+                    info "Downloading ${dl_name} (${dl_quant}, ${dl_size}) ..."
                     info "Saving to: ${MODEL_PATH}"
                     curl -L --progress-bar -o "${MODEL_PATH}" "${dl_url}"
                     ok "Download complete: ${MODEL_PATH}"
