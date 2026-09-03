@@ -11,11 +11,21 @@ pub(super) fn stop_serve_locked(
     info: Option<serve_state::ServePidInfo>,
     print_status: bool,
 ) -> Result<()> {
-    if let Some(info) = info.as_ref() {
-        validate_recorded_processes(info, port)?;
-    }
     let mut config = config::load_app_config().unwrap_or_default();
     config.port = port;
+    let live_backend = info
+        .as_ref()
+        .filter(|value| {
+            value.backend_port.is_some()
+                && value.backend_process_owned.is_none()
+                && value.backend_pid.is_none()
+        })
+        .and_then(|_| live_backend_shutdown_target(&config));
+    let backend_process_owned =
+        recorded_backend_process_owned(info.as_ref(), live_backend.as_ref());
+    if let Some(info) = info.as_ref() {
+        validate_recorded_processes(info, port, backend_process_owned)?;
+    }
     let url = format!("{}/omni/shutdown", config.service_base_url());
     let shutdown_accepted =
         match http_client::post_json(&url, &serde_json::json!({}), SHUTDOWN_REQUEST_TIMEOUT) {
@@ -45,21 +55,24 @@ pub(super) fn stop_serve_locked(
                 Duration::ZERO
             },
         );
-    let mut backend_closed = info
-        .as_ref()
-        .and_then(|value| value.backend_port)
+    let backend_port =
+        managed_backend_port(info.as_ref(), live_backend.as_ref(), backend_process_owned);
+    let mut backend_closed = backend_port
         .is_none_or(|backend_port| wait_for_local_port_closed(backend_port, Duration::ZERO));
     backend_closed = backend_closed
-        && recorded_process_exited(
-            info.as_ref().and_then(|value| value.backend_pid),
-            info.as_ref()
-                .and_then(|value| value.backend_process.as_ref()),
-            LegacyProcessKind::Backend,
-            info.as_ref(),
-            port,
-        );
+        && (backend_process_owned == Some(false)
+            || recorded_process_exited(
+                info.as_ref().and_then(|value| value.backend_pid),
+                info.as_ref()
+                    .and_then(|value| value.backend_process.as_ref()),
+                LegacyProcessKind::Backend,
+                info.as_ref(),
+                port,
+            ));
     if info.is_some() && (!gateway_closed || !backend_closed) {
-        if let Some(pid) = info.as_ref().and_then(|value| value.backend_pid) {
+        if backend_process_owned != Some(false)
+            && let Some(pid) = info.as_ref().and_then(|value| value.backend_pid)
+        {
             stop_recorded_process(
                 pid,
                 info.as_ref()
@@ -90,22 +103,20 @@ pub(super) fn stop_serve_locked(
                 port,
                 FORCED_SHUTDOWN_TIMEOUT,
             );
-        backend_closed = info
-            .as_ref()
-            .and_then(|value| value.backend_port)
-            .is_none_or(|backend_port| {
-                wait_for_local_port_closed(backend_port, FORCED_SHUTDOWN_TIMEOUT)
-            });
+        backend_closed = backend_port.is_none_or(|backend_port| {
+            wait_for_local_port_closed(backend_port, FORCED_SHUTDOWN_TIMEOUT)
+        });
         backend_closed = backend_closed
-            && wait_for_recorded_process_exit(
-                info.as_ref().and_then(|value| value.backend_pid),
-                info.as_ref()
-                    .and_then(|value| value.backend_process.as_ref()),
-                LegacyProcessKind::Backend,
-                info.as_ref(),
-                port,
-                FORCED_SHUTDOWN_TIMEOUT,
-            );
+            && (backend_process_owned == Some(false)
+                || wait_for_recorded_process_exit(
+                    info.as_ref().and_then(|value| value.backend_pid),
+                    info.as_ref()
+                        .and_then(|value| value.backend_process.as_ref()),
+                    LegacyProcessKind::Backend,
+                    info.as_ref(),
+                    port,
+                    FORCED_SHUTDOWN_TIMEOUT,
+                ));
     }
     let mut tunnel_closed = true;
     if let Some(pid) = info.as_ref().and_then(|value| value.cloudflared_pid) {
@@ -151,8 +162,57 @@ enum LegacyProcessKind {
     Backend,
 }
 
-fn validate_recorded_processes(info: &serve_state::ServePidInfo, port: u16) -> Result<()> {
-    for (pid, identity, kind, label) in [
+#[derive(Debug, Clone, Copy)]
+struct BackendShutdownTarget {
+    process_owned: bool,
+    port: Option<u16>,
+}
+
+fn live_backend_shutdown_target(config: &config::AppConfig) -> Option<BackendShutdownTarget> {
+    let url = format!("{}/health?deep=true", config.service_base_url());
+    let response = http_client::get_json(&url, Duration::from_secs(2)).ok()?;
+    if response.status >= 400 {
+        return None;
+    }
+    let state = response.body.get("omni").unwrap_or(&response.body);
+    let process_owned = json_bool(state, "process_owned")?;
+    let port = json_u64(state, "backend_port").and_then(|value| u16::try_from(value).ok());
+    Some(BackendShutdownTarget {
+        process_owned,
+        port,
+    })
+}
+
+fn recorded_backend_process_owned(
+    info: Option<&serve_state::ServePidInfo>,
+    live_backend: Option<&BackendShutdownTarget>,
+) -> Option<bool> {
+    info.and_then(|value| value.backend_process_owned)
+        .or_else(|| info.and_then(|value| value.backend_pid).map(|_| true))
+        .or_else(|| live_backend.map(|value| value.process_owned))
+}
+
+fn managed_backend_port(
+    info: Option<&serve_state::ServePidInfo>,
+    live_backend: Option<&BackendShutdownTarget>,
+    process_owned: Option<bool>,
+) -> Option<u16> {
+    if process_owned == Some(false) {
+        return None;
+    }
+    info.and_then(|value| value.backend_port).or_else(|| {
+        live_backend
+            .filter(|value| value.process_owned)
+            .and_then(|value| value.port)
+    })
+}
+
+fn validate_recorded_processes(
+    info: &serve_state::ServePidInfo,
+    port: u16,
+    backend_process_owned: Option<bool>,
+) -> Result<()> {
+    let mut recorded = vec![
         (
             info.pid,
             info.gateway_process.as_ref(),
@@ -165,13 +225,16 @@ fn validate_recorded_processes(info: &serve_state::ServePidInfo, port: u16) -> R
             LegacyProcessKind::Cloudflared,
             "cloudflared",
         ),
-        (
+    ];
+    if backend_process_owned != Some(false) {
+        recorded.push((
             info.backend_pid,
             info.backend_process.as_ref(),
             LegacyProcessKind::Backend,
             "backend",
-        ),
-    ] {
+        ));
+    }
+    for (pid, identity, kind, label) in recorded {
         let Some(pid) = pid else {
             continue;
         };

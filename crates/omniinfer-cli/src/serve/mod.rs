@@ -183,6 +183,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
         backend_pid: None,
         backend_process: None,
         backend_port: None,
+        backend_process_owned: None,
     };
     if let Err(error) = serve_state::save_serve_pid_info(&serve_info) {
         cleanup_failed_serve(&mut rust_gateway, None, public_config.port, &run_id);
@@ -347,6 +348,7 @@ pub(crate) fn serve_orchestrated(args: &ServeArgs) -> Result<()> {
     serve_info.backend_pid = backend_pid;
     serve_info.backend_process = backend_pid.and_then(serve_state::capture_process_identity);
     serve_info.backend_port = backend_port;
+    serve_info.backend_process_owned = json_bool(&state, "process_owned");
     if backend_pid.is_some() && serve_info.backend_process.is_none() {
         cleanup_failed_serve(
             &mut rust_gateway,
