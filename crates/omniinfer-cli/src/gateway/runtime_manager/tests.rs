@@ -1221,18 +1221,24 @@ fn official_cuda_policy_covers_linux_and_windows_modes() {
 #[test]
 fn partial_offload_manages_trace_verbosity_and_rejects_disabled_logs() {
     let automatic = managed_placement_evidence_args(
+        "llama.cpp-linux-cuda",
         &["--jinja".to_string()],
         Some(LlamaCppCudaPlacementPolicy::Auto),
     )
     .unwrap();
     assert!(automatic.ends_with(&["-lv".to_string(), "4".to_string()]));
     assert_eq!(
-        managed_placement_evidence_args(&automatic, Some(LlamaCppCudaPlacementPolicy::Auto))
-            .unwrap(),
+        managed_placement_evidence_args(
+            "llama.cpp-linux-cuda",
+            &automatic,
+            Some(LlamaCppCudaPlacementPolicy::Auto),
+        )
+        .unwrap(),
         automatic,
         "managed launch arguments must remain idempotent"
     );
     let error = managed_placement_evidence_args(
+        "llama.cpp-linux-cuda",
         &["--log-disable".to_string()],
         Some(LlamaCppCudaPlacementPolicy::ExplicitPartial(12)),
     )
@@ -1240,6 +1246,7 @@ fn partial_offload_manages_trace_verbosity_and_rejects_disabled_logs() {
     assert!(error.to_string().contains("remove --log-disable"));
 
     let error = managed_placement_evidence_args(
+        "llama.cpp-linux-cuda",
         &["--log-disable".to_string()],
         Some(LlamaCppCudaPlacementPolicy::ExplicitFull),
     )
@@ -1247,6 +1254,7 @@ fn partial_offload_manages_trace_verbosity_and_rejects_disabled_logs() {
     assert!(error.to_string().contains("remove --log-disable"));
     assert_eq!(
         managed_placement_evidence_args(
+            "llama.cpp-linux-cuda",
             &["--gpu-layers=999".to_string()],
             Some(LlamaCppCudaPlacementPolicy::ExplicitFull),
         )
@@ -1256,6 +1264,25 @@ fn partial_offload_manages_trace_verbosity_and_rejects_disabled_logs() {
             "-lv".to_string(),
             "4".to_string(),
         ]
+    );
+}
+
+#[test]
+fn ik_cpu_moe_uses_native_logging_and_auto_partial_policy() {
+    let backend = speculative_test_backend("ik_llama.cpp-linux-cuda", "llama.cpp", true);
+    let args = vec!["-ngl".to_string(), "999".to_string(), "--cpu-moe".to_string()];
+    assert_eq!(
+        llama_cpp_cuda_placement_policy(&backend, &args).unwrap(),
+        Some(LlamaCppCudaPlacementPolicy::Auto)
+    );
+    assert_eq!(
+        managed_placement_evidence_args(
+            "ik_llama.cpp-linux-cuda",
+            &args,
+            Some(LlamaCppCudaPlacementPolicy::Auto),
+        )
+        .unwrap(),
+        args
     );
 }
 
@@ -1382,6 +1409,25 @@ fn host_scratch_buffer_does_not_make_cuda_model_partial() {
     )
     .unwrap();
     assert_eq!(placement.mode, "full");
+}
+
+#[test]
+fn parses_ik_llama_cpp_native_model_buffers() {
+    let placement = parse_llama_cpp_runtime_placement_text(
+        "llm_load_tensors: offloaded 41/41 layers to GPU\n\\
+         llm_load_tensors: CUDA_Host buffer size = 33155.31 MiB\n\\
+         llm_load_tensors: CUDA0 buffer size = 2027.78 MiB\n\\
+         llama_kv_cache_init: CUDA0 KV buffer size = 222.81 MiB\n\\
+         llama_init_from_model: CUDA_Host output buffer size = 0.95 MiB\n\\
+         llama_init_from_model: CUDA0 compute buffer size = 489.00 MiB\n",
+        "0",
+        LlamaCppCudaPlacementPolicy::Auto,
+    )
+    .unwrap();
+    assert_eq!(placement.mode, "partial");
+    assert_eq!(placement.offloaded_layers, Some(41));
+    assert!(placement.reported_bytes[&MemoryDomain::Host] > 32 * GIB);
+    assert!(placement.reported_bytes[&MemoryDomain::Cuda("0".to_string())] > 2 * GIB);
 }
 
 #[test]

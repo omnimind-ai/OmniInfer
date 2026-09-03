@@ -35,6 +35,7 @@ impl LlamaCppCudaPlacementPolicy {
 }
 
 pub(super) fn managed_placement_evidence_args(
+    backend_id: &str,
     launch_args: &[String],
     policy: Option<LlamaCppCudaPlacementPolicy>,
 ) -> Result<Vec<String>> {
@@ -49,6 +50,12 @@ pub(super) fn managed_placement_evidence_args(
             "{} llama.cpp placement requires startup logging; remove --log-disable",
             policy.as_str()
         );
+    }
+    // ik_llama.cpp already emits the buffer placement evidence we need at its
+    // default INFO level, and does not implement the official llama.cpp -lv
+    // verbosity flag.
+    if backend_id.starts_with("ik_llama.cpp") {
+        return Ok(launch_args.to_vec());
     }
     if launch_args.ends_with(&["-lv".to_string(), "4".to_string()]) {
         return Ok(launch_args.to_vec());
@@ -72,11 +79,22 @@ pub(super) fn llama_cpp_cuda_placement_policy(
     backend: &backend_registry::BackendSpec,
     launch_args: &[String],
 ) -> Result<Option<LlamaCppCudaPlacementPolicy>> {
-    if backend.family != "llama.cpp"
-        || !backend.id.starts_with("llama.cpp-")
-        || !backend.capabilities.iter().any(|cap| cap == "cuda")
-    {
+    let is_llama_cpp_family = backend.family == "llama.cpp"
+        && (backend.id.starts_with("llama.cpp-")
+            || backend.id.starts_with("ik_llama.cpp-"));
+    if !is_llama_cpp_family || !backend.capabilities.iter().any(|cap| cap == "cuda") {
         return Ok(None);
+    }
+    // ik_llama.cpp's --cpu-moe intentionally places the expert tensors in
+    // host memory even when -ngl 999 is present in its backend defaults.
+    // Treat that combination as automatic partial offload so admission can
+    // reserve host plus CUDA ceilings and reconcile them from startup logs.
+    if backend.id.starts_with("ik_llama.cpp")
+        && launch_args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "--cpu-moe" | "--n-cpu-moe"))
+    {
+        return Ok(Some(LlamaCppCudaPlacementPolicy::Auto));
     }
     let Some(value) = gpu_layers_value(launch_args) else {
         if launch_args
@@ -175,6 +193,29 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
     for line in text.lines() {
         if let Some(parsed) = parse_offloaded_layers(line) {
             layers = Some(parsed);
+        }
+        // ik_llama.cpp reports persistent model buffers as
+        // llm_load_tensors: CUDA_Host/CUDA0 buffer size = ... rather than
+        // including the word model used by official llama.cpp.
+        if line.contains("llm_load_tensors:") && !line.contains(" model buffer size") {
+            let marker = " buffer size";
+            if let Some(marker_index) = line.find(marker) {
+                let Some(label) = line[..marker_index].split_whitespace().last() else {
+                    continue;
+                };
+                let Some(domain) = buffer_domain(label, &devices) else {
+                    continue;
+                };
+                let Some(bytes) = parse_buffer_bytes(&line[marker_index + marker.len()..])?
+                else {
+                    continue;
+                };
+                let key = (domain, "model", label.to_string());
+                let current = buffers.entry(key).or_insert(0);
+                *current = current
+                    .checked_add(bytes)
+                    .ok_or_else(|| anyhow::anyhow!("llama.cpp placement byte count overflow"))?;
+            }
         }
         for (marker, category) in [
             (" model buffer size", "model"),
