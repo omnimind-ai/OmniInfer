@@ -7,16 +7,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q4_K_M.gguf",
-                        "size": 11.62
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/6a01edae730afdbaa070f9c747bd2cffdbef81d4/gpt-oss-20b-Q4_K_M.gguf",
+                        "memory_estimate_gib": 11.62
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q6_K.gguf",
-                        "size": 12.04
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/6a01edae730afdbaa070f9c747bd2cffdbef81d4/gpt-oss-20b-Q6_K.gguf",
+                        "memory_estimate_gib": 12.04
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/master/gpt-oss-20b-Q8_0.gguf",
-                        "size": 12.11
+                        "download": "https://modelscope.cn/models/unsloth/gpt-oss-20b-GGUF/resolve/6a01edae730afdbaa070f9c747bd2cffdbef81d4/gpt-oss-20b-Q8_0.gguf",
+                        "memory_estimate_gib": 12.11
                     }
                 },
                 "README": "readme/gpt-oss-20b.md"
@@ -27,16 +27,16 @@
                 "tag": [],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-                        "size": 0.49
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/2e50b77b0eee3083842019e257b74854323d880a/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+                        "memory_estimate_gib": 0.49
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q6_k.gguf",
-                        "size": 0.65
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/2e50b77b0eee3083842019e257b74854323d880a/qwen2.5-0.5b-instruct-q6_k.gguf",
+                        "memory_estimate_gib": 0.65
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q8_0.gguf",
-                        "size": 0.68
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/2e50b77b0eee3083842019e257b74854323d880a/qwen2.5-0.5b-instruct-q8_0.gguf",
+                        "memory_estimate_gib": 0.68
                     }
                 },
                 "README": "readme/Qwen2.5-0.5B-Instruct.md"
@@ -45,16 +45,16 @@
                 "tag": [],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q4_k_m.gguf",
-                        "size": 1.12
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/e8b19c78f775ccbcf6df15ceace6bb5276f09765/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                        "memory_estimate_gib": 1.12
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q6_k.gguf",
-                        "size": 1.46
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/e8b19c78f775ccbcf6df15ceace6bb5276f09765/qwen2.5-1.5b-instruct-q6_k.gguf",
+                        "memory_estimate_gib": 1.46
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/master/qwen2.5-1.5b-instruct-q8_0.gguf",
-                        "size": 1.89
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/e8b19c78f775ccbcf6df15ceace6bb5276f09765/qwen2.5-1.5b-instruct-q8_0.gguf",
+                        "memory_estimate_gib": 1.89
                     }
                 },
                 "README": "readme/Qwen2.5-1.5B-Instruct.md"
@@ -63,16 +63,16 @@
                 "tag": [],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q4_k_m.gguf",
-                        "size": 2.1
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/4f524e37fc494cea95ce8868029df33b64b0f67b/qwen2.5-3b-instruct-q4_k_m.gguf",
+                        "memory_estimate_gib": 2.1
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q6_k.gguf",
-                        "size": 2.79
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/4f524e37fc494cea95ce8868029df33b64b0f67b/qwen2.5-3b-instruct-q6_k.gguf",
+                        "memory_estimate_gib": 2.79
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/master/qwen2.5-3b-instruct-q8_0.gguf",
-                        "size": 3.62
+                        "download": "https://modelscope.cn/models/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/4f524e37fc494cea95ce8868029df33b64b0f67b/qwen2.5-3b-instruct-q8_0.gguf",
+                        "memory_estimate_gib": 3.62
                     }
                 },
                 "README": "readme/Qwen2.5-3B-Instruct.md"
@@ -82,15 +82,15 @@
                 "quantization": {
                     "Q4_K_M": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q4_k_m.gguf",
-                        "size": 4.68
+                        "memory_estimate_gib": 4.68
                     },
                     "Q6_K": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q6_k.gguf",
-                        "size": 6.25
+                        "memory_estimate_gib": 6.25
                     },
                     "Q8_0": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/master/qwen2.5-7b-instruct-q8_0.gguf",
-                        "size": 8.1
+                        "memory_estimate_gib": 8.1
                     }
                 },
                 "README": "readme/Qwen2.5-7B-Instruct.md"
@@ -100,15 +100,15 @@
                 "quantization": {
                     "Q4_K_M": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q4_k_m.gguf",
-                        "size": 8.99
+                        "memory_estimate_gib": 8.99
                     },
                     "Q6_K": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q6_k.gguf",
-                        "size": 12.12
+                        "memory_estimate_gib": 12.12
                     },
                     "Q8_0": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/master/qwen2.5-14b-instruct-q8_0.gguf",
-                        "size": 15.7
+                        "memory_estimate_gib": 15.7
                     }
                 },
                 "README": "readme/Qwen2.5-14B-Instruct.md"
@@ -118,15 +118,15 @@
                 "quantization": {
                     "Q4_K_M": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q4_k_m.gguf",
-                        "size": 19.85
+                        "memory_estimate_gib": 19.85
                     },
                     "Q6_K": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q6_k.gguf",
-                        "size": 26.89
+                        "memory_estimate_gib": 26.89
                     },
                     "Q8_0": {
                         "download": "https://modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GGUF/resolve/master/qwen2.5-32b-instruct-q8_0.gguf",
-                        "size": 34.82
+                        "memory_estimate_gib": 34.82
                     }
                 },
                 "README": "readme/Qwen2.5-32B-Instruct.md"
@@ -139,22 +139,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
-                        "size": 1.93
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/45c3db007adfae103f9d0f5813538196075957db/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+                        "memory_estimate_gib": 1.93
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q6_K.gguf",
-                        "size": 2.54
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/45c3db007adfae103f9d0f5813538196075957db/Qwen2.5-VL-3B-Instruct-Q6_K.gguf",
+                        "memory_estimate_gib": 2.54
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
-                        "size": 3.29
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/45c3db007adfae103f9d0f5813538196075957db/Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
+                        "memory_estimate_gib": 3.29
                     }
                 },
                 "README": "readme/Qwen2.5-VL-3B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 2.67
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-3B-Instruct-GGUF/resolve/45c3db007adfae103f9d0f5813538196075957db/mmproj-F16.gguf",
+                    "memory_estimate_gib": 2.67
                 }
             },
             "Qwen2.5-VL-7B-Instruct": {
@@ -163,22 +163,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
-                        "size": 4.68
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/6e17021fb3e06b2a89e2d795fcd6dadf41cbee74/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+                        "memory_estimate_gib": 4.68
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q6_K.gguf",
-                        "size": 6.25
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/6e17021fb3e06b2a89e2d795fcd6dadf41cbee74/Qwen2.5-VL-7B-Instruct-Q6_K.gguf",
+                        "memory_estimate_gib": 6.25
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
-                        "size": 8.1
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/6e17021fb3e06b2a89e2d795fcd6dadf41cbee74/Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
+                        "memory_estimate_gib": 8.1
                     }
                 },
                 "README": "readme/Qwen2.5-VL-7B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 2.7
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/6e17021fb3e06b2a89e2d795fcd6dadf41cbee74/mmproj-F16.gguf",
+                    "memory_estimate_gib": 2.7
                 }
             },
             "Qwen2.5-VL-32B-Instruct": {
@@ -187,22 +187,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf",
-                        "size": 19.85
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/bd160d8e6718fd009b6f9b515c4d64b8c093d656/Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf",
+                        "memory_estimate_gib": 19.85
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q6_K.gguf",
-                        "size": 26.89
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/bd160d8e6718fd009b6f9b515c4d64b8c093d656/Qwen2.5-VL-32B-Instruct-Q6_K.gguf",
+                        "memory_estimate_gib": 26.89
                     },
                     "Q5_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/Qwen2.5-VL-32B-Instruct-Q5_K_M.gguf",
-                        "size": 23.26
+                        "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/bd160d8e6718fd009b6f9b515c4d64b8c093d656/Qwen2.5-VL-32B-Instruct-Q5_K_M.gguf",
+                        "memory_estimate_gib": 23.26
                     }
                 },
                 "README": "readme/Qwen2.5-VL-32B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 2.75
+                    "download": "https://modelscope.cn/models/unsloth/Qwen2.5-VL-32B-Instruct-GGUF/resolve/b90f951fb222d0028a33da90b651919a354a6a08/mmproj-F16.gguf",
+                    "memory_estimate_gib": 2.75
                 }
             }
         },
@@ -213,16 +213,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q4_K_M.gguf",
-                        "size": 0.4
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/6091bc857fe0dffa19c581a7ccc7def1b126ff54/Qwen3-0.6B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 0.4
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q6_K.gguf",
-                        "size": 0.5
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/6091bc857fe0dffa19c581a7ccc7def1b126ff54/Qwen3-0.6B-Q6_K.gguf",
+                        "memory_estimate_gib": 0.5
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q8_0.gguf",
-                        "size": 0.64
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-0.6B-GGUF/resolve/6091bc857fe0dffa19c581a7ccc7def1b126ff54/Qwen3-0.6B-Q8_0.gguf",
+                        "memory_estimate_gib": 0.64
                     }
                 },
                 "README": "readme/Qwen3-0.6B.md"
@@ -233,16 +233,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q4_K_M.gguf",
-                        "size": 2.5
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/e203c6a745e2376a680765554c1ae470a01c0af4/Qwen3-4B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 2.5
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q6_K.gguf",
-                        "size": 3.31
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/e203c6a745e2376a680765554c1ae470a01c0af4/Qwen3-4B-Q6_K.gguf",
+                        "memory_estimate_gib": 3.31
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/master/Qwen3-4B-Q8_0.gguf",
-                        "size": 4.28
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-4B-GGUF/resolve/e203c6a745e2376a680765554c1ae470a01c0af4/Qwen3-4B-Q8_0.gguf",
+                        "memory_estimate_gib": 4.28
                     }
                 },
                 "README": "readme/Qwen3-4B.md"
@@ -253,16 +253,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q4_K_M.gguf",
-                        "size": 5.03
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/c2f559f08ee5632ae0584b99606fd90a4922a805/Qwen3-8B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 5.03
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q6_K.gguf",
-                        "size": 6.73
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/c2f559f08ee5632ae0584b99606fd90a4922a805/Qwen3-8B-Q6_K.gguf",
+                        "memory_estimate_gib": 6.73
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/master/Qwen3-8B-Q8_0.gguf",
-                        "size": 8.71
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-8B-GGUF/resolve/c2f559f08ee5632ae0584b99606fd90a4922a805/Qwen3-8B-Q8_0.gguf",
+                        "memory_estimate_gib": 8.71
                     }
                 },
                 "README": "readme/Qwen3-8B.md"
@@ -273,16 +273,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q4_K_M.gguf",
-                        "size": 9
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/75e6c3eb4235b337eb5cd7337cbcddee3aaeac35/Qwen3-14B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 9
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q6_K.gguf",
-                        "size": 12.12
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/75e6c3eb4235b337eb5cd7337cbcddee3aaeac35/Qwen3-14B-Q6_K.gguf",
+                        "memory_estimate_gib": 12.12
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/master/Qwen3-14B-Q8_0.gguf",
-                        "size": 15.7
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-14B-GGUF/resolve/75e6c3eb4235b337eb5cd7337cbcddee3aaeac35/Qwen3-14B-Q8_0.gguf",
+                        "memory_estimate_gib": 15.7
                     }
                 },
                 "README": "readme/Qwen3-14B.md"
@@ -293,16 +293,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q4_K_M.gguf",
-                        "size": 19.76
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/7d92195354ca709ed5f997eee306822ed5eb2cf7/Qwen3-32B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 19.76
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q6_K.gguf",
-                        "size": 26.88
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/7d92195354ca709ed5f997eee306822ed5eb2cf7/Qwen3-32B-Q6_K.gguf",
+                        "memory_estimate_gib": 26.88
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/master/Qwen3-32B-Q8_0.gguf",
-                        "size": 34.82
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-32B-GGUF/resolve/7d92195354ca709ed5f997eee306822ed5eb2cf7/Qwen3-32B-Q8_0.gguf",
+                        "memory_estimate_gib": 34.82
                     }
                 },
                 "README": "readme/Qwen3-32B.md"
@@ -315,22 +315,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q4_K_M.gguf",
-                        "size": 1.11
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/6dcc6c46b4f9b722d781111d088ee4213fec3fce/Qwen3-VL-2B-Instruct-Q4_K_M.gguf",
+                        "memory_estimate_gib": 1.11
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q6_K.gguf",
-                        "size": 1.42
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/6dcc6c46b4f9b722d781111d088ee4213fec3fce/Qwen3-VL-2B-Instruct-Q6_K.gguf",
+                        "memory_estimate_gib": 1.42
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/Qwen3-VL-2B-Instruct-Q8_0.gguf",
-                        "size": 1.83
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/6dcc6c46b4f9b722d781111d088ee4213fec3fce/Qwen3-VL-2B-Instruct-Q8_0.gguf",
+                        "memory_estimate_gib": 1.83
                     }
                 },
                 "README": "readme/Qwen3-VL-2B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 1.63
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/6dcc6c46b4f9b722d781111d088ee4213fec3fce/mmproj-F16.gguf",
+                    "memory_estimate_gib": 1.63
                 }
             },
             "Qwen3-VL-4B-Instruct": {
@@ -339,22 +339,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
-                        "size": 2.5
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/5da8ed1858d076b51222062cd3724e154bbd13e3/Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+                        "memory_estimate_gib": 2.5
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q6_K.gguf",
-                        "size": 3.31
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/5da8ed1858d076b51222062cd3724e154bbd13e3/Qwen3-VL-4B-Instruct-Q6_K.gguf",
+                        "memory_estimate_gib": 3.31
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/Qwen3-VL-4B-Instruct-Q8_0.gguf",
-                        "size": 4.28
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/5da8ed1858d076b51222062cd3724e154bbd13e3/Qwen3-VL-4B-Instruct-Q8_0.gguf",
+                        "memory_estimate_gib": 4.28
                     }
                 },
                 "README": "readme/Qwen3-VL-4B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 1.66
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/5da8ed1858d076b51222062cd3724e154bbd13e3/mmproj-F16.gguf",
+                    "memory_estimate_gib": 1.66
                 }
             },
             "Qwen3-VL-8B-Instruct": {
@@ -363,22 +363,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
-                        "size": 5.03
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/4e2066f88dd47d2862aaf0a83b60cbf1eb784b4a/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+                        "memory_estimate_gib": 5.03
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q6_K.gguf",
-                        "size": 6.73
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/4e2066f88dd47d2862aaf0a83b60cbf1eb784b4a/Qwen3-VL-8B-Instruct-Q6_K.gguf",
+                        "memory_estimate_gib": 6.73
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/Qwen3-VL-8B-Instruct-Q8_0.gguf",
-                        "size": 8.71
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/4e2066f88dd47d2862aaf0a83b60cbf1eb784b4a/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+                        "memory_estimate_gib": 8.71
                     }
                 },
                 "README": "readme/Qwen3-VL-8B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 2.31
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/4e2066f88dd47d2862aaf0a83b60cbf1eb784b4a/mmproj-F16.gguf",
+                    "memory_estimate_gib": 2.31
                 }
             },
             "Qwen3-VL-32B-Instruct": {
@@ -387,22 +387,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q4_K_M.gguf",
-                        "size": 19.76
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/dba7c079df5a13ba93d427743e1c92d1063c59e6/Qwen3-VL-32B-Instruct-Q4_K_M.gguf",
+                        "memory_estimate_gib": 19.76
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q6_K.gguf",
-                        "size": 26.88
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/dba7c079df5a13ba93d427743e1c92d1063c59e6/Qwen3-VL-32B-Instruct-Q6_K.gguf",
+                        "memory_estimate_gib": 26.88
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/Qwen3-VL-32B-Instruct-Q8_0.gguf",
-                        "size": 34.82
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/dba7c079df5a13ba93d427743e1c92d1063c59e6/Qwen3-VL-32B-Instruct-Q8_0.gguf",
+                        "memory_estimate_gib": 34.82
                     }
                 },
                 "README": "readme/Qwen3-VL-32B-Instruct.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 2.38
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3-VL-32B-Instruct-GGUF/resolve/dba7c079df5a13ba93d427743e1c92d1063c59e6/mmproj-F16.gguf",
+                    "memory_estimate_gib": 2.38
                 }
             }
         },
@@ -414,22 +414,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q4_K_M.gguf",
-                        "size": 0.53
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/88467eb7c8e3b6e7894c794f373050d4dbc6ae8a/Qwen3.5-0.8B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 0.53
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q6_K.gguf",
-                        "size": 0.64
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/88467eb7c8e3b6e7894c794f373050d4dbc6ae8a/Qwen3.5-0.8B-Q6_K.gguf",
+                        "memory_estimate_gib": 0.64
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q8_0.gguf",
-                        "size": 0.81
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/88467eb7c8e3b6e7894c794f373050d4dbc6ae8a/Qwen3.5-0.8B-Q8_0.gguf",
+                        "memory_estimate_gib": 0.81
                     }
                 },
                 "README": "readme/Qwen3.5-0.8B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 0.4
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/88467eb7c8e3b6e7894c794f373050d4dbc6ae8a/mmproj-F16.gguf",
+                    "memory_estimate_gib": 0.4
                 }
             },
             "Qwen3.5-2B": {
@@ -439,22 +439,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q4_K_M.gguf",
-                        "size": 1.28
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/90057e31161eb95cc0bc1413c4f53b44de9b49c8/Qwen3.5-2B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 1.28
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q6_K.gguf",
-                        "size": 1.57
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/90057e31161eb95cc0bc1413c4f53b44de9b49c8/Qwen3.5-2B-Q6_K.gguf",
+                        "memory_estimate_gib": 1.57
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q8_0.gguf",
-                        "size": 2.01
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/90057e31161eb95cc0bc1413c4f53b44de9b49c8/Qwen3.5-2B-Q8_0.gguf",
+                        "memory_estimate_gib": 2.01
                     }
                 },
                 "README": "readme/Qwen3.5-2B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 1.33
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/90057e31161eb95cc0bc1413c4f53b44de9b49c8/mmproj-F16.gguf",
+                    "memory_estimate_gib": 1.33
                 }
             },
             "Qwen3.5-4B": {
@@ -464,22 +464,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q4_K_M.gguf",
-                        "size": 2.74
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/167b4afc359863325cb4164418c715421b4e9118/Qwen3.5-4B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 2.55
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q6_K.gguf",
-                        "size": 3.53
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/167b4afc359863325cb4164418c715421b4e9118/Qwen3.5-4B-Q6_K.gguf",
+                        "memory_estimate_gib": 3.53
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q8_0.gguf",
-                        "size": 4.48
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/167b4afc359863325cb4164418c715421b4e9118/Qwen3.5-4B-Q8_0.gguf",
+                        "memory_estimate_gib": 4.48
                     }
                 },
                 "README": "readme/Qwen3.5-4B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 1.33
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/167b4afc359863325cb4164418c715421b4e9118/mmproj-F16.gguf",
+                    "memory_estimate_gib": 0.63
                 }
             },
             "Qwen3.5-9B": {
@@ -489,22 +489,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q4_K_M.gguf",
-                        "size": 5.68
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/ae90f0d1c1be2b9250b0ef68265615f6fe3c777b/Qwen3.5-9B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 5.68
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q6_K.gguf",
-                        "size": 7.46
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/ae90f0d1c1be2b9250b0ef68265615f6fe3c777b/Qwen3.5-9B-Q6_K.gguf",
+                        "memory_estimate_gib": 7.46
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-Q8_0.gguf",
-                        "size": 9.53
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/ae90f0d1c1be2b9250b0ef68265615f6fe3c777b/Qwen3.5-9B-Q8_0.gguf",
+                        "memory_estimate_gib": 9.53
                     }
                 },
                 "README": "readme/Qwen3.5-9B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 1.82
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/ae90f0d1c1be2b9250b0ef68265615f6fe3c777b/mmproj-F16.gguf",
+                    "memory_estimate_gib": 1.82
                 }
             },
             "Qwen3.5-27B": {
@@ -514,22 +514,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q4_K_M.gguf",
-                        "size": 16.74
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/423f1c4258b5cf0b9013ab7ae3fdce0337ca94a3/Qwen3.5-27B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 16.74
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q6_K.gguf",
-                        "size": 22.45
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/423f1c4258b5cf0b9013ab7ae3fdce0337ca94a3/Qwen3.5-27B-Q6_K.gguf",
+                        "memory_estimate_gib": 22.45
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/Qwen3.5-27B-Q8_0.gguf",
-                        "size": 28.6
+                        "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/423f1c4258b5cf0b9013ab7ae3fdce0337ca94a3/Qwen3.5-27B-Q8_0.gguf",
+                        "memory_estimate_gib": 28.6
                     }
                 },
                 "README": "readme/Qwen3.5-27B.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 1.84
+                    "download": "https://modelscope.cn/models/unsloth/Qwen3.5-27B-GGUF/resolve/423f1c4258b5cf0b9013ab7ae3fdce0337ca94a3/mmproj-F16.gguf",
+                    "memory_estimate_gib": 1.84
                 }
             }
         },
@@ -540,16 +540,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
-                        "size": 1.12
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/fa0539ea11c2f7ce5b540004ce6e8ed20d462f77/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 1.12
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
-                        "size": 1.46
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/fa0539ea11c2f7ce5b540004ce6e8ed20d462f77/DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf",
+                        "memory_estimate_gib": 1.46
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf",
-                        "size": 1.89
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/fa0539ea11c2f7ce5b540004ce6e8ed20d462f77/DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf",
+                        "memory_estimate_gib": 1.89
                     }
                 },
                 "README": "readme/DeepSeek-R1-Distill-Qwen-1.5B.md"
@@ -560,16 +560,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
-                        "size": 4.68
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/282f395a1d3e46c9fca376c4143061120bd038d6/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 4.68
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q6_K.gguf",
-                        "size": 6.25
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/282f395a1d3e46c9fca376c4143061120bd038d6/DeepSeek-R1-Distill-Qwen-7B-Q6_K.gguf",
+                        "memory_estimate_gib": 6.25
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-7B-Q8_0.gguf",
-                        "size": 8.1
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/282f395a1d3e46c9fca376c4143061120bd038d6/DeepSeek-R1-Distill-Qwen-7B-Q8_0.gguf",
+                        "memory_estimate_gib": 8.1
                     }
                 },
                 "README": "readme/DeepSeek-R1-Distill-Qwen-7B.md"
@@ -580,16 +580,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf",
-                        "size": 5.03
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/6c8d030ecd6fcdf709b49ba1d1495421d1a0308e/DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 5.03
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q6_K.gguf",
-                        "size": 6.73
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/6c8d030ecd6fcdf709b49ba1d1495421d1a0308e/DeepSeek-R1-0528-Qwen3-8B-Q6_K.gguf",
+                        "memory_estimate_gib": 6.73
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/master/DeepSeek-R1-0528-Qwen3-8B-Q8_0.gguf",
-                        "size": 8.71
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-0528-Qwen3-8B-GGUF/resolve/6c8d030ecd6fcdf709b49ba1d1495421d1a0308e/DeepSeek-R1-0528-Qwen3-8B-Q8_0.gguf",
+                        "memory_estimate_gib": 8.71
                     }
                 },
                 "README": "readme/DeepSeek-R1-0528-Qwen3-8B.md"
@@ -600,16 +600,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
-                        "size": 8.99
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/82a888e26b9e44f1b7264ae5e9e815dfa6d65976/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 8.99
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
-                        "size": 12.12
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/82a888e26b9e44f1b7264ae5e9e815dfa6d65976/DeepSeek-R1-Distill-Qwen-14B-Q6_K.gguf",
+                        "memory_estimate_gib": 12.12
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf",
-                        "size": 15.7
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/82a888e26b9e44f1b7264ae5e9e815dfa6d65976/DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf",
+                        "memory_estimate_gib": 15.7
                     }
                 },
                 "README": "readme/DeepSeek-R1-Distill-Qwen-14B.md"
@@ -620,16 +620,16 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
-                        "size": 19.85
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/035cb6d68544759a34239b70465cb7647187e987/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+                        "memory_estimate_gib": 19.85
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q6_K.gguf",
-                        "size": 26.89
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/035cb6d68544759a34239b70465cb7647187e987/DeepSeek-R1-Distill-Qwen-32B-Q6_K.gguf",
+                        "memory_estimate_gib": 26.89
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-32B-Q8_0.gguf",
-                        "size": 34.82
+                        "download": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/035cb6d68544759a34239b70465cb7647187e987/DeepSeek-R1-Distill-Qwen-32B-Q8_0.gguf",
+                        "memory_estimate_gib": 34.82
                     }
                 },
                 "README": "readme/DeepSeek-R1-Distill-Qwen-32B.md"
@@ -640,16 +640,16 @@
                 "tag": [],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q4_K_M.gguf",
-                        "size": 6.17
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/25c393191d24643d54cf94a78b6245c5c666596c/GLM-4-9B-0414-Q4_K_M.gguf",
+                        "memory_estimate_gib": 6.17
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q6_K.gguf",
-                        "size": 8.27
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/25c393191d24643d54cf94a78b6245c5c666596c/GLM-4-9B-0414-Q6_K.gguf",
+                        "memory_estimate_gib": 8.27
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/master/GLM-4-9B-0414-Q8_0.gguf",
-                        "size": 10
+                        "download": "https://modelscope.cn/models/unsloth/GLM-4-9B-0414-GGUF/resolve/25c393191d24643d54cf94a78b6245c5c666596c/GLM-4-9B-0414-Q8_0.gguf",
+                        "memory_estimate_gib": 10
                     }
                 },
                 "README": "readme/GLM-4-9B-0414.md"
@@ -662,22 +662,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/master/gemma-4-E2B-it-Q4_K_M.gguf",
-                        "size": 3.11
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/3cf5e9a744cbddd4b09b641c16bac325627ab83d/gemma-4-E2B-it-Q4_K_M.gguf",
+                        "memory_estimate_gib": 3.11
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/master/gemma-4-E2B-it-Q6_K.gguf",
-                        "size": 4.5
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/a352a90aa39133d4ef42cb8e871633de42b8898e/gemma-4-E2B-it-Q6_K.gguf",
+                        "memory_estimate_gib": 4.5
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/master/gemma-4-E2B-it-Q8_0.gguf",
-                        "size": 5.05
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/0de1add99d3a6fe6460de5b1f947ca448873693d/gemma-4-E2B-it-Q8_0.gguf",
+                        "memory_estimate_gib": 5.05
                     }
                 },
                 "README": "readme/gemma-4-E2B-it.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 0.99
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-E2B-it-GGUF/resolve/1c9c1cafbd02c60d2eed92cc5d814be2777f6d32/mmproj-F16.gguf",
+                    "memory_estimate_gib": 0.99
                 }
             },
             "gemma-4-E4B-it": {
@@ -686,22 +686,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q4_K_M.gguf",
-                        "size": 4.64
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/0c79d73b1b8496e05fcd467288ab1bf8ca6d0b94/gemma-4-E4B-it-Q4_K_M.gguf",
+                        "memory_estimate_gib": 4.64
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q6_K.gguf",
-                        "size": 6.59
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/bb93ac83cfc91fdf113ab7bbf462e9b15e29b4d4/gemma-4-E4B-it-Q6_K.gguf",
+                        "memory_estimate_gib": 6.59
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/gemma-4-E4B-it-Q8_0.gguf",
-                        "size": 7.63
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/d2b070a71443662ab038fe3f2f5b0b2aa6b6766d/gemma-4-E4B-it-Q8_0.gguf",
+                        "memory_estimate_gib": 7.63
                     }
                 },
                 "README": "readme/gemma-4-E4B-it.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 0.99
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-E4B-it-GGUF/resolve/73f5a5d82f84d16011fec0b55cbf512831fba63c/mmproj-F16.gguf",
+                    "memory_estimate_gib": 0.99
                 }
             },
             "gemma-4-31B-it": {
@@ -710,22 +710,22 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/master/gemma-4-31B-it-Q4_K_M.gguf",
-                        "size": 18.32
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/fe0edf3f21539d03ac7cf97f0f2448a825d5e7b1/gemma-4-31B-it-Q4_K_M.gguf",
+                        "memory_estimate_gib": 18.32
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/master/gemma-4-31B-it-Q6_K.gguf",
-                        "size": 25.2
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/fe0edf3f21539d03ac7cf97f0f2448a825d5e7b1/gemma-4-31B-it-Q6_K.gguf",
+                        "memory_estimate_gib": 25.2
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/master/gemma-4-31B-it-Q8_0.gguf",
-                        "size": 32.64
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/fe0edf3f21539d03ac7cf97f0f2448a825d5e7b1/gemma-4-31B-it-Q8_0.gguf",
+                        "memory_estimate_gib": 32.64
                     }
                 },
                 "README": "readme/gemma-4-31B-it.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 1.2
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-31B-it-GGUF/resolve/ef02ccfbdc150b7c9394ff1464ccda7963c868fb/mmproj-F16.gguf",
+                    "memory_estimate_gib": 1.2
                 }
             },
             "gemma-4-12B-it": {
@@ -734,44 +734,46 @@
                 ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q4_K_M.gguf",
-                        "size": 7.12
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/d4ebba378c514edd07905ce52da1e03d05587df3/gemma-4-12b-it-Q4_K_M.gguf",
+                        "memory_estimate_gib": 7.12
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q6_K.gguf",
-                        "size": 9.79
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/42f2608b7b99f91f615379d16af2c01e19b17d71/gemma-4-12b-it-Q6_K.gguf",
+                        "memory_estimate_gib": 9.79
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/gemma-4-12b-it-Q8_0.gguf",
-                        "size": 12.67
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/66eb60e10e75635df3842b9043d919bfed0a571d/gemma-4-12b-it-Q8_0.gguf",
+                        "memory_estimate_gib": 12.67
                     }
                 },
                 "README": "readme/gemma-4-12B-it.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 0.18
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-12B-it-GGUF/resolve/2c17e1ddbcbee1e973f9467a75e660fd185df5a0/mmproj-F16.gguf",
+                    "memory_estimate_gib": 0.18
                 }
             },
             "gemma-4-26B-A4B-it": {
-                "tag": ["视觉模型"],
+                "tag": [
+                    "视觉模型"
+                ],
                 "quantization": {
                     "Q4_K_M": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
-                        "size": 16.87
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/be9a5cf3f885eea0a44addf7ec49ba82737c6292/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+                        "memory_estimate_gib": 16.87
                     },
                     "Q6_K": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-UD-Q6_K.gguf",
-                        "size": 22.9
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/4ec49d45bf04320dd480500f2f9a3734f02eb619/gemma-4-26B-A4B-it-UD-Q6_K.gguf",
+                        "memory_estimate_gib": 22.9
                     },
                     "Q8_0": {
-                        "download": "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/master/gemma-4-26B-A4B-it-Q8_0.gguf",
-                        "size": 27.08
+                        "download": "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/7425cee93a8a8dd4162094f379f4e37b6423587d/gemma-4-26B-A4B-it-Q8_0.gguf",
+                        "memory_estimate_gib": 27.08
                     }
                 },
                 "README": "readme/gemma-4-26B-A4B-it.md",
                 "vision": {
-                    "download": "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/master/mmproj-F16.gguf",
-                    "size": 1.19
+                    "download": "https://modelscope.cn/models/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/7ea37a09171e3d28490b3e138a9e648299d66e1a/mmproj-F16.gguf",
+                    "memory_estimate_gib": 1.19
                 }
             }
         }
@@ -783,11 +785,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-0.5B-Instruct-4bit",
-                        "size": 0.49
+                        "memory_estimate_gib": 0.49
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-0.5B-Instruct-8bit",
-                        "size": 0.68
+                        "memory_estimate_gib": 0.68
                     }
                 },
                 "README": ""
@@ -797,11 +799,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-1.5B-Instruct-4bit",
-                        "size": 1.12
+                        "memory_estimate_gib": 1.12
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-1.5B-Instruct-8bit",
-                        "size": 1.89
+                        "memory_estimate_gib": 1.89
                     }
                 },
                 "README": ""
@@ -811,11 +813,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-3B-Instruct-4bit",
-                        "size": 2.1
+                        "memory_estimate_gib": 2.1
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-3B-Instruct-8bit",
-                        "size": 3.62
+                        "memory_estimate_gib": 3.62
                     }
                 },
                 "README": ""
@@ -825,11 +827,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-7B-Instruct-4bit",
-                        "size": 4.68
+                        "memory_estimate_gib": 4.68
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-7B-Instruct-8bit",
-                        "size": 8.1
+                        "memory_estimate_gib": 8.1
                     }
                 },
                 "README": ""
@@ -839,11 +841,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-14B-Instruct-4bit",
-                        "size": 8.99
+                        "memory_estimate_gib": 8.99
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-14B-Instruct-8bit",
-                        "size": 15.7
+                        "memory_estimate_gib": 15.7
                     }
                 },
                 "README": ""
@@ -853,11 +855,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-32B-Instruct-4bit",
-                        "size": 19.85
+                        "memory_estimate_gib": 19.85
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-32B-Instruct-8bit",
-                        "size": 34.82
+                        "memory_estimate_gib": 34.82
                     }
                 },
                 "README": ""
@@ -871,11 +873,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
-                        "size": 1.93
+                        "memory_estimate_gib": 1.93
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-VL-3B-Instruct-8bit",
-                        "size": 3.29
+                        "memory_estimate_gib": 3.29
                     }
                 },
                 "README": ""
@@ -887,11 +889,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
-                        "size": 4.68
+                        "memory_estimate_gib": 4.68
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-VL-7B-Instruct-8bit",
-                        "size": 8.1
+                        "memory_estimate_gib": 8.1
                     }
                 },
                 "README": ""
@@ -903,11 +905,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-VL-32B-Instruct-4bit",
-                        "size": 19.85
+                        "memory_estimate_gib": 19.85
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen2.5-VL-32B-Instruct-8bit",
-                        "size": 23.26
+                        "memory_estimate_gib": 23.26
                     }
                 },
                 "README": ""
@@ -921,11 +923,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-0.6B-4bit",
-                        "size": 0.4
+                        "memory_estimate_gib": 0.4
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-0.6B-8bit",
-                        "size": 0.64
+                        "memory_estimate_gib": 0.64
                     }
                 },
                 "README": ""
@@ -937,11 +939,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-4B-4bit",
-                        "size": 2.5
+                        "memory_estimate_gib": 2.5
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-4B-8bit",
-                        "size": 4.28
+                        "memory_estimate_gib": 4.28
                     }
                 },
                 "README": ""
@@ -953,11 +955,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-8B-4bit",
-                        "size": 5.03
+                        "memory_estimate_gib": 5.03
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-8B-8bit",
-                        "size": 8.71
+                        "memory_estimate_gib": 8.71
                     }
                 },
                 "README": ""
@@ -969,11 +971,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-14B-4bit",
-                        "size": 9
+                        "memory_estimate_gib": 9
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-14B-8bit",
-                        "size": 15.7
+                        "memory_estimate_gib": 15.7
                     }
                 },
                 "README": ""
@@ -985,11 +987,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-32B-4bit",
-                        "size": 19.76
+                        "memory_estimate_gib": 19.76
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-32B-8bit",
-                        "size": 34.82
+                        "memory_estimate_gib": 34.82
                     }
                 },
                 "README": ""
@@ -1003,11 +1005,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-VL-2B-Instruct-4bit",
-                        "size": 1.11
+                        "memory_estimate_gib": 1.11
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-VL-2B-Instruct-8bit",
-                        "size": 1.83
+                        "memory_estimate_gib": 1.83
                     }
                 },
                 "README": ""
@@ -1019,11 +1021,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-VL-4B-Instruct-4bit",
-                        "size": 2.5
+                        "memory_estimate_gib": 2.5
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-VL-4B-Instruct-8bit",
-                        "size": 4.28
+                        "memory_estimate_gib": 4.28
                     }
                 },
                 "README": ""
@@ -1035,11 +1037,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-VL-8B-Instruct-4bit",
-                        "size": 5.03
+                        "memory_estimate_gib": 5.03
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-VL-8B-Instruct-8bit",
-                        "size": 8.71
+                        "memory_estimate_gib": 8.71
                     }
                 },
                 "README": ""
@@ -1051,11 +1053,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-VL-32B-Instruct-4bit",
-                        "size": 19.76
+                        "memory_estimate_gib": 19.76
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3-VL-32B-Instruct-8bit",
-                        "size": 34.82
+                        "memory_estimate_gib": 34.82
                     }
                 },
                 "README": ""
@@ -1070,11 +1072,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-0.8B-MLX-4bit",
-                        "size": 0.53
+                        "memory_estimate_gib": 0.53
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-0.8B-MLX-8bit",
-                        "size": 0.81
+                        "memory_estimate_gib": 0.81
                     }
                 },
                 "README": ""
@@ -1087,11 +1089,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-2B-MLX-4bit",
-                        "size": 1.28
+                        "memory_estimate_gib": 1.28
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-2B-MLX-8bit",
-                        "size": 2.01
+                        "memory_estimate_gib": 2.01
                     }
                 },
                 "README": ""
@@ -1104,11 +1106,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-4B-MLX-4bit",
-                        "size": 2.74
+                        "memory_estimate_gib": 2.74
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-4B-MLX-8bit",
-                        "size": 4.48
+                        "memory_estimate_gib": 4.48
                     }
                 },
                 "README": ""
@@ -1121,11 +1123,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-9B-MLX-4bit",
-                        "size": 5.68
+                        "memory_estimate_gib": 5.68
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-9B-MLX-8bit",
-                        "size": 9.53
+                        "memory_estimate_gib": 9.53
                     }
                 },
                 "README": ""
@@ -1138,11 +1140,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-27B-MLX-4bit",
-                        "size": 16.74
+                        "memory_estimate_gib": 16.74
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/Qwen3.5-27B-MLX-8bit",
-                        "size": 28.6
+                        "memory_estimate_gib": 28.6
                     }
                 },
                 "README": ""
@@ -1156,11 +1158,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit",
-                        "size": 1.12
+                        "memory_estimate_gib": 1.12
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-8bit",
-                        "size": 1.89
+                        "memory_estimate_gib": 1.89
                     }
                 },
                 "README": ""
@@ -1172,11 +1174,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-Distill-Qwen-7B-4bit",
-                        "size": 4.68
+                        "memory_estimate_gib": 4.68
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-Distill-Qwen-7B-8bit",
-                        "size": 8.1
+                        "memory_estimate_gib": 8.1
                     }
                 },
                 "README": ""
@@ -1188,11 +1190,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit",
-                        "size": 5.03
+                        "memory_estimate_gib": 5.03
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit",
-                        "size": 8.71
+                        "memory_estimate_gib": 8.71
                     }
                 },
                 "README": ""
@@ -1204,11 +1206,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit",
-                        "size": 8.99
+                        "memory_estimate_gib": 8.99
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-Distill-Qwen-14B-8bit",
-                        "size": 15.7
+                        "memory_estimate_gib": 15.7
                     }
                 },
                 "README": ""
@@ -1220,11 +1222,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
-                        "size": 19.85
+                        "memory_estimate_gib": 19.85
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/DeepSeek-R1-Distill-Qwen-32B-8bit",
-                        "size": 34.82
+                        "memory_estimate_gib": 34.82
                     }
                 },
                 "README": ""
@@ -1236,11 +1238,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/GLM-4-9B-0414-4bit",
-                        "size": 6.17
+                        "memory_estimate_gib": 6.17
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/GLM-4-9B-0414-8bit",
-                        "size": 10
+                        "memory_estimate_gib": 10
                     }
                 },
                 "README": ""
@@ -1254,11 +1256,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/gemma-4-e2b-it-4bit",
-                        "size": 3.11
+                        "memory_estimate_gib": 3.11
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/gemma-4-e2b-it-8bit",
-                        "size": 5.05
+                        "memory_estimate_gib": 5.05
                     }
                 },
                 "README": ""
@@ -1270,11 +1272,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/gemma-4-e4b-it-4bit",
-                        "size": 4.64
+                        "memory_estimate_gib": 4.64
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/gemma-4-e4b-it-8bit",
-                        "size": 7.63
+                        "memory_estimate_gib": 7.63
                     }
                 },
                 "README": ""
@@ -1286,11 +1288,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/gemma-4-31b-it-4bit",
-                        "size": 18.32
+                        "memory_estimate_gib": 18.32
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/gemma-4-31b-it-8bit",
-                        "size": 32.64
+                        "memory_estimate_gib": 32.64
                     }
                 },
                 "README": ""
@@ -1300,11 +1302,11 @@
                 "quantization": {
                     "4bit": {
                         "download": "https://modelscope.cn/models/mlx-community/gemma-4-26b-a4b-it-4bit",
-                        "size": 15.64
+                        "memory_estimate_gib": 15.64
                     },
                     "8bit": {
                         "download": "https://modelscope.cn/models/mlx-community/gemma-4-26b-a4b-it-8bit",
-                        "size": 27.08
+                        "memory_estimate_gib": 27.08
                     }
                 },
                 "README": ""

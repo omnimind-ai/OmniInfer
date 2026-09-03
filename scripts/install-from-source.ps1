@@ -768,11 +768,24 @@ if ($Model) {
                 if (-not (Test-Path -LiteralPath $catalogPath)) {
                     throw "Bundled model catalog not found: $catalogPath"
                 }
+                $assetCatalogPath = Join-Path $InstallDir "crates\omniinfer-core\model_catalogs\download_assets.json"
+                if (-not (Test-Path -LiteralPath $assetCatalogPath)) {
+                    throw "Bundled download asset catalog not found: $assetCatalogPath"
+                }
                 $catalogRaw = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8
                 if ($catalogRaw.Length -gt 0 -and $catalogRaw[0] -eq [char]0xFEFF) {
                     $catalogRaw = $catalogRaw.Substring(1)
                 }
                 $catalog = $catalogRaw | ConvertFrom-Json
+                $assetCatalogRaw = Get-Content -LiteralPath $assetCatalogPath -Raw -Encoding UTF8
+                if ($assetCatalogRaw.Length -gt 0 -and $assetCatalogRaw[0] -eq [char]0xFEFF) {
+                    $assetCatalogRaw = $assetCatalogRaw.Substring(1)
+                }
+                $assetCatalog = $assetCatalogRaw | ConvertFrom-Json
+                $assetSizes = @{}
+                foreach ($assetProperty in $assetCatalog.assets.PSObject.Properties) {
+                    $assetSizes[$assetProperty.Name] = $assetProperty.Value.size_bytes
+                }
 
                 $modelList = @()
                 $seen = @{}
@@ -788,18 +801,24 @@ if ($Model) {
                                 $q = $quants.$qName
                                 if (-not $q) { continue }
                                 $dl = $q.download
-                                $sizeStr = $q.size
-                                if (-not $dl -or -not $sizeStr) { continue }
+                                if ($dl -isnot [string]) { continue }
+                                $memoryStr = $q.memory_estimate_gib
+                                if (-not $dl -or -not $memoryStr) { continue }
                                 $dedup = "$modelName|$qName"
                                 if ($seen.ContainsKey($dedup)) { continue }
                                 $seen[$dedup] = $true
-                                try { $sizeGib = [double]$sizeStr } catch { continue }
-                                if ($sizeGib -gt 6.0 -or $sizeGib -lt 0.1) { continue }
+                                try { $memoryGib = [double]$memoryStr } catch { continue }
+                                if ($memoryGib -gt 6.0 -or $memoryGib -lt 0.1) { continue }
+                                $downloadSize = "size unknown"
+                                if ($assetSizes.ContainsKey($dl)) {
+                                    $downloadSize = "{0:F2} GiB" -f ([double]$assetSizes[$dl] / 1GB)
+                                }
                                 $modelList += [PSCustomObject]@{
-                                    Name  = $modelName
-                                    Quant = $qName
-                                    Size  = $sizeGib
-                                    Url   = $dl
+                                    Name           = $modelName
+                                    Quant          = $qName
+                                    MemoryEstimate = $memoryGib
+                                    DownloadSize   = $downloadSize
+                                    Url            = $dl
                                 }
                                 break
                             }
@@ -807,7 +826,7 @@ if ($Model) {
                     }
                 }
 
-                $modelList = $modelList | Sort-Object Size | Select-Object -First 6
+                $modelList = $modelList | Sort-Object MemoryEstimate | Select-Object -First 6
 
                 if ($modelList.Count -eq 0) {
                     Write-Warn "No suitable models found in catalog."
@@ -818,7 +837,7 @@ if ($Model) {
 
                     $dlLabels = @()
                     foreach ($m in $modelList) {
-                        $dlLabels += ("{0,-32} {1,-10} {2:F2} GiB" -f $m.Name, $m.Quant, $m.Size)
+                        $dlLabels += ("{0,-32} {1,-10} download {2}" -f $m.Name, $m.Quant, $m.DownloadSize)
                     }
 
                     $dlIdx = Select-Menu -Default 0 -Options $dlLabels
@@ -832,7 +851,7 @@ if ($Model) {
                     if (Test-Path $ModelPath) {
                         Write-Ok "Model already downloaded: $ModelPath"
                     } else {
-                        Write-Info "Downloading $($selected.Name) ($($selected.Quant), $($selected.Size.ToString('F2')) GiB) ..."
+                        Write-Info "Downloading $($selected.Name) ($($selected.Quant), $($selected.DownloadSize)) ..."
                         Write-Info "Saving to: $ModelPath"
                         Invoke-WebRequest -Uri $selected.Url -OutFile $ModelPath -UseBasicParsing
                         Write-Ok "Download complete: $ModelPath"
