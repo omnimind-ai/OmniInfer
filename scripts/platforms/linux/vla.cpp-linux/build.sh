@@ -19,6 +19,7 @@ DEPENDENCY_PREFIX=""
 DEPENDENCY_LIBRARY_DIRS=()
 DEPENDENCY_PKG_CONFIG_DIRS=()
 CUDA_ARCHITECTURES=""
+LLAMA_SOURCE=""
 
 check_deps() {
   local rc=0
@@ -50,6 +51,7 @@ Options:
   --clean                      Remove the previous build directory before configuring
   --dependency-prefix <path>   Prefix containing protobuf/cppzmq/libzmq dependencies
   --cuda-architectures <list>  CMAKE_CUDA_ARCHITECTURES value for CUDA builds
+  --llama-source <path>        Reuse an existing llama.cpp source tree instead of downloading it
   --no-bootstrap               Do not auto-initialize the vla.cpp git submodule
   --from-source                Build from the checked-out source submodule
   --smoke-test                 Run `vla-server --help` after the build completes
@@ -92,6 +94,10 @@ while (($# > 0)); do
       CUDA_ARCHITECTURES="${2:?missing value for --cuda-architectures}"
       shift 2
       ;;
+    --llama-source)
+      LLAMA_SOURCE="${2:?missing value for --llama-source}"
+      shift 2
+      ;;
     --no-bootstrap)
       BOOTSTRAP_SUBMODULE=0
       shift
@@ -132,6 +138,20 @@ BUILD_ROOT="${PACKAGE_ROOT}/build/${BACKEND_ID}"
 BIN_ROOT="${PACKAGE_ROOT}/bin"
 LOG_ROOT="${PACKAGE_ROOT}/logs"
 MODELS_ROOT="${REPO_ROOT}/.local/models"
+
+if [[ -n "${LLAMA_SOURCE}" ]]; then
+  if [[ ! -f "${LLAMA_SOURCE}/CMakeLists.txt" ]]; then
+    echo "llama.cpp source tree is missing CMakeLists.txt: ${LLAMA_SOURCE}" >&2
+    exit 1
+  fi
+  LLAMA_SOURCE="$(cd "${LLAMA_SOURCE}" && pwd -P)"
+  if [[ ${ENABLE_CUDA} -eq 1 ]] &&
+    ! grep -Fq 'vla.cpp: CUDA extension hook' "${LLAMA_SOURCE}/ggml/src/ggml-cuda/ggml-cuda.cu"; then
+    echo "CUDA llama.cpp source is missing the vla.cpp extension hook: ${LLAMA_SOURCE}" >&2
+    echo "Reuse a llama-src directory previously prepared by the vla.cpp FetchContent build." >&2
+    exit 1
+  fi
+fi
 
 if [[ -n "${DEPENDENCY_PREFIX}" ]]; then
   if [[ ! -d "${DEPENDENCY_PREFIX}" ]]; then
@@ -395,6 +415,10 @@ if [[ -n "${CUDA_ARCHITECTURES}" ]]; then
   CONFIGURE_ARGS+=(-DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}")
 fi
 
+if [[ -n "${LLAMA_SOURCE}" ]]; then
+  CONFIGURE_ARGS+=(-DFETCHCONTENT_SOURCE_DIR_LLAMA="${LLAMA_SOURCE}")
+fi
+
 if command -v ninja >/dev/null 2>&1; then
   CONFIGURE_ARGS+=(-G Ninja)
 fi
@@ -408,6 +432,9 @@ echo "CUDA: $( [[ ${ENABLE_CUDA} -eq 1 ]] && printf 'enabled' || printf 'disable
 echo "Link-time optimization: $( [[ ${ENABLE_LTO} -eq 1 ]] && printf 'enabled' || printf 'disabled' )"
 if [[ -n "${DEPENDENCY_PREFIX}" ]]; then
   echo "Dependency prefix: ${DEPENDENCY_PREFIX}"
+fi
+if [[ -n "${LLAMA_SOURCE}" ]]; then
+  echo "llama.cpp source: ${LLAMA_SOURCE}"
 fi
 if [[ ${CLEAN_BUILD} -eq 1 ]]; then
   echo "Cleaning previous build directory: ${BUILD_ROOT}"

@@ -306,6 +306,20 @@ fn catalog_entry<'a>(
     platform: &str,
     backend: &str,
 ) -> Result<&'a PrebuiltEntry> {
+    if let Some(excluded) =
+        catalog.excluded_release_asset(platform, backend, std::env::consts::ARCH)
+    {
+        let tag = catalog
+            .sources
+            .get(&excluded.source)
+            .and_then(|source| source.tag.as_deref())
+            .unwrap_or("unknown release");
+        anyhow::bail!(
+            "official prebuilt archive for {platform}/{backend} ({tag}, {}) is intentionally unavailable: {}. Use `omniinfer build {backend} --from-source` from a source checkout.",
+            excluded.architecture,
+            excluded.reason
+        );
+    }
     catalog.entry(platform, backend).ok_or_else(|| {
             anyhow::anyhow!(
                 "no prebuilt archive is configured for {platform}/{backend}. Use `omniinfer build {backend} --from-source` from a source checkout."

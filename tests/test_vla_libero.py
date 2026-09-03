@@ -466,13 +466,27 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("the port still shares OmniInfer state", readme)
         self.assertIn("same host as the gateway", readme)
         self.assertIn(
-            "scripts/platforms/linux/vla.cpp-linux-cuda/build.sh --from-source",
+            "./omniinfer build vla.cpp-linux-cuda --from-source",
             readme,
         )
         self.assertIn(
             'cp -a .local/runtime/linux/vla.cpp-linux-cuda "$DEMO_ROOT/runtimes/"',
             readme,
         )
+
+    def test_vla_build_can_reuse_an_existing_llama_source_tree(self):
+        build_script = (
+            REPOSITORY_ROOT
+            / "scripts"
+            / "platforms"
+            / "linux"
+            / "vla.cpp-linux"
+            / "build.sh"
+        ).read_text()
+        self.assertIn("--llama-source <path>", build_script)
+        self.assertIn('LLAMA_SOURCE="$(cd "${LLAMA_SOURCE}" && pwd -P)"', build_script)
+        self.assertIn('-DFETCHCONTENT_SOURCE_DIR_LLAMA="${LLAMA_SOURCE}"', build_script)
+        self.assertIn("CUDA llama.cpp source is missing the vla.cpp extension hook", build_script)
 
     def test_readme_explains_torch_backend_changes_need_a_fresh_venv(self):
         readme = (REPOSITORY_ROOT / "examples" / "vla-libero" / "README.md").read_text()
@@ -1100,7 +1114,8 @@ class MetricTests(unittest.TestCase):
         ).read_text()
         self.assertIn("current prebuilt catalog", readme)
         self.assertIn("`backend install` is not available", readme)
-        self.assertIn("source-build dependencies", readme)
+        self.assertIn("does not repack", readme)
+        self.assertIn("source dependencies", readme)
 
     def test_state_exposes_only_the_ten_predefined_object_tasks(self):
         state = DEMO.DemoState(DEMO.DemoConfig())

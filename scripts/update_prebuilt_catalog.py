@@ -34,6 +34,16 @@ def iter_source_release_assets(catalog: dict[str, Any], source_name: str):
             yield platform, backend, "runtime", entry
             for index, asset in enumerate(entry.get("companion_assets", []), start=1):
                 yield platform, backend, f"companion {index}", asset
+    for asset in catalog.get("excluded_release_assets", []):
+        if asset.get("source") != source_name:
+            continue
+        yield (
+            asset.get("platform", "unknown"),
+            asset.get("backend", "unknown"),
+            "excluded runtime",
+            asset,
+        )
+
 
 def validate(
     catalog: dict[str, Any],
@@ -95,6 +105,39 @@ def validate(
             validate_asset(errors, platform, backend, "runtime", entry, tag)
             for index, asset in enumerate(entry.get("companion_assets", []), start=1):
                 validate_asset(errors, platform, backend, f"companion {index}", asset, tag)
+    installable = {
+        (platform, backend)
+        for platform, entries in catalog.get("platforms", {}).items()
+        for backend in entries
+    }
+    for entry in catalog.get("excluded_release_assets", []):
+        source_name = entry.get("source")
+        source = sources.get(source_name)
+        platform = entry.get("platform")
+        backend = entry.get("backend")
+        architecture = entry.get("architecture")
+        reason = entry.get("reason")
+        if source is None:
+            errors.append(
+                f"excluded {platform}/{backend}: unknown source {source_name!r}"
+            )
+            continue
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (platform, backend, architecture, reason)
+        ):
+            errors.append("excluded release asset metadata is incomplete")
+            continue
+        if (platform, backend) in installable:
+            errors.append(f"{platform}/{backend}: cannot be both installable and excluded")
+        validate_asset(
+            errors,
+            platform,
+            backend,
+            "excluded runtime",
+            entry,
+            source.get("tag"),
+        )
     for platform, entries in catalog.get("python_runtimes", {}).items():
         for backend, entry in entries.items():
             required = ("source", "tag", "package", "python", "launcher")

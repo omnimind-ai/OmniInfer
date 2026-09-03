@@ -81,7 +81,20 @@ pub(crate) struct PrebuiltCatalog {
     pub(crate) sources: BTreeMap<String, SourceMetadata>,
     #[serde(default)]
     pub(crate) python_runtimes: BTreeMap<String, BTreeMap<String, PythonRuntimeEntry>>,
+    #[serde(default)]
+    pub(crate) excluded_release_assets: Vec<ExcludedReleaseAsset>,
     pub(crate) platforms: BTreeMap<String, BTreeMap<String, PrebuiltEntry>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ExcludedReleaseAsset {
+    pub(crate) source: String,
+    pub(crate) platform: String,
+    pub(crate) backend: String,
+    pub(crate) architecture: String,
+    pub(crate) url: String,
+    pub(crate) sha256: String,
+    pub(crate) reason: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -197,6 +210,19 @@ impl PrebuiltCatalog {
 
     pub(crate) fn source_metadata(&self, entry: &PrebuiltEntry) -> Option<&SourceMetadata> {
         self.sources.get(entry.source.as_deref()?)
+    }
+
+    pub(crate) fn excluded_release_asset(
+        &self,
+        platform: &str,
+        backend: &str,
+        architecture: &str,
+    ) -> Option<&ExcludedReleaseAsset> {
+        self.excluded_release_assets.iter().find(|entry| {
+            entry.platform == platform
+                && entry.backend == backend
+                && entry.architecture == architecture
+        })
     }
 
     pub(crate) fn resolved_tag<'a>(&'a self, entry: &'a PrebuiltEntry) -> Option<&'a str> {
@@ -333,6 +359,46 @@ fn validate_catalog(catalog: &PrebuiltCatalog) -> Result<()> {
                 validate_sha256(asset.sha256.as_deref(), platform, backend, &role)?;
                 validate_asset_url(&asset.url, platform, backend, &role, tag)?;
             }
+        }
+    }
+    for entry in &catalog.excluded_release_assets {
+        let source = catalog.sources.get(&entry.source).ok_or_else(|| {
+            anyhow::anyhow!(
+                "excluded {}/{} references unknown source {}",
+                entry.platform,
+                entry.backend,
+                entry.source
+            )
+        })?;
+        let tag = source.tag.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("excluded source {} has no release tag", entry.source)
+        })?;
+        if entry.platform.trim().is_empty()
+            || entry.backend.trim().is_empty()
+            || entry.architecture.trim().is_empty()
+            || entry.reason.trim().is_empty()
+        {
+            anyhow::bail!("excluded release asset metadata is incomplete");
+        }
+        validate_sha256(
+            Some(&entry.sha256),
+            &entry.platform,
+            &entry.backend,
+            "excluded runtime",
+        )?;
+        validate_asset_url(
+            &entry.url,
+            &entry.platform,
+            &entry.backend,
+            "excluded runtime",
+            tag,
+        )?;
+        if catalog.entry(&entry.platform, &entry.backend).is_some() {
+            anyhow::bail!(
+                "{}/{} cannot be both installable and excluded",
+                entry.platform,
+                entry.backend
+            );
         }
     }
     for (platform, entries) in &catalog.python_runtimes {
@@ -607,6 +673,12 @@ mod tests {
         assert!(
             catalog
                 .python_runtime("windows", "vllm-wsl2-rocm")
+                .is_some()
+        );
+        assert!(catalog.entry("linux", "vla.cpp-linux-cuda").is_none());
+        assert!(
+            catalog
+                .excluded_release_asset("linux", "vla.cpp-linux-cuda", "x86_64")
                 .is_some()
         );
     }

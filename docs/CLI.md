@@ -164,6 +164,13 @@ Use source builds only from a source checkout when you explicitly need to compil
 
 Packaged releases support `backend install` for prebuilt runtimes. Source builds still require a cloned repository with `scripts/platforms/...` and the relevant submodules.
 
+For `vla.cpp`, the official v0.3.0 archives are recorded but intentionally
+excluded from installation because they do not contain a portable runtime
+dependency closure. OmniInfer does not repack those binaries. From a source
+checkout, use `./omniinfer build vla.cpp-linux --from-source` or
+`./omniinfer build vla.cpp-linux-cuda --from-source`. Build-script options can
+be passed unchanged after `--`, for example `-- --jobs 4 --smoke-test`.
+
 ### 3. Select a backend
 
 Always pick a backend from `backend list` on your current device.

@@ -52,10 +52,11 @@ git submodule update --init framework/vla.cpp
 # 4. Create the small CPU-only demo environment (default).
 examples/vla-libero/setup.sh
 
-# 5. Build the VLA runtime, copy the complete backend package into a private
-#    runtime root, choose an unused gateway port, then start OmniInfer.
+# 5. Build the VLA runtime through the CLI, copy the complete backend package
+#    into a private runtime root, choose an unused gateway port, then start
+#    OmniInfer.
 DEMO_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/omniinfer/vla-libero-demo"
-bash scripts/platforms/linux/vla.cpp-linux-cuda/build.sh --from-source
+./omniinfer build vla.cpp-linux-cuda --from-source
 mkdir -p "$DEMO_ROOT/runtimes"
 cp -a .local/runtime/linux/vla.cpp-linux-cuda "$DEMO_ROOT/runtimes/"
 
@@ -162,9 +163,11 @@ changes the observation sent to the policy.
 2. An NVIDIA driver plus EGL-capable rendering for CUDA vla.cpp runtimes.
 3. Build `vla.cpp-linux` or `vla.cpp-linux-cuda` from an OmniInfer source
    checkout, then place or copy the complete backend directory into the same
-   per-user runtime root used by the gateway. The current prebuilt catalog does
-   not publish either VLA backend, so `backend install` is not available for
-   this example yet. See `docs/build.md` for source-build dependencies.
+   per-user runtime root used by the gateway. The current prebuilt catalog
+   records but excludes the incomplete official v0.3.0 archives, so
+   `backend install` is not available for this example yet.
+   OmniInfer does not repack upstream binaries; see `docs/build.md` for the
+   audit and source dependencies.
 4. Initialize `framework/vla.cpp`.
 5. Have a SmolVLA or PI0.5 checkpoint compatible with the vla.cpp runtime.
 
@@ -182,7 +185,7 @@ that a matching prebuilt archive is available:
 
 ```sh
 DEMO_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/omniinfer/vla-libero-demo"
-bash scripts/platforms/linux/vla.cpp-linux-cuda/build.sh --from-source
+./omniinfer build vla.cpp-linux-cuda --from-source
 mkdir -p "$DEMO_ROOT/runtimes"
 cp -a .local/runtime/linux/vla.cpp-linux-cuda "$DEMO_ROOT/runtimes/"
 ```

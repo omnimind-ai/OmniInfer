@@ -33,11 +33,14 @@ pub(crate) enum Command {
     Build {
         backend: String,
         /// Install a prebuilt runtime. This is the default for the compatibility alias.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "from_source")]
         prebuilt: bool,
         /// Build from source. Requires a source checkout and platform build scripts.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "prebuilt")]
         from_source: bool,
+        /// Arguments passed unchanged to the platform source build script after `--`.
+        #[arg(last = true, requires = "from_source")]
+        build_args: Vec<String>,
     },
     /// Show current status.
     Status,
