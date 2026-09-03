@@ -17,6 +17,7 @@ mod local_gateway;
 mod model_commands;
 mod prebuilt_catalog;
 mod serve;
+mod source_builder;
 mod tui;
 mod wsl_runtime_installer;
 
@@ -87,6 +88,7 @@ fn run_ported_command(command: &Command) -> Result<()> {
             backend,
             prebuilt,
             from_source,
+            ..
         } if *prebuilt || !*from_source => {
             backend_installer::install_backend(backend_installer::InstallOptions {
                 backend: backend.clone(),
@@ -96,9 +98,12 @@ fn run_ported_command(command: &Command) -> Result<()> {
                 wsl_distro: None,
             })
         }
-        Command::Build { .. } if !source_build_scripts_available() => anyhow::bail!(
-            "Source backend builds are only available from a source checkout, not packaged releases."
-        ),
+        Command::Build {
+            backend,
+            from_source: true,
+            build_args,
+            ..
+        } => source_builder::build_backend(backend, build_args),
         Command::Ps { json } => print_ps(*json),
         Command::Model {
             command: ModelCommand::List { all, best },
@@ -276,13 +281,6 @@ fn print_completion(shell: CompletionShell) {
             &mut std::io::stdout(),
         ),
     }
-}
-
-fn source_build_scripts_available() -> bool {
-    paths::repo_root()
-        .join("scripts")
-        .join("platforms")
-        .is_dir()
 }
 
 fn print_advisor_system(json_output: bool) -> Result<()> {
