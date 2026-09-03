@@ -91,6 +91,10 @@ bash scripts/platforms/linux/vla.cpp-linux/build.sh --from-source
 bash scripts/platforms/linux/vla.cpp-linux-cuda/build.sh --from-source
 ```
 
+If the pinned llama.cpp dependency is already available locally, pass
+`--llama-source /path/to/llama.cpp` after `--` to reuse it and avoid another
+network download. The directory must contain a llama.cpp `CMakeLists.txt`.
+
 For stable-diffusion.cpp Vulkan:
 
 ```bash

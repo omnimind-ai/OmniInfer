@@ -474,6 +474,19 @@ class RuntimeContractTests(unittest.TestCase):
             readme,
         )
 
+    def test_vla_build_can_reuse_an_existing_llama_source_tree(self):
+        build_script = (
+            REPOSITORY_ROOT
+            / "scripts"
+            / "platforms"
+            / "linux"
+            / "vla.cpp-linux"
+            / "build.sh"
+        ).read_text()
+        self.assertIn("--llama-source <path>", build_script)
+        self.assertIn('LLAMA_SOURCE="$(cd "${LLAMA_SOURCE}" && pwd -P)"', build_script)
+        self.assertIn('-DFETCHCONTENT_SOURCE_DIR_LLAMA="${LLAMA_SOURCE}"', build_script)
+
     def test_readme_explains_torch_backend_changes_need_a_fresh_venv(self):
         readme = (REPOSITORY_ROOT / "examples" / "vla-libero" / "README.md").read_text()
         self.assertIn("does not convert an", readme)
