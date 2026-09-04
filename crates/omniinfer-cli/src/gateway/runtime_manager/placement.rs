@@ -89,14 +89,12 @@ pub(super) fn llama_cpp_cuda_placement_policy(
     // Treat that combination as automatic partial offload so admission can
     // reserve host plus CUDA ceilings and reconcile them from startup logs.
     if backend.id.starts_with("ik_llama.cpp")
-        && launch_args
-            .iter()
-            .any(|arg| {
-                matches!(
-                    arg.as_str(),
-                    "-cmoe" | "--cpu-moe" | "-ncmoe" | "--n-cpu-moe"
-                )
-            })
+        && launch_args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "-cmoe" | "--cpu-moe" | "-ncmoe" | "--n-cpu-moe"
+            )
+        })
     {
         return Ok(Some(LlamaCppCudaPlacementPolicy::Auto));
     }
