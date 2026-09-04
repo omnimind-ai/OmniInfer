@@ -84,14 +84,14 @@ pub(super) fn llama_cpp_cuda_placement_policy(
     if !is_llama_cpp_family || !backend.capabilities.iter().any(|cap| cap == "cuda") {
         return Ok(None);
     }
-    // ik_llama.cpp's --cpu-moe intentionally places the expert tensors in
+    // ik_llama.cpp's CPU-MoE options intentionally place the expert tensors in
     // host memory even when -ngl 999 is present in its backend defaults.
     // Treat that combination as automatic partial offload so admission can
     // reserve host plus CUDA ceilings and reconcile them from startup logs.
     if backend.id.starts_with("ik_llama.cpp")
         && launch_args
             .iter()
-            .any(|arg| matches!(arg.as_str(), "--cpu-moe" | "--n-cpu-moe"))
+            .any(|arg| matches!(arg.as_str(), "-cmoe" | "--cpu-moe" | "-ncmoe" | "--n-cpu-moe"))
     {
         return Ok(Some(LlamaCppCudaPlacementPolicy::Auto));
     }

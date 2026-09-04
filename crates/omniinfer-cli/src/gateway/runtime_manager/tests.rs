@@ -1291,6 +1291,22 @@ fn ik_cpu_moe_uses_native_logging_and_auto_partial_policy() {
 }
 
 #[test]
+fn ik_cpu_moe_short_aliases_use_auto_partial_policy() {
+    let backend = speculative_test_backend("ik_llama.cpp-linux-cuda", "llama.cpp", true);
+    for args in [
+        vec!["-ngl", "999", "-cmoe"],
+        vec!["-ngl", "999", "-ncmoe", "12"],
+    ] {
+        let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            llama_cpp_cuda_placement_policy(&backend, &args).unwrap(),
+            Some(LlamaCppCudaPlacementPolicy::Auto),
+            "CPU-MoE alias should permit partial placement: {args:?}"
+        );
+    }
+}
+
+#[test]
 fn partial_offload_provisional_budget_guards_host_and_cuda() {
     let cuda = MemoryDomain::Cuda("0".to_string());
     let estimated = ResourceBudget::from_domains(BTreeMap::from([(cuda.clone(), 1_000)])).unwrap();
