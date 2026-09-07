@@ -86,9 +86,9 @@ fn ik_llama_cpu_moe_layers(launch_args: &[String]) -> Result<Option<u32>> {
                 let value = launch_args.get(index + 1).ok_or_else(|| {
                     anyhow::anyhow!("{flag} requires a non-negative integer value")
                 })?;
-                let parsed = value.parse::<u32>().map_err(|_| {
-                    anyhow::anyhow!("{flag} value must be a non-negative integer")
-                })?;
+                let parsed = value
+                    .parse::<u32>()
+                    .map_err(|_| anyhow::anyhow!("{flag} value must be a non-negative integer"))?;
                 layers = Some(parsed);
                 index += 1;
             }
