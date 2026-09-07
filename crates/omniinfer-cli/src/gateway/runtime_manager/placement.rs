@@ -75,6 +75,30 @@ pub(super) struct RuntimePlacement {
     pub(super) reconciled_budget: ResourceBudget,
 }
 
+fn ik_llama_cpu_moe_layers(launch_args: &[String]) -> Result<Option<u32>> {
+    let mut layers = None;
+    let mut index = 0;
+    while index < launch_args.len() {
+        let flag = launch_args[index].as_str();
+        match flag {
+            "-cmoe" | "--cpu-moe" => layers = Some(999),
+            "-ncmoe" | "--n-cpu-moe" => {
+                let value = launch_args.get(index + 1).ok_or_else(|| {
+                    anyhow::anyhow!("{flag} requires a non-negative integer value")
+                })?;
+                let parsed = value.parse::<u32>().map_err(|_| {
+                    anyhow::anyhow!("{flag} value must be a non-negative integer")
+                })?;
+                layers = Some(parsed);
+                index += 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Ok(layers)
+}
+
 pub(super) fn llama_cpp_cuda_placement_policy(
     backend: &backend_registry::BackendSpec,
     launch_args: &[String],
@@ -88,15 +112,12 @@ pub(super) fn llama_cpp_cuda_placement_policy(
     // host memory even when -ngl 999 is present in its backend defaults.
     // Treat that combination as automatic partial offload so admission can
     // reserve host plus CUDA ceilings and reconcile them from startup logs.
-    if backend.id.starts_with("ik_llama.cpp")
-        && launch_args.iter().any(|arg| {
-            matches!(
-                arg.as_str(),
-                "-cmoe" | "--cpu-moe" | "-ncmoe" | "--n-cpu-moe"
-            )
-        })
-    {
-        return Ok(Some(LlamaCppCudaPlacementPolicy::Auto));
+    if backend.id.starts_with("ik_llama.cpp") {
+        if let Some(cpu_moe_layers) = ik_llama_cpu_moe_layers(launch_args)? {
+            if cpu_moe_layers > 0 {
+                return Ok(Some(LlamaCppCudaPlacementPolicy::Auto));
+            }
+        }
     }
     let Some(value) = gpu_layers_value(launch_args) else {
         if launch_args

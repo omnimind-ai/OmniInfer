@@ -1307,6 +1307,50 @@ fn ik_cpu_moe_short_aliases_use_auto_partial_policy() {
 }
 
 #[test]
+fn ik_cpu_moe_policy_uses_final_effective_value() {
+    let backend = speculative_test_backend("ik_llama.cpp-linux-cuda", "llama.cpp", true);
+    let cases = [
+        (
+            vec!["-ngl", "999", "-ncmoe", "0"],
+            LlamaCppCudaPlacementPolicy::ExplicitFull,
+        ),
+        (
+            vec!["-ngl", "999", "-cmoe", "-ncmoe", "0"],
+            LlamaCppCudaPlacementPolicy::ExplicitFull,
+        ),
+        (
+            vec!["-ngl", "999", "-ncmoe", "0", "-cmoe"],
+            LlamaCppCudaPlacementPolicy::Auto,
+        ),
+    ];
+    for (args, expected) in cases {
+        let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            llama_cpp_cuda_placement_policy(&backend, &args).unwrap(),
+            Some(expected),
+            "CPU-MoE policy should use the final effective value: {args:?}"
+        );
+    }
+}
+
+#[test]
+fn ik_cpu_moe_policy_rejects_invalid_count() {
+    let backend = speculative_test_backend("ik_llama.cpp-linux-cuda", "llama.cpp", true);
+    for args in [
+        vec!["-ngl", "999", "-ncmoe"],
+        vec!["-ngl", "999", "-ncmoe", "-1"],
+        vec!["-ngl", "999", "--n-cpu-moe", "invalid"],
+    ] {
+        let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let error = llama_cpp_cuda_placement_policy(&backend, &args).unwrap_err();
+        assert!(
+            error.to_string().contains("non-negative integer"),
+            "invalid CPU-MoE count should fail clearly: {args:?}"
+        );
+    }
+}
+
+#[test]
 fn partial_offload_provisional_budget_guards_host_and_cuda() {
     let cuda = MemoryDomain::Cuda("0".to_string());
     let estimated = ResourceBudget::from_domains(BTreeMap::from([(cuda.clone(), 1_000)])).unwrap();
