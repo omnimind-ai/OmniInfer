@@ -53,8 +53,10 @@ jobs:
       - name: Run gateway runtime manager unit tests
         run: "cargo test -p omniinfer-cli --bin omniinfer gateway::runtime_manager::tests::"
 
-      - name: Run speculative load failure integration test
-        run: "cargo test -p omniinfer-cli --test cli_smoke speculative_load_failure_rolls_back_real_backend_and_cuda_reservation"
+      - name: Run resource admission integration tests
+        run: |
+          cargo test -p omniinfer-cli --test cli_smoke speculative_load_failure_rolls_back_real_backend_and_cuda_reservation
+          cargo test -p omniinfer-cli --test cli_smoke overestimated_full_offload_reconciles_and_retains_capacity_guards
 
       - name: Run backend archive security tests
         run: "cargo test -p omniinfer-cli --bin omniinfer backend_installer::tests::"

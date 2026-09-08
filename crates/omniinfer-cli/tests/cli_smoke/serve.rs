@@ -1629,6 +1629,28 @@ fn overestimated_full_offload_reconciles_and_retains_capacity_guards() {
         .expect("start gateway");
     assert_eq!(wait_for_http_json(gateway_port, "/health")["status"], "ok");
 
+    // Explicit client requirements must not be clamped by provisional admission.
+    for layers in ["auto", "999"] {
+        let rejected = http_client::post_json(
+            &format!("http://127.0.0.1:{gateway_port}/omni/model/select"),
+            &serde_json::json!({
+                "backend": backend_id,
+                "model": model.display().to_string(),
+                "backend_port": backend_port,
+                "launch_args": ["-ngl", layers],
+                "resource_budget_bytes": 4_u64 * 1024 * 1024 * 1024,
+            }),
+            Duration::from_secs(10),
+        )
+        .expect("explicit budget response");
+        assert_ne!(
+            rejected.status, 200,
+            "oversized explicit budget: {:?}",
+            rejected.body
+        );
+        assert!(wait_for_port_closed(backend_port));
+    }
+
     let first = http_client::post_json(
         &format!("http://127.0.0.1:{gateway_port}/omni/model/select"),
         &serde_json::json!({
@@ -1636,6 +1658,7 @@ fn overestimated_full_offload_reconciles_and_retains_capacity_guards() {
             "model": model.display().to_string(),
             "backend_port": backend_port,
             "launch_args": ["-ngl", "999"],
+            "resource_budget_bytes": null,
         }),
         Duration::from_secs(10),
     )
