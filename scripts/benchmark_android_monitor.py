@@ -21,7 +21,9 @@ while kill -0 PID_VALUE 2>/dev/null; do
  if [ -n "$stop_reason" ]; then
   echo SAFETY_STOP "$stop_reason"
   owned_command=$(tr '\000' ' ' < /proc/PID_VALUE/cmdline)
-  case " $owned_command " in *" MODEL_BIN_VALUE "*" MODEL_PATH_VALUE "*) kill -TERM PID_VALUE;; esac
+  case " $owned_command " in *" MODEL_BIN_VALUE "*)
+   case " $owned_command " in *" MODEL_PATH_VALUE "*) kill -TERM PID_VALUE;; esac
+  ;; esac
   exit 2
  fi
  sleep 1
