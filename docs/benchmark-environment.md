@@ -46,6 +46,22 @@ automatic brightness may subsequently change. Verify wakefulness with bounded
 polling because `Dozing` after a sleep event is transitional. `verify_display`
 checks this without changing settings. Historical evidence gaps remain gaps.
 
+For a prospective Android campaign, `scripts/benchmark_android_monitor.py`
+provides `render_monitor(pid, binary, model)`. It renders the regular one-hertz
+process/frequency/battery collector for an owned runtime and absolute shell-safe
+campaign paths. Save the rendered script with the cohort, push it to the owned
+work directory and start it on the device with output captured to a file.
+
+The existing battery observation also enforces the declared 40°C ceiling during
+warmups and in-flight requests. An observation above 40°C or a missing/invalid
+sensor emits `SAFETY_STOP`; SIGTERM is sent only when the PID's command line still
+contains the exact expected binary and model arguments. Preserve the failed
+cohort and raw reading, and clean up the owned forward/runtime. Do not interpret
+a partial response as a benchmark result. The guarantee applies to observed
+samples, not temperatures between samples; the monitor never changes device
+policy or creates heat. Freeze the same monitor for both sides of a comparison.
+
+
 ## Android CPU stability
 
 Declare warmup count before collecting a cohort. Battery temperature alone does
