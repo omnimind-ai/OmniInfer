@@ -70,12 +70,33 @@ pub(super) fn extract_measurement(response: &Value, elapsed: Duration) -> Result
         .or_else(|| positive_number(metrics, &["decode_ms"]))
         .ok_or_else(|| anyhow::anyhow!("response has no decode timing"))?;
     let ttft_ms = positive_number(metrics, &["ttft_ms"]);
+    // Recent llama.cpp excludes the first sampled token from decode timing.
+    // Infer only the documented N or N-1 convention from the native timing pair.
+    let scored_decode_tokens = match (
+        positive_number(timings, &["predicted_ms", "decode_ms"]),
+        positive_number(timings, &["predicted_per_second", "decode_tps"]),
+    ) {
+        (Some(duration), Some(rate)) => {
+            let tokens = duration * rate / 1000.0;
+            let rounded = tokens.round();
+            if (tokens - rounded).abs() > 0.01
+                || rounded < 1.0
+                || (rounded != completion_tokens as f64
+                    && rounded != completion_tokens.saturating_sub(1) as f64)
+            {
+                anyhow::bail!("native decode timing does not identify N or N-1 scored tokens");
+            }
+            rounded as u64
+        }
+        _ => completion_tokens,
+    };
     let wall_time_ms = elapsed.as_secs_f64() * 1000.0;
     Ok(Measurement {
         prompt_tokens,
         completion_tokens,
+        scored_decode_tokens,
         prefill_tps: prompt_tokens as f64 * 1000.0 / prefill_duration_ms,
-        decode_tps: completion_tokens as f64 * 1000.0 / decode_duration_ms,
+        decode_tps: scored_decode_tokens as f64 * 1000.0 / decode_duration_ms,
         prefill_duration_ms,
         decode_duration_ms,
         ttft_ms,
@@ -187,6 +208,18 @@ pub(super) struct BuildSubmission<'a> {
 }
 
 pub(super) fn build_submission(input: BuildSubmission<'_>) -> Result<Value> {
+    let scored_decode_tokens = input
+        .measurements
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("benchmark produced no measurements"))?
+        .scored_decode_tokens;
+    if input
+        .measurements
+        .iter()
+        .any(|measurement| measurement.scored_decode_tokens != scored_decode_tokens)
+    {
+        anyhow::bail!("Scored decode token counts differ between runs");
+    }
     let mut model = json!({
         "catalog_model_id": input.args.catalog_model_id,
         "format": input.args.model_format,
@@ -212,6 +245,16 @@ pub(super) fn build_submission(input: BuildSubmission<'_>) -> Result<Value> {
     });
     if let Some(notes) = protocol_notes(input.args) {
         protocol["notes"] = json!(notes);
+    }
+    if scored_decode_tokens != input.tg {
+        let note =
+            "Native decode timing excludes the first sampled token; scored decode tokens are TG-1.";
+        let existing = protocol["notes"].as_str().unwrap_or_default();
+        protocol["notes"] = json!(if existing.is_empty() {
+            note.to_string()
+        } else {
+            format!("{existing}; {note}")
+        });
     }
     let mut provenance = json!({"submitter_name": input.args.submitter_name});
     if let Some(organization) = input.args.organization.as_deref() {
@@ -274,7 +317,7 @@ pub(super) fn build_submission(input: BuildSubmission<'_>) -> Result<Value> {
             "tg": input.tg,
             "scored_tokens": {
                 "prefill": input.pp,
-                "decode": input.tg,
+                "decode": scored_decode_tokens,
             },
             "context_size": input.context_size,
             "batch_size": input.batch_size,

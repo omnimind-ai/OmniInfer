@@ -39,6 +39,7 @@ const MODEL_FORMATS: &[&str] = &[
 struct Measurement {
     prompt_tokens: u64,
     completion_tokens: u64,
+    scored_decode_tokens: u64,
     prefill_tps: f64,
     decode_tps: f64,
     prefill_duration_ms: f64,
@@ -428,6 +429,29 @@ mod tests {
     }
 
     #[test]
+    fn preserves_native_decode_scoring_conventions() {
+        for scored in [127_u64, 128] {
+            let response = json!({
+                "usage": {"prompt_tokens": 512, "completion_tokens": 128},
+                "timings": {"prompt_ms": 2000.0, "predicted_ms": 2000.0,
+                    "predicted_per_second": scored as f64 / 2.0}
+            });
+            let measured = extract_measurement(&response, Duration::from_secs(5)).unwrap();
+            assert_eq!(measured.completion_tokens, 128);
+            assert_eq!(measured.scored_decode_tokens, scored);
+            assert_eq!(measured.decode_tps, scored as f64 / 2.0);
+        }
+        for rate in [50.0, 63.6, 64.5] {
+            let response = json!({
+                "usage": {"prompt_tokens": 512, "completion_tokens": 128},
+                "timings": {"prompt_ms": 2000.0, "predicted_ms": 2000.0,
+                    "predicted_per_second": rate}
+            });
+            assert!(extract_measurement(&response, Duration::from_secs(5)).is_err());
+        }
+    }
+
+    #[test]
     fn accepts_only_effective_cache_isolation_flags() {
         let state = json!({"mmproj": null});
         let isolated = [
@@ -458,6 +482,7 @@ mod tests {
         let measurement = |prefill_tps, decode_tps| Measurement {
             prompt_tokens: 64,
             completion_tokens: 16,
+            scored_decode_tokens: 16,
             prefill_tps,
             decode_tps,
             prefill_duration_ms: 64_000.0 / prefill_tps,
