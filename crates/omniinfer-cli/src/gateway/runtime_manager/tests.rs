@@ -1534,3 +1534,21 @@ fn ready_timeout_does_not_retry_without_post_cooldown_budget() {
     assert!(matches!(error, RuntimeProcessError::ReadyTimeout));
     assert_eq!(attempts, 1);
 }
+
+#[test]
+fn explicit_full_requires_complete_layer_and_model_evidence() {
+    for log in [
+        "load_tensors: CUDA0 model buffer size = 2048.00 MiB\n",
+        "load_tensors: offloaded 20/41 layers to GPU\nload_tensors: CUDA0 model buffer size = 2048.00 MiB\n",
+        "load_tensors: offloaded 41/41 layers to GPU\nsched_reserve: CUDA0 compute buffer size = 72.00 MiB\n",
+    ] {
+        assert!(
+            parse_llama_cpp_runtime_placement_text(
+                log,
+                "0",
+                LlamaCppCudaPlacementPolicy::ExplicitFull
+            )
+            .is_err()
+        );
+    }
+}

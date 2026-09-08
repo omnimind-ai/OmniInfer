@@ -569,15 +569,30 @@ impl RustRuntimeManager {
                         .as_ref()
                         .map(|ledger| ledger.snapshot()),
                 )?;
-                let Some(decision) = decision else {
+                if let Some(decision) = decision {
+                    let reservation_id = self
+                        .resource_ledger
+                        .as_mut()
+                        .expect("speculative admission requires a resource ledger")
+                        .reserve(&requested_model_key, decision.budget.clone())?;
+                    (reservation_id, Some(decision))
+                } else if reconcile_policy.is_some()
+                    && payload.get("resource_budget_bytes").is_none()
+                {
+                    // GGUF byte-size heuristics overestimate hybrid MoE KV and
+                    // activations. Use the same bounded launch transaction as
+                    // auto placement; ExplicitFull is still enforced against
+                    // this process's actual buffers before exposing the route.
+                    let reservation_id = self.reserve_llama_cpp_placement_resources(
+                        &requested_model_key,
+                        &resource_budget,
+                        budget_cuda_devices.as_deref(),
+                        &budget_vulkan_devices,
+                    )?;
+                    (reservation_id, None)
+                } else {
                     return Err(error);
-                };
-                let reservation_id = self
-                    .resource_ledger
-                    .as_mut()
-                    .expect("speculative admission requires a resource ledger")
-                    .reserve(&requested_model_key, decision.budget.clone())?;
-                (reservation_id, Some(decision))
+                }
             }
             Err(error) => return Err(error),
         };

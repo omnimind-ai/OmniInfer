@@ -176,7 +176,13 @@ An explicit full-offload request such as `-ngl 999`, `--gpu-layers=all`, or
 `--gpu-layers=max` must reconcile to a full placement. A single-GPU near-fit
 load may waive only bounded allocator slack while holding that device
 exclusively; multi-GPU loads hold conservative ceilings on every selected
-device until the reported tensor split is known. Material host model placement,
+device until the reported tensor split is known. If a single-GPU estimate exceeds
+the bounded slack allowance, an official CUDA load without a client-provided
+budget can use the same provisional host/device reservation as automatic
+placement. This handles hybrid MoE estimates whose KV and activation heuristic
+is larger than the native allocation. The process must still report all layers
+offloaded and actual model buffers within reconciled capacity; this is not a
+waiver of an explicit full-offload request. Material host model placement,
 missing evidence, or a reconciled budget above capacity fails closed: OmniInfer
 stops the process tree, closes the listener, withholds the route, and rolls back
 the reservation.

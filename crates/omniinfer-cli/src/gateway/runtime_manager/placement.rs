@@ -287,7 +287,9 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
     if policy.permits_partial_offload() && mode == "unknown" {
         anyhow::bail!("llama.cpp startup log reported an indeterminate placement");
     }
-    if matches!(policy, LlamaCppCudaPlacementPolicy::ExplicitFull) && mode != "full" {
+    if matches!(policy, LlamaCppCudaPlacementPolicy::ExplicitFull)
+        && (mode != "full" || !all_layers_offloaded || cuda_model_bytes == 0)
+    {
         anyhow::bail!(
             "llama.cpp did not satisfy the requested full CUDA offload (observed mode: {mode})"
         );
