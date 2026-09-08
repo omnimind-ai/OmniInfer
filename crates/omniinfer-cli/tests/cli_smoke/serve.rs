@@ -1658,6 +1658,7 @@ fn overestimated_full_offload_reconciles_and_retains_capacity_guards() {
             "model": model.display().to_string(),
             "backend_port": backend_port,
             "launch_args": ["-ngl", "999"],
+            "resource_budget_bytes": null,
         }),
         Duration::from_secs(10),
     )

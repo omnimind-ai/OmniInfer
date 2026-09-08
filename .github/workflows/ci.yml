@@ -40,7 +40,7 @@ jobs:
       - name: Verify benchmark producer contract
         run: |
           python3 scripts/sync_benchmark_contract.py --check
-          python3 -m unittest tests/test_benchmark_contract.py
+          python3 -m unittest discover -s tests -p 'test_benchmark_*.py'
 
       - name: Run benchmark contract tests
         run: |
@@ -53,8 +53,10 @@ jobs:
       - name: Run gateway runtime manager unit tests
         run: "cargo test -p omniinfer-cli --bin omniinfer gateway::runtime_manager::tests::"
 
-      - name: Run speculative load failure integration test
-        run: "cargo test -p omniinfer-cli --test cli_smoke speculative_load_failure_rolls_back_real_backend_and_cuda_reservation"
+      - name: Run resource admission integration tests
+        run: |
+          cargo test -p omniinfer-cli --test cli_smoke speculative_load_failure_rolls_back_real_backend_and_cuda_reservation
+          cargo test -p omniinfer-cli --test cli_smoke overestimated_full_offload_reconciles_and_retains_capacity_guards
 
       - name: Run backend archive security tests
         run: "cargo test -p omniinfer-cli --bin omniinfer backend_installer::tests::"
@@ -85,6 +87,9 @@ jobs:
 
       - name: Test benchmark contract integrity
         run: "cargo test -p omniinfer-cli --bin omniinfer benchmark::contract::tests::"
+
+      - name: Test benchmark evidence helpers
+        run: python -m unittest discover -s tests -p 'test_benchmark_*.py'
 
       - name: Test desktop serve lifecycle
         run: |
