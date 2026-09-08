@@ -89,6 +89,13 @@ captured from OmniInfer state and credential values are redacted. Use
 Archived commands are text evidence and are never executed by the submission
 service.
 
+The output token budget and the scored decode count are separate. When native
+timing and throughput show that llama.cpp excludes the first sampled token,
+OmniInfer retains the actual TG from response usage and writes TG-1 to
+`workload.scored_tokens.decode`, preserving native throughput with a protocol
+note. Both N and N-1 timing conventions are accepted; ambiguous timing pairs or
+scoring changes within a cohort fail instead of silently inflating throughput.
+
 Use `--json` when another program needs the complete result on stdout. Progress
 and the saved path are written to stderr, so stdout remains one valid JSON value.
 
