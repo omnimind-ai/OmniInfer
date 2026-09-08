@@ -204,6 +204,8 @@ compute and output allocations are still charged to host memory when native
 logs report them. Actual capacity overflow, material CPU model placement under
 an explicit full request, or missing placement evidence stops the process and
 rolls back the reservation. `--device none` retains host-only admission.
+Explicit `resource_budget_bytes` requirements are reserved without provisional
+clamping, for both CUDA and Vulkan.
 
 ## Idempotency and Reloads
 

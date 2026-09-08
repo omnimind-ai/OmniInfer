@@ -560,11 +560,14 @@ impl RustRuntimeManager {
             .keys()
             .filter(|domain| matches!(domain, MemoryDomain::Cuda(_)))
             .count();
-        let use_provisional_reservation = reconcile_policy.is_some_and(|policy| {
-            policy.permits_partial_offload()
-                || selected_cuda_devices > 1
-                || !budget_vulkan_devices.is_empty()
-        });
+        // An explicit client reservation is a minimum admission requirement,
+        // not a heuristic that may be clamped to currently available memory.
+        let use_provisional_reservation = payload.get("resource_budget_bytes").is_none()
+            && reconcile_policy.is_some_and(|policy| {
+                policy.permits_partial_offload()
+                    || selected_cuda_devices > 1
+                    || !budget_vulkan_devices.is_empty()
+            });
         let initial_reservation = if use_provisional_reservation {
             self.reserve_llama_cpp_placement_resources(
                 &requested_model_key,
