@@ -8,7 +8,8 @@ cohorts. Do not backfill old measurements with new observations.
 ## Windows GPU counters
 
 Run `scripts/benchmark_windows_gpu.ps1 -OutputPath <new-jsonl-file>` continuously
-from before loading until after the final request. Record UTC phase boundaries
+from before loading until after the final request. For a bounded collector check,
+pass `-MaxSamples 3`; the default collects continuously. Record UTC phase boundaries
 for loading, ready, QA, calibration, warmup and scored requests separately.
 Allow the predeclared post-readiness settling period before QA (the September 8
 replacement cohort used five seconds). It is part of both comparison protocols.

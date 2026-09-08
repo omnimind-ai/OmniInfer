@@ -1,11 +1,17 @@
-param([Parameter(Mandatory = $true)][string]$OutputPath)
+param(
+    [Parameter(Mandatory = $true)][string]$OutputPath,
+    [ValidateRange(0, 86400)][int]$MaxSamples = 0
+)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 # Cooked utilization covers an interval. The first start is deliberately unknown;
 # a consumer must not infer it by subtracting the requested sampling period.
 $previousTimestamp = $null
-Get-Counter -Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -Continuous |
+$counterArgs = @{ Counter = '\GPU Engine(*)\Utilization Percentage'; SampleInterval = 1 }
+if ($MaxSamples -eq 0) { $counterArgs.Continuous = $true }
+else { $counterArgs.MaxSamples = $MaxSamples }
+Get-Counter @counterArgs |
     ForEach-Object {
         $currentTimestamp = $_.Timestamp.ToUniversalTime().ToString('o')
         $samples = @($_.CounterSamples | ForEach-Object {
