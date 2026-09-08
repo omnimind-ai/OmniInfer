@@ -22,6 +22,9 @@ interval crossing a boundary is ambiguous; it does not establish when activity
 occurred. Foreign activity above the threshold still excludes that cohort;
 ambiguity is not permission to discard a sample or exempt PID 4. Missing or
 invalid in-window counters fail closed. Preserve the returned attribution.
+An unknown-start sample that ends at or before a protected window is entirely
+outside it. A sample ending after that boundary remains ambiguous when its
+start is unknown, even if it ends after the protected window.
 
 ## Android display and prelaunch temperature
 
