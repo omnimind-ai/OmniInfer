@@ -40,7 +40,7 @@ jobs:
       - name: Verify benchmark producer contract
         run: |
           python3 scripts/sync_benchmark_contract.py --check
-          python3 -m unittest tests/test_benchmark_contract.py
+          python3 -m unittest discover -s tests -p 'test_benchmark_*.py'
 
       - name: Run benchmark contract tests
         run: |
@@ -85,6 +85,9 @@ jobs:
 
       - name: Test benchmark contract integrity
         run: "cargo test -p omniinfer-cli --bin omniinfer benchmark::contract::tests::"
+
+      - name: Test benchmark evidence helpers
+        run: python -m unittest discover -s tests -p 'test_benchmark_*.py'
 
       - name: Test desktop serve lifecycle
         run: |
