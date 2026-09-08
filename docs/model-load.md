@@ -83,6 +83,11 @@ Common generation defaults include:
 }
 ```
 
+Client-provided `resource_budget_bytes` remains a strict admission requirement.
+CUDA auto placement and multi-device loads do not clamp it to available memory;
+provisional estimate reconciliation applies when there is no positive client
+budget. A null value follows the existing omitted-value behavior.
+
 ## Response
 
 ```json

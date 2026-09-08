@@ -540,8 +540,16 @@ impl RustRuntimeManager {
             .keys()
             .filter(|domain| matches!(domain, MemoryDomain::Cuda(_)))
             .count();
-        let use_provisional_reservation = reconcile_policy
-            .is_some_and(|policy| policy.permits_partial_offload() || selected_cuda_devices > 1);
+        // Match the budget builder's optional-positive-value semantics.
+        let has_client_budget = payload
+            .get("resource_budget_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|bytes| bytes > 0);
+        // Client-provided reservations are admission requirements, not estimates.
+        let use_provisional_reservation = !has_client_budget
+            && reconcile_policy.is_some_and(|policy| {
+                policy.permits_partial_offload() || selected_cuda_devices > 1
+            });
         let initial_reservation = if use_provisional_reservation {
             self.reserve_llama_cpp_placement_resources(
                 &requested_model_key,
@@ -576,9 +584,7 @@ impl RustRuntimeManager {
                         .expect("speculative admission requires a resource ledger")
                         .reserve(&requested_model_key, decision.budget.clone())?;
                     (reservation_id, Some(decision))
-                } else if reconcile_policy.is_some()
-                    && payload.get("resource_budget_bytes").is_none()
-                {
+                } else if reconcile_policy.is_some() && !has_client_budget {
                     // GGUF byte-size heuristics overestimate hybrid MoE KV and
                     // activations. Use the same bounded launch transaction as
                     // auto placement; ExplicitFull is still enforced against
