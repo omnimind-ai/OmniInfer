@@ -17,13 +17,29 @@ pub(super) fn llama_cpp_vulkan_selection(
     {
         return Ok(None);
     }
-    let visible = match std::env::var("GGML_VK_VISIBLE_DEVICES") {
-        Ok(value) => parse_vulkan_visible_devices(&value)?,
-        Err(std::env::VarError::NotPresent) => vulkan_physical_gpu_indices()?,
-        Err(error) => return Err(error.into()),
-    };
+    resolve_vulkan_selection(args, || match std::env::var("GGML_VK_VISIBLE_DEVICES") {
+        Ok(value) => parse_vulkan_visible_devices(&value),
+        Err(std::env::VarError::NotPresent) => vulkan_physical_gpu_indices(),
+        Err(error) => Err(error.into()),
+    })
+    .map(Some)
+}
+
+fn resolve_vulkan_selection(
+    args: &[String],
+    resolve_visible: impl FnOnce() -> Result<Vec<String>>,
+) -> Result<VulkanSelection> {
+    // Only an explicit final `--device none` can select an empty device list.
+    // CPU-only loads must not depend on a working Vulkan loader or GPU probe.
+    if select_vulkan_devices(args, &[]).is_ok_and(|selected| selected.is_empty()) {
+        return Ok(VulkanSelection {
+            visible: Vec::new(),
+            selected: BTreeMap::new(),
+        });
+    }
+    let visible = resolve_visible()?;
     let selected = select_vulkan_devices(args, &visible)?;
-    Ok(Some(VulkanSelection { visible, selected }))
+    Ok(VulkanSelection { visible, selected })
 }
 
 fn parse_vulkan_visible_devices(value: &str) -> Result<Vec<String>> {
@@ -168,4 +184,34 @@ fn vulkan_physical_gpu_indices() -> Result<Vec<String>> {
     })();
     unsafe { instance.destroy_instance(None) };
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_only_selection_does_not_probe_vulkan() {
+        for args in [
+            vec!["--device=none"],
+            vec!["-dev", "none"],
+            vec!["--device", "Vulkan0", "-dev=none"],
+        ] {
+            let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            let selection = resolve_vulkan_selection(&args, || {
+                panic!("CPU-only selection must not probe Vulkan")
+            })
+            .unwrap();
+            assert!(selection.visible.is_empty());
+            assert!(selection.selected.is_empty());
+        }
+    }
+
+    #[test]
+    fn gpu_override_still_requires_a_successful_probe() {
+        let args = ["--device=none", "-dev", "Vulkan0"].map(str::to_owned);
+        let error =
+            resolve_vulkan_selection(&args, || anyhow::bail!("loader unavailable")).unwrap_err();
+        assert!(error.to_string().contains("loader unavailable"));
+    }
 }
