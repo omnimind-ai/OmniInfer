@@ -411,7 +411,15 @@ impl RustRuntimeManager {
             &backend.default_args,
             launch_args.as_deref(),
         );
-        let placement_policy = llama_cpp_cuda_placement_policy(backend, &effective_launch_args)?;
+        let vulkan_selection = llama_cpp_vulkan_selection(backend, &effective_launch_args)?;
+        let placement_policy = if vulkan_selection
+            .as_ref()
+            .is_some_and(|s| s.selected.is_empty())
+        {
+            None
+        } else {
+            llama_cpp_placement_policy(backend, &effective_launch_args)?
+        };
         let effective_launch_args =
             managed_placement_evidence_args(&effective_launch_args, placement_policy)?;
         let launch_args_have_ctx =
@@ -504,8 +512,16 @@ impl RustRuntimeManager {
                 &plan.log_file_name,
                 &requested_model_key,
             ));
-        let (runtime_env, cuda_selection) =
+        let (mut runtime_env, cuda_selection) =
             runtime_env_for_backend(backend, &effective_launch_args);
+        if let Some(selection) = &vulkan_selection {
+            // Freeze physical enumeration so native logical VulkanN and the
+            // capacity probe refer to the same device, including visibility remaps.
+            runtime_env.push((
+                "GGML_VK_VISIBLE_DEVICES".to_string(),
+                selection.visible.join(","),
+            ));
+        }
         let budget_cuda_devices = if backend.capabilities.iter().any(|value| value == "cuda") {
             match cuda_selection.as_ref() {
                 Some(selection) => Some(selection.visible_devices.clone()),
@@ -526,6 +542,10 @@ impl RustRuntimeManager {
             budget_cuda_devices.as_deref(),
             replicate_across_domains,
         )?;
+        let resource_budget = match &vulkan_selection {
+            Some(selection) => vulkan_placement_budget(&resource_budget, &selection.selected)?,
+            None => resource_budget,
+        };
         let budget_vulkan_devices = resource_budget
             .domains()
             .keys()
@@ -540,8 +560,11 @@ impl RustRuntimeManager {
             .keys()
             .filter(|domain| matches!(domain, MemoryDomain::Cuda(_)))
             .count();
-        let use_provisional_reservation = reconcile_policy
-            .is_some_and(|policy| policy.permits_partial_offload() || selected_cuda_devices > 1);
+        let use_provisional_reservation = reconcile_policy.is_some_and(|policy| {
+            policy.permits_partial_offload()
+                || selected_cuda_devices > 1
+                || !budget_vulkan_devices.is_empty()
+        });
         let initial_reservation = if use_provisional_reservation {
             self.reserve_llama_cpp_placement_resources(
                 &requested_model_key,
@@ -630,9 +653,8 @@ impl RustRuntimeManager {
                 let placement = parse_llama_cpp_runtime_placement(
                     &log_path,
                     log_start_offset,
-                    budget_cuda_devices
-                        .as_deref()
-                        .expect("CUDA reconciliation requires selected devices"),
+                    budget_cuda_devices.as_deref().unwrap_or_default(),
+                    &vulkan_selection.as_ref().map(|selection| selection.selected.clone()).unwrap_or_default(),
                     policy,
                 );
                 let placement = match placement {
@@ -1816,6 +1838,9 @@ use model_config::*;
 mod placement;
 
 use placement::*;
+
+mod vulkan;
+use vulkan::*;
 pub(super) fn pick_runtime_port(host: &str) -> Result<u16> {
     let listener = std::net::TcpListener::bind((host, 0))?;
     Ok(listener.local_addr()?.port())
