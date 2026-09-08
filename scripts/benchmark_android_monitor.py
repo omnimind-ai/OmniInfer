@@ -39,3 +39,11 @@ def render_monitor(pid: int, binary: str, model: str) -> str:
             raise ValueError("monitor requires absolute shell-safe campaign paths")
     return (_TEMPLATE.lstrip("\n").replace("PID_VALUE", str(pid))
             .replace("MODEL_BIN_VALUE", binary).replace("MODEL_PATH_VALUE", model))
+
+
+def validate_monitor_log(text: str) -> None:
+    """Reject a stop even if the final HTTP response beat the monitor's signal."""
+    if "SAFETY_STOP" in text:
+        raise RuntimeError("Android thermal monitor stopped the cohort")
+    if not re.search(r"^SAMPLE \d+", text, re.MULTILINE):
+        raise RuntimeError("Android monitor evidence is missing")

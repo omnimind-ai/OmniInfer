@@ -21,6 +21,13 @@ class AndroidMonitorTests(unittest.TestCase):
                     monitor.render_monitor(pid, binary, model)
         self.assertNotIn('\0', monitor.render_monitor(42, '/bin/server', '/model'))
 
+    def test_stop_after_successful_response_still_invalidates_cohort(self):
+        monitor.validate_monitor_log('SAMPLE 123\n  temperature: 390\n')
+        for text in ['', 'SAMPLE 123\nSAFETY_STOP TEMPERATURE_ABOVE_40C\n']:
+            with self.subTest(text=text):
+                with self.assertRaises(RuntimeError):
+                    monitor.validate_monitor_log(text)
+
     @unittest.skipUnless(sys.platform.startswith('linux'), 'requires procfs and POSIX signals')
     def test_sampled_thermal_stop_preserves_process_ownership(self):
         with tempfile.TemporaryDirectory() as tmp:

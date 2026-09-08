@@ -59,7 +59,9 @@ contains the exact expected binary and model arguments. Preserve the failed
 cohort and raw reading, and clean up the owned forward/runtime. Do not interpret
 a partial response as a benchmark result. The guarantee applies to observed
 samples, not temperatures between samples; the monitor never changes device
-policy or creates heat. Freeze the same monitor for both sides of a comparison.
+policy or creates heat. Freeze the same monitor for both sides of a comparison. After collecting its log,
+call `validate_monitor_log(text)` before marking measurements complete: a late
+stop invalidates the cohort even when the last HTTP response succeeded.
 
 
 ## Android CPU stability
