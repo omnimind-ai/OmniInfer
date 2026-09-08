@@ -45,6 +45,9 @@ class BenchmarkEnvironmentTests(unittest.TestCase):
             (19.5, 20.5, "boundary_ambiguous", False, False),
             (20, 21, "outside", True, False),
             (None, 10.2, "unknown_interval", False, False),
+            (None, 9, "outside", True, False),
+            (None, 10, "outside", True, False),
+            (None, 21, "unknown_interval", False, False),
         ]:
             with self.subTest(start=start, end=end):
                 result = env.foreign_gpu_activity(

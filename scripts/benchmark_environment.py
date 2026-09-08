@@ -46,6 +46,10 @@ def counter_interval_relation(
     if not all(math.isfinite(value) for value in values) or window_end < window_start:
         raise ValueError("invalid measurement window or counter timestamp")
     if start is None:
+        # Even with an unknown beginning, an interval that already ended
+        # cannot overlap a future protected window.
+        if end <= window_start:
+            return "outside"
         return "unknown_interval"
     if not math.isfinite(start) or start >= end:
         raise ValueError("counter interval must have finite, increasing boundaries")
