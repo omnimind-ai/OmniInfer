@@ -46,6 +46,31 @@ automatic brightness may subsequently change. Verify wakefulness with bounded
 polling because `Dozing` after a sleep event is transitional. `verify_display`
 checks this without changing settings. Historical evidence gaps remain gaps.
 
+## Android CPU stability
+
+Declare warmup count before collecting a cohort. Battery temperature alone does
+not establish a steady CPU frequency: separate CPU clusters may transition to
+lower clocks while the battery remains within the thermal gate. Keep the complete
+failed cohort and correlate frequency observations with request boundaries.
+Whole-request or one-hertz samples cannot locate an event within subsecond
+prefill; use a separate diagnostic with sufficient temporal resolution and keep
+its observation overhead out of published performance results.
+
+For MiniCPM5-2B F16 on SM8850 with official `64e9bceb2`, PP512/TG128,
+ctx2048, eight threads and strict affinity `ff`, issue #257's single predeclared
+replacement used three warmups followed by all three formal rounds. The PP
+population CV fell from 5.955% to 0.1056%; TG CV fell from 8.969% to 2.0578%.
+That configuration's measured means were 52.0134 and 10.5293 tokens/s. This is a
+validated campaign warmup remedy, not a runtime or system frequency-policy fix.
+The original one-warmup cohort remains excluded. Do not generalize three warmups
+to other devices or use it as permission to retry an unrelated failing cell.
+
+Both backends in a comparison must use the same declared warmup protocol.
+Preserve the 5% population CV gate, fixed model/runtime, token counts, cache
+policy, all scored rounds and excluded attempts. If a prospectively declared
+corrective cohort still fails, retain the gap rather than selecting stable
+rounds, cooling between scored requests or relaxing the threshold.
+
 Validate the helpers with:
 
 ```sh
