@@ -87,6 +87,31 @@ For HTP performance, use repackable GGUF quantizations such as Q4_0, Q4_1,
 Q8_0, IQ4_NL, or MXFP4. K-quants such as Q4_K_M can run much slower on this
 backend and are not the default Android HTP catalog path.
 
+Selecting `llama.cpp/htp`, `--device HTP0` or all GPU layers expresses a requested
+accelerator, not verified all-NPU execution. With official `64e9bceb2` and the
+original OpenBMB MiniCPM5-2B GGUF assets, Q8_0 executes embedding `GET_ROWS` on CPU
+on SM8650/SM8750/SM8850, including an explicit HTP embedding override. Q4_K_M also
+executes transformer matrix multiplications on CPU. Report these routes as
+CPU-assisted; do not publish them in a pure-NPU matrix. Converting to Q4_0 creates
+a different asset and does not fix the original Q4_K_M capability.
+
+Use actual post-load scheduler logs from a separate single-slot diagnostic
+(`GGML_SCHED_DEBUG=2`, `-lv 5`), with both prefill and decode and the same model,
+build, device, parameters and requested prompt shapes. Startup reservation graphs
+are insufficient. The read-only helper produces a hash-bound placement report:
+
+```sh
+python3 scripts/benchmark_htp_placement.py "$DIAGNOSTIC_LOG" --output "$NEW_REPORT"
+```
+
+Exit 2 excludes CPU-assisted, incomplete, missing or unrecognized evidence.
+Exit 0 only permits independent placement review: it never certifies correctness
+or performance, and its report always sets `performance_publishable` to false.
+An HTP-only graph can still produce wrong answers (MiniCPM5 F16 on SM8750, #259).
+Check each request, prefill/decode shapes, correct output and identity separately,
+then run fresh non-debug performance cohorts. Keep failed original evidence.
+
+
 ## MNN
 
 Use MNN for MNN-packaged models.
