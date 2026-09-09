@@ -667,10 +667,13 @@ impl RustRuntimeManager {
                     Err(error) => {
                         let cleanup = process.stop(Duration::from_secs(8));
                         return Err(match cleanup {
-                            Ok(()) => error.context(format!(
-                                "failed to reconcile llama.cpp placement (log: {})",
-                                log_path.display()
-                            )),
+                            Ok(()) => {
+                                let message = format!(
+                                    "failed to reconcile llama.cpp placement: {error} (log: {})",
+                                    log_path.display()
+                                );
+                                error.context(message)
+                            }
                             Err(cleanup) => anyhow::anyhow!(
                                 "failed to reconcile llama.cpp placement: {error}; runtime cleanup failed: {cleanup}; log: {}",
                                 log_path.display()

@@ -431,7 +431,9 @@ if [ -z "$placement_mode" ]; then
     *) placement_mode="partial" ;;
   esac
 fi
-if [ "$placement_mode" = "oversized" ]; then
+if [ -f "$(dirname "$0")/placement-log" ]; then
+  cat "$(dirname "$0")/placement-log"
+elif [ "$placement_mode" = "oversized" ]; then
   printf '%s\n' \
     'load_tensors: offloaded 2/4 layers to GPU' \
     'load_tensors: CPU_Mapped model buffer size = 1000000.00 GiB' \
@@ -785,7 +787,9 @@ fn main() {
                 "999" | "all" | "max" => "full".to_string(),
                 _ => "partial".to_string(),
             });
-        if placement_mode.trim() == "oversized" {
+        if let Ok(log) = std::fs::read_to_string(executable.with_file_name("placement-log")) {
+            print!("{log}");
+        } else if placement_mode.trim() == "oversized" {
             println!("load_tensors: offloaded 2/4 layers to GPU");
             println!("load_tensors: CPU_Mapped model buffer size = 1000000.00 GiB");
             println!("load_tensors: CUDA0 model buffer size = 1000000.00 GiB");

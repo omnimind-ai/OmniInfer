@@ -117,10 +117,11 @@ pub(super) fn llama_cpp_placement_policy(
     // Treat that combination as automatic partial offload so admission can
     // reserve host plus CUDA ceilings and reconcile them from startup logs.
     if backend.id.starts_with("ik_llama.cpp") {
-        if let Some(cpu_moe_layers) = ik_llama_cpu_moe_layers(launch_args)? {
-            if cpu_moe_layers > 0 {
-                return Ok(Some(LlamaCppPlacementPolicy::Auto));
-            }
+        let cpu_moe_layers = ik_llama_cpu_moe_layers(launch_args)?.unwrap_or(0);
+        // Native --fit can move experts to the CPU independently of ncmoe,
+        // including with the backend's default -ngl 999.
+        if cpu_moe_layers > 0 || launch_args.iter().any(|arg| arg == "--fit") {
+            return Ok(Some(LlamaCppPlacementPolicy::Auto));
         }
     }
     let Some(value) = gpu_layers_value(launch_args) else {
@@ -403,6 +404,11 @@ fn buffer_domain(
     vulkan_devices: &BTreeMap<String, String>,
 ) -> Result<Option<MemoryDomain>> {
     let upper = label.to_ascii_uppercase();
+    if upper == "CUDA_SPLIT" {
+        anyhow::bail!(
+            "CUDA_Split model placement lacks per-device memory evidence; use ik_llama.cpp --split-mode layer or --split-mode none"
+        );
+    }
     if upper.starts_with("CPU") || upper == "CUDA_HOST" || upper == "VULKAN_HOST" {
         return Ok(Some(MemoryDomain::Host));
     }

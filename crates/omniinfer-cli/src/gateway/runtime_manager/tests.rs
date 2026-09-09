@@ -1350,6 +1350,57 @@ fn ik_cpu_moe_policy_rejects_invalid_count() {
 }
 
 #[test]
+fn ik_fit_uses_auto_policy_without_weakening_official_full_offload() {
+    for backend_id in ["ik_llama.cpp-linux-cuda", "ik_llama.cpp-cuda"] {
+        let backend = speculative_test_backend(backend_id, "llama.cpp", true);
+        for tokens in [
+            vec!["-ngl", "999", "--fit"],
+            vec!["-ngl", "999", "-ncmoe", "0", "--fit"],
+        ] {
+            let args = tokens.into_iter().map(str::to_string).collect::<Vec<_>>();
+            assert_eq!(
+                llama_cpp_placement_policy(&backend, &args).unwrap(),
+                Some(LlamaCppPlacementPolicy::Auto)
+            );
+        }
+        let args = ["-ngl", "999", "--fit", "-ncmoe", "invalid"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert!(llama_cpp_placement_policy(&backend, &args).is_err());
+    }
+    let backend = speculative_test_backend("llama.cpp-linux-cuda", "llama.cpp", true);
+    let args = ["-ngl", "999", "--fit"]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        llama_cpp_placement_policy(&backend, &args).unwrap(),
+        Some(LlamaCppPlacementPolicy::ExplicitFull)
+    );
+}
+
+#[test]
+fn ik_split_buffers_require_per_device_evidence() {
+    // Upstream ik's native split label is not a logical CUDA device. Even
+    // otherwise complete model/KV/compute logs cannot prove its allocation.
+    let log = "llm_load_tensors: offloaded 41/41 layers to GPU\n\
+               llm_load_tensors: CUDA0 buffer size = 512.00 MiB\n\
+               llm_load_tensors: CUDA_Split buffer size = 20000.00 MiB\n\
+               llama_kv_cache_init: CUDA0 KV buffer size = 256.00 MiB\n\
+               llama_init_from_model: CUDA1 compute buffer size = 128.00 MiB\n";
+    for policy in [
+        LlamaCppPlacementPolicy::Auto,
+        LlamaCppPlacementPolicy::ExplicitFull,
+    ] {
+        let error = parse_llama_cpp_runtime_placement_text(log, "2,3", &BTreeMap::new(), policy)
+            .unwrap_err();
+        assert!(error.to_string().contains("CUDA_Split"));
+        assert!(error.to_string().contains("--split-mode layer"));
+    }
+}
+
+#[test]
 fn partial_offload_provisional_budget_guards_host_and_cuda() {
     let cuda = MemoryDomain::Cuda("0".to_string());
     let estimated = ResourceBudget::from_domains(BTreeMap::from([(cuda.clone(), 1_000)])).unwrap();

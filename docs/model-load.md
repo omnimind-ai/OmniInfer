@@ -192,6 +192,24 @@ missing evidence, or a reconciled budget above capacity fails closed: OmniInfer
 stops the process tree, closes the listener, withholds the route, and rolls back
 the reservation.
 
+### ik_llama.cpp CUDA placement
+
+Linux and Windows ik_llama.cpp CUDA loads use the same host/device reservation
+and startup reconciliation. `--cpu-moe` / `-cmoe`, a positive `--n-cpu-moe` /
+`-ncmoe` count, or native `--fit` selects automatic placement even with the
+default `-ngl 999`. CPU-MoE counts follow the last supplied option; a final
+count of zero disables that override. `--fit` independently permits ik to move
+experts to host memory as needed. Other explicit full-offload loads remain
+strict.
+
+OmniInfer reads ik's native `llm_load_tensors` buffer logs without adding the
+unsupported `-lv` flag. Startup logging must remain enabled. Multi-GPU
+`attn`/`graph` configurations that emit `CUDA_Split` cannot currently provide
+the per-device memory evidence required by reconciliation: OmniInfer rejects
+the load, stops its runtime, and releases its reservation. Use
+`--split-mode layer` or `--split-mode none` instead; split weights are never
+silently omitted from the budget.
+
 ### Official llama.cpp Vulkan placement
 
 Linux and Windows Vulkan loads also reconcile native model, KV, compute and

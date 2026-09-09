@@ -392,6 +392,104 @@ async fn partial_offload_reconciliation_failure_cleans_runtime_and_ledger() {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 #[tokio::test]
+async fn ik_native_placement_reconciles_and_split_failure_rolls_back() {
+    const TEST_MIB: u64 = 1024 * 1024;
+    let _env_lock = TEST_ENV_LOCK.lock().await;
+    let temp = temp_root("ik-native-placement");
+    let model = temp.join("model.gguf");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&model, b"gguf").unwrap();
+    let backend_id = if cfg!(windows) {
+        "ik_llama.cpp-cuda"
+    } else {
+        "ik_llama.cpp-linux-cuda"
+    };
+    install_fake_llama_server(&temp, backend_id);
+    let fixture = temp
+        .join(".local/runtime")
+        .join(test_runtime_platform_dir())
+        .join(backend_id)
+        .join("bin/placement-log");
+    let _guard = EnvGuard::set("OMNIINFER_RUST_STATE_ROOT", temp.display().to_string());
+    let _cuda = EnvGuard::set("CUDA_VISIBLE_DEVICES", "0".to_string());
+    let gateway = spawn_test_gateway_with_options(GatewayAccessPolicy::default(), None).await;
+    let port = gateway.port;
+    for (option, split) in [("--fit", false), ("--cpu-moe", false), ("--fit", true)] {
+        // Log replay validates gateway integration, not native model correctness.
+        let label = if split { "CUDA_Split" } else { "CUDA0" };
+        std::fs::write(
+            &fixture,
+            format!(
+                "llm_load_tensors: offloaded 41/41 layers to GPU\n\
+             llm_load_tensors: CUDA_Host buffer size = 1024.00 MiB\n\
+             llm_load_tensors: {label} buffer size = 16.00 MiB\n\
+             llama_kv_cache_init: CUDA0 KV buffer size = 4.00 MiB\n"
+            ),
+        )
+        .unwrap();
+        let backend_port = pick_runtime_port("127.0.0.1").unwrap();
+        let model_text = model.display().to_string();
+        let response = tokio::task::spawn_blocking({
+            let model_text = model_text.clone();
+            move || {
+                ureq::post(format!("http://127.0.0.1:{port}/omni/model/load"))
+                    .config()
+                    .http_status_as_error(false)
+                    .build()
+                    .send_json(json!({"backend": backend_id, "model": model_text,
+                    "ctx_size": 512, "backend_port": backend_port,
+                    "launch_args": ["-ngl", "999", option]}))
+                    .unwrap()
+            }
+        })
+        .await
+        .unwrap();
+        let status = response.status().as_u16();
+        let body: Value = response.into_body().read_json().unwrap();
+        if split {
+            assert_eq!(status, 502, "{body}");
+            assert!(body.to_string().contains("CUDA_Split"), "{body}");
+            assert!(body.to_string().contains("--split-mode layer"), "{body}");
+        } else {
+            assert_eq!(status, 200, "{body}");
+            assert_eq!(body["runtime_placement"]["policy"], "auto");
+            assert_eq!(body["runtime_placement"]["mode"], "partial");
+            assert!(
+                !body["launch_command"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|arg| arg == "-lv")
+            );
+            let state = gateway_state(port).await;
+            let committed = &state["resource_ledger"]["committed_bytes"];
+            assert!(committed["host"].as_u64().unwrap() > 1024 * TEST_MIB);
+            assert!(committed["cuda:0"].as_u64().unwrap() > 20 * TEST_MIB);
+            let unload: Value = tokio::task::spawn_blocking(move || {
+                ureq::post(format!("http://127.0.0.1:{port}/omni/model/unload"))
+                    .send_json(json!({"model": model_text}))
+                    .unwrap()
+                    .into_body()
+                    .read_json()
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+            assert_eq!(unload["resources_released"], true);
+        }
+        let state = gateway_state(port).await;
+        assert_eq!(resource_total(&state, "reserved_bytes"), 0);
+        assert_eq!(resource_total(&state, "committed_bytes"), 0);
+        assert!(state["loaded_models"].as_array().unwrap().is_empty());
+        assert_eq!(state["backend_ready"], false);
+        assert!(std::net::TcpStream::connect(("127.0.0.1", backend_port)).is_err());
+    }
+    gateway.stop().await;
+    std::fs::remove_dir_all(temp).ok();
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[tokio::test]
 async fn explicit_full_offload_keeps_strict_cuda_admission() {
     let _env_lock = TEST_ENV_LOCK.lock().await;
     let temp = temp_root("explicit-full-offload-admission");
