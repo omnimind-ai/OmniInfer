@@ -87,6 +87,10 @@ For HTP performance, use repackable GGUF quantizations such as Q4_0, Q4_1,
 Q8_0, IQ4_NL, or MXFP4. K-quants such as Q4_K_M can run much slower on this
 backend and are not the default Android HTP catalog path.
 
+The llama.cpp submodule is pinned to `30b6a755e29692e8bc8e072885325716a2fee70f`
+(2026-09-09). Updating the dependency does not certify the device/model pairs
+below; their recorded limitations remain until native revalidation passes.
+
 Selecting `llama.cpp/htp`, `--device HTP0` or all GPU layers expresses a requested
 accelerator, not verified all-NPU execution. With official `64e9bceb2` and the
 original OpenBMB MiniCPM5-2B GGUF assets, Q8_0 executes embedding `GET_ROWS` on CPU
