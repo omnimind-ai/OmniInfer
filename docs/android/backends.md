@@ -387,3 +387,18 @@ For GPU/OpenCL backends, the library manifest declares optional device libraries
 ```
 
 You normally do not need to copy these declarations into the host manifest unless your manifest merge rules remove library entries.
+
+### Native adapter validation
+
+When updating the llama.cpp submodule, build the JNI target against the pinned
+source, not just a standalone llama-server. Configure the JNI CMake project with
+`OMNIINFER_BUILD_NATIVE_TESTS=ON` to also build `omniinfer-llama-smoke`.
+On an otherwise idle Android device, run `omniinfer-llama-smoke MODEL.gguf` with
+a known-good CPU model. It checks the real adapter's load/reset/generate path,
+correct answers and token counts with thinking disabled and enabled.
+
+For a vision-capable model with its adjacent projector, optionally supply an
+image as the second argument. This additionally requires nonzero image tokens
+and a correct answer to the text following the image marker, catching truncated
+multimodal prompt forwarding. Model-dependent smoke results are functional
+checks, not throughput measurements or proof of NPU correctness.
