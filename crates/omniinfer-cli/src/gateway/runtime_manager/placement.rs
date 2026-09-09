@@ -7,13 +7,13 @@ use super::*;
 const MAX_PLACEMENT_LOG_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LlamaCppCudaPlacementPolicy {
+pub(super) enum LlamaCppPlacementPolicy {
     Auto,
     ExplicitPartial(u32),
     ExplicitFull,
 }
 
-impl LlamaCppCudaPlacementPolicy {
+impl LlamaCppPlacementPolicy {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
@@ -37,7 +37,7 @@ impl LlamaCppCudaPlacementPolicy {
 pub(super) fn managed_placement_evidence_args(
     backend_id: &str,
     launch_args: &[String],
-    policy: Option<LlamaCppCudaPlacementPolicy>,
+    policy: Option<LlamaCppPlacementPolicy>,
 ) -> Result<Vec<String>> {
     let Some(policy) = policy else {
         return Ok(launch_args.to_vec());
@@ -67,7 +67,7 @@ pub(super) fn managed_placement_evidence_args(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RuntimePlacement {
-    pub(super) policy: LlamaCppCudaPlacementPolicy,
+    pub(super) policy: LlamaCppPlacementPolicy,
     pub(super) mode: String,
     pub(super) offloaded_layers: Option<u32>,
     pub(super) total_layers: Option<u32>,
@@ -99,13 +99,17 @@ fn ik_llama_cpu_moe_layers(launch_args: &[String]) -> Result<Option<u32>> {
     Ok(layers)
 }
 
-pub(super) fn llama_cpp_cuda_placement_policy(
+pub(super) fn llama_cpp_placement_policy(
     backend: &backend_registry::BackendSpec,
     launch_args: &[String],
-) -> Result<Option<LlamaCppCudaPlacementPolicy>> {
-    let is_llama_cpp_family = backend.family == "llama.cpp"
-        && (backend.id.starts_with("llama.cpp-") || backend.id.starts_with("ik_llama.cpp-"));
-    if !is_llama_cpp_family || !backend.capabilities.iter().any(|cap| cap == "cuda") {
+) -> Result<Option<LlamaCppPlacementPolicy>> {
+    if backend.family != "llama.cpp"
+        || !(backend.id.starts_with("llama.cpp-") || backend.id.starts_with("ik_llama.cpp-"))
+        || !backend
+            .capabilities
+            .iter()
+            .any(|cap| cap == "cuda" || cap == "vulkan")
+    {
         return Ok(None);
     }
     // ik_llama.cpp's CPU-MoE options intentionally place the expert tensors in
@@ -115,7 +119,7 @@ pub(super) fn llama_cpp_cuda_placement_policy(
     if backend.id.starts_with("ik_llama.cpp") {
         if let Some(cpu_moe_layers) = ik_llama_cpu_moe_layers(launch_args)? {
             if cpu_moe_layers > 0 {
-                return Ok(Some(LlamaCppCudaPlacementPolicy::Auto));
+                return Ok(Some(LlamaCppPlacementPolicy::Auto));
             }
         }
     }
@@ -126,21 +130,21 @@ pub(super) fn llama_cpp_cuda_placement_policy(
         {
             anyhow::bail!("llama.cpp GPU-layer argument is missing its value");
         }
-        return Ok(Some(LlamaCppCudaPlacementPolicy::Auto));
+        return Ok(Some(LlamaCppPlacementPolicy::Auto));
     };
     if value.eq_ignore_ascii_case("auto") {
-        return Ok(Some(LlamaCppCudaPlacementPolicy::Auto));
+        return Ok(Some(LlamaCppPlacementPolicy::Auto));
     }
     if matches!(value.to_ascii_lowercase().as_str(), "all" | "max") {
-        return Ok(Some(LlamaCppCudaPlacementPolicy::ExplicitFull));
+        return Ok(Some(LlamaCppPlacementPolicy::ExplicitFull));
     }
     let layers = value.parse::<u32>().map_err(|_| {
         anyhow::anyhow!("llama.cpp GPU layers must be 'auto', 'all', or a non-negative integer")
     })?;
     Ok(Some(if layers >= 999 {
-        LlamaCppCudaPlacementPolicy::ExplicitFull
+        LlamaCppPlacementPolicy::ExplicitFull
     } else {
-        LlamaCppCudaPlacementPolicy::ExplicitPartial(layers)
+        LlamaCppPlacementPolicy::ExplicitPartial(layers)
     }))
 }
 
@@ -148,37 +152,49 @@ pub(super) fn provisional_llama_cpp_placement_budget(
     estimated: &ResourceBudget,
     snapshot: &omniinfer_core::resource_ledger::ResourceLedgerSnapshot,
 ) -> Result<ResourceBudget> {
-    let cuda = estimated
+    let gpus = estimated
         .domains()
         .iter()
-        .filter(|(domain, _)| matches!(domain, MemoryDomain::Cuda(_)))
+        .filter(|(domain, _)| matches!(domain, MemoryDomain::Cuda(_) | MemoryDomain::Vulkan(_)))
         .collect::<Vec<_>>();
-    if cuda.is_empty() {
-        anyhow::bail!("llama.cpp placement reconciliation requires a selected CUDA device");
+    if gpus.is_empty() {
+        anyhow::bail!("llama.cpp placement reconciliation requires a selected GPU device");
     }
-    let estimated_total = cuda.iter().try_fold(0_u64, |total, (_, bytes)| {
+    let estimated_total = gpus.iter().try_fold(0_u64, |total, (_, bytes)| {
         total
             .checked_add(**bytes)
             .ok_or_else(|| anyhow::anyhow!("llama.cpp placement budget overflow"))
     })?;
     let available = snapshot.available()?;
+    let host_available = available.get(&MemoryDomain::Host).copied().unwrap_or(0);
+    if host_available == 0 {
+        anyhow::bail!("llama.cpp placement requires available host memory");
+    }
+    let host_ceiling = if gpus
+        .iter()
+        .any(|(domain, _)| matches!(domain, MemoryDomain::Vulkan(_)))
+    {
+        estimated_total.min(host_available)
+    } else {
+        estimated_total
+    };
     let mut components = vec![BudgetComponent {
         name: "llama_cpp_host_ceiling".to_string(),
         domain: MemoryDomain::Host,
-        bytes: estimated_total,
+        bytes: host_ceiling,
     }];
-    for (cuda_domain, _) in cuda {
-        let cuda_available = available.get(cuda_domain).copied().unwrap_or(0);
-        if cuda_available == 0 {
+    for (gpu_domain, _) in gpus {
+        let gpu_available = available.get(gpu_domain).copied().unwrap_or(0);
+        if gpu_available == 0 {
             anyhow::bail!(
                 "llama.cpp placement reconciliation requires available memory on {}",
-                cuda_domain.key(),
+                gpu_domain.key(),
             );
         }
         components.push(BudgetComponent {
-            name: "llama_cpp_cuda_ceiling".to_string(),
-            domain: cuda_domain.clone(),
-            bytes: estimated_total.min(cuda_available),
+            name: "llama_cpp_device_ceiling".to_string(),
+            domain: gpu_domain.clone(),
+            bytes: estimated_total.min(gpu_available),
         });
     }
     ResourceBudget::from_components(components).map_err(Into::into)
@@ -188,7 +204,8 @@ pub(super) fn parse_llama_cpp_runtime_placement(
     log_path: &Path,
     start_offset: u64,
     cuda_visible_devices: &str,
-    policy: LlamaCppCudaPlacementPolicy,
+    vulkan_devices: &BTreeMap<String, String>,
+    policy: LlamaCppPlacementPolicy,
 ) -> Result<RuntimePlacement> {
     let mut file = fs::File::open(log_path)?;
     let end = file.metadata()?.len();
@@ -202,13 +219,14 @@ pub(super) fn parse_llama_cpp_runtime_placement(
     file.seek(SeekFrom::Start(start_offset))?;
     let mut text = String::new();
     file.read_to_string(&mut text)?;
-    parse_llama_cpp_runtime_placement_text(&text, cuda_visible_devices, policy)
+    parse_llama_cpp_runtime_placement_text(&text, cuda_visible_devices, vulkan_devices, policy)
 }
 
 pub(super) fn parse_llama_cpp_runtime_placement_text(
     text: &str,
     cuda_visible_devices: &str,
-    policy: LlamaCppCudaPlacementPolicy,
+    vulkan_devices: &BTreeMap<String, String>,
+    policy: LlamaCppPlacementPolicy,
 ) -> Result<RuntimePlacement> {
     let devices = ordered_cuda_devices(cuda_visible_devices);
     let mut buffers = BTreeMap::<(MemoryDomain, &'static str, String), u64>::new();
@@ -226,7 +244,7 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
                 let Some(label) = line[..marker_index].split_whitespace().last() else {
                     continue;
                 };
-                let Some(domain) = buffer_domain(label, &devices) else {
+                let Some(domain) = buffer_domain(label, &devices, vulkan_devices)? else {
                     continue;
                 };
                 let Some(bytes) = parse_buffer_bytes(&line[marker_index + marker.len()..])? else {
@@ -251,7 +269,7 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
             let Some(label) = line[..marker_index].split_whitespace().last() else {
                 continue;
             };
-            let Some(domain) = buffer_domain(label, &devices) else {
+            let Some(domain) = buffer_domain(label, &devices, vulkan_devices)? else {
                 continue;
             };
             let Some(bytes) = parse_buffer_bytes(&line[marker_index + marker.len()..])? else {
@@ -269,7 +287,7 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
         }
     }
     if buffers.is_empty() {
-        anyhow::bail!("llama.cpp startup log did not report CPU/CUDA buffer placement");
+        anyhow::bail!("llama.cpp startup log did not report CPU/GPU buffer placement");
     }
     let mut categorized = BTreeMap::<(MemoryDomain, &'static str), u64>::new();
     for ((domain, category, _), bytes) in buffers {
@@ -282,10 +300,11 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
         .get(&(MemoryDomain::Host, "model"))
         .copied()
         .unwrap_or(0);
-    let cuda_model_bytes = categorized
+    let gpu_model_bytes = categorized
         .iter()
         .filter(|((domain, category), _)| {
-            matches!(domain, MemoryDomain::Cuda(_)) && *category == "model"
+            matches!(domain, MemoryDomain::Cuda(_) | MemoryDomain::Vulkan(_))
+                && *category == "model"
         })
         .try_fold(0_u64, |total, (_, bytes)| {
             total
@@ -322,22 +341,17 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
         });
     }
     let has_host = reported.contains_key(&MemoryDomain::Host);
-    let has_cuda = reported
+    let has_gpu = reported
         .keys()
-        .any(|domain| matches!(domain, MemoryDomain::Cuda(_)));
+        .any(|domain| matches!(domain, MemoryDomain::Cuda(_) | MemoryDomain::Vulkan(_)));
     let (offloaded_layers, total_layers) = layers.unzip();
     let all_layers_offloaded = matches!(
         (offloaded_layers, total_layers),
         (Some(offloaded), Some(total)) if total > 0 && offloaded == total
     );
-    let incidental_host_mapping_limit = (cuda_model_bytes / 20).max(512 * MIB);
+    let incidental_host_mapping_limit = (gpu_model_bytes / 20).max(512 * MIB);
     let host_model_is_material = host_model_bytes > incidental_host_mapping_limit;
-    let mode = match (
-        host_model_bytes > 0,
-        cuda_model_bytes > 0,
-        has_host,
-        has_cuda,
-    ) {
+    let mode = match (host_model_bytes > 0, gpu_model_bytes > 0, has_host, has_gpu) {
         (true, true, _, _) if all_layers_offloaded && !host_model_is_material => "full",
         (true, true, _, _) => "partial",
         (true, false, _, true) => "partial",
@@ -350,9 +364,11 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
     if policy.permits_partial_offload() && mode == "unknown" {
         anyhow::bail!("llama.cpp startup log reported an indeterminate placement");
     }
-    if matches!(policy, LlamaCppCudaPlacementPolicy::ExplicitFull) && mode != "full" {
+    if matches!(policy, LlamaCppPlacementPolicy::ExplicitFull)
+        && (mode != "full" || !all_layers_offloaded || gpu_model_bytes == 0)
+    {
         anyhow::bail!(
-            "llama.cpp did not satisfy the requested full CUDA offload (observed mode: {mode})"
+            "llama.cpp did not satisfy the requested full GPU offload (observed mode: {mode})"
         );
     }
     Ok(RuntimePlacement {
@@ -381,13 +397,29 @@ fn ordered_cuda_devices(visible_devices: &str) -> Vec<String> {
     devices
 }
 
-fn buffer_domain(label: &str, devices: &[String]) -> Option<MemoryDomain> {
+fn buffer_domain(
+    label: &str,
+    devices: &[String],
+    vulkan_devices: &BTreeMap<String, String>,
+) -> Result<Option<MemoryDomain>> {
     let upper = label.to_ascii_uppercase();
-    if upper.starts_with("CPU") || upper == "CUDA_HOST" {
-        return Some(MemoryDomain::Host);
+    if upper.starts_with("CPU") || upper == "CUDA_HOST" || upper == "VULKAN_HOST" {
+        return Ok(Some(MemoryDomain::Host));
     }
-    let logical = upper.strip_prefix("CUDA")?.parse::<usize>().ok()?;
-    devices.get(logical).cloned().map(MemoryDomain::Cuda)
+    if let Some(index) = upper.strip_prefix("VULKAN") {
+        let physical = vulkan_devices
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("unreserved Vulkan buffer device: {label}"))?;
+        return Ok(Some(MemoryDomain::Vulkan(physical.clone())));
+    }
+    if let Some(index) = upper.strip_prefix("CUDA") {
+        let logical = index.parse::<usize>()?;
+        let physical = devices
+            .get(logical)
+            .ok_or_else(|| anyhow::anyhow!("unreserved CUDA buffer device: {label}"))?;
+        return Ok(Some(MemoryDomain::Cuda(physical.clone())));
+    }
+    Ok(None)
 }
 
 fn parse_buffer_bytes(rest: &str) -> Result<Option<u64>> {

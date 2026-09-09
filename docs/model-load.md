@@ -83,6 +83,11 @@ Common generation defaults include:
 }
 ```
 
+Client-provided `resource_budget_bytes` remains a strict admission requirement.
+CUDA auto placement and multi-device loads do not clamp it to available memory;
+provisional estimate reconciliation applies when there is no positive client
+budget. A null value follows the existing omitted-value behavior.
+
 ## Response
 
 ```json
@@ -176,10 +181,37 @@ An explicit full-offload request such as `-ngl 999`, `--gpu-layers=all`, or
 `--gpu-layers=max` must reconcile to a full placement. A single-GPU near-fit
 load may waive only bounded allocator slack while holding that device
 exclusively; multi-GPU loads hold conservative ceilings on every selected
-device until the reported tensor split is known. Material host model placement,
+device until the reported tensor split is known. If a single-GPU estimate exceeds
+the bounded slack allowance, an official CUDA load without a client-provided
+budget can use the same provisional host/device reservation as automatic
+placement. This handles hybrid MoE estimates whose KV and activation heuristic
+is larger than the native allocation. The process must still report all layers
+offloaded and actual model buffers within reconciled capacity; this is not a
+waiver of an explicit full-offload request. Material host model placement,
 missing evidence, or a reconciled budget above capacity fails closed: OmniInfer
 stops the process tree, closes the listener, withholds the route, and rolls back
 the reservation.
+
+### Official llama.cpp Vulkan placement
+
+Linux and Windows Vulkan loads also reconcile native model, KV, compute and
+output buffers. The gateway pins `GGML_VK_VISIBLE_DEVICES` to an explicit physical
+GPU list, preserving an existing visibility list when provided, and maps native
+`VulkanN` names through it. `-dev` / `--device` selection is checked before launch.
+The loader's `VK_EXT_memory_budget` determines available device-local memory;
+missing budget support or unknown device mappings fail closed.
+
+GPU-resident estimates are no longer charged entirely to host memory. Provisional
+Vulkan loads reserve separate host and device ceilings, with the host ceiling
+bounded by currently available host memory. This allows carved UMA heaps with
+large Vulkan budgets and smaller host-free portions. CPU model, Vulkan host,
+compute and output allocations are still charged to host memory when native
+logs report them. Actual capacity overflow, material CPU model placement under
+an explicit full request, or missing placement evidence stops the process and
+rolls back the reservation. `--device none` retains host-only admission and
+skips the gateway's Vulkan loader/capacity probe; it does not require a GPU.
+Explicit `resource_budget_bytes` requirements are reserved without provisional
+clamping, for both CUDA and Vulkan.
 
 ## Idempotency and Reloads
 

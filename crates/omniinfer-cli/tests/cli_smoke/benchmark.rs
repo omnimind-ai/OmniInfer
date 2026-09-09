@@ -2,6 +2,12 @@ use super::support::*;
 
 #[test]
 fn bench_archives_submission_compatible_json() {
+    check_archived_decode_scoring(None, 16);
+    check_archived_decode_scoring(Some(20.0), 16);
+    check_archived_decode_scoring(Some(18.75), 15);
+}
+
+fn check_archived_decode_scoring(native_rate: Option<f64>, scored: u64) {
     let root = temp_repo_root("bench-run");
     let runtime_dir = root.join("runtime");
     fs::create_dir_all(&runtime_dir).expect("create runtime dir");
@@ -32,6 +38,12 @@ fn bench_archives_submission_compatible_json() {
         "usage": {"prompt_tokens": 64, "completion_tokens": 16},
         "timings": {"prompt_ms": 400.0, "predicted_ms": 800.0}
     }"#;
+    let mut measurement: serde_json::Value = serde_json::from_str(measurement).unwrap();
+    if let Some(rate) = native_rate {
+        measurement["timings"]["predicted_per_second"] = serde_json::json!(rate);
+    }
+    let measurement = measurement.to_string();
+    let measurement = measurement.as_str();
     let gateway = TestGateway::start(vec![
         Response::new(r#"{"status":"ok"}"#),
         Response::new(&state),
@@ -135,7 +147,7 @@ fn bench_archives_submission_compatible_json() {
     assert_eq!(payload["workload"]["pp"], 64);
     assert_eq!(payload["workload"]["tg"], 16);
     assert_eq!(payload["workload"]["scored_tokens"]["prefill"], 64);
-    assert_eq!(payload["workload"]["scored_tokens"]["decode"], 16);
+    assert_eq!(payload["workload"]["scored_tokens"]["decode"], scored);
     assert_eq!(payload["execution"]["compute_mode"], "single");
     assert_eq!(payload["execution"]["prefill_accelerator"], "gpu");
     assert_eq!(payload["execution"]["decode_accelerator"], "gpu");
@@ -147,11 +159,20 @@ fn bench_archives_submission_compatible_json() {
     );
     assert_eq!(
         payload["runs"]["decode_tps"],
-        serde_json::json!([20.0, 20.0, 20.0])
+        serde_json::json!([scored as f64 / 0.8; 3].to_vec())
     );
     assert_eq!(payload["optimization"]["mode"], "baseline");
     assert_eq!(payload["optimization"]["methods"], serde_json::json!([]));
-    assert!(payload["protocol"].get("notes").is_none());
+    if scored == 16 {
+        assert!(payload["protocol"].get("notes").is_none());
+    } else {
+        assert!(
+            payload["protocol"]["notes"]
+                .as_str()
+                .unwrap()
+                .contains("TG-1")
+        );
+    }
     let run_command = payload["runtime"]["run_command"]
         .as_str()
         .expect("runtime command is a string");
