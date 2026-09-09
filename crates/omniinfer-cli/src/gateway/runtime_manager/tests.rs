@@ -1199,20 +1199,19 @@ fn official_cuda_policy_covers_linux_and_windows_modes() {
     for id in ["llama.cpp-linux-cuda", "llama.cpp-cuda"] {
         let backend = speculative_test_backend(id, "llama.cpp", true);
         assert_eq!(
-            llama_cpp_cuda_placement_policy(&backend, &[]).unwrap(),
-            Some(LlamaCppCudaPlacementPolicy::Auto)
+            llama_cpp_placement_policy(&backend, &[]).unwrap(),
+            Some(LlamaCppPlacementPolicy::Auto)
         );
         assert_eq!(
-            llama_cpp_cuda_placement_policy(&backend, &["-ngl".to_string(), "24".to_string()])
-                .unwrap(),
-            Some(LlamaCppCudaPlacementPolicy::ExplicitPartial(24))
+            llama_cpp_placement_policy(&backend, &["-ngl".to_string(), "24".to_string()]).unwrap(),
+            Some(LlamaCppPlacementPolicy::ExplicitPartial(24))
         );
         assert_eq!(
-            llama_cpp_cuda_placement_policy(&backend, &["--gpu-layers=999".to_string()]).unwrap(),
-            Some(LlamaCppCudaPlacementPolicy::ExplicitFull)
+            llama_cpp_placement_policy(&backend, &["--gpu-layers=999".to_string()]).unwrap(),
+            Some(LlamaCppPlacementPolicy::ExplicitFull)
         );
         assert!(
-            llama_cpp_cuda_placement_policy(&backend, &["-ngl".to_string()]).is_err(),
+            llama_cpp_placement_policy(&backend, &["-ngl".to_string()]).is_err(),
             "a dangling GPU-layer flag must fail before launch"
         );
     }
@@ -1222,33 +1221,32 @@ fn official_cuda_policy_covers_linux_and_windows_modes() {
 fn partial_offload_manages_trace_verbosity_and_rejects_disabled_logs() {
     let automatic = managed_placement_evidence_args(
         &["--jinja".to_string()],
-        Some(LlamaCppCudaPlacementPolicy::Auto),
+        Some(LlamaCppPlacementPolicy::Auto),
     )
     .unwrap();
     assert!(automatic.ends_with(&["-lv".to_string(), "4".to_string()]));
     assert_eq!(
-        managed_placement_evidence_args(&automatic, Some(LlamaCppCudaPlacementPolicy::Auto))
-            .unwrap(),
+        managed_placement_evidence_args(&automatic, Some(LlamaCppPlacementPolicy::Auto)).unwrap(),
         automatic,
         "managed launch arguments must remain idempotent"
     );
     let error = managed_placement_evidence_args(
         &["--log-disable".to_string()],
-        Some(LlamaCppCudaPlacementPolicy::ExplicitPartial(12)),
+        Some(LlamaCppPlacementPolicy::ExplicitPartial(12)),
     )
     .unwrap_err();
     assert!(error.to_string().contains("remove --log-disable"));
 
     let error = managed_placement_evidence_args(
         &["--log-disable".to_string()],
-        Some(LlamaCppCudaPlacementPolicy::ExplicitFull),
+        Some(LlamaCppPlacementPolicy::ExplicitFull),
     )
     .unwrap_err();
     assert!(error.to_string().contains("remove --log-disable"));
     assert_eq!(
         managed_placement_evidence_args(
             &["--gpu-layers=999".to_string()],
-            Some(LlamaCppCudaPlacementPolicy::ExplicitFull),
+            Some(LlamaCppPlacementPolicy::ExplicitFull),
         )
         .unwrap(),
         vec![
@@ -1310,7 +1308,8 @@ sched_reserve: CPU compute buffer size = 128.00 MiB
 sched_reserve: CUDA0 compute buffer size = 512.00 MiB
 ",
         "3",
-        LlamaCppCudaPlacementPolicy::Auto,
+        &BTreeMap::new(),
+        LlamaCppPlacementPolicy::Auto,
     )
     .unwrap();
     assert_eq!(placement.mode, "partial");
@@ -1332,7 +1331,8 @@ fn host_model_buffer_takes_precedence_over_all_layers_offloaded() {
          load_tensors: CUDA0 model buffer size = 9340.14 MiB\n\
          llama_kv_cache: CUDA0 KV buffer size = 80.00 MiB\n",
         "5",
-        LlamaCppCudaPlacementPolicy::Auto,
+        &BTreeMap::new(),
+        LlamaCppPlacementPolicy::Auto,
     )
     .unwrap();
     assert_eq!(placement.mode, "partial");
@@ -1349,7 +1349,8 @@ fn small_cpu_mapping_does_not_misclassify_full_moe_offload() {
          llama_kv_cache: CUDA0 KV buffer size = 80.00 MiB\n\
          sched_reserve: CUDA0 compute buffer size = 72.02 MiB\n",
         "0",
-        LlamaCppCudaPlacementPolicy::ExplicitFull,
+        &BTreeMap::new(),
+        LlamaCppPlacementPolicy::ExplicitFull,
     )
     .unwrap();
     assert_eq!(placement.mode, "full");
@@ -1364,7 +1365,8 @@ fn explicit_full_offload_rejects_material_host_placement() {
          load_tensors: CPU_Mapped model buffer size = 20699.72 MiB\n\
          load_tensors: CUDA0 model buffer size = 9340.14 MiB\n",
         "0",
-        LlamaCppCudaPlacementPolicy::ExplicitFull,
+        &BTreeMap::new(),
+        LlamaCppPlacementPolicy::ExplicitFull,
     )
     .unwrap_err();
     assert!(error.to_string().contains("did not satisfy"));
@@ -1378,7 +1380,8 @@ fn host_scratch_buffer_does_not_make_cuda_model_partial() {
          sched_reserve: CPU compute buffer size = 24.93 MiB\n\
          sched_reserve: CUDA0 compute buffer size = 497.00 MiB\n",
         "5",
-        LlamaCppCudaPlacementPolicy::Auto,
+        &BTreeMap::new(),
+        LlamaCppPlacementPolicy::Auto,
     )
     .unwrap();
     assert_eq!(placement.mode, "full");
@@ -1392,7 +1395,8 @@ fn placement_parser_preserves_cuda_visible_device_order() {
          load_tensors: CUDA0 model buffer size = 16.00 MiB\n\
          load_tensors: CUDA1 model buffer size = 4.00 MiB\n",
         "3,1",
-        LlamaCppCudaPlacementPolicy::Auto,
+        &BTreeMap::new(),
+        LlamaCppPlacementPolicy::Auto,
     )
     .unwrap();
     assert_eq!(
@@ -1410,10 +1414,11 @@ fn automatic_placement_without_buffer_evidence_fails_closed() {
     let error = parse_llama_cpp_runtime_placement_text(
         "load_tensors: offloaded 2/4 layers to GPU\n",
         "0",
-        LlamaCppCudaPlacementPolicy::Auto,
+        &BTreeMap::new(),
+        LlamaCppPlacementPolicy::Auto,
     )
     .unwrap_err();
-    assert!(error.to_string().contains("did not report CPU/CUDA buffer"));
+    assert!(error.to_string().contains("did not report CPU/GPU buffer"));
 }
 
 #[test]
@@ -1426,7 +1431,8 @@ fn placement_parser_sums_persistent_buffers_and_uses_peak_scratch_buffers() {
          sched_reserve: CUDA0 compute buffer size = 12.00 MiB\n\
          llama_context: CUDA0  output buffer size = 2.00 MiB\n",
         "0",
-        LlamaCppCudaPlacementPolicy::Auto,
+        &BTreeMap::new(),
+        LlamaCppPlacementPolicy::Auto,
     )
     .unwrap();
     assert_eq!(
@@ -1546,7 +1552,142 @@ fn explicit_full_requires_complete_layer_and_model_evidence() {
             parse_llama_cpp_runtime_placement_text(
                 log,
                 "0",
-                LlamaCppCudaPlacementPolicy::ExplicitFull
+                &BTreeMap::new(),
+                LlamaCppPlacementPolicy::ExplicitFull
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn vulkan_visibility_mapping_preserves_native_logical_device_identity() {
+    let visible = vec!["3".to_string(), "1".to_string()];
+    let args = vec!["-dev".to_string(), "Vulkan1".to_string()];
+    let selected = select_vulkan_devices(&args, &visible).unwrap();
+    assert_eq!(
+        selected,
+        BTreeMap::from([("1".to_string(), "1".to_string())])
+    );
+    let placement = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 41/41 layers to GPU\n\
+         load_tensors: Vulkan1 model buffer size = 20470.32 MiB\n\
+         llama_kv_cache: Vulkan1 KV buffer size = 640.00 MiB\n\
+         sched_reserve: Vulkan1 compute buffer size = 80.00 MiB\n\
+         sched_reserve: Vulkan_Host compute buffer size = 32.00 MiB\n",
+        "",
+        &selected,
+        LlamaCppPlacementPolicy::ExplicitFull,
+    )
+    .unwrap();
+    assert_eq!(placement.mode, "full");
+    assert!(placement.reported_bytes[&MemoryDomain::Vulkan("1".to_string())] > 20 * GIB);
+    assert_eq!(placement.reported_bytes[&MemoryDomain::Host], 32 * MIB);
+    assert!(
+        !placement
+            .reported_bytes
+            .contains_key(&MemoryDomain::Vulkan("3".to_string()))
+    );
+}
+
+#[test]
+fn vulkan_selection_validates_all_aliases_and_last_override() {
+    let visible = vec!["3".to_string(), "1".to_string()];
+    for args in [
+        vec!["-dev=Vulkan0"],
+        vec!["--device", "Vulkan0"],
+        vec!["-dev", "Vulkan1", "--device=Vulkan0"],
+    ] {
+        assert_eq!(
+            select_vulkan_devices(
+                &args.into_iter().map(str::to_string).collect::<Vec<_>>(),
+                &visible
+            )
+            .unwrap(),
+            BTreeMap::from([("0".to_string(), "3".to_string())])
+        );
+    }
+    for args in [
+        vec!["-dev"],
+        vec!["--device="],
+        vec!["-dev", "Vulkan2"],
+        vec!["-dev", "CUDA0"],
+    ] {
+        assert!(
+            select_vulkan_devices(
+                &args.into_iter().map(str::to_string).collect::<Vec<_>>(),
+                &visible
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        select_vulkan_devices(&["--device=none".to_string()], &visible)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn vulkan_uma_reserves_separate_host_and_device_ceilings() {
+    let gpu = MemoryDomain::Vulkan("0".to_string());
+    let selected = BTreeMap::from([("0".to_string(), "0".to_string())]);
+    let initial =
+        ResourceBudget::from_domains(BTreeMap::from([(MemoryDomain::Host, 28 * GIB)])).unwrap();
+    let estimated = vulkan_placement_budget(&initial, &selected).unwrap();
+    assert_eq!(estimated.domains()[&gpu], 28 * GIB);
+    assert!(!estimated.domains().contains_key(&MemoryDomain::Host));
+    let actual = parse_llama_cpp_runtime_placement_text(
+        "load_tensors: offloaded 41/41 layers to GPU\n\
+         load_tensors: Vulkan0 model buffer size = 20470.32 MiB\n\
+         llama_kv_cache: Vulkan0 KV buffer size = 640.00 MiB\n\
+         sched_reserve: Vulkan0 compute buffer size = 80.00 MiB\n\
+         sched_reserve: CPU compute buffer size = 32.00 MiB\n",
+        "",
+        &selected,
+        LlamaCppPlacementPolicy::ExplicitFull,
+    )
+    .unwrap();
+    for (device_capacity, fits) in [(106 * GIB, true), (10 * GIB, false)] {
+        let capacity = ResourceCapacity::new(
+            1,
+            BTreeMap::from([
+                (MemoryDomain::Host, 18 * GIB),
+                (gpu.clone(), device_capacity),
+            ]),
+        )
+        .unwrap();
+        let mut ledger = ResourceLedger::new(capacity);
+        let provisional =
+            provisional_llama_cpp_placement_budget(&estimated, &ledger.snapshot()).unwrap();
+        assert_eq!(provisional.domains()[&MemoryDomain::Host], 18 * GIB);
+        let id = ledger.reserve("uma-load", provisional.clone()).unwrap();
+        assert!(ledger.reserve("concurrent", provisional).is_err());
+        assert_eq!(
+            ledger
+                .reconcile_reservation(id, actual.reconciled_budget.clone())
+                .is_ok(),
+            fits
+        );
+        assert!(ledger.rollback(id));
+        assert!(ledger.snapshot().reserved.is_empty());
+    }
+}
+
+#[test]
+fn vulkan_unreserved_buffers_and_partial_full_offload_fail_closed() {
+    let selected = BTreeMap::from([("0".to_string(), "0".to_string())]);
+    for log in [
+        "load_tensors: Vulkan1 model buffer size = 10.00 MiB\n",
+        "load_tensors: offloaded 20/41 layers to GPU\nload_tensors: Vulkan0 model buffer size = 10.00 MiB\n",
+        "load_tensors: offloaded 41/41 layers to GPU\nload_tensors: CPU_Mapped model buffer size = 20000.00 MiB\nload_tensors: Vulkan0 model buffer size = 1000.00 MiB\n",
+    ] {
+        assert!(
+            parse_llama_cpp_runtime_placement_text(
+                log,
+                "",
+                &selected,
+                LlamaCppPlacementPolicy::ExplicitFull
             )
             .is_err()
         );

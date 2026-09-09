@@ -192,6 +192,27 @@ missing evidence, or a reconciled budget above capacity fails closed: OmniInfer
 stops the process tree, closes the listener, withholds the route, and rolls back
 the reservation.
 
+### Official llama.cpp Vulkan placement
+
+Linux and Windows Vulkan loads also reconcile native model, KV, compute and
+output buffers. The gateway pins `GGML_VK_VISIBLE_DEVICES` to an explicit physical
+GPU list, preserving an existing visibility list when provided, and maps native
+`VulkanN` names through it. `-dev` / `--device` selection is checked before launch.
+The loader's `VK_EXT_memory_budget` determines available device-local memory;
+missing budget support or unknown device mappings fail closed.
+
+GPU-resident estimates are no longer charged entirely to host memory. Provisional
+Vulkan loads reserve separate host and device ceilings, with the host ceiling
+bounded by currently available host memory. This allows carved UMA heaps with
+large Vulkan budgets and smaller host-free portions. CPU model, Vulkan host,
+compute and output allocations are still charged to host memory when native
+logs report them. Actual capacity overflow, material CPU model placement under
+an explicit full request, or missing placement evidence stops the process and
+rolls back the reservation. `--device none` retains host-only admission and
+skips the gateway's Vulkan loader/capacity probe; it does not require a GPU.
+Explicit `resource_budget_bytes` requirements are reserved without provisional
+clamping, for both CUDA and Vulkan.
+
 ## Idempotency and Reloads
 
 The gateway compares the resolved model path, backend, `mmproj`, context size,
