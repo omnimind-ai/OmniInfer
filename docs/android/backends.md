@@ -112,6 +112,12 @@ Exit 2 excludes CPU-assisted, incomplete, missing or unrecognized evidence.
 Exit 0 only permits independent placement review: it never certifies correctness
 or performance, and its report always sets `performance_publishable` to false.
 An HTP-only graph can still produce wrong answers (MiniCPM5 F16 on SM8750, #259).
+Native revalidation with `30b6a755e` on 2026-09-09 still fails F16 loading on
+SM8650 with `fastrpc_mmap failed` (#256), and still produces incorrect answers
+on SM8750 (#259). Same-version, same-asset CPU controls pass on both devices.
+These two issues were closed as outside OmniInfer's fix scope, not as resolved
+compatibility problems. The native HTP/device failure remains; the exact driver
+versus backend root cause has not been established.
 Check each request, prefill/decode shapes, correct output and identity separately,
 then run fresh non-debug performance cohorts. Keep failed original evidence.
 

@@ -86,6 +86,14 @@ validated campaign warmup remedy, not a runtime or system frequency-policy fix.
 The original one-warmup cohort remains excluded. Do not generalize three warmups
 to other devices or use it as permission to retry an unrelated failing cell.
 
+MiniCPM5 Q8_0 on SM8750 remains unstable for PP128/TG128 with official
+`30b6a755e`: the complete one-warmup/three-round revalidation had PP population
+CV 6.8491% and TG CV 0.3751%. Native server logs agree with API timings, so this
+is not an observed gateway timing or reporting arithmetic error. The cohort
+remains excluded and issue #260 remains open: frequency transitions are a
+possible contributor, not proof of a llama.cpp defect. Do not keep retrying or
+classify this as a resolved upstream issue without new causal evidence.
+
 Both backends in a comparison must use the same declared warmup protocol.
 Preserve the 5% population CV gate, fixed model/runtime, token counts, cache
 policy, all scored rounds and excluded attempts. If a prospectively declared
