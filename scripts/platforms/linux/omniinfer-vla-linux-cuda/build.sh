@@ -77,6 +77,10 @@ fi
     printf 'Missing vla.proto in runtime home: %s\n' "${RUNTIME_HOME}" >&2
     exit 1
 }
+[[ -f "${RUNTIME_HOME}/vla_pb2.py" ]] || {
+    printf 'Missing bundled protobuf module in runtime home: %s\n' "${RUNTIME_HOME}" >&2
+    exit 1
+}
 [[ -x "${VLA_PYTHON}" ]] || {
     printf 'Runtime Python is not executable: %s\n' "${VLA_PYTHON}" >&2
     exit 1
@@ -91,5 +95,6 @@ install -d "${PACKAGE_ROOT}/bin" "${PACKAGE_ROOT}/logs" "${PACKAGE_ROOT}/THIRD_P
 install -m 0755 "${SCRIPT_DIR}/omniinfer-vla-server" "${PACKAGE_ROOT}/bin/omniinfer-vla-server"
 install -m 0644 "${RUNTIME_HOME}/omniinfer_server.py" "${PACKAGE_ROOT}/omniinfer_vla_server.py"
 install -m 0644 "${RUNTIME_HOME}/vla.proto" "${PACKAGE_ROOT}/vla.proto"
+install -m 0644 "${RUNTIME_HOME}/vla_pb2.py" "${PACKAGE_ROOT}/vla_pb2.py"
 
 printf 'Built OmniInfer VLA Runtime at %s\n' "${PACKAGE_ROOT}"

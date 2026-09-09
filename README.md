@@ -3,7 +3,8 @@
 OmniInfer-VLA 在 Jetson CUDA 设备上运行 Pi0.5 和 GR00T N1.7 VLA 模型，
 提供一个本地 ZeroMQ/Protobuf 服务端，以及固定输入的延迟测试脚本。
 
-本文档对应当前 Jetson 部署目录：
+以下命令以解压后的项目位于 `~/OmniInfer` 为例；若实际目录不同，只需修改
+`OMNIINFER_ROOT` 的值。
 
 ```text
 ~/OmniInfer/framework/OmniInfer-VLA
@@ -24,15 +25,29 @@ OmniInfer-VLA/
 
 ## 2. 环境配置
 
-开始前，请确认 Jetson 已安装与当前 JetPack 匹配的 CUDA 驱动，以及 Rust/Cargo、`uv`、
-C/C++ 编译器、CMake 和 Ninja。
+开始前，请确认 Jetson 已安装与当前 JetPack 匹配的 CUDA 驱动。首次部署时，先安装宿主构建工具；
+Python 依赖会由后续的 `uv sync` 安装到项目隔离环境中，不会修改系统 Python：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl build-essential cmake ninja-build pkg-config
+
+# 仅首次安装 uv 与 Rust 工具链；安装后重新打开终端，或执行下面的 PATH 命令。
+curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+```
+
+`vla_pb2.py` 已随源码提供，因此运行服务端和 benchmark 不要求额外安装系统 `protoc`。
 
 ### 2.1 编译 OmniInfer CLI
 
-CLI 属于 OmniInfer 根仓库，必须先进入根目录再执行 Cargo 命令：
+CLI 属于 OmniInfer 根仓库。先进入项目根目录，再执行 Cargo 命令：
 
 ```bash
-cd "$HOME/OmniInfer"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+export OMNIINFER_ROOT="${OMNIINFER_ROOT:-$HOME/OmniInfer}"
+cd "$OMNIINFER_ROOT"
 cargo build -p omniinfer-cli
 ```
 
@@ -47,6 +62,24 @@ cargo build -p omniinfer-cli
 VLA Python workspace 位于 `framework/OmniInfer-VLA`。进入该目录后执行一次 `uv sync`，
 即可创建隔离环境、安装全部 workspace 依赖，并自动构建 `omniinfer-vla-ext` 的 C++ 扩展。
 
+```bash
+export OMNIINFER_ROOT="${OMNIINFER_ROOT:-$HOME/OmniInfer}"
+export VLA_ROOT="$OMNIINFER_ROOT/framework/OmniInfer-VLA"
+cd "$VLA_ROOT"
+uv sync
+
+# 验证 Python、PyTorch/CUDA 和服务端导入均可用。
+uv run python -c 'import torch; print(torch.__version__, torch.version.cuda)'
+uv run python omniinfer_server.py --help
+```
+
+`uv sync` 会创建项目隔离环境，并通过 `scikit-build-core` 自动调用 CMake/Ninja 编译 C++ 扩展；
+不需要手动编译该扩展。仅在修改 `omniinfer-vla-ext` C++ 源码后，才需要在 VLA 目录执行：
+
+```bash
+uv sync --reinstall-package omniinfer-vla-ext
+```
+
 
 ## 3. 模型与本地资源
 
@@ -58,6 +91,14 @@ VLA Python workspace 位于 `framework/OmniInfer-VLA`。进入该目录后执行
 | PaliGemma tokenizer | `~/models/paligemma-3b-pt-224` | Pi0.5 native Processor |
 | GR00T checkpoint | `~/models/GR00T-N1.7-LIBERO/libero_object` | GR00T LIBERO 权重 |
 | Cosmos/Qwen resources | `~/models/Cosmos-Reason2-2B` | GR00T native Processor |
+
+若开发板已有 `~/vla-bench/models/GR00T-N1.7-LIBERO/libero_object` 与
+`~/vla-bench/models/Cosmos-Reason2-2B`，一键 benchmark 会自动使用它们。其他目录布局可显式指定：
+
+```bash
+export GROOT_CHECKPOINT=/path/to/GR00T-N1.7-LIBERO/libero_object
+export GROOT_PROCESSOR=/path/to/Cosmos-Reason2-2B
+```
 
 验证资源：
 
@@ -116,9 +157,10 @@ GR00T native 模式还需要：
 关闭它启动的服务器。
 
 ```bash
-cd ~/OmniInfer
+export OMNIINFER_ROOT="${OMNIINFER_ROOT:-$HOME/OmniInfer}"
+cd "$OMNIINFER_ROOT"
 
-export OMNIINFER_VLA_RUNTIME_HOME="$HOME/OmniInfer/framework/OmniInfer-VLA"
+export OMNIINFER_VLA_RUNTIME_HOME="$OMNIINFER_ROOT/framework/OmniInfer-VLA"
 
 # 默认：2 次预热、3 次正式计时，Pi0.5 + GR00T native
 ./scripts/benchmark_omniinfer_vla.sh

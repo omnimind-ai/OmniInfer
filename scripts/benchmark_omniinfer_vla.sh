@@ -44,9 +44,20 @@ MODE="${1:-both}"
 NATIVE="${NATIVE:-1}"
 
 PI_CHECKPOINT="${PI_CHECKPOINT:-$HOME/models/pi05_libero_finetuned_v044}"
-GROOT_CHECKPOINT="${GROOT_CHECKPOINT:-$HOME/models/GR00T-N1.7-LIBERO/libero_object}"
 PI05_TOKENIZER="${PI05_TOKENIZER:-$HOME/models/paligemma-3b-pt-224}"
-GROOT_PROCESSOR="${GROOT_PROCESSOR:-$HOME/models/Cosmos-Reason2-2B}"
+
+# Keep ~/models as the portable default, while accepting the existing
+# vla-bench resource layout used by Thor development images.
+GROOT_CHECKPOINT_DEFAULT="$HOME/models/GR00T-N1.7-LIBERO/libero_object"
+GROOT_PROCESSOR_DEFAULT="$HOME/models/Cosmos-Reason2-2B"
+if [[ ! -d "$GROOT_CHECKPOINT_DEFAULT" && -d "$HOME/vla-bench/models/GR00T-N1.7-LIBERO/libero_object" ]]; then
+    GROOT_CHECKPOINT_DEFAULT="$HOME/vla-bench/models/GR00T-N1.7-LIBERO/libero_object"
+fi
+if [[ ! -d "$GROOT_PROCESSOR_DEFAULT" && -d "$HOME/vla-bench/models/Cosmos-Reason2-2B" ]]; then
+    GROOT_PROCESSOR_DEFAULT="$HOME/vla-bench/models/Cosmos-Reason2-2B"
+fi
+GROOT_CHECKPOINT="${GROOT_CHECKPOINT:-$GROOT_CHECKPOINT_DEFAULT}"
+GROOT_PROCESSOR="${GROOT_PROCESSOR:-$GROOT_PROCESSOR_DEFAULT}"
 GROOT_EMBODIMENT_TAG="${GROOT_EMBODIMENT_TAG:-LIBERO_PANDA}"
 
 SERVER_PID=""

@@ -29,7 +29,8 @@ def _runtime_home() -> Path:
 
 
 RUNTIME_HOME = _runtime_home()
-PROTO = os.environ.get("OMNIINFER_VLA_PROTO", str(RUNTIME_HOME / "vla.proto"))
+PROTO_OVERRIDE = os.environ.get("OMNIINFER_VLA_PROTO")
+PROTO = PROTO_OVERRIDE or str(RUNTIME_HOME / "vla.proto")
 ARCH_DEFAULTS = {
     "pi05": {"num_images": 3, "image_size": 224},
     "gr00t_n17": {"num_images": 2, "image_size": 256},
@@ -67,6 +68,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_proto():
+    generated = RUNTIME_HOME / "vla_pb2.py"
+    if not PROTO_OVERRIDE and generated.is_file():
+        runtime_home_text = str(RUNTIME_HOME)
+        if runtime_home_text not in sys.path:
+            sys.path.insert(0, runtime_home_text)
+        import vla_pb2
+
+        return vla_pb2
+
     with tempfile.TemporaryDirectory() as temp_dir:
         subprocess.run(
             [
