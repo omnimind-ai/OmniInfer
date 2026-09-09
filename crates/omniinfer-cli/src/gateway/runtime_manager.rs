@@ -421,7 +421,7 @@ impl RustRuntimeManager {
             llama_cpp_placement_policy(backend, &effective_launch_args)?
         };
         let effective_launch_args =
-            managed_placement_evidence_args(&effective_launch_args, placement_policy)?;
+            managed_placement_evidence_args(&backend.id, &effective_launch_args, placement_policy)?;
         let launch_args_have_ctx =
             launch_args_have_ctx_size(&backend.family, &effective_launch_args);
         let launch_args_ctx_size =
@@ -667,10 +667,13 @@ impl RustRuntimeManager {
                     Err(error) => {
                         let cleanup = process.stop(Duration::from_secs(8));
                         return Err(match cleanup {
-                            Ok(()) => error.context(format!(
-                                "failed to reconcile llama.cpp placement (log: {})",
-                                log_path.display()
-                            )),
+                            Ok(()) => {
+                                let message = format!(
+                                    "failed to reconcile llama.cpp placement: {error} (log: {})",
+                                    log_path.display()
+                                );
+                                error.context(message)
+                            }
                             Err(cleanup) => anyhow::anyhow!(
                                 "failed to reconcile llama.cpp placement: {error}; runtime cleanup failed: {cleanup}; log: {}",
                                 log_path.display()

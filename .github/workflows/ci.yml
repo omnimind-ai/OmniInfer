@@ -91,6 +91,9 @@ jobs:
       - name: Test benchmark evidence helpers
         run: python -m unittest discover -s tests -p 'test_benchmark_*.py'
 
+      - name: Test ik CUDA placement and rollback
+        run: cargo test -p omniinfer-cli --bin omniinfer ik_ --locked
+
       - name: Test desktop serve lifecycle
         run: |
           cargo test -p omniinfer-cli --test cli_smoke serve_explicit_roots_reach_gateway_model_load_lifecycle

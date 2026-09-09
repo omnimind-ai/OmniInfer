@@ -35,6 +35,7 @@ impl LlamaCppPlacementPolicy {
 }
 
 pub(super) fn managed_placement_evidence_args(
+    backend_id: &str,
     launch_args: &[String],
     policy: Option<LlamaCppPlacementPolicy>,
 ) -> Result<Vec<String>> {
@@ -49,6 +50,12 @@ pub(super) fn managed_placement_evidence_args(
             "{} llama.cpp placement requires startup logging; remove --log-disable",
             policy.as_str()
         );
+    }
+    // ik_llama.cpp already emits the buffer placement evidence we need at its
+    // default INFO level, and does not implement the official llama.cpp -lv
+    // verbosity flag.
+    if backend_id.starts_with("ik_llama.cpp") {
+        return Ok(launch_args.to_vec());
     }
     if launch_args.ends_with(&["-lv".to_string(), "4".to_string()]) {
         return Ok(launch_args.to_vec());
@@ -68,18 +75,54 @@ pub(super) struct RuntimePlacement {
     pub(super) reconciled_budget: ResourceBudget,
 }
 
+fn ik_llama_cpu_moe_layers(launch_args: &[String]) -> Result<Option<u32>> {
+    let mut layers = None;
+    let mut index = 0;
+    while index < launch_args.len() {
+        let flag = launch_args[index].as_str();
+        match flag {
+            "-cmoe" | "--cpu-moe" => layers = Some(999),
+            "-ncmoe" | "--n-cpu-moe" => {
+                let value = launch_args.get(index + 1).ok_or_else(|| {
+                    anyhow::anyhow!("{flag} requires a non-negative integer value")
+                })?;
+                let parsed = value
+                    .parse::<u32>()
+                    .map_err(|_| anyhow::anyhow!("{flag} value must be a non-negative integer"))?;
+                layers = Some(parsed);
+                index += 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Ok(layers)
+}
+
 pub(super) fn llama_cpp_placement_policy(
     backend: &backend_registry::BackendSpec,
     launch_args: &[String],
 ) -> Result<Option<LlamaCppPlacementPolicy>> {
     if backend.family != "llama.cpp"
-        || !backend.id.starts_with("llama.cpp-")
+        || !(backend.id.starts_with("llama.cpp-") || backend.id.starts_with("ik_llama.cpp-"))
         || !backend
             .capabilities
             .iter()
             .any(|cap| cap == "cuda" || cap == "vulkan")
     {
         return Ok(None);
+    }
+    // ik_llama.cpp's CPU-MoE options intentionally place the expert tensors in
+    // host memory even when -ngl 999 is present in its backend defaults.
+    // Treat that combination as automatic partial offload so admission can
+    // reserve host plus CUDA ceilings and reconcile them from startup logs.
+    if backend.id.starts_with("ik_llama.cpp") {
+        let cpu_moe_layers = ik_llama_cpu_moe_layers(launch_args)?.unwrap_or(0);
+        // Native --fit can move experts to the CPU independently of ncmoe,
+        // including with the backend's default -ngl 999.
+        if cpu_moe_layers > 0 || launch_args.iter().any(|arg| arg == "--fit") {
+            return Ok(Some(LlamaCppPlacementPolicy::Auto));
+        }
     }
     let Some(value) = gpu_layers_value(launch_args) else {
         if launch_args
@@ -192,6 +235,28 @@ pub(super) fn parse_llama_cpp_runtime_placement_text(
     for line in text.lines() {
         if let Some(parsed) = parse_offloaded_layers(line) {
             layers = Some(parsed);
+        }
+        // ik_llama.cpp reports persistent model buffers as
+        // llm_load_tensors: CUDA_Host/CUDA0 buffer size = ... rather than
+        // including the word model used by official llama.cpp.
+        if line.contains("llm_load_tensors:") && !line.contains(" model buffer size") {
+            let marker = " buffer size";
+            if let Some(marker_index) = line.find(marker) {
+                let Some(label) = line[..marker_index].split_whitespace().last() else {
+                    continue;
+                };
+                let Some(domain) = buffer_domain(label, &devices, vulkan_devices)? else {
+                    continue;
+                };
+                let Some(bytes) = parse_buffer_bytes(&line[marker_index + marker.len()..])? else {
+                    continue;
+                };
+                let key = (domain, "model", label.to_string());
+                let current = buffers.entry(key).or_insert(0);
+                *current = current
+                    .checked_add(bytes)
+                    .ok_or_else(|| anyhow::anyhow!("llama.cpp placement byte count overflow"))?;
+            }
         }
         for (marker, category) in [
             (" model buffer size", "model"),
@@ -339,6 +404,11 @@ fn buffer_domain(
     vulkan_devices: &BTreeMap<String, String>,
 ) -> Result<Option<MemoryDomain>> {
     let upper = label.to_ascii_uppercase();
+    if upper == "CUDA_SPLIT" {
+        anyhow::bail!(
+            "CUDA_Split model placement lacks per-device memory evidence; use ik_llama.cpp --split-mode layer or --split-mode none"
+        );
+    }
     if upper.starts_with("CPU") || upper == "CUDA_HOST" || upper == "VULKAN_HOST" {
         return Ok(Some(MemoryDomain::Host));
     }
