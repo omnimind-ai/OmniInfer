@@ -87,6 +87,10 @@ For HTP performance, use repackable GGUF quantizations such as Q4_0, Q4_1,
 Q8_0, IQ4_NL, or MXFP4. K-quants such as Q4_K_M can run much slower on this
 backend and are not the default Android HTP catalog path.
 
+The llama.cpp submodule is pinned to `30b6a755e29692e8bc8e072885325716a2fee70f`
+(2026-09-09). Updating the dependency does not certify the device/model pairs
+below; their recorded limitations remain until native revalidation passes.
+
 Selecting `llama.cpp/htp`, `--device HTP0` or all GPU layers expresses a requested
 accelerator, not verified all-NPU execution. With official `64e9bceb2` and the
 original OpenBMB MiniCPM5-2B GGUF assets, Q8_0 executes embedding `GET_ROWS` on CPU
@@ -108,6 +112,12 @@ Exit 2 excludes CPU-assisted, incomplete, missing or unrecognized evidence.
 Exit 0 only permits independent placement review: it never certifies correctness
 or performance, and its report always sets `performance_publishable` to false.
 An HTP-only graph can still produce wrong answers (MiniCPM5 F16 on SM8750, #259).
+Native revalidation with `30b6a755e` on 2026-09-09 still fails F16 loading on
+SM8650 with `fastrpc_mmap failed` (#256), and still produces incorrect answers
+on SM8750 (#259). Same-version, same-asset CPU controls pass on both devices.
+These two issues were closed as outside OmniInfer's fix scope, not as resolved
+compatibility problems. The native HTP/device failure remains; the exact driver
+versus backend root cause has not been established.
 Check each request, prefill/decode shapes, correct output and identity separately,
 then run fresh non-debug performance cohorts. Keep failed original evidence.
 
@@ -377,3 +387,18 @@ For GPU/OpenCL backends, the library manifest declares optional device libraries
 ```
 
 You normally do not need to copy these declarations into the host manifest unless your manifest merge rules remove library entries.
+
+### Native adapter validation
+
+When updating the llama.cpp submodule, build the JNI target against the pinned
+source, not just a standalone llama-server. Configure the JNI CMake project with
+`OMNIINFER_BUILD_NATIVE_TESTS=ON` to also build `omniinfer-llama-smoke`.
+On an otherwise idle Android device, run `omniinfer-llama-smoke MODEL.gguf` with
+a known-good CPU model. It checks the real adapter's load/reset/generate path,
+correct answers and token counts with thinking disabled and enabled.
+
+For a vision-capable model with its adjacent projector, optionally supply an
+image as the second argument. This additionally requires nonzero image tokens
+and a correct answer to the text following the image marker, catching truncated
+multimodal prompt forwarding. Model-dependent smoke results are functional
+checks, not throughput measurements or proof of NPU correctness.

@@ -88,10 +88,11 @@ public:
       selected_devices.push_back(nullptr);
       mp.devices = selected_devices.data();
       mp.n_gpu_layers = extract_int(config_json, "n_gpu_layers", 99);
-      mp.use_mmap = extract_bool(config_json, "mmap", false);
+      const bool use_mmap = extract_bool(config_json, "mmap", false);
+      mp.load_mode = use_mmap ? LLAMA_LOAD_MODE_MMAP : LLAMA_LOAD_MODE_NONE;
       __android_log_print(ANDROID_LOG_INFO, "OmniInferJni",
           "llama.cpp selected device=%s n_gpu_layers=%d mmap=%s",
-          llama_device.c_str(), mp.n_gpu_layers, mp.use_mmap ? "true" : "false");
+          llama_device.c_str(), mp.n_gpu_layers, use_mmap ? "true" : "false");
     }
     model_ = llama_model_load_from_file(model_path.c_str(), mp);
     if (!model_) return false;
@@ -286,37 +287,35 @@ public:
         cur_pos_ = 0;
         llama_memory_clear(llama_get_memory(ctx_), false);
 
-        // Create bitmaps for all images.
-        std::vector<mtmd_bitmap*> bmps;
+        // Keep lazy media contexts alive until their bitmaps are released.
+        std::vector<mtmd_helper::video_ptr> videos;
+        mtmd::bitmaps bmps;
         for (const auto& img : images) {
-          auto* bmp = mtmd_helper_bitmap_init_from_buf(mtmd_ctx_, img.data(), img.size(), false);
-          if (bmp) bmps.push_back(bmp);
+          auto media = mtmd_helper_bitmap_init_from_buf(
+              mtmd_ctx_, img.data(), img.size(), false, mtmd_helper_init_opt_default());
+          if (media.video_ctx) videos.emplace_back(media.video_ctx);
+          if (!media.bitmap) return "";
+          bmps.entries.emplace_back(media.bitmap);
         }
-        if (bmps.empty()) return "";
+        if (bmps.entries.empty()) return "";
 
-        mtmd_input_text text{params.prompt.c_str(), true, true};
-        mtmd_input_chunks* chunks = mtmd_input_chunks_init();
-        std::vector<const mtmd_bitmap*> bmp_ptrs(bmps.begin(), bmps.end());
-        if (mtmd_tokenize(mtmd_ctx_, chunks, &text, bmp_ptrs.data(), bmp_ptrs.size()) != 0) {
-          for (auto* b : bmps) mtmd_bitmap_free(b);
-          mtmd_input_chunks_free(chunks);
+        mtmd_input_text text{params.prompt.c_str(), params.prompt.size(), true, true};
+        mtmd::input_chunks chunks(mtmd_input_chunks_init());
+        auto bmp_ptrs = bmps.c_ptr();
+        if (mtmd_tokenize(mtmd_ctx_, chunks.ptr.get(), &text, bmp_ptrs.data(), bmp_ptrs.size()) != 0) {
           return "";
         }
 
         llama_pos n_past = 0;
-        if (mtmd_helper_eval_chunks(mtmd_ctx_, ctx_, chunks, 0, 0, 512, true, &n_past) != 0) {
-          for (auto* b : bmps) mtmd_bitmap_free(b);
-          mtmd_input_chunks_free(chunks);
+        if (mtmd_helper_eval_chunks(mtmd_ctx_, ctx_, chunks.ptr.get(), 0, 0, 512, true, &n_past) != 0) {
           return "";
         }
 
         cur_pos_ = n_past;
-        n_prompt_tokens = (int)mtmd_helper_get_n_tokens(chunks);
+        n_prompt_tokens = (int)mtmd_helper_get_n_tokens(chunks.ptr.get());
         auto text_toks = common_tokenize(ctx_, params.prompt, true, true);
         n_image_tokens = n_prompt_tokens - (int)text_toks.size();
         if (n_image_tokens < 0) n_image_tokens = 0;
-        for (auto* b : bmps) mtmd_bitmap_free(b);
-        mtmd_input_chunks_free(chunks);
       }
 
       // Save conversation history (stripped of generation prompt) and token count.
@@ -657,11 +656,14 @@ private:
       sp.reasoning_budget_start =
           common_tokenize(llama_model_get_vocab(model_), chat_params.thinking_start_tag, false, true);
     }
-    if (!chat_params.thinking_end_tag.empty()) {
-      sp.reasoning_budget_end =
-          common_tokenize(llama_model_get_vocab(model_), chat_params.thinking_end_tag, false, true);
-      sp.reasoning_budget_forced =
-          common_tokenize(llama_model_get_vocab(model_), chat_params.thinking_end_tag, false, true);
+    for (const auto& tag : chat_params.thinking_end_tags) {
+      if (!tag.empty()) {
+        sp.reasoning_budget_end.push_back(
+            common_tokenize(llama_model_get_vocab(model_), tag, false, true));
+      }
+    }
+    if (!sp.reasoning_budget_end.empty()) {
+      sp.reasoning_budget_forced = sp.reasoning_budget_end.front();
     }
     auto f = [&](const char* key) -> std::optional<float> {
       auto v = json_num(json, key);

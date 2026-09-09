@@ -97,3 +97,13 @@ if(OMNIINFER_BACKEND_EXECUTORCH_QNN)
 endif()
 
 target_link_libraries(${CMAKE_PROJECT_NAME} android log)
+
+# Opt-in device correctness gate using the same adapter as JNI.
+option(OMNIINFER_BUILD_NATIVE_TESTS "Build native Android backend smoke tools" OFF)
+if(OMNIINFER_BUILD_NATIVE_TESTS AND OMNIINFER_BACKEND_LLAMA_CPP)
+    add_executable(omniinfer-llama-smoke ../../../test/cpp/llama_backend_smoke.cpp)
+    get_target_property(OMNIINFER_JNI_INCLUDES ${CMAKE_PROJECT_NAME} INCLUDE_DIRECTORIES)
+    target_include_directories(omniinfer-llama-smoke PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${OMNIINFER_JNI_INCLUDES})
+    target_link_libraries(omniinfer-llama-smoke PRIVATE llama llama-common mtmd android log)
+endif()
