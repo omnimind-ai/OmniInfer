@@ -60,7 +60,7 @@ def main() -> int:
     if args.native:
         command.extend(["--native", "--task", args.task])
     print("Pi0.5 OmniInfer VLA Runtime benchmark", flush=True)
-    print("configuration: BF16 params, F32 vision, 3 images, 48 language tokens, 10-step fixed noise", flush=True)
+    print("request: 3 images, 48-token target, 10-step fixed noise; params/vision dtype set by server (README launcher: BF16/BF16)", flush=True)
     print(f"endpoint: {addr}", flush=True)
     return subprocess.run(command).returncode
 

@@ -162,17 +162,17 @@ cd "$OMNIINFER_ROOT"
 
 export OMNIINFER_VLA_RUNTIME_HOME="$OMNIINFER_ROOT/framework/OmniInfer-VLA"
 
-# 默认：2 次预热、3 次正式计时，Pi0.5 + GR00T native
-./scripts/benchmark_omniinfer_vla.sh
+# 预热 10 次、正式计时 10 次，Pi0.5 + GR00T native
+WARMUP=10 TIMED=10 ./scripts/benchmark_omniinfer_vla.sh
 
 # Pi0.5 native 端到端（Processor + Engine + decode）
-WARMUP=2 TIMED=3 ./scripts/benchmark_omniinfer_vla.sh pi05
+WARMUP=10 TIMED=10 ./scripts/benchmark_omniinfer_vla.sh pi05
 
 # GR00T native 端到端；要求 torchvision 与 Jetson torch ABI 匹配
-WARMUP=2 TIMED=3 ./scripts/benchmark_omniinfer_vla.sh gr00t
+WARMUP=10 TIMED=10 ./scripts/benchmark_omniinfer_vla.sh gr00t
 
 # GR00T prepared / engine-only；跳过 tokenizer 和视觉 Processor
-NATIVE=0 WARMUP=2 TIMED=3 ./scripts/benchmark_omniinfer_vla.sh gr00t
+NATIVE=0 WARMUP=10 TIMED=10 ./scripts/benchmark_omniinfer_vla.sh gr00t
 ```
 
 可覆盖的常用路径和参数：
@@ -183,7 +183,7 @@ PI05_TOKENIZER=/path/to/paligemma \
 GROOT_CHECKPOINT=/path/to/gr00t/libero_object \
 GROOT_PROCESSOR=/path/to/cosmos-qwen \
 GROOT_EMBODIMENT_TAG=LIBERO_PANDA \
-WARMUP=10 TIMED=50 \
+WARMUP=10 TIMED=10 \
 ./scripts/benchmark_omniinfer_vla.sh pi05
 ```
 
@@ -191,7 +191,7 @@ WARMUP=10 TIMED=50 \
 
 | 模型 | 参数 / 图像 | 文本长度 | Diffusion | 输出 |
 |---|---|---:|---:|---|
-| Pi0.5 | BF16 参数、F32 vision、3 × 224 图像 | 48 tokens | 10 steps | `50 × 7` LIBERO actions |
+| Pi0.5 | BF16 参数、BF16 vision、3 × 224 图像 | 48 tokens | 10 steps | `50 × 7` LIBERO actions |
 | GR00T N1.7 | BF16、2 × 256 图像 | 156 tokens | 固定 noise | `40 × 132` 内部动作张量 |
 
 结果及服务日志写入：

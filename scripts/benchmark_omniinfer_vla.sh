@@ -204,7 +204,7 @@ run_model() {
 case "$MODE" in
     pi05)
         run_model "Pi0.5" "pi05" "$PI_CHECKPOINT" 3 \
-            "--vision-dtype float32" \
+            "--vision-dtype bfloat16" \
             "$SCRIPTS/benchmark_omniinfer_vla_pi05.py"
         ;;
     gr00t|groot)
@@ -214,7 +214,7 @@ case "$MODE" in
         ;;
     both)
         run_model "Pi0.5" "pi05" "$PI_CHECKPOINT" 3 \
-            "--vision-dtype float32" \
+            "--vision-dtype bfloat16" \
             "$SCRIPTS/benchmark_omniinfer_vla_pi05.py"
         run_model "GR00T" "gr00t_n17" "$GROOT_CHECKPOINT" 2 \
             "" \
