@@ -31,6 +31,14 @@ jobs:
           cargo fmt --all -- --check
           rustfmt --edition 2021 --check crates/omniinfer-cli/tests/fixtures/fake_llama_server.rs
 
+      - name: Test Android backend selector compatibility
+        run: bash tests/test_android_backend_selectors.sh
+
+      - name: Test backend selector workflows
+        run: |
+          cargo test -p omniinfer-cli --test cli_smoke backend_ --locked
+          cargo test -p omniinfer-cli --test cli_smoke serve_explicit_roots_reach_gateway_model_load_lifecycle --locked
+
       - name: Run core unit tests
         run: cargo test -p omniinfer-core
 
@@ -93,6 +101,9 @@ jobs:
 
       - name: Test ik CUDA placement and rollback
         run: cargo test -p omniinfer-cli --bin omniinfer ik_ --locked
+
+      - name: Test backend selector workflows
+        run: cargo test -p omniinfer-cli --test cli_smoke backend_ --locked
 
       - name: Test desktop serve lifecycle
         run: |

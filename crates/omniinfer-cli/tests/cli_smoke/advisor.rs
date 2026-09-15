@@ -149,7 +149,13 @@ fn advisor_fit_json_ranks_installed_backend() {
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["advisor", "fit"])
         .arg(&model)
-        .args(["--ctx-size", "512", "--json"])
+        .args([
+            "--ctx-size",
+            "512",
+            "--json",
+            "--backend",
+            omniinfer_core::backend::names::selector(backend_id),
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""object": "advisor.fit""#))

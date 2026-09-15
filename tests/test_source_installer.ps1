@@ -25,6 +25,27 @@ if (-not $installerText.Contains('Invoke-OmniInfer serve --detach --port $OmniPo
     throw "Source installer backend activation must not restore a previous model"
 }
 
+# Exercise the actual discovery block with a machine ID unlike its public selector.
+$discoveryStart = $installerText.IndexOf('$BackendIds   = @()')
+$discoveryEnd = $installerText.IndexOf('function Test-PrebuiltBackend', $discoveryStart)
+if ($discoveryStart -lt 0 -or $discoveryEnd -lt 0) { throw "Missing catalog discovery block" }
+$discovery = [ScriptBlock]::Create($installerText.Substring($discoveryStart, $discoveryEnd - $discoveryStart))
+& {
+    function Invoke-OmniInfer {
+        if (($args -join ' ') -ne 'backend list --scope compatible --json') {
+            throw "Discovery must use local machine JSON"
+        }
+        $global:LASTEXITCODE = 0
+        '{"data":[{"id":"runtime-legacy","selector":"engine-cpu"}]}'
+    }
+    function Stop-Fatal { throw ($args -join ' ') }
+    . $discovery
+    if ($BackendIds.Count -ne 1 -or $BackendIds[0] -ne 'runtime-legacy') {
+        throw "Source build paths must retain the machine ID"
+    }
+    if ($BackendDescs[0] -ne 'engine-cpu') { throw "Menu must show the public selector" }
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $diffusionBuildScript = Join-Path $repoRoot "scripts\platforms\windows\stable-diffusion.cpp-vulkan\build.ps1"
 $diffusionTokens = $null

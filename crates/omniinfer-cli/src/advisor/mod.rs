@@ -42,13 +42,9 @@ pub fn fit_payload(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    if let Some(backend) = backend_filter
-        && !backends
-            .iter()
-            .any(|item| json_str(item, "id") == Some(backend))
-    {
-        anyhow::bail!("Unsupported backend: {backend}");
-    }
+    let backend_filter = backend_filter
+        .map(|name| omniinfer_core::backend::names::resolve_rows(&backends, name))
+        .transpose()?;
     let candidates = backends
         .iter()
         .filter(|backend| {

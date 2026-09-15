@@ -484,3 +484,31 @@ fn selector_override_keeps_legacy_paths_and_exact_override_precedence() {
         Some("legacy settings")
     );
 }
+
+#[test]
+fn every_host_template_selector_round_trips_without_identity_or_path_changes() {
+    for system in [
+        HostSystem::Linux,
+        HostSystem::Windows,
+        HostSystem::Mac,
+        HostSystem::Android,
+        HostSystem::Ios,
+    ] {
+        for machine in ["x86_64", "aarch64", "s390x"] {
+            let registry = BackendRegistry::build(HostInfo { system, machine }, "", &Value::Null);
+            for row in registry.rows(BackendScope::All) {
+                if row["architecture_compatible"] != true {
+                    continue;
+                }
+                let id = row["id"].as_str().unwrap();
+                let selector = row["selector"].as_str().unwrap();
+                assert!(!selector.contains([' ', '/']));
+                let legacy = registry.resolve(id).unwrap();
+                let resolved = registry.resolve(selector).unwrap();
+                assert_eq!(resolved.id, legacy.id, "{system:?}/{machine}: {selector}");
+                assert_eq!(resolved.runtime_dir, legacy.runtime_dir);
+                assert_eq!(resolved.default_args, legacy.default_args);
+            }
+        }
+    }
+}

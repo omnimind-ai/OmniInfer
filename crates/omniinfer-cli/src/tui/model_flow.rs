@@ -404,7 +404,9 @@ pub(super) fn selected_backend_line(backends_payload: &Value, backend: Option<&s
     let Some(row) = selected else {
         return "Backend: none selected".to_string();
     };
-    let id = json_str(row, "id").unwrap_or("-");
+    let id = json_str(row, "selector").unwrap_or_else(|| {
+        omniinfer_core::backend::names::selector(json_str(row, "id").unwrap_or("-"))
+    });
     let state = if json_bool(row, "installed").unwrap_or(false)
         && json_bool(row, "hardware_compatible").unwrap_or(false)
     {

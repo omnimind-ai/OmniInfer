@@ -9,7 +9,7 @@ Android and iOS use the embedded modules under `android/` and `ios/`.
 
 If you are running OmniInfer from a source checkout, prepare at least one local runtime backend before using the CLI.
 
-- Windows: build or install one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`; managed `vllm-wsl2-cuda` and `vllm-wsl2-rocm` are available for supported WSL2-capable NVIDIA and AMD systems. See [Build Guide: Windows](build.md#windows).
+- Windows: build or install one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-cpu-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`; managed `vllm-wsl2-cuda` and `vllm-wsl2-rocm` are available for supported WSL2-capable NVIDIA and AMD systems. See [Build Guide: Windows](build.md#windows).
 - Linux: build one of `llama.cpp-cpu`, `llama.cpp-rocm`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-cpu-s390x`, `llama.cpp-openvino`, or `vllm-cuda` first. See [Build Guide: Linux](build.md#linux).
 - macOS: build `llama.cpp-metal`, `llama.cpp-cpu`, `turboquant-metal`, or `mlx-metal` first. See [Build Guide: macOS](build.md#macos).
 
@@ -191,7 +191,7 @@ Examples:
 
 - Linux: `llama.cpp-cpu`, `llama.cpp-rocm`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-cpu-s390x`, `llama.cpp-openvino`, `vllm-cuda`, `vla.cpp-cpu`, or `vla.cpp-cuda`
 - macOS: `llama.cpp-metal`, `llama.cpp-cpu`, `turboquant-metal`, or `mlx-metal`
-- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, `llama.cpp-hip`, or managed `vllm-wsl2-cuda` / `vllm-wsl2-rocm`
+- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-cpu-arm64`, `llama.cpp-sycl`, `llama.cpp-hip`, or managed `vllm-wsl2-cuda` / `vllm-wsl2-rocm`
 
 When you select a desktop backend, OmniInfer also creates a backend-specific JSON config template under:
 

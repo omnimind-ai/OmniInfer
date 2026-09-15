@@ -541,6 +541,7 @@ fn serve_explicit_roots_reach_gateway_model_load_lifecycle() {
     assert_eq!(response.body["selected_backend"], backend_id);
     let after = wait_for_http_json(port, "/health?deep=true");
     assert_eq!(after["omni"]["backend_ready"], true);
+    assert!(health["omni"]["backend_pid"].as_u64().unwrap() > 0);
     assert_eq!(after["omni"]["backend_pid"], health["omni"]["backend_pid"]);
     assert_eq!(
         after["omni"]["launch_command"],
@@ -2502,7 +2503,7 @@ fn ps_lists_detached_services_from_pid_files() {
         .stdout(predicate::str::contains(
             "OpenAI Base URL: https://example-test.trycloudflare.com/v1",
         ))
-        .stdout(predicate::str::contains("Backend: llama.cpp-linux-cuda"))
+        .stdout(predicate::str::contains("Backend: llama.cpp-cuda"))
         .stdout(predicate::str::contains("Backend Ready: yes"))
         .stdout(predicate::str::contains("Context Size: 512"));
 

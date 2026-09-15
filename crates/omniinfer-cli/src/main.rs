@@ -454,7 +454,9 @@ fn print_ps(json_output: bool) -> Result<()> {
         }
         println!(
             "    Backend: {}",
-            json_str(&service, "backend").unwrap_or("unknown")
+            omniinfer_core::backend::names::selector(
+                json_str(&service, "backend").unwrap_or("unknown")
+            )
         );
         println!(
             "    Backend Ready: {}",

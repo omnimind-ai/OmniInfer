@@ -21,7 +21,7 @@ async fn rust_gateway_loads_external_runtime_and_forwards_chat() {
         move || {
             ureq::post(format!("http://127.0.0.1:{port}/omni/model/select"))
                 .send_json(json!({
-                    "backend": backend_id,
+                    "backend": omniinfer_core::backend::names::selector(backend_id),
                     "model": model.display().to_string(),
                     "ctx_size": 512,
                     "backend_port": backend_port,

@@ -1,5 +1,7 @@
 # Building OmniInfer
 
+CLI commands accept [public backend selectors](backend-names.md). Platform build/release script paths and packaging IDs remain the legacy runtime IDs listed below.
+
 This guide explains how OmniInfer builds or installs local runtime backends from a source checkout.
 
 ## Build Model
@@ -631,7 +633,7 @@ present, and missing requested backends are built through their normal backend b
 scripts before packaging:
 
 ```bash
-bash ./scripts/platforms/macos/build-release.sh --backend llama.cpp-metal --backend turboquant-metal
+bash ./scripts/platforms/macos/build-release.sh --backend llama.cpp-mac --backend turboquant-mac
 ```
 
 The default output directory is the stable package root:
