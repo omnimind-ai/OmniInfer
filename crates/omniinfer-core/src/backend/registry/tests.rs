@@ -369,3 +369,118 @@ fn mac_x86_64_only_accepts_intel_llama_backend() {
         ));
     }
 }
+
+#[test]
+fn public_selectors_resolve_without_changing_runtime_identity() {
+    for (system, machine, name, id) in [
+        (
+            HostSystem::Linux,
+            "x86_64",
+            "llama.cpp-cpu",
+            "llama.cpp-linux",
+        ),
+        (
+            HostSystem::Linux,
+            "x86_64",
+            "llama.cpp-cuda",
+            "llama.cpp-linux-cuda",
+        ),
+        (
+            HostSystem::Windows,
+            "amd64",
+            "llama.cpp-cuda",
+            "llama.cpp-cuda",
+        ),
+        (HostSystem::Mac, "arm64", "llama.cpp-metal", "llama.cpp-mac"),
+        (
+            HostSystem::Mac,
+            "x86_64",
+            "llama.cpp-cpu",
+            "llama.cpp-mac-intel",
+        ),
+        (
+            HostSystem::Linux,
+            "x86_64",
+            "ik_llama.cpp-cuda",
+            "ik_llama.cpp-linux-cuda",
+        ),
+        (
+            HostSystem::Windows,
+            "arm64",
+            "llama.cpp-cpu-arm64",
+            "llama.cpp-windows-arm64",
+        ),
+        (
+            HostSystem::Linux,
+            "s390x",
+            "llama.cpp-cpu-s390x",
+            "llama.cpp-linux-s390x",
+        ),
+        (HostSystem::Ios, "arm64", "llama.cpp-metal", "llama.cpp-ios"),
+    ] {
+        let registry =
+            BackendRegistry::build(HostInfo { system, machine }, "runtime", &Value::Null);
+        let public = registry.resolve(name).unwrap();
+        assert_eq!(public, registry.get(id).unwrap());
+        assert_eq!(public.id, id);
+        let payload = public.to_api_payload(false, None, None, None);
+        assert_eq!(payload["selector"], name);
+        assert_eq!(payload["id"], id);
+        assert_eq!(payload["label"], name);
+    }
+}
+
+#[test]
+fn names_do_not_strip_foreign_platforms_or_hide_architecture_errors() {
+    let registry = BackendRegistry::build(
+        HostInfo {
+            system: HostSystem::Linux,
+            machine: "x86_64",
+        },
+        "",
+        &Value::Null,
+    );
+    for name in [
+        "llama.cpp-mac",
+        "llama.cpp-hip",
+        "vllm-wsl2-cuda",
+        "llama.cpp-cuda-typo",
+        "llama.cpp-cpu-s390x",
+    ] {
+        assert!(registry.resolve(name).is_err(), "{name}");
+    }
+    let mac = BackendRegistry::build(
+        HostInfo {
+            system: HostSystem::Mac,
+            machine: "arm64",
+        },
+        "",
+        &Value::Null,
+    );
+    assert!(mac.resolve("llama.cpp-mac-intel").is_err());
+    assert!(mac.resolve("llama.cpp-cpu").is_err());
+}
+
+#[test]
+fn selector_override_keeps_legacy_paths_and_exact_override_precedence() {
+    let host = HostInfo {
+        system: HostSystem::Linux,
+        machine: "x86_64",
+    };
+    let registry = BackendRegistry::build(
+        host,
+        "runtime",
+        &json!({
+            "llama.cpp-cuda": {"catalog_url": "alias settings"},
+            "llama.cpp-linux-cuda": {"catalog_url": "legacy settings"}
+        }),
+    );
+    assert_eq!(
+        registry
+            .resolve("llama.cpp-cuda")
+            .unwrap()
+            .catalog_url
+            .as_deref(),
+        Some("legacy settings")
+    );
+}
