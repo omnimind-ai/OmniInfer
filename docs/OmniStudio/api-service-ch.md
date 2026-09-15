@@ -1,5 +1,7 @@
 # OmniStudio API 服务指南
 
+后端输入接受连字符选择器及旧 ID；返回的身份字段保留旧 ID，界面使用 `selector`（旧服务回退到 `id`）。 [Backend names](../backend-names.md).
+
 ## 目录
 
 - [API 概览](#api-概览)

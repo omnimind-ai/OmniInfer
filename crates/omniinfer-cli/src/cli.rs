@@ -84,6 +84,15 @@ pub(crate) enum BackendCommand {
     List {
         #[arg(long, default_value = "compatible")]
         scope: BackendScope,
+        /// Emit registry JSON with stable IDs and public selectors.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve a public selector or legacy ID locally without starting a service.
+    Resolve {
+        backend: String,
+        #[arg(long)]
+        json: bool,
     },
     /// Install a backend runtime.
     Install {

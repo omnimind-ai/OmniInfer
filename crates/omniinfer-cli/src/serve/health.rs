@@ -68,7 +68,10 @@ pub(super) fn print_serve_ready(
             }
         }
     }
-    println!("Backend: {}", json_str(state, "backend").unwrap_or("-"));
+    println!(
+        "Backend: {}",
+        omniinfer_core::backend::names::selector(json_str(state, "backend").unwrap_or("-"))
+    );
     if let Some(protocol) = json_str(state, "external_server_protocol") {
         println!("Backend protocol: {protocol}");
     }
@@ -241,7 +244,10 @@ pub(crate) fn print_serve_status(port: u16) {
     match http_client::get_json(&url, Duration::from_secs(2)) {
         Ok(response) if response.status == 200 => {
             let state = response.body.get("omni").unwrap_or(&response.body);
-            println!("Backend: {}", json_str(state, "backend").unwrap_or("-"));
+            println!(
+                "Backend: {}",
+                omniinfer_core::backend::names::selector(json_str(state, "backend").unwrap_or("-"))
+            );
             if let Some(protocol) = json_str(state, "external_server_protocol") {
                 println!("Backend protocol: {protocol}");
             }

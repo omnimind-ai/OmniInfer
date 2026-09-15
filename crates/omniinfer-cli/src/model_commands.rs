@@ -39,7 +39,10 @@ pub(crate) fn load_model(args: &ModelLoadArgs) -> Result<()> {
     };
     let (response, plan) = load_model_with_request(&request, args.verbose)?;
     if plan.auto_selected {
-        println!("Auto-selected backend: {}", plan.backend);
+        println!(
+            "Auto-selected backend: {}",
+            omniinfer_core::backend::names::selector(&plan.backend)
+        );
     }
     print_model_loaded(&response, &plan)?;
     Ok(())
@@ -80,7 +83,11 @@ pub(crate) fn load_model_with_request_for_config_and_autostart(
         None => state
             .selected_backend
             .as_deref()
-            .map(paths::backend_profile_file)
+            .map(|name| {
+                omniinfer_core::backend::names::resolve_rows(rows, name)
+                    .map(paths::backend_profile_file)
+            })
+            .transpose()?
             .filter(|path| path.is_file())
             .map(backend_profiles::load_backend_profile)
             .transpose()?,
@@ -141,7 +148,10 @@ pub(crate) fn print_model_loaded(
         .or_else(|| json_u64(&plan.payload, "ctx_size"))
         .and_then(|value| u32::try_from(value).ok());
     println!("Model loaded");
-    println!("Backend: {selected_backend}");
+    println!(
+        "Backend: {}",
+        omniinfer_core::backend::names::selector(selected_backend)
+    );
     println!("Model: {selected_model}");
     println!("mmproj: {}", selected_mmproj.unwrap_or("-"));
     println!(
@@ -185,7 +195,7 @@ fn print_full_model_catalog(payload: &serde_json::Value) {
         return;
     };
     for (backend, backend_payload) in backends {
-        println!("\n[{backend}]");
+        println!("\n[{}]", omniinfer_core::backend::names::selector(backend));
         let Some(families) = backend_payload.as_object() else {
             continue;
         };
@@ -220,7 +230,9 @@ fn print_quantization_rows(model_info: &serde_json::Value, include_backend: bool
             .map(|value| format!("{value} GiB"))
             .unwrap_or_else(|| "-".to_string());
         if include_backend {
-            let backend = json_str(quant_info, "backend").unwrap_or("-");
+            let backend = omniinfer_core::backend::names::selector(
+                json_str(quant_info, "backend").unwrap_or("-"),
+            );
             println!("    - {quant_name}: backend={backend}, suitable={suitable}, memory={memory}");
         } else {
             println!("      - {quant_name}: suitable={suitable}, memory={memory}");

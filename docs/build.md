@@ -71,7 +71,7 @@ The supported user-facing prebuilt runtime install command is implemented in Rus
 For example:
 
 ```bash
-./omniinfer backend install llama.cpp-linux
+./omniinfer backend install llama.cpp-cpu
 ```
 
 `./omniinfer build <backend>` and `./omniinfer build <backend> --prebuilt` are retained as compatibility aliases for the same prebuilt installer. Source builds are explicit and require a source checkout:
@@ -631,7 +631,7 @@ present, and missing requested backends are built through their normal backend b
 scripts before packaging:
 
 ```bash
-bash ./scripts/platforms/macos/build-release.sh --backend llama.cpp-mac --backend turboquant-mac
+bash ./scripts/platforms/macos/build-release.sh --backend llama.cpp-metal --backend turboquant-metal
 ```
 
 The default output directory is the stable package root:
@@ -697,7 +697,7 @@ List the local backends:
 Select one backend:
 
 ```bash
-./omniinfer backend select llama.cpp-linux-vulkan
+./omniinfer backend select llama.cpp-vulkan
 ```
 
 Load a model:

@@ -140,7 +140,10 @@ pub(super) fn choose_backend() -> Result<Option<String>> {
         let items = rows
             .iter()
             .map(|row| MenuItem {
-                label: json_str(row, "id").unwrap_or("-").to_string(),
+                label: json_str(row, "selector")
+                    .or_else(|| json_str(row, "id"))
+                    .unwrap_or("-")
+                    .to_string(),
                 details: vec![if json_bool(row, "binary_exists").unwrap_or(false) {
                     "installed".to_string()
                 } else {

@@ -477,7 +477,7 @@ fn serve_explicit_roots_reach_gateway_model_load_lifecycle() {
             "--api-key",
             "test-key",
             "--backend",
-            backend_id,
+            omniinfer_core::backend::names::selector(backend_id),
             "--model",
         ])
         .arg(&model)
@@ -530,6 +530,22 @@ fn serve_explicit_roots_reach_gateway_model_load_lifecycle() {
             })
     );
     assert!(!state_root.join(".local").join("runtime").exists());
+    // Selecting the same runtime by its alias must preserve its process and model.
+    let response = omniinfer_core::http_client::post_json(
+        &format!("http://127.0.0.1:{port}/omni/backend/select"),
+        &serde_json::json!({"backend": omniinfer_core::backend::names::selector(backend_id)}),
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["selected_backend"], backend_id);
+    let after = wait_for_http_json(port, "/health?deep=true");
+    assert_eq!(after["omni"]["backend_ready"], true);
+    assert_eq!(after["omni"]["backend_pid"], health["omni"]["backend_pid"]);
+    assert_eq!(
+        after["omni"]["launch_command"],
+        health["omni"]["launch_command"]
+    );
 
     let mut shutdown = Command::cargo_bin("omniinfer").expect("binary exists");
     shutdown

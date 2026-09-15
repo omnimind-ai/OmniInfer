@@ -1,5 +1,7 @@
 # OmniInfer Desktop API
 
+Backend inputs accept hyphenated selectors and legacy IDs. Identity fields keep legacy IDs; display `selector`, falling back to `id` on older services. [Backend names](backend-names.md).
+
 This document describes the local HTTP API exposed by the desktop OmniInfer gateway.
 
 Base URL:
@@ -299,7 +301,9 @@ Example response:
   "available_backends": [
     {
       "id": "llama.cpp-cuda",
-      "label": "llama.cpp CUDA",
+      "label": "llama.cpp-cuda",
+      "selector": "llama.cpp-cuda",
+      "execution_environment": "native",
       "family": "llama.cpp",
       "selected": true,
       "binary_exists": true,
@@ -345,7 +349,9 @@ Example response:
   "data": [
     {
       "id": "llama.cpp-cuda",
-      "label": "llama.cpp CUDA",
+      "label": "llama.cpp-cuda",
+      "selector": "llama.cpp-cuda",
+      "execution_environment": "native",
       "family": "llama.cpp",
       "selected": true,
       "binary_exists": true,

@@ -106,21 +106,36 @@ pub(super) fn resolve_serve_start_backend(args: &ServeArgs) -> Result<Option<Str
         .as_deref()
         .filter(|value| !value.trim().is_empty())
     {
-        return Ok(Some(backend.to_string()));
+        return Ok(Some(
+            backend_registry::BackendRegistry::load_current()
+                .resolve(backend)?
+                .id
+                .clone(),
+        ));
     }
     if let Some(default_backend) = args
         .default_backend
         .as_deref()
         .filter(|value| !value.trim().is_empty())
     {
-        return Ok(Some(default_backend.to_string()));
+        return Ok(Some(
+            backend_registry::BackendRegistry::load_current()
+                .resolve(default_backend)?
+                .id
+                .clone(),
+        ));
     }
     if let Some(selected_backend) = local_state::load_state()
         .ok()
         .and_then(|state| state.selected_backend)
         .filter(|value| !value.trim().is_empty())
     {
-        return Ok(Some(selected_backend));
+        return Ok(Some(
+            backend_registry::BackendRegistry::load_current()
+                .resolve(&selected_backend)?
+                .id
+                .clone(),
+        ));
     }
     Ok(backend_registry::BackendRegistry::load_current()
         .api_payload(backend_registry::BackendScope::Installed)

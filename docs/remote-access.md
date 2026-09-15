@@ -11,7 +11,7 @@ Start the gateway with Cloudflare mode. If you already know the model path, use 
 ```sh
 ./omniinfer serve \
   --cloudflare \
-  --backend llama.cpp-linux-cuda \
+  --backend llama.cpp-cuda \
   --model /path/to/model.gguf \
   --ctx-size 8192 \
   --api-key auto \
@@ -97,7 +97,7 @@ For a stable public hostname, run OmniInfer behind a trusted reverse proxy or tu
 
 ```sh
 ./omniinfer serve \
-  --backend llama.cpp-linux-cuda \
+  --backend llama.cpp-cuda \
   --public-model-root /path/to/public_models \
   --api-key oi_inference_key \
   --allow-remote-management \

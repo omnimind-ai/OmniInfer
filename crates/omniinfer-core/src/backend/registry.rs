@@ -206,7 +206,11 @@ impl BackendRegistry {
             .selected_model
             .as_ref()
             .map(|model| model.model.as_str());
-        let selected_backend = state.selected_backend.as_deref();
+        let selected_backend = state
+            .selected_backend
+            .as_deref()
+            .and_then(|name| self.resolve(name).ok())
+            .map(|spec| spec.id.as_str());
         self.specs
             .values()
             .filter_map(|spec| {

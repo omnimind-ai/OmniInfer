@@ -114,7 +114,7 @@ OmniInfer runs everywhere:
 | Android | Gradle module | llama.cpp, MNN, LiteRT-LM, ExecuTorch QNN |
 | iOS | Swift package | Embedded native inference service |
 
-Runtime availability depends on the device and accelerator. Use `omniinfer backend list` for the current machine and see the [Build Guide](docs/build.md) for the full platform matrix.
+Runtime availability depends on the device and accelerator. Use `omniinfer backend list` for the current machine; [backend names](docs/backend-names.md) explains selectors and legacy compatibility and see the [Build Guide](docs/build.md) for the full platform matrix.
 
 ## Documentation
 

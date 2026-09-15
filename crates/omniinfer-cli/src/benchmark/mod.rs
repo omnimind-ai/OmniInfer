@@ -67,10 +67,19 @@ pub(crate) fn run(args: &BenchRunArgs) -> Result<()> {
             "Loaded backend ID {loaded_backend:?} cannot be represented by the benchmark schema."
         );
     }
-    if let Some(expected) = args.backend_id.as_deref()
-        && expected != loaded_backend
-    {
-        anyhow::bail!("Loaded backend is {loaded_backend}, but --backend-id requested {expected}.");
+    if let Some(expected) = args.backend_id.as_deref() {
+        let registry = omniinfer_core::backend_registry::BackendRegistry::load_current();
+        // Benchmark identity stays the runtime/catalog ID, even with a public selector input.
+        let expected_id = if expected == loaded_backend {
+            expected
+        } else {
+            &registry.resolve(expected)?.id
+        };
+        if expected_id != loaded_backend {
+            anyhow::bail!(
+                "Loaded backend is {loaded_backend}, but --backend-id requested {expected}."
+            );
+        }
     }
 
     let launch_args = command_array(&state, "launch_command")?;
