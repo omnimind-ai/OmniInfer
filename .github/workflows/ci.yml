@@ -94,7 +94,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Test benchmark contract integrity
-        run: "cargo test -p omniinfer-cli --bin omniinfer benchmark::contract::tests::"
+        run: |
+          python scripts/sync_benchmark_contract.py --check
+          cargo test -p omniinfer-cli --bin omniinfer benchmark::contract::tests:: --locked
+          cargo test -p omniinfer-cli --test cli_smoke bench_ik_selector_keeps_cold_cache_safety_guard --locked
 
       - name: Test benchmark evidence helpers
         run: python -m unittest discover -s tests -p 'test_benchmark_*.py'

@@ -4,8 +4,8 @@
   "contract_version": "1.0.0",
   "files": {
     "catalog-index.json": {
-      "bytes": 96893,
-      "sha256": "f1732339376a21f616b271961b063fb47cfb5563ef066e643bb3c0415fc29baf"
+      "bytes": 108989,
+      "sha256": "b6cddbdd4e17044401266ff7b69c05530bbdac53646817c9fb7fe5e2c692101d"
     },
     "schema.json": {
       "bytes": 15417,

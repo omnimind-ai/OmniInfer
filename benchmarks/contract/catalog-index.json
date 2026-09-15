@@ -7,6 +7,18 @@
       ]
     },
     {
+      "id": "ik_llama.cpp-cuda",
+      "platforms": [
+        "windows"
+      ]
+    },
+    {
+      "id": "ik_llama.cpp-linux-cuda",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
       "id": "litert-android-cpu",
       "platforms": [
         "android"
@@ -157,6 +169,18 @@
       ]
     },
     {
+      "id": "omnicore-linux-cuda",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "omnicore-vulkan",
+      "platforms": [
+        "windows"
+      ]
+    },
+    {
       "id": "turboquant-mac",
       "platforms": [
         "macos"
@@ -214,6 +238,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -231,6 +257,7 @@
       "backend_ids": [
         "llama.cpp-hip",
         "llama.cpp-vulkan",
+        "omnicore-vulkan",
         "vllm-wsl2-rocm"
       ],
       "id": "radeon-8060s",
@@ -241,6 +268,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -256,6 +285,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -271,6 +302,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -286,6 +319,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -301,6 +336,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -316,6 +353,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -331,10 +370,13 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
         "llama.cpp-vulkan",
+        "omnicore-linux-cuda",
         "vllm-linux-cuda"
       ],
       "id": "rtx-3090",
@@ -346,6 +388,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -361,6 +405,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -376,6 +422,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -391,6 +439,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -406,6 +456,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -421,6 +473,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -436,6 +490,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -451,6 +507,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -466,6 +524,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -481,10 +541,13 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
         "llama.cpp-vulkan",
+        "omnicore-linux-cuda",
         "vllm-linux-cuda"
       ],
       "id": "rtx-4090",
@@ -496,6 +559,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -511,6 +576,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -526,6 +593,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -541,6 +610,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -556,6 +627,8 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
@@ -571,10 +644,13 @@
     },
     {
       "backend_ids": [
+        "ik_llama.cpp-cuda",
+        "ik_llama.cpp-linux-cuda",
         "llama.cpp-cuda",
         "llama.cpp-linux-cuda",
         "llama.cpp-linux-vulkan",
         "llama.cpp-vulkan",
+        "omnicore-linux-cuda",
         "vllm-linux-cuda"
       ],
       "id": "rtx-5090",
@@ -1160,6 +1236,51 @@
       ]
     },
     {
+      "id": "deepseek-v4-flash",
+      "modalities": [
+        "text"
+      ],
+      "support": [
+        {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "UD-IQ1_S"
+          ]
+        },
+        {
+          "backend_id": "llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "BF16",
+            "UD-IQ1_M",
+            "UD-IQ1_S",
+            "UD-IQ2_M",
+            "UD-IQ2_XXS",
+            "UD-IQ3_S",
+            "UD-IQ3_XXS",
+            "UD-IQ4_NL",
+            "UD-IQ4_XS",
+            "UD-Q2_K_XL",
+            "UD-Q3_K_M",
+            "UD-Q3_K_XL",
+            "UD-Q4_K_XL",
+            "UD-Q8_K_XL"
+          ]
+        },
+        {
+          "backend_id": "vllm-linux-cuda",
+          "format": "Safetensors",
+          "platform_id": "linux",
+          "quantizations": [
+            "FP4"
+          ]
+        }
+      ]
+    },
+    {
       "id": "gemma-4-12b",
       "modalities": [
         "image",
@@ -1711,6 +1832,50 @@
       ]
     },
     {
+      "id": "glm-5.3-flash",
+      "modalities": [
+        "image",
+        "text"
+      ],
+      "support": [
+        {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "UD-IQ1_S"
+          ]
+        },
+        {
+          "backend_id": "llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "BF16",
+            "Q8_0",
+            "UD-IQ1_M",
+            "UD-IQ1_S",
+            "UD-IQ2_XXS",
+            "UD-IQ3_XXS",
+            "UD-IQ4_XS",
+            "UD-Q2_K_XL",
+            "UD-Q3_K_XL",
+            "UD-Q4_K_XL",
+            "UD-Q5_K_XL",
+            "UD-Q6_K_XL"
+          ]
+        },
+        {
+          "backend_id": "vllm-linux-cuda",
+          "format": "Safetensors",
+          "platform_id": "linux",
+          "quantizations": [
+            "FP8"
+          ]
+        }
+      ]
+    },
+    {
       "id": "gpt-oss-20b",
       "modalities": [
         "text"
@@ -1798,6 +1963,34 @@
             "BF16",
             "Q4_K_M",
             "Q6_K",
+            "Q8_0"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "minicpm5-2b",
+      "modalities": [
+        "text"
+      ],
+      "support": [
+        {
+          "backend_id": "llama.cpp-android",
+          "format": "GGUF",
+          "platform_id": "android",
+          "quantizations": [
+            "F16",
+            "Q4_K_M",
+            "Q8_0"
+          ]
+        },
+        {
+          "backend_id": "omnicore-android",
+          "format": "GGUF",
+          "platform_id": "android",
+          "quantizations": [
+            "F16",
+            "Q4_K_M",
             "Q8_0"
           ]
         }
@@ -2731,6 +2924,16 @@
       ],
       "support": [
         {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -2789,6 +2992,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -2833,6 +3046,16 @@
       ],
       "support": [
         {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -2891,6 +3114,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -2935,6 +3168,16 @@
       ],
       "support": [
         {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -2993,6 +3236,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3053,6 +3306,16 @@
           ]
         },
         {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -3111,6 +3374,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3164,6 +3437,24 @@
           ]
         },
         {
+          "backend_id": "omnicore-android",
+          "format": "GGUF",
+          "platform_id": "android",
+          "quantizations": [
+            "Q4_0"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -3222,6 +3513,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3328,6 +3629,16 @@
       ],
       "support": [
         {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -3361,6 +3672,14 @@
           ]
         },
         {
+          "backend_id": "omnicore-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M"
+          ]
+        },
+        {
           "backend_id": "vllm-linux-cuda",
           "format": "Safetensors",
           "platform_id": "linux",
@@ -3386,6 +3705,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3439,6 +3768,24 @@
           ]
         },
         {
+          "backend_id": "omnicore-android",
+          "format": "GGUF",
+          "platform_id": "android",
+          "quantizations": [
+            "Q4_0"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -3497,6 +3844,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3553,11 +3910,36 @@
           ]
         },
         {
+          "backend_id": "omnicore-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M"
+          ]
+        },
+        {
           "backend_id": "vllm-linux-cuda",
           "format": "Safetensors",
           "platform_id": "linux",
           "quantizations": [
             "BF16"
+          ]
+        },
+        {
+          "backend_id": "llama.cpp-vulkan",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "BF16",
+            "Q4_K_M"
+          ]
+        },
+        {
+          "backend_id": "omnicore-vulkan",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M"
           ]
         }
       ]
@@ -3583,6 +3965,16 @@
           "platform_id": "android",
           "quantizations": [
             "Q4_0"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3619,6 +4011,14 @@
           ]
         },
         {
+          "backend_id": "omnicore-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M"
+          ]
+        },
+        {
           "backend_id": "vllm-linux-cuda",
           "format": "Safetensors",
           "platform_id": "linux",
@@ -3644,6 +4044,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3705,6 +4115,16 @@
           ]
         },
         {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -3738,6 +4158,14 @@
           ]
         },
         {
+          "backend_id": "omnicore-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M"
+          ]
+        },
+        {
           "backend_id": "vllm-linux-cuda",
           "format": "Safetensors",
           "platform_id": "linux",
@@ -3763,6 +4191,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3836,6 +4274,16 @@
       ],
       "support": [
         {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -3869,11 +4317,29 @@
           ]
         },
         {
+          "backend_id": "omnicore-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M"
+          ]
+        },
+        {
           "backend_id": "vllm-linux-cuda",
           "format": "Safetensors",
           "platform_id": "linux",
           "quantizations": [
             "BF16"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {
@@ -3885,6 +4351,23 @@
             "Q4_K_M",
             "Q6_K",
             "Q8_0"
+          ]
+        },
+        {
+          "backend_id": "llama.cpp-vulkan",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "BF16",
+            "Q4_K_M"
+          ]
+        },
+        {
+          "backend_id": "omnicore-vulkan",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M"
           ]
         }
       ]
@@ -3940,6 +4423,16 @@
           ]
         },
         {
+          "backend_id": "ik_llama.cpp-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
+          ]
+        },
+        {
           "backend_id": "llama.cpp-linux",
           "format": "GGUF",
           "platform_id": "linux",
@@ -3973,6 +4466,14 @@
           ]
         },
         {
+          "backend_id": "omnicore-linux-cuda",
+          "format": "GGUF",
+          "platform_id": "linux",
+          "quantizations": [
+            "Q4_K_M"
+          ]
+        },
+        {
           "backend_id": "vllm-linux-cuda",
           "format": "Safetensors",
           "platform_id": "linux",
@@ -3998,6 +4499,16 @@
           "quantizations": [
             "4bit",
             "8bit"
+          ]
+        },
+        {
+          "backend_id": "ik_llama.cpp-cuda",
+          "format": "GGUF",
+          "platform_id": "windows",
+          "quantizations": [
+            "Q4_K_M",
+            "Q6_K",
+            "Q8_0"
           ]
         },
         {

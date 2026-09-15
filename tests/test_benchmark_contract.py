@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,6 +64,31 @@ class BenchmarkContractTests(unittest.TestCase):
             schema.write_bytes(schema.read_bytes() + b"\n")
             with self.assertRaisesRegex(CONTRACT.ContractError, "byte count mismatch"):
                 CONTRACT.check_contract(destination)
+
+    def test_git_autocrlf_checkout_preserves_contract_bytes(self):
+        # Exercise Git conversion itself, including on Windows CI, instead of
+        # merely asserting that .gitattributes contains a particular string.
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository"
+            repository.mkdir()
+            (repository / ".gitattributes").write_bytes((ROOT / ".gitattributes").read_bytes())
+            relative = Path("benchmarks") / "contract"
+            (repository / relative).mkdir(parents=True)
+            originals = {path.name: path.read_bytes() for path in self.source.glob("*.json")}
+            for name, raw in originals.items():
+                self.assertNotIn(b"\r", raw, name)
+                (repository / relative / name).write_bytes(raw)
+            def git(*args):
+                result = subprocess.run(["git", *args], cwd=repository, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, f"git {args}: {result.stderr}")
+            git("init", "--quiet")
+            git("config", "core.autocrlf", "true")
+            git("add", ".gitattributes", "benchmarks/contract")
+            checkout = Path(directory) / "checkout"
+            git("checkout-index", "--all", "--prefix=" + checkout.as_posix() + "/")
+            for name, raw in originals.items():
+                self.assertEqual((checkout / relative / name).read_bytes(), raw, name)
+            CONTRACT.check_contract(checkout / relative)
 
     def test_parser_rejects_duplicate_keys_and_non_finite_numbers(self):
         with self.assertRaisesRegex(CONTRACT.ContractError, "duplicate JSON key"):
