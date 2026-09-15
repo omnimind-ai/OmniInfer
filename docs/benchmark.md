@@ -155,3 +155,22 @@ Before upload, review the public model URL, device and backend catalog IDs,
 runtime commands, optimization declaration, and submitter metadata. Commands
 must not contain credential values; use `<redacted>` or an environment-variable
 reference instead.
+
+### ik CUDA catalog scope
+
+The producer uses stable catalog IDs `ik_llama.cpp-cuda` (Windows) and
+`ik_llama.cpp-linux-cuda` (Linux). Public selectors are resolved before validation;
+they do not replace the submitted `catalog_backend_id`.
+
+The reviewed Qwen3/Qwen3.5/Qwen3.6 entries admit their listed GGUF Q4_K_M, Q6_K
+and Q8_0 combinations. DeepSeek-V4-Flash and GLM-5.3-Flash currently admit ik CUDA
+GGUF UD-IQ1_S on Linux only. Do not inherit other llama.cpp quantizations,
+XL mixed weights or Windows Flash support. Always record the exact runtime
+version and build/run provenance; a catalog match does not establish that a
+particular runtime revision supports the model or replace website review.
+
+Catalog admission and producer execution are separate checks. `bench run` currently
+rejects ik runtimes at the per-run cache-isolation gate. Synchronizing the catalog
+does not enable native ik benchmark collection or certify cold-cache measurements;
+that requires a separately verified cache-erasure integration, tracked in
+[issue #276](https://github.com/omnimind-ai/OmniInfer/issues/276).

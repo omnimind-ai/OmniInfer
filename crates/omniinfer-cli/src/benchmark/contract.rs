@@ -339,6 +339,154 @@ mod tests {
     }
 
     #[test]
+    fn ik_cuda_accepts_reviewed_qwen_and_linux_flash_combinations() {
+        let contract = embedded();
+        for (platform, backend) in [
+            ("linux", "ik_llama.cpp-linux-cuda"),
+            ("windows", "ik_llama.cpp-cuda"),
+        ] {
+            for model in ["qwen3-4b", "qwen3-5-2b", "qwen3-6-35b-a3b"] {
+                for quantization in ["Q4_K_M", "Q6_K", "Q8_0"] {
+                    contract
+                        .validate_references(
+                            model,
+                            "GGUF",
+                            quantization,
+                            backend,
+                            "rtx-3090",
+                            platform,
+                        )
+                        .unwrap();
+                }
+            }
+        }
+        for model in ["deepseek-v4-flash", "glm-5.3-flash"] {
+            contract
+                .validate_references(
+                    model,
+                    "GGUF",
+                    "UD-IQ1_S",
+                    "ik_llama.cpp-linux-cuda",
+                    "rtx-3090",
+                    "linux",
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn ik_cuda_does_not_inherit_other_runtime_platforms_or_precisions() {
+        let contract = embedded();
+        for model in ["deepseek-v4-flash", "glm-5.3-flash"] {
+            for quantization in ["BF16", "Q4_K_M", "UD-IQ1_M", "UD-Q4_K_XL"] {
+                let error = contract
+                    .validate_references(
+                        model,
+                        "GGUF",
+                        quantization,
+                        "ik_llama.cpp-linux-cuda",
+                        "rtx-3090",
+                        "linux",
+                    )
+                    .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("combination is not in the catalog")
+                );
+            }
+            let error = contract
+                .validate_references(
+                    model,
+                    "GGUF",
+                    "UD-IQ1_S",
+                    "ik_llama.cpp-cuda",
+                    "rtx-3090",
+                    "windows",
+                )
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("combination is not in the catalog")
+            );
+        }
+        for (backend, platform) in [
+            ("ik_llama.cpp-cuda", "linux"),
+            ("ik_llama.cpp-linux-cuda", "windows"),
+            ("ik_llama.cpp-linux-cuda", "android"),
+        ] {
+            let error = contract
+                .validate_references(
+                    "qwen3-5-2b",
+                    "GGUF",
+                    "Q4_K_M",
+                    backend,
+                    "rtx-3090",
+                    platform,
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains("not available on platform"));
+        }
+        for quantization in ["BF16", "UD-Q4_K_XL"] {
+            assert!(
+                contract
+                    .validate_references(
+                        "qwen3-6-35b-a3b",
+                        "GGUF",
+                        quantization,
+                        "ik_llama.cpp-linux-cuda",
+                        "rtx-3090",
+                        "linux"
+                    )
+                    .is_err()
+            );
+        }
+        assert!(
+            contract
+                .validate_references(
+                    "qwen3-5-2b",
+                    "Safetensors",
+                    "Q4_K_M",
+                    "ik_llama.cpp-linux-cuda",
+                    "rtx-3090",
+                    "linux"
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn contract_preserves_exact_bytes_and_rejects_crlf_conversion() {
+        for (index, raw) in [MANIFEST_BYTES, SCHEMA_BYTES, CATALOG_BYTES]
+            .iter()
+            .enumerate()
+        {
+            assert!(!raw.contains(&b'\r'));
+            let converted = raw
+                .iter()
+                .flat_map(|byte| {
+                    if *byte == b'\n' {
+                        vec![b'\r', b'\n']
+                    } else {
+                        vec![*byte]
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut artifacts = [MANIFEST_BYTES, SCHEMA_BYTES, CATALOG_BYTES];
+            artifacts[index] = &converted;
+            let error = BenchmarkContract::from_bytes(
+                artifacts[0],
+                artifacts[1],
+                artifacts[2],
+                SNAPSHOT_BYTES,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("integrity mismatch"));
+        }
+    }
+
+    #[test]
     fn rejects_unknown_catalog_references() {
         let contract = embedded();
         let error = contract

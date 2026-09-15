@@ -442,3 +442,68 @@ fn bench_requires_an_explicit_optimization_declaration() {
             "Explicit optimization declaration is required",
         ));
 }
+
+#[test]
+fn bench_ik_selector_keeps_cold_cache_safety_guard() {
+    let backend = if cfg!(windows) {
+        "ik_llama.cpp-cuda"
+    } else {
+        "ik_llama.cpp-linux-cuda"
+    };
+    let state = serde_json::json!({
+        "backend_ready": true, "model": "/models/qwen.gguf", "backend": backend,
+        "mmproj": null, "launch_command": ["llama-server", "-m", "/models/qwen.gguf"]
+    })
+    .to_string();
+    let gateway = TestGateway::start(vec![
+        Response::new(r#"{"status":"ok"}"#),
+        Response::new(&state),
+    ]);
+    let root = temp_repo_root("bench-ik-cache-guard");
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(
+        root.join("config/omniinfer.json"),
+        format!(r#"{{"host":"127.0.0.1","port":{}}}"#, gateway.port),
+    )
+    .unwrap();
+    let selector = if cfg!(target_os = "linux") || cfg!(windows) {
+        omniinfer_core::backend::names::selector(backend)
+    } else {
+        backend
+    };
+    Command::cargo_bin("omniinfer")
+        .unwrap()
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args([
+            "bench",
+            "run",
+            "--backend-id",
+            selector,
+            "--catalog-model-id",
+            "qwen3-5-2b",
+            "--format",
+            "GGUF",
+            "--quantization",
+            "Q4_K_M",
+            "--model-url",
+            "https://example.com/qwen.gguf",
+            "--device-name",
+            "NVIDIA GeForce RTX 3090",
+            "--soc",
+            "rtx-3090",
+            "--baseline",
+            "--submitter-name",
+            "Test",
+            "--json",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(format!(
+            "Backend {backend} cannot currently prove per-run cache erasure"
+        )));
+    assert!(gateway.request().starts_with("GET /health HTTP/1.1"));
+    assert!(gateway.request().starts_with("GET /omni/state HTTP/1.1"));
+    gateway.join();
+    assert!(!root.join(".local/benchmarks/results").exists());
+    fs::remove_dir_all(root).ok();
+}
