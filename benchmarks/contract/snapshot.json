@@ -3,8 +3,8 @@
   "catalog_schema_version": 1,
   "contract_version": "1.0.0",
   "manifest": {
-    "bytes": 799,
-    "sha256": "68bf4d84d11deecbb2382a8772082b3889ed42534aec9250a3520fae758ec537"
+    "bytes": 800,
+    "sha256": "844044a4af52f569922e1a923625830f79a58fa9249927946b5e9cc4a5c8f5f8"
   },
   "schema_version": "1.4.0",
   "source": {
