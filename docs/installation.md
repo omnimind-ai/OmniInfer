@@ -1,5 +1,7 @@
 # Installing OmniInfer
 
+Backend installation accepts the names printed by `omniinfer backend list`, such as `llama.cpp-cpu`. See [backend names](backend-names.md) for legacy compatibility and runtime IDs used by packaging scripts.
+
 OmniInfer separates the CLI installation from backend runtimes and models. The default installers download the official CLI-only GitHub Release, verify its SHA-256 checksum, and install it without elevated privileges.
 
 ## Install the Release CLI

@@ -59,8 +59,30 @@ fn main() -> Result<()> {
 fn run_ported_command(command: &Command) -> Result<()> {
     match command {
         Command::Backend {
-            command: BackendCommand::List { scope },
-        } => print_backend_list(scope.clone()),
+            command: BackendCommand::List { scope, json },
+        } => {
+            if *json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&rust_backend_payload(scope.clone()))?
+                );
+                Ok(())
+            } else {
+                print_backend_list(scope.clone())
+            }
+        }
+        Command::Backend {
+            command: BackendCommand::Resolve { backend, json },
+        } => {
+            let registry = omniinfer_core::backend_registry::BackendRegistry::load_current();
+            let spec = registry.resolve(backend)?;
+            if *json {
+                println!("{}", spec.to_api_payload(false, None, None, None));
+            } else {
+                println!("{}", spec.id);
+            }
+            Ok(())
+        }
         Command::Backend {
             command:
                 BackendCommand::Install {
@@ -432,7 +454,9 @@ fn print_ps(json_output: bool) -> Result<()> {
         }
         println!(
             "    Backend: {}",
-            json_str(&service, "backend").unwrap_or("unknown")
+            omniinfer_core::backend::names::selector(
+                json_str(&service, "backend").unwrap_or("unknown")
+            )
         );
         println!(
             "    Backend Ready: {}",

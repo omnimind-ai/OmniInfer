@@ -69,7 +69,8 @@ if [[ -n "${FIXTURE_COMMANDS_FILE:-}" ]]; then
 fi
 case "$*" in
     --version) echo "omniinfer fixture" ;;
-    "backend list --scope compatible") echo "${FIXTURE_BACKEND_ID:?} fixture" ;;
+    "backend list --scope compatible --json") printf '{"data":[{"id":"%s","selector":"public-cpu"}]}\n' "${FIXTURE_BACKEND_ID:?}" ;;
+    "backend resolve public-cpu") echo "${FIXTURE_BACKEND_ID:?}" ;;
     "backend list --scope installed") exit 0 ;;
 esac
 EOF
@@ -102,7 +103,7 @@ FIXTURE_BACKEND_ID="${backend_id}" \
 PATH="${fake_bin}:${PATH}" \
 bash "${REPO_ROOT}/scripts/install-from-source.sh" \
     --install-dir "${install_dir}" \
-    --backend "${backend_id}" \
+    --backend "public-cpu" \
     --from-source \
     --no-model \
     --non-interactive \

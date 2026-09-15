@@ -115,9 +115,11 @@ fn install_backend_inner(options: &InstallOptions, reporter: &mut InstallReporte
 
     let platform = current_platform_name();
     let registry = backend_registry::BackendRegistry::load_current();
-    let spec = registry
-        .get(&options.backend)
-        .ok_or_else(|| anyhow::anyhow!("Unsupported backend: {}", options.backend))?;
+    let spec = registry.resolve(&options.backend)?;
+    let mut resolved_options = options.clone();
+    resolved_options.backend = spec.id.clone();
+    let options = &resolved_options;
+    reporter.backend = spec.id.clone();
     let catalog = load_catalog()?;
     let runtime_dir = PathBuf::from(&spec.runtime_dir);
     reporter.event(

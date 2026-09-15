@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::detection::{embedded_module_exists, is_hardware_compatible};
+use super::detection::{
+    embedded_module_exists, is_architecture_compatible, is_hardware_compatible,
+};
 #[cfg(test)]
 use super::detection::{gpu_backend_ids, output_mentions_amd_gpu, parse_nvidia_driver_branch};
 use super::templates::backend_templates;
@@ -80,6 +82,10 @@ pub struct BackendSpec {
 }
 
 impl BackendSpec {
+    pub fn selector(&self) -> &str {
+        super::names::selector(&self.id)
+    }
+
     pub fn binary_exists(&self) -> bool {
         if self.runtime_mode == "embedded" {
             return self
@@ -103,7 +109,9 @@ impl BackendSpec {
         let binary_exists = self.binary_exists();
         let mut payload = json!({
             "id": self.id,
-            "label": self.label,
+            "label": self.selector(),
+            "selector": self.selector(),
+            "execution_environment": if self.id.starts_with("vllm-wsl2-") { "wsl2" } else { "native" },
             "family": self.family,
             "selected": selected,
             "binary_exists": binary_exists,
@@ -161,7 +169,11 @@ impl BackendRegistry {
             .iter()
             .map(|template| {
                 let override_value = override_map
-                    .and_then(|items| items.get(template.id))
+                    .and_then(|items| {
+                        items
+                            .get(template.id)
+                            .or_else(|| items.get(super::names::selector(template.id)))
+                    })
                     .unwrap_or(&Value::Null);
                 let spec = build_backend_spec(template, &runtime_root, override_value);
                 (spec.id.clone(), spec)
@@ -174,13 +186,31 @@ impl BackendRegistry {
         self.specs.get(backend_id)
     }
 
+    pub fn resolve(&self, name: &str) -> Result<&BackendSpec, super::names::ResolveError> {
+        let id = super::names::resolve_id(
+            name,
+            self.specs.values().map(|spec| {
+                (
+                    spec.id.as_str(),
+                    spec.selector(),
+                    is_architecture_compatible(self.host, spec),
+                )
+            }),
+        )?;
+        Ok(&self.specs[id])
+    }
+
     pub fn rows(&self, scope: BackendScope) -> Vec<Value> {
         let state = local_state::load_state().unwrap_or_default();
         let loaded_model = state
             .selected_model
             .as_ref()
             .map(|model| model.model.as_str());
-        let selected_backend = state.selected_backend.as_deref();
+        let selected_backend = state
+            .selected_backend
+            .as_deref()
+            .and_then(|name| self.resolve(name).ok())
+            .map(|spec| spec.id.as_str());
         self.specs
             .values()
             .filter_map(|spec| {
@@ -192,7 +222,7 @@ impl BackendRegistry {
                     BackendScope::All => true,
                 };
                 include.then(|| {
-                    spec.to_api_payload(
+                    let mut row = spec.to_api_payload(
                         selected_backend == Some(spec.id.as_str()),
                         loaded_model,
                         Some(if compatible {
@@ -201,7 +231,10 @@ impl BackendRegistry {
                             "incompatible"
                         }),
                         Some(backend_priority(&spec.id)),
-                    )
+                    );
+                    row["architecture_compatible"] =
+                        json!(is_architecture_compatible(self.host, spec));
+                    row
                 })
             })
             .collect()

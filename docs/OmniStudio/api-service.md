@@ -1,5 +1,7 @@
 # OmniStudio API Service Guide
 
+Backend inputs accept hyphenated selectors and legacy IDs. Identity fields keep legacy IDs; display `selector`, falling back to `id` on older services. [Backend names](../backend-names.md).
+
 ## Table of Contents
 
 - [API Overview](#api-overview)

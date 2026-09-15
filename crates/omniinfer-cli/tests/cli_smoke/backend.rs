@@ -51,7 +51,11 @@ fn backend_install_prebuilt_from_local_catalog() {
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .env("OMNIINFER_PREBUILT_CATALOG", &fixture.catalog)
-        .args(["backend", "install", backend_id])
+        .args([
+            "backend",
+            "install",
+            omniinfer_core::backend::names::selector(backend_id),
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
@@ -1037,11 +1041,16 @@ fn backend_select_persists_state_and_profile() {
     let mut cmd = Command::cargo_bin("omniinfer").expect("binary exists");
     cmd.env("OMNIINFER_RUST_STRICT", "1")
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
-        .args(["backend", "select", backend_id])
+        .args([
+            "backend",
+            "select",
+            omniinfer_core::backend::names::selector(backend_id),
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
-            "Selected backend: {backend_id}"
+            "Selected backend: {}",
+            omniinfer_core::backend::names::selector(backend_id)
         )))
         .stdout(predicate::str::contains(format!(
             "Models directory: {models_dir}"
@@ -1287,4 +1296,49 @@ fn installed_launcher(root: &std::path::Path, backend_id: &str) -> std::path::Pa
         } else {
             "llama-server"
         })
+}
+
+#[test]
+fn backend_selector_resolves_locally_and_list_keeps_machine_id() {
+    let root = temp_repo_root("backend-selector");
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(root.join("config/omniinfer.json"), r#"{"port":1}"#).unwrap();
+    let id = test_external_backend_id();
+    let selector = omniinfer_core::backend::names::selector(id);
+    for name in [id, selector] {
+        Command::cargo_bin("omniinfer")
+            .unwrap()
+            .env("OMNIINFER_RUST_REPO_ROOT", &root)
+            .args(["backend", "resolve", name])
+            .assert()
+            .success()
+            .stdout(format!("{id}\n"));
+    }
+    let output = Command::cargo_bin("omniinfer")
+        .unwrap()
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["backend", "list", "--scope", "all", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let row = payload["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap();
+    assert_eq!(row["selector"], selector);
+    assert_eq!(row["label"], selector);
+    Command::cargo_bin("omniinfer")
+        .unwrap()
+        .env("OMNIINFER_RUST_REPO_ROOT", &root)
+        .args(["backend", "resolve", "not-a-backend"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unsupported backend"));
+    assert!(!root.join(".local/config/state.json").exists());
+    fs::remove_dir_all(root).ok();
 }

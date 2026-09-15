@@ -51,7 +51,7 @@ public final class OmniInferServer: @unchecked Sendable {
     /// Load a model and start the HTTP server.
     /// - Parameters:
     ///   - modelPath: Path to model file (.gguf) or directory (MLX).
-    ///   - backend: `"llama.cpp"` or `"mlx"`.
+    ///   - backend: `"llama.cpp-metal"` or `"mlx-metal"`; legacy `"llama.cpp"` / `"mlx"` remain accepted.
     /// - Returns: `true` if the model was loaded and the server started.
     @discardableResult
     public func loadModel(
@@ -62,6 +62,8 @@ public final class OmniInferServer: @unchecked Sendable {
         nCtx: Int = 2048,
         nGpuLayers: Int = 99
     ) async -> Bool {
+        guard let resolvedBackend = BackendSelector(selector: backend) else { return false }
+        let backend = resolvedBackend.rawValue
         lock.lock()
 
         // Unload if switching model or backend.

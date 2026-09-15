@@ -205,7 +205,12 @@ fn normalize_backends(payload: Value) -> Vec<Value> {
                 map.insert(
                     "install_command".to_string(),
                     prebuilt_installable
-                        .then(|| Value::String(format!("omniinfer backend install {id}")))
+                        .then(|| {
+                            Value::String(format!(
+                                "omniinfer backend install {}",
+                                omniinfer_core::backend::names::selector(&id)
+                            ))
+                        })
                         .unwrap_or(Value::Null),
                 );
                 map.insert(

@@ -23,7 +23,7 @@ pub(crate) fn print_backend_list(scope: BackendScope) -> Result<()> {
     let color = color_output_enabled();
     let width = rows
         .iter()
-        .filter_map(|item| json_str(item, "id"))
+        .filter_map(|item| json_str(item, "selector").or_else(|| json_str(item, "id")))
         .map(str::len)
         .chain(std::iter::once("Backend".len()))
         .max()
@@ -36,7 +36,9 @@ pub(crate) fn print_backend_list(scope: BackendScope) -> Result<()> {
     }
     let mut missing_runtime_count = 0_usize;
     for item in &rows {
-        let backend = json_str(&item, "id").unwrap_or("");
+        let backend = json_str(&item, "selector")
+            .or_else(|| json_str(&item, "id"))
+            .unwrap_or("");
         let selected = if json_bool(&item, "selected").unwrap_or(false) {
             "yes"
         } else {
@@ -132,17 +134,11 @@ pub(crate) fn select_backend_for_config_with_autostart(
         .get("data")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("Unable to read backend list."))?;
+    let backend = omniinfer_core::backend::names::resolve_rows(rows, backend)?;
     let backend_payload = rows
         .iter()
-        .find(|item| json_str(item, "id") == Some(backend))
-        .ok_or_else(|| {
-            let available = rows
-                .iter()
-                .filter_map(|item| json_str(item, "id"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            anyhow::anyhow!("Unsupported backend: {backend}\nAvailable backends: {available}")
-        })?;
+        .find(|row| json_str(row, "id") == Some(backend))
+        .expect("resolved backend row");
 
     let _payload = post_local_json_for_config_with_autostart(
         "/omni/backend/select",
@@ -153,7 +149,10 @@ pub(crate) fn select_backend_for_config_with_autostart(
     )?;
     local_state::save_selected_backend(backend)?;
     let profile = backend_profiles::ensure_backend_profile_template(backend_payload)?;
-    println!("Selected backend: {backend}");
+    println!(
+        "Selected backend: {}",
+        omniinfer_core::backend::names::selector(backend)
+    );
     if let Some(models_dir) = json_str(backend_payload, "models_dir") {
         println!("Models directory: {models_dir}");
     }

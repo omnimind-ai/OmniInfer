@@ -29,7 +29,7 @@ pub(super) fn gpu_backend_ids(host: HostInfo) -> &'static [&'static str] {
     }
 }
 
-pub(super) fn is_hardware_compatible(host: HostInfo, spec: &BackendSpec) -> bool {
+pub(super) fn is_architecture_compatible(host: HostInfo, spec: &BackendSpec) -> bool {
     let caps = spec
         .capabilities
         .iter()
@@ -44,6 +44,18 @@ pub(super) fn is_hardware_compatible(host: HostInfo, spec: &BackendSpec) -> bool
     if caps.contains(&"s390x") && host.machine != "s390x" {
         return false;
     }
+    true
+}
+
+pub(super) fn is_hardware_compatible(host: HostInfo, spec: &BackendSpec) -> bool {
+    if !is_architecture_compatible(host, spec) {
+        return false;
+    }
+    let caps = spec
+        .capabilities
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     if caps.contains(&"openvino") || caps.contains(&"eagle3") {
         return spec.binary_exists();
     }

@@ -73,7 +73,9 @@ fn advisor_system_text_prints_usable_backends() {
         .success()
         .stdout(predicate::str::contains("OmniInfer Advisor System"))
         .stdout(predicate::str::contains("Usable backends:"))
-        .stdout(predicate::str::contains(backend_id))
+        .stdout(predicate::str::contains(
+            omniinfer_core::backend::names::selector(backend_id),
+        ))
         .stdout(predicate::str::contains("Hidden backends:"));
     fs::remove_dir_all(source_root).ok();
     fs::remove_dir_all(state_root).ok();
@@ -147,7 +149,13 @@ fn advisor_fit_json_ranks_installed_backend() {
         .env("OMNIINFER_RUST_REPO_ROOT", &root)
         .args(["advisor", "fit"])
         .arg(&model)
-        .args(["--ctx-size", "512", "--json"])
+        .args([
+            "--ctx-size",
+            "512",
+            "--json",
+            "--backend",
+            omniinfer_core::backend::names::selector(backend_id),
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""object": "advisor.fit""#))

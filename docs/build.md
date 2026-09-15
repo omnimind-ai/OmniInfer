@@ -1,5 +1,7 @@
 # Building OmniInfer
 
+CLI commands accept [public backend selectors](backend-names.md). Platform build/release script paths and packaging IDs remain the legacy runtime IDs listed below.
+
 This guide explains how OmniInfer builds or installs local runtime backends from a source checkout.
 
 ## Build Model
@@ -71,7 +73,7 @@ The supported user-facing prebuilt runtime install command is implemented in Rus
 For example:
 
 ```bash
-./omniinfer backend install llama.cpp-linux
+./omniinfer backend install llama.cpp-cpu
 ```
 
 `./omniinfer build <backend>` and `./omniinfer build <backend> --prebuilt` are retained as compatibility aliases for the same prebuilt installer. Source builds are explicit and require a source checkout:
@@ -697,7 +699,7 @@ List the local backends:
 Select one backend:
 
 ```bash
-./omniinfer backend select llama.cpp-linux-vulkan
+./omniinfer backend select llama.cpp-vulkan
 ```
 
 Load a model:

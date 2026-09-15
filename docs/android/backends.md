@@ -1,5 +1,7 @@
 # Android Backend Reference
 
+Use the hyphenated [backend selectors](../backend-names.md#android-aar). Legacy slash names remain accepted with the same defaults.
+
 This document collects backend-specific Android integration details. For the short setup path, start with [integration.md](./integration.md).
 
 ## Backend Matrix
@@ -91,7 +93,7 @@ The llama.cpp submodule is pinned to `30b6a755e29692e8bc8e072885325716a2fee70f`
 (2026-09-09). Updating the dependency does not certify the device/model pairs
 below; their recorded limitations remain until native revalidation passes.
 
-Selecting `llama.cpp/htp`, `--device HTP0` or all GPU layers expresses a requested
+Selecting `llama.cpp-htp`, `--device HTP0` or all GPU layers expresses a requested
 accelerator, not verified all-NPU execution. With official `64e9bceb2` and the
 original OpenBMB MiniCPM5-2B GGUF assets, Q8_0 executes embedding `GET_ROWS` on CPU
 on SM8650/SM8750/SM8850, including an explicit HTP embedding override. Q4_K_M also

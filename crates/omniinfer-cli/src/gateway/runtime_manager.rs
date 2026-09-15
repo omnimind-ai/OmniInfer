@@ -261,9 +261,8 @@ pub(super) enum LoadModelOutcome {
 impl RustRuntimeManager {
     pub(super) fn select_backend(&mut self, backend_id: &str) -> Result<Value> {
         let registry = BackendRegistry::load_current();
-        let backend = registry
-            .get(backend_id)
-            .ok_or_else(|| anyhow::anyhow!("unsupported backend: {backend_id}"))?;
+        let backend = registry.resolve(backend_id)?;
+        let backend_id = backend.id.as_str();
         if self.selected_backend.as_deref() != Some(backend_id) {
             self.stop_runtime()?;
         }
@@ -272,6 +271,7 @@ impl RustRuntimeManager {
         Ok(json!({
             "ok": true,
             "selected_backend": backend_id,
+            "backend_selector": backend.selector(),
             "binary_exists": backend.binary_exists(),
             "models_dir": backend.models_dir,
         }))
@@ -801,9 +801,10 @@ impl RustRuntimeManager {
             ));
         }
         let registry = BackendRegistry::load_current();
-        let backend = registry.get(&backend_id).ok_or_else(|| {
-            AttachRuntimeError::bad_request(format!("unsupported backend: {backend_id}"))
-        })?;
+        let backend = registry
+            .resolve(&backend_id)
+            .map_err(|error| AttachRuntimeError::bad_request(error.to_string()))?;
+        let backend_id = backend.id.clone();
         if backend.runtime_mode != "external_server" {
             return Err(AttachRuntimeError::bad_request(format!(
                 "{} is not an external-server backend",
@@ -1049,7 +1050,7 @@ impl RustRuntimeManager {
     }
 
     pub(super) fn resolve_requested_backend(&self, payload: &Value) -> Result<String> {
-        payload
+        let requested = payload
             .get("backend")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
@@ -1062,7 +1063,11 @@ impl RustRuntimeManager {
                     .and_then(Value::as_str)
                     .map(str::to_string)
             })
-            .ok_or_else(|| anyhow::anyhow!("no installed backend available"))
+            .ok_or_else(|| anyhow::anyhow!("no installed backend available"))?;
+        Ok(BackendRegistry::load_current()
+            .resolve(&requested)?
+            .id
+            .clone())
     }
 
     pub(super) fn proxy_base_for_model(&mut self, requested_model: Option<&str>) -> Option<String> {

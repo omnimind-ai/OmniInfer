@@ -75,6 +75,12 @@ fn check_archived_decode_scoring(native_rate: Option<f64>, scored: u64) {
         .args([
             "bench",
             "run",
+            "--backend-id",
+            if cfg!(target_os = "linux") {
+                "llama.cpp-cuda"
+            } else {
+                "llama.cpp-linux-cuda"
+            },
             "--benchmark-id",
             benchmark_id,
             "--catalog-model-id",
@@ -105,6 +111,10 @@ fn check_archived_decode_scoring(native_rate: Option<f64>, scored: u64) {
     let printed_payload: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout)
         .expect("--json stdout is one JSON value");
     assert_eq!(printed_payload["benchmark_id"], benchmark_id);
+    assert_eq!(
+        printed_payload["backend"]["catalog_backend_id"],
+        "llama.cpp-linux-cuda"
+    );
 
     assert!(gateway.request().starts_with("GET /health HTTP/1.1"));
     assert!(gateway.request().starts_with("GET /omni/state HTTP/1.1"));

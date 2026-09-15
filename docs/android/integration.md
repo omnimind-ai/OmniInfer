@@ -1,5 +1,7 @@
 # Android Integration Guide
 
+Use the hyphenated [backend selectors](../backend-names.md#android-aar). Legacy slash names remain accepted with the same defaults.
+
 This is the short path for embedding OmniInfer into a third-party Android app.
 
 1. Add `android/omniinfer-server` as a Gradle module, or consume the published AAR.

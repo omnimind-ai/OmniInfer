@@ -408,7 +408,9 @@ impl ModelMenuColumns {
                 ModelMenuColumnKind::Disk => fallback_dash(&item.disk),
                 ModelMenuColumnKind::Ctx => fallback_dash(&item.ctx),
                 ModelMenuColumnKind::Fit => fallback_dash(&item.fit),
-                ModelMenuColumnKind::Backend => fallback_dash(&item.backend),
+                ModelMenuColumnKind::Backend => {
+                    fallback_dash(omniinfer_core::backend::names::selector(&item.backend))
+                }
                 ModelMenuColumnKind::Evidence => fallback_dash(&item.evidence),
             })
             .collect()
@@ -836,7 +838,13 @@ pub(super) fn print_section(title: &str, subtitle: &str) {
 }
 
 pub(super) fn print_chat_header(session: &ChatSession) {
-    print_section("Chat", &format!("Backend: {}", session.backend));
+    print_section(
+        "Chat",
+        &format!(
+            "Backend: {}",
+            omniinfer_core::backend::names::selector(&session.backend)
+        ),
+    );
     println!(
         "{} {}",
         paint("Commands", Tone::Muted),

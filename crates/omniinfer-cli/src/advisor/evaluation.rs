@@ -466,7 +466,7 @@ pub(super) fn next_load_command(
     recommended: &Value,
     ctx_size: u32,
 ) -> Option<String> {
-    let backend = json_str(recommended, "backend")?;
+    let backend = omniinfer_core::backend::names::selector(json_str(recommended, "backend")?);
     let model = shell_quote(json_str(model_info, "model")?);
     let mut parts = vec![
         "omniinfer".to_string(),

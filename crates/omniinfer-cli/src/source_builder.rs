@@ -14,9 +14,8 @@ pub(crate) fn build_backend(backend: &str, build_args: &[String]) -> Result<()> 
     }
 
     let registry = backend_registry::BackendRegistry::load_current();
-    if registry.get(backend).is_none() {
-        anyhow::bail!("Unsupported backend: {backend}");
-    }
+    let spec = registry.resolve(backend)?;
+    let backend = spec.id.as_str();
 
     let script = source_build_script(&scripts_root, backend);
     if !script.is_file() {
@@ -26,7 +25,7 @@ pub(crate) fn build_backend(backend: &str, build_args: &[String]) -> Result<()> 
         );
     }
 
-    println!("Building backend from source: {backend}");
+    println!("Building backend from source: {}", spec.selector());
     println!("Build script: {}", script.display());
     let mut command = source_build_command(&script, build_args);
     command.current_dir(&repo_root);

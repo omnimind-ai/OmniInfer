@@ -32,7 +32,8 @@ fn model_load_posts_payload_and_persists_state() {
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
-            "Auto-selected backend: {backend_id}"
+            "Auto-selected backend: {}",
+            omniinfer_core::backend::names::selector(backend_id)
         )))
         .stdout(predicate::str::contains("Model loaded"))
         .stdout(predicate::str::contains("ctx-size: 8192"));

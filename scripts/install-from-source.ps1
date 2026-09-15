@@ -541,21 +541,21 @@ Register-EngineEvent PowerShell.Exiting -Action {
 
 $BackendIds   = @()
 $BackendDescs = @()
-# The stable text table keeps backend IDs in its first column. Querying the
-# local CLI does not require starting or replacing a gateway.
-$rawOutput = (Invoke-OmniInfer backend list --scope compatible 2>$null) -join "`n"
-foreach ($line in $rawOutput -split "`n") {
-    $columns = $line.Trim() -split '\s+'
-    if ($columns.Count -eq 0) { continue }
-    $backendId = $columns[0]
-    if ($backendId -in @("", "Compatible", "Backend", "Install") -or $backendId -match '^-+$') {
-        continue
-    }
-    if ($backendId -match '^[a-zA-Z0-9._-]+$') {
+# Machine identities remain stable even when public menu selectors change.
+$rawOutput = (Invoke-OmniInfer backend list --scope compatible --json) -join "`n"
+if ($LASTEXITCODE -ne 0) { Stop-Fatal "Unable to query the backend catalog." }
+try {
+    $catalogRows = ($rawOutput | ConvertFrom-Json).data
+    foreach ($row in $catalogRows) {
+        $backendId = [string]$row.id
+        $selector = if ($row.selector) { [string]$row.selector } else { $backendId }
+        if ($backendId -notmatch '^[a-zA-Z0-9._-]+$' -or $selector -notmatch '^[a-zA-Z0-9._-]+$') {
+            throw "Invalid backend identity or selector"
+        }
         $BackendIds += $backendId
-        $BackendDescs += $backendId
+        $BackendDescs += $selector
     }
-}
+} catch { Stop-Fatal "Invalid backend catalog: $_" }
 
 if ($BackendIds.Count -eq 0) {
     Stop-Fatal "No backends found. Check your platform support."
@@ -591,7 +591,8 @@ if ($script:CudaEffectiveArch) {
 Write-Host ""
 
 if ($Backend) {
-    $SelectedBackend = $Backend
+    $SelectedBackend = (Invoke-OmniInfer backend resolve $Backend) -join "`n"
+    if ($LASTEXITCODE -ne 0) { Stop-Fatal "Unsupported backend: $Backend" }
 } else {
     $Prebuilt = $false
     $prebuiltIds = @()

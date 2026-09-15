@@ -64,6 +64,8 @@ pub enum ModelLoadError {
         selected: String,
     },
     #[error("{0}")]
+    BackendName(#[from] crate::backend::names::ResolveError),
+    #[error("{0}")]
     BackendArgs(#[from] crate::backend_args::BackendArgError),
     #[error("Failed to load the model.")]
     MissingResult,
@@ -83,11 +85,13 @@ pub fn build_model_load_payload(
 ) -> Result<ModelLoadPlan, ModelLoadError> {
     let (mut backend_id, auto_selected) =
         select_backend(backends, recommended_backend, selected_backend)?;
+    backend_id = crate::backend::names::resolve_rows(backends, &backend_id)?.to_string();
     let mut backend = find_backend(backends, &backend_id)
         .ok_or_else(|| ModelLoadError::SelectedBackendMissing(backend_id.clone()))?;
 
     if let Some(profile) = profile {
         if let Some(profile_backend) = profile.backend_id.as_deref() {
+            let profile_backend = crate::backend::names::resolve_rows(backends, profile_backend)?;
             if profile_backend != backend_id {
                 if selected_backend.is_some() {
                     return Err(ModelLoadError::ProfileBackendMismatch {
@@ -405,6 +409,72 @@ mod tests {
             serde_json::json!(["--timing-detail", "phase"])
         );
         assert!(plan.payload.get("ctx_size").is_none());
+        std::fs::remove_dir_all(cwd).ok();
+    }
+
+    #[test]
+    fn public_selector_and_legacy_profile_produce_identical_load_plans() {
+        let cwd = temp_dir("selector-profile");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(cwd.join("model.gguf"), "").unwrap();
+        let mut row = backend("llama.cpp-linux-cuda", "llama.cpp", true);
+        row["selector"] = serde_json::json!("llama.cpp-cuda");
+        let rows = [row];
+        let request = ModelLoadRequest {
+            model: "model.gguf".into(),
+            ..Default::default()
+        };
+        let mut profile = BackendProfile {
+            path: cwd.join("profile.json"),
+            backend_id: Some("llama.cpp-linux-cuda".into()),
+            family: Some("llama.cpp".into()),
+            load_extra_args: vec!["-ngl".into(), "99".into()],
+            infer_extra_args: vec![],
+        };
+        let legacy = build_model_load_payload(
+            &request,
+            &rows,
+            None,
+            Some("llama.cpp-linux-cuda"),
+            Some(&profile),
+            &cwd,
+        )
+        .unwrap();
+        let alias = build_model_load_payload(
+            &request,
+            &rows,
+            None,
+            Some("llama.cpp-cuda"),
+            Some(&profile),
+            &cwd,
+        )
+        .unwrap();
+        assert_eq!(legacy, alias);
+        profile.backend_id = Some("llama.cpp-cuda".into());
+        assert_eq!(
+            legacy,
+            build_model_load_payload(
+                &request,
+                &rows,
+                None,
+                Some("llama.cpp-linux-cuda"),
+                Some(&profile),
+                &cwd
+            )
+            .unwrap()
+        );
+        profile.backend_id = Some("other-backend".into());
+        assert!(
+            build_model_load_payload(
+                &request,
+                &rows,
+                None,
+                Some("llama.cpp-cuda"),
+                Some(&profile),
+                &cwd
+            )
+            .is_err()
+        );
         std::fs::remove_dir_all(cwd).ok();
     }
 

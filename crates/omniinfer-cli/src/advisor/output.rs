@@ -1,4 +1,5 @@
 use super::*;
+use omniinfer_core::backend::names::selector;
 use std::io::IsTerminal;
 
 use crossterm::style::{Color, Stylize, style};
@@ -77,6 +78,7 @@ pub fn print_system(payload: &Value, json_output: bool) -> Result<()> {
     let recommended_installed = summary
         .and_then(|value| value.get("recommended_installed_backend"))
         .and_then(Value::as_str)
+        .map(selector)
         .map(str::to_string)
         .unwrap_or_else(|| {
             if installed_count == 0 {
@@ -98,6 +100,7 @@ pub fn print_system(payload: &Value, json_output: bool) -> Result<()> {
             .and_then(|value| value.get("recommended_backend_to_install"))
             .and_then(Value::as_str)
     {
+        let candidate = selector(candidate);
         println!("  Recommended backend to install: {candidate}");
         println!("  Install command: omniinfer backend install {candidate}");
     }
@@ -153,7 +156,7 @@ pub fn print_fit(payload: &Value, json_output: bool) -> Result<()> {
     if recommended.is_object() {
         println!(
             "Recommended backend: {}",
-            json_str(recommended, "backend").unwrap_or("-")
+            selector(json_str(recommended, "backend").unwrap_or("-"))
         );
         println!("Fit: {}", json_str(recommended, "fit").unwrap_or("-"));
         println!(
@@ -191,7 +194,7 @@ pub fn print_fit(payload: &Value, json_output: bool) -> Result<()> {
         for candidate in alternatives.iter().take(5) {
             println!(
                 "  {}: fit={}, installed={}",
-                json_str(candidate, "backend").unwrap_or("-"),
+                selector(json_str(candidate, "backend").unwrap_or("-")),
                 json_str(candidate, "fit").unwrap_or("-"),
                 if json_bool(candidate, "installed").unwrap_or(false) {
                     "yes"
@@ -299,7 +302,7 @@ pub fn print_recommend(payload: &Value, json_output: bool) -> Result<()> {
         println!("{}. {}", index + 1, json_str(model, "model").unwrap_or("-"));
         println!(
             "   backend={} fit={} score={} confidence={} evidence={}",
-            json_str(recommended, "backend").unwrap_or("-"),
+            selector(json_str(recommended, "backend").unwrap_or("-")),
             json_str(recommended, "fit").unwrap_or("-"),
             json_number_string(row, "score"),
             json_str(row, "recommendation_confidence").unwrap_or("-"),
@@ -339,7 +342,7 @@ fn print_usable_backends(payload: &Value) {
                 .collect::<Vec<_>>()
                 .join(", ");
             vec![
-                json_str(backend, "id").unwrap_or("-").to_string(),
+                selector(json_str(backend, "id").unwrap_or("-")).to_string(),
                 json_str(backend, "family").unwrap_or("-").to_string(),
                 if capabilities.is_empty() {
                     "-".to_string()

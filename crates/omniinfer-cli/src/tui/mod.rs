@@ -267,6 +267,18 @@ mod backend_model_tests {
     }
 
     #[test]
+    fn selected_backend_summary_displays_public_selector() {
+        let payload = serde_json::json!({"data": [{
+            "id": "llama.cpp-linux-cuda", "selector": "llama.cpp-cuda",
+            "installed": true, "hardware_compatible": true, "selected": true
+        }]});
+        assert_eq!(
+            selected_backend_line(&payload, Some("llama.cpp-linux-cuda")),
+            "Backend: llama.cpp-cuda (installed, compatible)"
+        );
+    }
+
+    #[test]
     fn model_picker_uses_explicit_backend_over_persisted_selection() {
         let backends = serde_json::json!({
             "data": [

@@ -480,19 +480,22 @@ echo ""
 declare -a BACKEND_IDS=()
 declare -a BACKEND_DESCS=()
 
-# Query the local CLI catalog directly. Backend discovery must not start,
-# replace, or stop a gateway owned by another process. The stable text table
-# keeps backend IDs in its first column.
-while IFS= read -r line; do
-    id="$(printf '%s\n' "${line}" | awk '{print $1}')"
-    case "${id}" in
-        ""|Compatible|Backend|Install|---*) continue ;;
-    esac
-    if [[ "${id}" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-        BACKEND_IDS+=("${id}")
-        BACKEND_DESCS+=("${id}")
-    fi
-done <<< "$(omniinfer_cmd backend list --scope compatible 2>/dev/null)"
+# Read machine identities separately from public menu selectors. Discovery is local.
+backend_catalog="$(omniinfer_cmd backend list --scope compatible --json)" ||
+    fatal "Unable to query the backend catalog."
+backend_rows="$(printf '%s' "${backend_catalog}" | python3 -c '
+import json, re, sys
+for row in json.load(sys.stdin)["data"]:
+    identity, selector = row["id"], row.get("selector", row["id"])
+    if not all(re.fullmatch(r"[a-zA-Z0-9._-]+", value) for value in (identity, selector)):
+        raise ValueError("Invalid backend identity or selector")
+    print(identity + "\t" + selector)
+')" || fatal "Invalid backend catalog."
+while IFS=$'\t' read -r id selector; do
+    [[ -n "${id}" ]] || continue
+    BACKEND_IDS+=("${id}")
+    BACKEND_DESCS+=("${selector}")
+done <<< "${backend_rows}"
 
 if [[ ${#BACKEND_IDS[@]} -eq 0 ]]; then
     fatal "No backends found. Check your platform support."
@@ -508,7 +511,8 @@ esac
 # Backend selection loop: select → check build deps → re-select if missing
 while true; do
     if [[ -n "${BACKEND_OVERRIDE}" ]]; then
-        SELECTED_BACKEND="${BACKEND_OVERRIDE}"
+        SELECTED_BACKEND="$(omniinfer_cmd backend resolve "${BACKEND_OVERRIDE}")" ||
+            fatal "Unsupported backend: ${BACKEND_OVERRIDE}"
     else
         PREBUILT_MODE=0
         _prebuilt_ids=()

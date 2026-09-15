@@ -1,5 +1,7 @@
 # OmniInfer CLI Guide
 
+Backend names use hyphenated selectors; see [names and legacy compatibility](backend-names.md).
+
 This guide shows how to use the OmniInfer desktop CLI on Linux, macOS, and Windows.
 Android and iOS use the embedded modules under `android/` and `ios/`.
 
@@ -7,9 +9,9 @@ Android and iOS use the embedded modules under `android/` and `ios/`.
 
 If you are running OmniInfer from a source checkout, prepare at least one local runtime backend before using the CLI.
 
-- Windows: build or install one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`; managed `vllm-wsl2-cuda` and `vllm-wsl2-rocm` are available for supported WSL2-capable NVIDIA and AMD systems. See [Build Guide: Windows](build.md#windows).
-- Linux: build one of `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `stable-diffusion.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, `llama.cpp-linux-openvino`, or `vllm-linux-cuda` first. See [Build Guide: Linux](build.md#linux).
-- macOS: build `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac` first. See [Build Guide: macOS](build.md#macos).
+- Windows: build or install one of `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-cpu-arm64`, `llama.cpp-sycl`, or `llama.cpp-hip`; managed `vllm-wsl2-cuda` and `vllm-wsl2-rocm` are available for supported WSL2-capable NVIDIA and AMD systems. See [Build Guide: Windows](build.md#windows).
+- Linux: build one of `llama.cpp-cpu`, `llama.cpp-rocm`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-cpu-s390x`, `llama.cpp-openvino`, or `vllm-cuda` first. See [Build Guide: Linux](build.md#linux).
+- macOS: build `llama.cpp-metal`, `llama.cpp-cpu`, `turboquant-metal`, or `mlx-metal` first. See [Build Guide: macOS](build.md#macos).
 
 If you are using a packaged release that already includes `runtime/`, you can skip this preparation step and jump straight to the CLI commands below.
 Packaged releases do not include the `omniinfer build` command; backend builds are source-checkout tooling only.
@@ -80,7 +82,7 @@ The default install mode is prebuilt. It downloads every runtime and companion a
 For example:
 
 ```sh
-./omniinfer backend install llama.cpp-linux
+./omniinfer backend install llama.cpp-cpu
 ```
 
 Windows:
@@ -187,9 +189,9 @@ Windows:
 
 Examples:
 
-- Linux: `llama.cpp-linux`, `llama.cpp-linux-rocm`, `llama.cpp-linux-vulkan`, `stable-diffusion.cpp-linux-vulkan`, `llama.cpp-linux-s390x`, `llama.cpp-linux-openvino`, `vllm-linux-cuda`, `vla.cpp-linux`, or `vla.cpp-linux-cuda`
-- macOS: `llama.cpp-mac`, `llama.cpp-mac-intel`, `turboquant-mac`, or `mlx-mac`
-- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-windows-arm64`, `llama.cpp-sycl`, `llama.cpp-hip`, or managed `vllm-wsl2-cuda` / `vllm-wsl2-rocm`
+- Linux: `llama.cpp-cpu`, `llama.cpp-rocm`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-cpu-s390x`, `llama.cpp-openvino`, `vllm-cuda`, `vla.cpp-cpu`, or `vla.cpp-cuda`
+- macOS: `llama.cpp-metal`, `llama.cpp-cpu`, `turboquant-metal`, or `mlx-metal`
+- Windows: `llama.cpp-cpu`, `llama.cpp-cuda`, `llama.cpp-vulkan`, `stable-diffusion.cpp-vulkan`, `llama.cpp-cpu-arm64`, `llama.cpp-sycl`, `llama.cpp-hip`, or managed `vllm-wsl2-cuda` / `vllm-wsl2-rocm`
 
 When you select a desktop backend, OmniInfer also creates a backend-specific JSON config template under:
 
@@ -251,7 +253,7 @@ Estimate fit and get a recommended backend:
 
 ```sh
 ./omniinfer advisor fit /path/to/model.gguf --ctx-size 8192
-./omniinfer advisor fit Qwen/Qwen2.5-7B-Instruct --backend vllm-linux-cuda --json
+./omniinfer advisor fit Qwen/Qwen2.5-7B-Instruct --backend vllm-cuda --json
 ```
 
 Plan hardware requirements for a model:
@@ -291,7 +293,7 @@ For `vllm-linux-cuda`, `vllm-wsl2-cuda`, and `vllm-wsl2-rocm`, OmniInfer passes 
 For `vla.cpp-*`, OmniInfer starts and supervises the managed `vla-server` process. vla.cpp uses its own ZeroMQ/protobuf action-prediction protocol instead of the OpenAI chat API, so VLA clients should connect to the reported loopback endpoint with vla.cpp's `src/serving/vla.proto` contract. The gateway does not translate or publish that unauthenticated protocol: `/v1/chat/completions` and `/v1/messages` return `422` while a VLA runtime is loaded. The model must be a VLA checkpoint file path, such as a GGUF or safetensors file. Pass `--mmproj` when the selected VLA architecture requires a separate vision tower GGUF. vla.cpp server-native flags such as `--config` and `--timing-detail phase` can be passed after `--`.
 
 ```sh
-./omniinfer backend select vla.cpp-linux-cuda
+./omniinfer backend select vla.cpp-cuda
 ./omniinfer load -m /models/smolvla/smolvla-libero.gguf --mmproj /models/smolvla/mmproj.gguf -- --timing-detail phase
 ```
 
@@ -304,7 +306,7 @@ This Q4 example follows the upstream low-VRAM defaults while enabling Vulkan
 flash attention:
 
 ```sh
-./omniinfer backend select stable-diffusion.cpp-linux-vulkan
+./omniinfer backend select stable-diffusion.cpp-vulkan
 ./omniinfer load -m /models/MiniMax-H3-FL2VA-Q4/minimax_h3_fl2va_pruned-Q4_K.gguf -- \
   --llm /models/MiniMax-H3-FL2VA-Q4/qwen3vl_32b_minimax_h3-Q4_K_M.gguf \
   --vae /models/MiniMax-H3-FL2VA-Q4/vae/minimax_h3_video_vae_fp16.safetensors \
@@ -354,7 +356,7 @@ Vision-language model:
 For `mlx-mac`, use a vision-capable model directory instead of a `.gguf` file or `mmproj` sidecar:
 
 ```sh
-./omniinfer backend select mlx-mac
+./omniinfer backend select mlx-metal
 ./omniinfer load -m /path/to/mlx-vlm-model-directory
 ./omniinfer chat \
   --image /path/to/image.jpg \
@@ -376,7 +378,7 @@ Example:
 vLLM example:
 
 ```sh
-./omniinfer backend select vllm-linux-cuda
+./omniinfer backend select vllm-cuda
 ./omniinfer load -m Qwen/Qwen3.5-4B-Instruct -- --max-model-len 8192 --gpu-memory-utilization 0.85
 ```
 
@@ -533,7 +535,7 @@ If you already know the model to serve, the same command can start the gateway, 
 ```sh
 ./omniinfer serve \
   --cloudflare \
-  --backend llama.cpp-linux-cuda \
+  --backend llama.cpp-cuda \
   --model /path/to/model.gguf \
   --ctx-size 8192 \
   --api-key auto \
@@ -585,7 +587,7 @@ For a fixed HTTPS hostname behind a trusted reverse proxy such as nginx + frp, k
 
 ```sh
 ./omniinfer serve \
-  --backend llama.cpp-linux-cuda \
+  --backend llama.cpp-cuda \
   --public-model-root /path/to/public_models \
   --api-key oi_inference_key \
   --allow-remote-management \

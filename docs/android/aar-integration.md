@@ -1,5 +1,7 @@
 # Android AAR Integration
 
+Use the hyphenated [backend selectors](../backend-names.md#android-aar). Legacy slash names remain accepted with the same defaults.
+
 This guide is for Android apps that consume OmniInfer as a Maven AAR.
 
 OmniInfer starts an on-device OpenAI-compatible HTTP server inside your app
@@ -224,16 +226,16 @@ val ok = OmniInferServer.loadModel(
 OmniInfer first matches `modelPath` against the bundled catalog file names. If
 it finds a match, it applies the catalog's backend, thread, context, and load
 defaults automatically. If there is no catalog match, it falls back by file
-extension for the backends included in this AAR: `.gguf` -> `llama.cpp/cpu`,
-`.litertlm` -> `litert/gpu`.
+extension for the backends included in this AAR: `.gguf` -> `llama.cpp-cpu`,
+`.litertlm` -> `litert-lm-gpu`.
 
 For explicit selection, use these public backend names:
 
 | Runtime | `backend` selector | Notes |
 |---|---|---|
-| llama.cpp CPU | `OmniInferBackend.LLAMA_CPP_CPU` / `"llama.cpp/cpu"` | No accelerator options |
-| llama.cpp HTP | `OmniInferBackend.LLAMA_CPP_HTP` / `"llama.cpp/htp"` | Adds `HTP0`, offload, and HTP batch defaults |
-| LiteRT-LM GPU | `OmniInferBackend.LITERT_GPU` / `"litert/gpu"` | Adds LiteRT GPU backend defaults |
+| llama.cpp CPU | `OmniInferBackend.LLAMA_CPP_CPU` / `"llama.cpp-cpu"` | No accelerator options |
+| llama.cpp HTP | `OmniInferBackend.LLAMA_CPP_HTP` / `"llama.cpp-htp"` | Adds `HTP0`, offload, and HTP batch defaults |
+| LiteRT-LM GPU | `OmniInferBackend.LITERT_GPU` / `"litert-lm-gpu"` | Adds LiteRT GPU backend defaults |
 
 Useful overrides stay small:
 
