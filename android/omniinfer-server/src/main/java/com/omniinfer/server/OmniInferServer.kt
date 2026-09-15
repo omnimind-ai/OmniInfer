@@ -8,13 +8,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
-object OmniInferBackend {
-    const val AUTO = "auto"
-    const val LLAMA_CPP_CPU = "llama.cpp/cpu"
-    const val LLAMA_CPP_HTP = "llama.cpp/htp"
-    const val LITERT_GPU = "litert/gpu"
-}
-
 data class OmniInferLoadOptions(
     val backend: String = OmniInferBackend.AUTO,
     val port: Int = 9099,
@@ -35,7 +28,6 @@ data class OmniInferLoadOptions(
  */
 object OmniInferServer {
     private const val TAG = "OmniInferServer"
-    private const val UNSUPPORTED_AUTO_BACKEND = "__unsupported_auto_backend__"
 
     private var appContext: Context? = null
     private var serverPort: Int = 9099
@@ -133,7 +125,7 @@ object OmniInferServer {
     /**
      * Load a model and start the server.
      * @param modelPath absolute path to model file (GGUF or .litertlm for auto backend inference)
-     * @param backend backend selector: "auto", "llama.cpp/cpu", "llama.cpp/htp", "litert/gpu",
+     * @param backend backend selector: "auto", "llama.cpp-cpu", "llama.cpp-htp", "litert-lm-gpu",
      *   or a legacy framework name such as "llama.cpp" / "litert".
      * @param port local server port (default 9099)
      * @param nThreads CPU threads (0 = auto)
@@ -183,7 +175,7 @@ object OmniInferServer {
             extraConfig = extraConfig,
             preferCatalogDefaults = preferCatalogDefaults,
         )
-        if (resolved.selector == UNSUPPORTED_AUTO_BACKEND) {
+        if (resolved.selector == BackendSelectors.UNSUPPORTED_AUTO_BACKEND) {
             lastError = "Auto backend inference supports catalog models, .gguf, and .litertlm/.litert files in this AAR. " +
                 "Pass a supported backend selector explicitly for other formats."
             Log.e(TAG, lastError)
@@ -326,16 +318,16 @@ object OmniInferServer {
         )
         val catalogDefaults = if (preferCatalogDefaults) catalogConfig else null
         val initialExtra = mergedExtraConfig(initialSelector, catalogDefaults, extraConfig)
-        val normalizedSelector = refineSelectorWithExtra(initialSelector, initialExtra)
+        val normalizedSelector = BackendSelectors.refineSelectorWithExtra(initialSelector, initialExtra)
         val baseExtra = if (normalizedSelector == initialSelector) {
             initialExtra
         } else {
             mergedExtraConfig(normalizedSelector, catalogDefaults, extraConfig)
         }
 
-        val bridgeBackend = bridgeBackendFor(normalizedSelector)
-        val defaultThreads = defaultThreadsFor(normalizedSelector)
-        val defaultCtx = defaultCtxFor(normalizedSelector)
+        val bridgeBackend = BackendSelectors.bridgeBackendFor(normalizedSelector)
+        val defaultThreads = BackendSelectors.defaultThreadsFor(normalizedSelector)
+        val defaultCtx = BackendSelectors.defaultCtxFor(normalizedSelector)
 
         return ResolvedLoadConfig(
             selector = normalizedSelector,
@@ -377,24 +369,11 @@ object OmniInferServer {
                 val accelerator = config.extraConfig["accelerator"]
                     ?: config.extraConfig["backend_type"]
                     ?: config.extraConfig["litert_backend"]
-                selectorFor(config.backend, accelerator)
+                BackendSelectors.selectorFor(config.backend, accelerator)
             }
-            return fromCatalog ?: inferBackendFromPath(modelPath)
+            return fromCatalog ?: BackendSelectors.inferBackendFromPath(modelPath)
         }
-        return when (raw) {
-            "llama", "llamacpp", "llama-cpp", "llama.cpp", "llama.cpp/cpu",
-            "llamacpp-cpu", "llama-cpp-cpu" -> OmniInferBackend.LLAMA_CPP_CPU
-
-            "llama.cpp/htp", "llama.cpp/npu", "llamacpp-htp", "llama-cpp-htp",
-            "llamacpp-npu", "llama-cpp-npu", "llama-htp", "llama-npu" ->
-                OmniInferBackend.LLAMA_CPP_HTP
-
-            "litert", "litert-lm", "litertlm", "litert/cpu", "litert-lm/cpu" -> "litert/cpu"
-            "litert/gpu", "litert-lm/gpu", "litertlm-gpu", "litert-gpu" ->
-                OmniInferBackend.LITERT_GPU
-
-            else -> selector
-        }
+        return BackendSelectors.normalizeExplicit(selector)
     }
 
     private fun mergedExtraConfig(
@@ -402,101 +381,10 @@ object OmniInferServer {
         catalogDefaults: OmniInferModelLoadConfig?,
         extraConfig: Map<String, String>,
     ): Map<String, String> {
-        val result = defaultExtraConfig(selector).toMutableMap()
+        val result = BackendSelectors.defaultExtraConfig(selector).toMutableMap()
         catalogDefaults?.extraConfig?.let { result.putAll(it) }
         result.putAll(extraConfig)
         return result
-    }
-
-    private fun refineSelectorWithExtra(
-        selector: String,
-        extraConfig: Map<String, String>,
-    ): String {
-        val accelerator = extraConfig["accelerator"]?.lowercase(Locale.US)
-        val backendType = extraConfig["backend_type"]?.lowercase(Locale.US)
-        val liteRtBackend = extraConfig["litert_backend"]?.lowercase(Locale.US)
-        return when {
-            selector == OmniInferBackend.LLAMA_CPP_CPU &&
-                (accelerator == "htp" || accelerator == "npu" || backendType == "npu") ->
-                OmniInferBackend.LLAMA_CPP_HTP
-
-            selector == "litert/cpu" && (backendType == "gpu" || liteRtBackend == "gpu") ->
-                OmniInferBackend.LITERT_GPU
-
-            selector == "mnn/cpu" && backendType == "opencl" -> "mnn/opencl"
-            selector == "mnn/cpu" && backendType == "vulkan" -> "mnn/vulkan"
-            else -> selector
-        }
-    }
-
-    private fun selectorFor(backend: String, accelerator: String?): String {
-        val normalizedBackend = backend.lowercase(Locale.US)
-        val normalizedAccelerator = accelerator?.lowercase(Locale.US)
-        return when {
-            normalizedBackend == "llama.cpp" && normalizedAccelerator == "htp" ->
-                OmniInferBackend.LLAMA_CPP_HTP
-            normalizedBackend == "llama.cpp" && normalizedAccelerator == "npu" ->
-                OmniInferBackend.LLAMA_CPP_HTP
-            normalizedBackend == "litert" && normalizedAccelerator == "gpu" ->
-                OmniInferBackend.LITERT_GPU
-            normalizedBackend == "litert" -> "litert/cpu"
-            normalizedBackend == "llama.cpp" -> OmniInferBackend.LLAMA_CPP_CPU
-            else -> backend
-        }
-    }
-
-    private fun inferBackendFromPath(modelPath: String): String {
-        val lower = modelPath.lowercase(Locale.US)
-        return when {
-            lower.endsWith(".litertlm") || lower.endsWith(".litert") -> OmniInferBackend.LITERT_GPU
-            lower.endsWith(".gguf") -> OmniInferBackend.LLAMA_CPP_CPU
-            else -> UNSUPPORTED_AUTO_BACKEND
-        }
-    }
-
-    private fun bridgeBackendFor(selector: String): String {
-        return when (selector.lowercase(Locale.US)) {
-            OmniInferBackend.LLAMA_CPP_CPU, OmniInferBackend.LLAMA_CPP_HTP -> "llama.cpp"
-            "litert/cpu", OmniInferBackend.LITERT_GPU -> "litert"
-            "mnn/cpu", "mnn/opencl", "mnn/vulkan" -> "mnn"
-            else -> selector
-        }
-    }
-
-    private fun defaultThreadsFor(selector: String): Int {
-        return when (selector.lowercase(Locale.US)) {
-            OmniInferBackend.LLAMA_CPP_HTP -> 6
-            "litert/cpu" -> 4
-            else -> 0
-        }
-    }
-
-    private fun defaultCtxFor(selector: String): Int {
-        return when (selector.lowercase(Locale.US)) {
-            else -> 8192
-        }
-    }
-
-    private fun defaultExtraConfig(selector: String): Map<String, String> {
-        return when (selector.lowercase(Locale.US)) {
-            OmniInferBackend.LLAMA_CPP_HTP -> mapOf(
-                "accelerator" to "htp",
-                "backend_type" to "npu",
-                "llama_device" to "HTP0",
-                "n_gpu_layers" to "99",
-                "batch_size" to "1024",
-                "ubatch_size" to "1024",
-                "hexagon_opfilter" to "SSM_CONV",
-            )
-            OmniInferBackend.LITERT_GPU -> mapOf(
-                "backend_type" to "gpu",
-                "litert_backend" to "gpu",
-            )
-            "litert/cpu" -> mapOf("backend_type" to "cpu")
-            "mnn/opencl" -> mapOf("backend_type" to "opencl")
-            "mnn/vulkan" -> mapOf("backend_type" to "vulkan")
-            else -> emptyMap()
-        }
     }
 
     private fun waitForHealth(port: Int, timeoutMs: Long = 5000): Boolean {

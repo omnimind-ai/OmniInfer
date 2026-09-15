@@ -63,3 +63,41 @@ remain legacy runtime IDs. `label` uses the hyphenated selector. Clients should
 use `selector` for display/input and `id` for stored identity, with an `id` fallback
 when talking to an older service. Registry rows also expose
 `architecture_compatible`, separately from runtime hardware detection.
+
+## Commands and script integration
+
+```bash
+omniinfer backend list
+omniinfer backend install llama.cpp-cpu
+omniinfer backend select llama.cpp-cpu
+omniinfer backend resolve llama.cpp-cpu
+omniinfer backend list --scope all --json
+```
+
+`backend resolve` prints only the stable runtime ID and never starts a gateway.
+With `--json`, it prints the resolved registry row. Source installers use
+`backend list --json` (`data[].id` for build paths, `data[].selector` for menus);
+do not parse the human table to construct paths. Installation, selection, source
+builds and `serve --backend` accept either name. Model load resolves saved selections
+and explicit profile backend fields to the same ID before comparing them.
+`bench run --backend-id` accepts a selector but emits the unchanged catalog ID.
+Old environment variable prefixes and platform build script paths remain valid.
+
+## Android AAR
+
+| Recommended selector | Accepted legacy examples | JNI engine |
+|---|---|---|
+| `llama.cpp-cpu` | `llama.cpp/cpu`, `llama.cpp`, `llama` | `llama.cpp` |
+| `llama.cpp-htp` | `llama.cpp/htp`, `llama.cpp/npu`, `llama-htp` | `llama.cpp` |
+| `litert-lm-cpu` | `litert/cpu`, `litert-lm/cpu`, `litert`, `litert-lm` | `litert` |
+| `litert-lm-gpu` | `litert/gpu`, `litert-lm/gpu`, `litert-gpu` | `litert` |
+| `mnn-cpu` | `mnn/cpu` | `mnn` |
+| `mnn-opencl` | `mnn/opencl` | `mnn` |
+| `mnn-vulkan` | `mnn/vulkan` | `mnn` |
+
+These names select existing integrations; they do not add runtime support. Bare
+LiteRT aliases still choose CPU; `auto` for `.litertlm` still chooses GPU. HTP
+keeps its existing thread, device, offload and SSM_CONV defaults. Existing slash
+strings, including constants inlined into older clients, are still accepted.
+Extra config retains precedence over defaults. Lower-level JNI engine names,
+model catalog IDs and build properties are unchanged.
