@@ -1,6 +1,5 @@
 import importlib.util
 import subprocess
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -80,12 +79,13 @@ class BenchmarkContractTests(unittest.TestCase):
                 self.assertNotIn(b"\r", raw, name)
                 (repository / relative / name).write_bytes(raw)
             def git(*args):
-                subprocess.run(["git", *args], cwd=repository, check=True, capture_output=True)
+                result = subprocess.run(["git", *args], cwd=repository, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, f"git {args}: {result.stderr}")
             git("init", "--quiet")
             git("config", "core.autocrlf", "true")
             git("add", ".gitattributes", "benchmarks/contract")
             checkout = Path(directory) / "checkout"
-            git("checkout-index", "--all", "--prefix=" + str(checkout) + os.sep)
+            git("checkout-index", "--all", "--prefix=" + checkout.as_posix() + "/")
             for name, raw in originals.items():
                 self.assertEqual((checkout / relative / name).read_bytes(), raw, name)
             CONTRACT.check_contract(checkout / relative)
