@@ -101,3 +101,12 @@ keeps its existing thread, device, offload and SSM_CONV defaults. Existing slash
 strings, including constants inlined into older clients, are still accepted.
 Extra config retains precedence over defaults. Lower-level JNI engine names,
 model catalog IDs and build properties are unchanged.
+
+## iOS Swift facade
+
+`OmniInferServer.loadModel(backend:)` accepts `llama.cpp-metal` and `mlx-metal`,
+alongside legacy `llama.cpp` and `mlx`. It resolves the name before comparing the
+loaded engine, so using the other spelling does not reload the same model.
+The native bridge still receives `llama.cpp`; existing `nGpuLayers` and other load
+parameters are unchanged. Unsupported names fail before unloading a model.
+These Swift engine identities are distinct from the standalone registry IDs above.

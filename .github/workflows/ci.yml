@@ -115,3 +115,12 @@ jobs:
         run: |
           .\tests\test_release_installer.ps1
           .\tests\test_source_installer.ps1
+
+  apple-backend-selectors:
+    name: Apple Backend Selectors
+    runs-on: macos-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test Swift backend selector compatibility
+        run: bash tests/test_ios_backend_selectors.sh
