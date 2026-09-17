@@ -213,3 +213,70 @@ WARMUP=10 TIMED=10 \
 
 仅比较 engine 时，所有实现必须使用 prepared 输入；比较机器人真实部署延迟时，所有实现必须包含
 同样的图像、语言、状态处理和 decode。
+
+## 6. OmniInfer-VLA-Fast Pi0.5 对照
+
+仓库通过 `framework/OmniInfer-VLA-Fast` 子模块集成。
+它使用 Rust/CUDA 的 OIVF 引擎，和 OmniInfer 的 Pi0.5 对照时保持同一 checkpoint、三路
+480x640 F32 RGB 图像、8-D state、原生 task tokenizer、50x7 输出和固定 diffusion noise。
+Fast 与 OmniInfer-VLA 共用第 2.2 节创建的 `.venv`，不需要再创建一套 Python 环境。
+
+### 6.1 安装 OmniInfer-VLA-Fast 环境
+
+先按第 2 节安装基础工具，并准备好 `framework/OmniInfer-VLA` 环境。Fast 与 OmniInfer-VLA 共用同一个 Python 环境。
+
+Jetson Thor 执行：
+
+```bash
+cd ~/OmniInfer/framework/OmniInfer-VLA
+uv sync
+uv pip install --python .venv/bin/python maturin
+
+OIVF_CUDA_ARCH=sm_110 CARGO_TARGET_DIR=target/wheel \
+  ../OmniInfer-VLA/.venv/bin/maturin build \
+  --release --features cuda --auditwheel skip \
+  -m oivf/crates/oivf-py/Cargo.toml
+
+uv pip install --python ../OmniInfer-VLA/.venv/bin/python \
+  target/wheel/wheels/oivf_py-*.whl
+
+uv pip install --python ../OmniInfer-VLA/.venv/bin/python \
+  --no-build-isolation --no-deps \
+  -e . -e oivf/python/oivf
+```
+
+验证安装：
+
+```bash
+../OmniInfer-VLA/.venv/bin/python -c \
+'import oivf_py, oivf, omniinfer_vla_fast; print("OmniInfer-VLA-Fast 环境 OK")'
+```
+
+### 6.2 测试方法
+
+默认使用第 3 节中的模型和 tokenizer，输入配置为：
+
+- 3 路 `480×640` F32 RGB 图像
+- 8-D state
+- 原生 task tokenizer，约 48 个语言 token
+- BF16 推理
+- 输出 `50×7` action
+- 预热 10 次，正式测试 10 次
+
+#### 无损版
+
+```bash
+cd ~/OmniInfer
+WARMUP=10 TIMED=10 \
+  ./scripts/benchmark_omniinfer_vla_fast_pi05_zmq.sh
+```
+
+#### 有损版：one-step pruning
+
+```bash
+cd ~/OmniInfer
+WARMUP=10 TIMED=10 \
+  ./scripts/benchmark_omniinfer_vla_fast_pi05_pruning_zmq.sh
+```
+
+该版本将 diffusion 推理从 10 步降为 1 步，并启用 warm-start，属于有损优化。其输出可直接与上面的 JSON tactics 无损版本进行性能和结果对比。
