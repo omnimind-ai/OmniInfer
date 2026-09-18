@@ -12,7 +12,7 @@ import java.security.MessageDigest
  * Expected engine package layout after extraction:
  * ```
  * <engineDir>/manifest.json
- * <engineDir>/lib/arm64-v8a/*.so
+ * <engineDir>/lib/arm64-v8a/&lt;lib&gt;.so
  * ```
  *
  * Process lifecycle: an engine package can only be installed once per process.
