@@ -57,17 +57,25 @@ fun isDynamicDependencyVersion(version: String): Boolean =
         version.contains("(") ||
         version.contains(")")
 
-val enableLlamaCpp: Boolean = boolProperty("omniinfer.backend.llama_cpp")
-val enableMnn: Boolean = boolProperty("omniinfer.backend.mnn")
-val enableExecutorchQnn: Boolean = boolProperty("omniinfer.backend.executorch_qnn")
-val enableLiteRtLm: Boolean = boolProperty("omniinfer.backend.litert_lm")
-val requireLiteRtLmInPublication: Boolean = boolProperty("omniinfer.publication.require_litert_lm")
-
 // When false, build a "lite" AAR that ships only the Kotlin/dex layer: no CMake
 // build, no packaged .so. The native runtime is delivered separately as a
 // downloadable engine package produced by bundleEnginePackage (see
 // docs/android/engine-download.md).
 val bundleNativeLibs: Boolean = boolProperty("omniinfer.packaging.native_bundled", true)
+val enableLlamaCpp: Boolean = boolProperty("omniinfer.backend.llama_cpp")
+val enableMnn: Boolean = boolProperty("omniinfer.backend.mnn")
+val enableExecutorchQnn: Boolean = boolProperty("omniinfer.backend.executorch_qnn")
+val enableLiteRtLm: Boolean = boolProperty("omniinfer.backend.litert_lm", bundleNativeLibs)
+val requireLiteRtLmInPublication: Boolean =
+    boolProperty("omniinfer.publication.require_litert_lm", bundleNativeLibs)
+
+if (!bundleNativeLibs && enableLiteRtLm) {
+    throw GradleException(
+        "A downloadable-engine Lite AAR cannot include LiteRT-LM. " +
+            "Remove -Pomniinfer.backend.litert_lm=true or build the bundled-runtime artifact.",
+    )
+}
+
 val publicationDisplayName: String =
     if (bundleNativeLibs) "OmniInfer Android" else "OmniInfer Android Lite"
 val publicationDescription: String =
@@ -579,9 +587,28 @@ val verifyAarDependencyMetadata by tasks.registering {
             if (isDynamicDependencyVersion(publishedLiteRtVersion)) {
                 throw GradleException("Generated POM uses dynamic LiteRT-LM version: $publishedLiteRtVersion")
             }
+        } else if (!bundleNativeLibs) {
+            val publishedLiteRtVersion = dependencyVersion(
+                "com.google.ai.edge.litertlm",
+                "litertlm-android",
+            )
+            if (publishedLiteRtVersion != null) {
+                throw GradleException(
+                    "Lite publication must not transitively package LiteRT-LM native libraries.",
+                )
+            }
         }
 
         ZipFile(aarFile).use { zip ->
+            val nativeEntries = zip.entries().asSequence()
+                .map { it.name }
+                .filter { it.endsWith(".so") }
+                .toList()
+            if (!bundleNativeLibs && nativeEntries.isNotEmpty()) {
+                throw GradleException(
+                    "Lite OmniInfer AAR must not package native libraries: ${nativeEntries.joinToString()}",
+                )
+            }
             val x86Entries = zip.entries().asSequence()
                 .map { it.name }
                 .filter { it.startsWith("jni/x86_64/") }
