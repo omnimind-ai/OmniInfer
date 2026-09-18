@@ -68,6 +68,14 @@ val requireLiteRtLmInPublication: Boolean = boolProperty("omniinfer.publication.
 // downloadable engine package produced by bundleEnginePackage (see
 // docs/android/engine-download.md).
 val bundleNativeLibs: Boolean = boolProperty("omniinfer.packaging.native_bundled", true)
+val publicationDisplayName: String =
+    if (bundleNativeLibs) "OmniInfer Android" else "OmniInfer Android Lite"
+val publicationDescription: String =
+    if (bundleNativeLibs) {
+        "Android local inference server with bundled native runtimes."
+    } else {
+        "Android local inference SDK for verified runtime-downloaded native engines."
+    }
 if (enableLiteRtLm && isDynamicDependencyVersion(liteRtLmVersion)) {
     throw GradleException(
         "omniinfer.litertlm.version must be a pinned release version, got '$liteRtLmVersion'. " +
@@ -277,7 +285,7 @@ val generateMavenCentralJavadoc by tasks.registering {
             """
             # OmniInfer Android
 
-            Android local inference server for llama.cpp CPU/HTP and LiteRT-LM GPU.
+            $publicationDescription
             API entry point: com.omniinfer.server.OmniInferServer.
             """.trimIndent() + "\n",
         )
@@ -301,8 +309,8 @@ afterEvaluate {
                 version = omniInferMavenVersion
                 artifact(mavenCentralJavadocJar)
                 pom {
-                    name.set("OmniInfer Android")
-                    description.set("Android local inference server for llama.cpp CPU/HTP and LiteRT-LM GPU.")
+                    name.set(publicationDisplayName)
+                    description.set(publicationDescription)
                     inceptionYear.set("2026")
                     url.set(omniInferMavenScmUrl)
                     licenses {

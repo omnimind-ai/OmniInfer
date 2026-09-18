@@ -10,6 +10,11 @@ Apps that prefer a self-contained install should use the standard
 [AAR integration](./aar-integration.md) instead; both modes share the same
 Kotlin API, server, and model catalog.
 
+The two delivery modes use separate Maven artifacts at the same release
+version: `io.github.omnimind-ai:omniinfer` bundles native runtimes, while
+`io.github.omnimind-ai:omniinfer-lite` contains only the SDK layer used here.
+Choose one; do not add both dependencies to the same app.
+
 ## Before You Start
 
 This workflow currently builds the SDK and engine from an OmniInfer source
@@ -90,6 +95,7 @@ gradle :omniinfer-server:publishReleasePublicationToOmniInferLocalRepository \
   -Pomniinfer.backend.llama_cpp=true -Pomniinfer.backend.mnn=false \
   -Pomniinfer.backend.executorch_qnn=false -Pomniinfer.backend.litert_lm=false \
   -Pomniinfer.publication.require_litert_lm=false \
+  -Pomniinfer.maven.artifact=omniinfer-lite \
   -Pomniinfer.maven.version="$VERSION" \
   -Pomniinfer.maven.repo="$MAVEN_REPO"
 
@@ -104,7 +110,7 @@ gradle :omniinfer-server:bundleEnginePackage \
 Outputs:
 
 ```text
-android/build/local-maven/io/github/omnimind-ai/omniinfer/<version>/
+android/build/local-maven/io/github/omnimind-ai/omniinfer-lite/<version>/
 android/omniinfer-server/build/distributions/engine/
 ```
 
@@ -155,7 +161,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("io.github.omnimind-ai:omniinfer:0.2.5-local.1")
+    implementation("io.github.omnimind-ai:omniinfer-lite:0.2.5-local.1")
 }
 ```
 
