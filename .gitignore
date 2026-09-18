@@ -6,6 +6,7 @@ Thumbs.db
 
 # Build artifacts
 build/
+.gradle/
 dist/
 out/
 target/

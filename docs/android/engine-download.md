@@ -10,6 +10,30 @@ Apps that prefer a self-contained install should use the standard
 [AAR integration](./aar-integration.md) instead; both modes share the same
 Kotlin API, server, and model catalog.
 
+## Before You Start
+
+This workflow currently builds the SDK and engine from an OmniInfer source
+checkout. It does not assume that an engine package is publicly hosted.
+
+You need:
+
+- an arm64 Android 8.0+ device (`minSdk 26`);
+- JDK 17 or 21, Gradle 8.10.2, Android SDK 35, NDK `28.2.13676358`, and
+  SDK CMake/Ninja;
+- an HTTPS location controlled by you for the engine zip and its `.sha256`;
+- an app-readable model file with a trusted size and SHA-256.
+
+Clone submodules, then run all producer commands from `android/`:
+
+```bash
+git clone --recurse-submodules https://github.com/omnimind-ai/OmniInfer.git
+cd OmniInfer/android
+export ANDROID_HOME=/absolute/path/to/Android/Sdk
+```
+
+The CPU engine is the portable starting point and needs no vendor prebuilt
+libraries. HTP is optional and documented below.
+
 ## How It Works
 
 ```
@@ -54,25 +78,56 @@ lib/arm64-v8a/*.so
 | `coreLibs` | The `DT_NEEDED` chain in `System.load` order (must end with `libomniinfer-jni.so`) |
 | `libs` | Every packaged `.so` with `name`, `sha256`, `sizeBytes` |
 
-Build both artifacts from the OmniInfer repo with Gradle:
+Build a matching Lite AAR and CPU engine package with the same version:
 
 ```bash
-# 1. Lite AAR: Kotlin SDK only, no native libs
+VERSION=0.2.5-local.1
+MAVEN_REPO="$PWD/build/local-maven"
+
+# 1. Lite AAR: Kotlin SDK only, no native libraries.
 gradle :omniinfer-server:publishReleasePublicationToOmniInferLocalRepository \
   -Pomniinfer.packaging.native_bundled=false \
   -Pomniinfer.backend.llama_cpp=true -Pomniinfer.backend.mnn=false \
   -Pomniinfer.backend.executorch_qnn=false -Pomniinfer.backend.litert_lm=false \
   -Pomniinfer.publication.require_litert_lm=false \
-  -Pomniinfer.maven.version=<version> \
-  -Pomniinfer.maven.repo=<local repo dir>
+  -Pomniinfer.maven.version="$VERSION" \
+  -Pomniinfer.maven.repo="$MAVEN_REPO"
 
-# 2. Engine package: zip + manifest + .sha256 (output: build/distributions/engine)
+# 2. Matching CPU engine: zip + manifest + .sha256.
 gradle :omniinfer-server:bundleEnginePackage \
   -Pomniinfer.backend.llama_cpp=true -Pomniinfer.backend.mnn=false \
   -Pomniinfer.backend.executorch_qnn=false -Pomniinfer.backend.litert_lm=false \
-  -Pomniinfer.backend.llama_cpp_htp=true \
-  -Pomniinfer.maven.version=<version>
+  -Pomniinfer.backend.llama_cpp_htp=false \
+  -Pomniinfer.maven.version="$VERSION"
 ```
+
+Outputs:
+
+```text
+android/build/local-maven/io/github/omnimind-ai/omniinfer/<version>/
+android/omniinfer-server/build/distributions/engine/
+```
+
+Publish the Maven repository to your artifact repository. Upload the engine
+zip and `.sha256` together to your HTTPS distribution point. Do not rename one
+without updating the checksum file.
+
+For HTP, supply one coherent, version-matched Snapdragon runtime set and enable
+it explicitly:
+
+```bash
+gradle :omniinfer-server:bundleEnginePackage \
+  -Pomniinfer.backend.llama_cpp=true \
+  -Pomniinfer.backend.mnn=false \
+  -Pomniinfer.backend.executorch_qnn=false \
+  -Pomniinfer.backend.litert_lm=false \
+  -Pomniinfer.backend.llama_cpp_htp=true \
+  -Pomniinfer.llama_cpp.htp_prebuilt_dir=/absolute/path/to/version-matched/libs \
+  -Pomniinfer.maven.version="$VERSION"
+```
+
+The directory must contain every HTP/OpenCL library requested by the Gradle
+task. Never combine host and DSP libraries from different llama.cpp commits.
 
 The bundle task re-opens the finished zip and re-verifies every entry against
 the manifest before publishing it, and emits `<name>.zip.sha256` for the
@@ -84,12 +139,23 @@ precede `libggml-base.so` and `libllama.so` must precede `libllama-common.so`
 
 ### Gradle Setup
 
-Consume the lite AAR as a normal Maven coordinate (repositories per
-[aar-integration](./aar-integration.md#gradle-setup)):
+Add the repository that contains your Lite AAR in `settings.gradle.kts`, then
+consume its exact version (also see
+[AAR integration](./aar-integration.md#gradle-setup)):
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven("https://artifacts.example.com/android")
+    }
+}
+```
 
 ```kotlin
 dependencies {
-    implementation("io.github.omnimind-ai:omniinfer:<version>")
+    implementation("io.github.omnimind-ai:omniinfer:0.2.5-local.1")
 }
 ```
 
@@ -98,8 +164,9 @@ inference libraries.
 
 ### Download And Install
 
-1. Fetch `<name>.zip.sha256` from your distribution point (HTTPS), then stream
-   the zip while hashing it; compare before extracting.
+1. Fetch `<name>.zip.sha256` from your distribution point (HTTPS), parse its
+   first whitespace-delimited field as 64 lowercase hex characters, then
+   stream the zip while hashing it; compare before extracting.
 2. Extract into a staging directory under app-private storage, then rename it
    into place atomically. Reject any zip entry whose canonical path escapes the
    target directory. Never extract to external storage: it is `noexec` and
@@ -122,18 +189,41 @@ size and SHA-256 and rejects unlisted `.so` files, before loading the
 
 ### Load A Model
 
-No new API: after `install`, use
+Initialize only after `install`, then use
 [`OmniInferServer`](./aar-integration.md#load-a-model) exactly as in the
 bundled AAR flow. `OmniInferServer` automatically passes the engine lib dir to
 the JNI backend; before `install` it falls back to `applicationInfo.nativeLibraryDir`.
 
 ```kotlin
 OmniInferServer.init(applicationContext)
-OmniInferServer.loadModel(
+val ok = OmniInferServer.loadModel(
     modelPath = modelPath,
-    options = OmniInferLoadOptions(backend = "llama.cpp-htp", port = 9099, nCtx = 4096),
+    options = OmniInferLoadOptions(backend = "llama.cpp-cpu", port = 9099, nCtx = 4096),
 )
 ```
+
+Check the Boolean result and surface the native error:
+
+```kotlin
+check(ok) { OmniInferServer.getLastError() }
+```
+
+Use `"llama.cpp-htp"` only when the installed manifest lists that backend and
+the device is supported. The model must be in app-private storage; normal apps
+must not depend on `/data/local/tmp`.
+
+Send a non-streaming request to the local server:
+
+```text
+POST http://127.0.0.1:9099/v1/chat/completions
+Content-Type: application/json
+
+{"model":"local","messages":[{"role":"user","content":"Reply READY only."}],"stream":false,"max_tokens":8}
+```
+
+Add `INTERNET`, the foreground-service permissions from
+[AAR integration](./aar-integration.md#manifest), and allow cleartext only for
+`127.0.0.1`. The downloadable engine itself should still use HTTPS.
 
 ## Rules And Gotchas
 
@@ -159,3 +249,6 @@ OmniInferServer.loadModel(
 - **Keep SDK and engine versions in lockstep.** `interfaceVersion` changes are
   breaking: the loader refuses a package whose interface version differs from
   the SDK's.
+- **Treat update failure as recoverable.** Keep the last verified engine until
+  the replacement has been fully downloaded and verified. Delete stale staging
+  files on the next launch.
