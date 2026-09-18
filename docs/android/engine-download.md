@@ -8,10 +8,10 @@ For a self-contained APK, use the standard
 [AAR integration](./aar-integration.md). The two modes have separate Maven
 artifacts at the same release version:
 
-| Mode | Dependency |
-|---|---|
-| Bundled runtime | `io.github.omnimind-ai:omniinfer:0.2.7` |
-| Downloaded runtime | `io.github.omnimind-ai:omniinfer-lite:0.2.7` |
+| Mode | Dependency | Availability |
+|---|---|---|
+| Bundled runtime | `io.github.omnimind-ai:omniinfer:0.2.7` | Pending a version-matched runtime rebuild |
+| Downloaded runtime | `io.github.omnimind-ai:omniinfer-lite:0.2.7` | Maven Central |
 
 Choose one dependency; do not add both.
 
