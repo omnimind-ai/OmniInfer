@@ -10,8 +10,8 @@ artifacts at the same release version:
 
 | Mode | Dependency |
 |---|---|
-| Bundled runtime | `io.github.omnimind-ai:omniinfer:0.2.5` |
-| Downloaded runtime | `io.github.omnimind-ai:omniinfer-lite:0.2.5` |
+| Bundled runtime | `io.github.omnimind-ai:omniinfer:0.2.6` |
+| Downloaded runtime | `io.github.omnimind-ai:omniinfer-lite:0.2.6` |
 
 Choose one dependency; do not add both.
 
@@ -31,7 +31,7 @@ Keep `google()` and `mavenCentral()` in `settings.gradle.kts`, then add:
 
 ```kotlin
 dependencies {
-    implementation("io.github.omnimind-ai:omniinfer-lite:0.2.5")
+    implementation("io.github.omnimind-ai:omniinfer-lite:0.2.6")
 }
 ```
 
@@ -151,7 +151,7 @@ gradle :omniinfer-server:bundleEnginePackage \
   -Pomniinfer.backend.executorch_qnn=false \
   -Pomniinfer.backend.litert_lm=false \
   -Pomniinfer.backend.llama_cpp_htp=false \
-  -Pomniinfer.maven.version=0.2.5
+  -Pomniinfer.maven.version=0.2.6
 ```
 
 The zip and checksum are written under
