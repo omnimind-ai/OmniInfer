@@ -2,6 +2,14 @@ package com.omniinfer.server
 
 // Host JVM contract: no Android SDK, JNI runtime or model assets required.
 fun main() {
+    check(BackendSelectors.isAuto("auto"))
+    check(BackendSelectors.isAuto(" AUTO "))
+    check(BackendSelectors.isAuto(""))
+    check(!BackendSelectors.isAuto("llama.cpp-cpu"))
+    check(BackendSelectors.shouldApplyCatalogDefaults(true, "auto"))
+    check(!BackendSelectors.shouldApplyCatalogDefaults(true, "llama.cpp-cpu"))
+    check(!BackendSelectors.shouldApplyCatalogDefaults(false, "auto"))
+
     val aliases = mapOf(
         "llama.cpp-cpu" to listOf("llama.cpp/cpu", "llama.cpp", "llama", "llamacpp-cpu"),
         "llama.cpp-htp" to listOf("llama.cpp/htp", "llama.cpp/npu", "llama-htp", "llama.cpp-npu"),

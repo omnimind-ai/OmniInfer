@@ -14,6 +14,12 @@ object OmniInferBackend {
 internal object BackendSelectors {
     const val UNSUPPORTED_AUTO_BACKEND = "__unsupported_auto_backend__"
 
+    fun isAuto(selector: String): Boolean =
+        selector.isBlank() || selector.trim().equals(OmniInferBackend.AUTO, ignoreCase = true)
+
+    fun shouldApplyCatalogDefaults(preferCatalogDefaults: Boolean, selector: String): Boolean =
+        preferCatalogDefaults && isAuto(selector)
+
     fun normalizeExplicit(selector: String): String {
         val raw = selector.trim().lowercase(Locale.US).replace('_', '-')
         return when (raw) {
