@@ -2,7 +2,9 @@
 
 Use the hyphenated [backend selectors](../backend-names.md#android-aar). Legacy slash names remain accepted with the same defaults.
 
-This guide is for Android apps that consume OmniInfer as a Maven AAR.
+This guide is for Android apps that consume OmniInfer as a Maven AAR. If the
+native runtime should be downloaded at runtime instead of being bundled in the
+APK, see [runtime engine download](./engine-download.md).
 
 OmniInfer starts an on-device OpenAI-compatible HTTP server inside your app
 process. Your app provides a local model file, loads it through the SDK, then

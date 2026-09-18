@@ -1,7 +1,10 @@
 import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.MessageDigest
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 
@@ -59,6 +62,12 @@ val enableMnn: Boolean = boolProperty("omniinfer.backend.mnn")
 val enableExecutorchQnn: Boolean = boolProperty("omniinfer.backend.executorch_qnn")
 val enableLiteRtLm: Boolean = boolProperty("omniinfer.backend.litert_lm")
 val requireLiteRtLmInPublication: Boolean = boolProperty("omniinfer.publication.require_litert_lm")
+
+// When false, build a "lite" AAR that ships only the Kotlin/dex layer: no CMake
+// build, no packaged .so. The native runtime is delivered separately as a
+// downloadable engine package produced by bundleEnginePackage (see
+// docs/android/engine-download.md).
+val bundleNativeLibs: Boolean = boolProperty("omniinfer.packaging.native_bundled", true)
 if (enableLiteRtLm && isDynamicDependencyVersion(liteRtLmVersion)) {
     throw GradleException(
         "omniinfer.litertlm.version must be a pinned release version, got '$liteRtLmVersion'. " +
@@ -85,7 +94,7 @@ val llamaCppHtpRuntimeFiles = listOf(
 
 val syncLlamaCppHtpJniLibs by tasks.registering {
     description = "Collect llama.cpp Snapdragon HTP runtime libraries for AAR packaging"
-    onlyIf { enableLlamaCppHtp }
+    onlyIf { bundleNativeLibs && enableLlamaCppHtp }
     outputs.dir(llamaCppRuntimeJniDir)
     doLast {
         val outputDir = llamaCppRuntimeJniDir.get().dir("arm64-v8a").asFile
@@ -103,7 +112,7 @@ val syncLlamaCppHtpJniLibs by tasks.registering {
 }
 
 // --- ExecuTorch QNN: auto-download pre-built binaries ---
-if (enableExecutorchQnn) {
+if (enableExecutorchQnn && bundleNativeLibs) {
     val etQnnVersion = 3  // bump when uploading new binaries to OSS
     val baseUrl = "https://omnimind-model.oss-cn-beijing.aliyuncs.com/omniinfer-android/arm64-v8a"
     val jniDir = file("src/main/jniLibs/arm64-v8a")
@@ -165,22 +174,24 @@ android {
             abiFilters += "arm64-v8a"
         }
 
-        externalNativeBuild {
-            cmake {
-                arguments += "-DCMAKE_BUILD_TYPE=Release"
-                arguments += "-DBUILD_SHARED_LIBS=ON"
-                if (enableLlamaCpp) {
-                    arguments += "-DGGML_NATIVE=OFF"
-                    arguments += "-DGGML_LLAMAFILE=OFF"
-                    arguments += "-DLLAMA_BUILD_COMMON=ON"
-                    arguments += "-DGGML_BACKEND_DL=ON"
-                    arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
-                }
-                arguments += "-DOMNIINFER_BACKEND_LLAMA_CPP=${if (enableLlamaCpp) "ON" else "OFF"}"
-                arguments += "-DOMNIINFER_BACKEND_MNN=${if (enableMnn) "ON" else "OFF"}"
-                arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=${if (enableExecutorchQnn) "ON" else "OFF"}"
-                if (enableMnn) {
-                    arguments += "-DMNN_USE_THREAD_POOL=${if (enableMnnThreadPool) "ON" else "OFF"}"
+        if (bundleNativeLibs) {
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DCMAKE_BUILD_TYPE=Release"
+                    arguments += "-DBUILD_SHARED_LIBS=ON"
+                    if (enableLlamaCpp) {
+                        arguments += "-DGGML_NATIVE=OFF"
+                        arguments += "-DGGML_LLAMAFILE=OFF"
+                        arguments += "-DLLAMA_BUILD_COMMON=ON"
+                        arguments += "-DGGML_BACKEND_DL=ON"
+                        arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
+                    }
+                    arguments += "-DOMNIINFER_BACKEND_LLAMA_CPP=${if (enableLlamaCpp) "ON" else "OFF"}"
+                    arguments += "-DOMNIINFER_BACKEND_MNN=${if (enableMnn) "ON" else "OFF"}"
+                    arguments += "-DOMNIINFER_BACKEND_EXECUTORCH_QNN=${if (enableExecutorchQnn) "ON" else "OFF"}"
+                    if (enableMnn) {
+                        arguments += "-DMNN_USE_THREAD_POOL=${if (enableMnnThreadPool) "ON" else "OFF"}"
+                    }
                 }
             }
         }
@@ -192,11 +203,13 @@ android {
                 java.srcDir("src/litertLm/java")
             }
             val jniLibDirs = mutableListOf<File>()
-            if (enableLlamaCppHtp) {
-                jniLibDirs += llamaCppRuntimeJniDir.get().asFile
-            }
-            if (enableExecutorchQnn) {
-                jniLibDirs += file("src/main/jniLibs")
+            if (bundleNativeLibs) {
+                if (enableLlamaCppHtp) {
+                    jniLibDirs += llamaCppRuntimeJniDir.get().asFile
+                }
+                if (enableExecutorchQnn) {
+                    jniLibDirs += file("src/main/jniLibs")
+                }
             }
             jniLibs.setSrcDirs(jniLibDirs)
         }
@@ -208,9 +221,11 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/omniinfer-jni/CMakeLists.txt")
+    if (bundleNativeLibs) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/omniinfer-jni/CMakeLists.txt")
+            }
         }
     }
 
@@ -328,6 +343,159 @@ afterEvaluate {
             )
             sign(publishing.publications["release"])
         }
+    }
+}
+
+// --- Downloadable engine package (see docs/android/engine-download.md) ---
+
+// DT_NEEDED dependency chain of the JNI bridge, in System.load order. libomp is
+// needed by libggml-base; libllama-common depends on libllama. Runtime backend
+// libs (libggml-cpu variants, libggml-opencl, libggml-hexagon, libggml-htp-*)
+// are discovered by ggml_backend_load_all_from_path at init.
+val engineCoreLibOrder = listOf(
+    "libomp.so",
+    "libggml-base.so",
+    "libggml.so",
+    "libllama.so",
+    "libllama-common.so",
+    "libmtmd.so",
+    "libomniinfer-jni.so",
+)
+
+fun enginePackageSha256(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(1 shl 16)
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
+val enginePackageBaseName = "omniinfer-engine-${omniInferMavenVersion}-arm64-v8a"
+
+val ENGINE_MANIFEST_FORMAT_VERSION = 1
+val ENGINE_MANIFEST_INTERFACE_VERSION = 1
+
+class EnginePackageManifestRow(val name: String, val sha256: String, val sizeBytes: Long)
+
+class EnginePackageManifest(val coreLibs: List<String>, val libs: List<EnginePackageManifestRow>)
+
+fun parseEnginePackageManifest(json: String): EnginePackageManifest {
+    val coreLibs = Regex(""""coreLibs"\s*:\s*\[([^]]*)]""")
+        .find(json)?.groupValues?.get(1)
+        ?.split(',')?.map { it.trim().trim('"') }
+        ?: throw GradleException("Engine manifest is missing coreLibs")
+    val libRows = Regex(""""name"\s*:\s*"([^"]+)",\s*"sha256"\s*:\s*"([0-9a-f]{64})",\s*"sizeBytes"\s*:\s*([0-9]+)""")
+        .findAll(json)
+        .map { EnginePackageManifestRow(it.groupValues[1], it.groupValues[2], it.groupValues[3].toLong()) }
+        .toList()
+    if (libRows.isEmpty()) throw GradleException("Engine manifest has no libs entries")
+    return EnginePackageManifest(coreLibs, libRows)
+}
+
+val bundleEnginePackage by tasks.registering {
+    description = "Bundle merged release native libs into a downloadable engine package (zip + manifest + sha256)"
+    group = "packaging"
+    dependsOn("mergeReleaseNativeLibs")
+    val mergedLibsDir = layout.buildDirectory.dir(
+        "intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib/arm64-v8a",
+    )
+    val outputDir = layout.buildDirectory.dir("distributions/engine")
+    inputs.dir(mergedLibsDir)
+    outputs.file(outputDir.map { it.file("$enginePackageBaseName.zip") })
+    outputs.file(outputDir.map { it.file("$enginePackageBaseName.zip.sha256") })
+    doLast {
+        if (!enableLlamaCpp) {
+            throw GradleException("bundleEnginePackage requires the llama.cpp backend (-Pomniinfer.backend.llama_cpp=true).")
+        }
+        val libSourceDir = mergedLibsDir.get().asFile
+        val libs = libSourceDir.listFiles { file -> file.isFile && file.extension == "so" }
+            ?.sortedBy { it.name }
+            ?.map { file -> EnginePackageManifestRow(file.name, enginePackageSha256(file), file.length()) }
+            ?: emptyList()
+        if (libs.isEmpty()) {
+            throw GradleException("No native libs found under ${libSourceDir.absolutePath}; run the release build first.")
+        }
+        val missing = engineCoreLibOrder.filter { core -> libs.none { it.name == core } }
+        if (missing.isNotEmpty()) {
+            throw GradleException("Engine package is missing core libs: $missing")
+        }
+        val coreLibs = engineCoreLibOrder
+        val backends = buildList {
+            if (enableLlamaCpp) add("llama.cpp-cpu")
+            if (enableLlamaCppHtp) add("llama.cpp-htp")
+        }
+
+        val manifestJson = buildString {
+            appendLine("{")
+            appendLine("  \"formatVersion\": $ENGINE_MANIFEST_FORMAT_VERSION,")
+            appendLine("  \"engineVersion\": \"${omniInferMavenVersion}\",")
+            appendLine("  \"interfaceVersion\": $ENGINE_MANIFEST_INTERFACE_VERSION,")
+            appendLine("  \"abi\": \"arm64-v8a\",")
+            appendLine("  \"minSdk\": 26,")
+            appendLine("  \"backends\": [${backends.joinToString(",") { "\"$it\"" }}],")
+            appendLine("  \"coreLibs\": [${coreLibs.joinToString(",") { "\"$it\"" }}],")
+            appendLine("  \"libs\": [")
+            appendLine(
+                libs.joinToString(",\n") { lib ->
+                    """    {"name": "${lib.name}", "sha256": "${lib.sha256}", "sizeBytes": ${lib.sizeBytes}}"""
+                },
+            )
+            appendLine("  ]")
+            append("}")
+        }
+
+        val outDir = outputDir.get().asFile
+        outDir.mkdirs()
+        val zipFile = File(outDir, "$enginePackageBaseName.zip")
+        ZipOutputStream(zipFile.outputStream().buffered()).use { zip ->
+            fun putEntry(entryName: String, content: ByteArray) {
+                zip.putNextEntry(ZipEntry(entryName))
+                zip.write(content)
+                zip.closeEntry()
+            }
+            putEntry("manifest.json", manifestJson.toByteArray())
+            for (lib in libs) {
+                zip.putNextEntry(ZipEntry("lib/arm64-v8a/${lib.name}"))
+                File(libSourceDir, lib.name).inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
+        }
+
+        // Re-open the finished zip and verify every entry against the manifest.
+        ZipFile(zipFile).use { zip ->
+            val manifestInZip = parseEnginePackageManifest(
+                zip.getInputStream(zip.getEntry("manifest.json")).bufferedReader().readText(),
+            )
+            check(manifestInZip.coreLibs == coreLibs) { "manifest coreLibs mismatch" }
+            var verified = 0
+            for (lib in libs) {
+                val entry = zip.getEntry("lib/arm64-v8a/${lib.name}")
+                    ?: throw GradleException("Engine zip is missing lib/arm64-v8a/${lib.name}")
+                check(entry.size == lib.sizeBytes) { "Engine zip size mismatch for ${lib.name}" }
+                val entrySha = zip.getInputStream(entry).use { stream ->
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    val buffer = ByteArray(1 shl 16)
+                    while (true) {
+                        val read = stream.read(buffer)
+                        if (read <= 0) break
+                        digest.update(buffer, 0, read)
+                    }
+                    digest.digest().joinToString("") { "%02x".format(it) }
+                }
+                check(entrySha == lib.sha256) { "Engine zip sha256 mismatch for ${lib.name}" }
+                verified++
+            }
+            logger.lifecycle("Engine package verified: $verified libs, manifest ${manifestInZip.libs.size} entries")
+        }
+
+        val shaFile = File(outDir, "$enginePackageBaseName.zip.sha256")
+        shaFile.writeText("${enginePackageSha256(zipFile)}  ${zipFile.name}\n")
+        logger.lifecycle("Engine package: ${zipFile.absolutePath} (${zipFile.length()} bytes)")
     }
 }
 

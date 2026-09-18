@@ -13,8 +13,26 @@ object OmniInferBridge {
     private val nextLiteRtHandle = AtomicLong(-1L)
     @Volatile private var lastError: String = ""
 
-    val isNativeLibraryLoaded: Boolean by lazy {
-        runCatching {
+    /** Set by [OmniInferEngineLoader.install] once the downloaded engine's core libs are loaded. */
+    @Volatile internal var engineNativeLibsLoaded: Boolean = false
+
+    private val apkLoadLock = Any()
+
+    internal fun markEngineNativeLibsLoaded() {
+        engineNativeLibsLoaded = true
+    }
+
+    /**
+     * True once the native bridge is usable. When no engine package is installed
+     * this loads the bundled library from the host APK; failures are not cached so
+     * a later [OmniInferEngineLoader.install] can still succeed in the same process.
+     */
+    val isNativeLibraryLoaded: Boolean
+        get() = engineNativeLibsLoaded || ensureApkNativeLibraryLoaded()
+
+    private fun ensureApkNativeLibraryLoaded(): Boolean = synchronized(apkLoadLock) {
+        if (engineNativeLibsLoaded) return true
+        return runCatching {
             System.loadLibrary(LIB_NAME)
             true
         }.getOrElse { error ->

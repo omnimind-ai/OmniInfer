@@ -198,7 +198,8 @@ object OmniInferServer {
             return true
         }
 
-        val nativeLibDir = ctx.applicationInfo.nativeLibraryDir
+        val nativeLibDir = OmniInferEngineLoader.installedNativeLibDir
+            ?: ctx.applicationInfo.nativeLibraryDir
         val handle = OmniInferBridge.init(
             modelPath = modelPath,
             backend = resolved.bridgeBackend,
