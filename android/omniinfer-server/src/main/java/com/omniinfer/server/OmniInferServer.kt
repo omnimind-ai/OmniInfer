@@ -317,7 +317,9 @@ object OmniInferServer {
             modelPath = modelPath,
             catalogConfig = catalogConfig,
         )
-        val catalogDefaults = if (preferCatalogDefaults) catalogConfig else null
+        val catalogDefaults = if (
+            BackendSelectors.shouldApplyCatalogDefaults(preferCatalogDefaults, backendSelector)
+        ) catalogConfig else null
         val initialExtra = mergedExtraConfig(initialSelector, catalogDefaults, extraConfig)
         val normalizedSelector = BackendSelectors.refineSelectorWithExtra(initialSelector, initialExtra)
         val baseExtra = if (normalizedSelector == initialSelector) {
