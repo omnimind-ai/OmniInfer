@@ -4,6 +4,7 @@
 # Usage:
 #   ./benchmark_omniinfer_vla.sh             # run Pi0.5 and GR00T
 #   ./benchmark_omniinfer_vla.sh pi05
+#   PRUNING=1 WARMUP=10 TIMED=10 ./benchmark_omniinfer_vla.sh pi05
 #   ./benchmark_omniinfer_vla.sh gr00t
 #   ./benchmark_omniinfer_vla.sh           # native Processor by default
 #   NATIVE=0 ./benchmark_omniinfer_vla.sh  # legacy prepared-token path
@@ -42,6 +43,7 @@ MODE="${1:-both}"
 # model-specific native Processor on every request. Set NATIVE=0 only when an
 # engine-only prepared-input comparison is explicitly desired.
 NATIVE="${NATIVE:-1}"
+PRUNING="${PRUNING:-0}"
 
 PI_CHECKPOINT="${PI_CHECKPOINT:-$HOME/models/pi05_libero_finetuned_v044}"
 PI05_TOKENIZER="${PI05_TOKENIZER:-$HOME/models/paligemma-3b-pt-224}"
@@ -168,6 +170,9 @@ run_model() {
             *) die "native Processor is unsupported for architecture: $arch" ;;
         esac
     fi
+    if [[ "$arch" == "pi05" && "$PRUNING" == "1" ]]; then
+        processor_args+=(--num-flow-steps 1 --flow-start-time 0.5 --warm-start --warm-start-alpha 0.5 --replan 5)
+    fi
     # shellcheck disable=SC2086
     "$VLA_PYTHON" "$VLA_SERVER" \
         --bind "$addr" \
@@ -194,6 +199,9 @@ run_model() {
     )
     if [[ "$NATIVE" == "1" ]]; then
         benchmark_args+=(--native)
+    fi
+    if [[ "$arch" == "pi05" && "$PRUNING" == "1" ]]; then
+        benchmark_args+=(--pruning)
     fi
     "$VLA_PYTHON" "$benchmark" "${benchmark_args[@]}"
     echo "result: $result"

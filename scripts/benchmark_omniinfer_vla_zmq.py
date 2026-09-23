@@ -64,6 +64,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-height", type=int, default=None)
     parser.add_argument("--image-width", type=int, default=None)
     parser.add_argument("--output", default=None)
+    parser.add_argument("--pruning", action="store_true",
+                        help="Record the launcher's Pi0.5 one-step warm-start settings; does not configure the server.")
     return parser.parse_args()
 
 
@@ -235,6 +237,10 @@ def main() -> int:
         "image_size": args.image_size,
         "lang_len": args.lang_len,
         "input_mode": "native_processor" if args.native else "prepared_tokens",
+        "launcher_pruning_config": {
+            "num_flow_steps": 1, "flow_start_time": 0.5,
+            "warm_start_alpha": 0.5, "replan": 5,
+        } if args.pruning else None,
         "task": args.task if args.native else None,
         "input_source": input_source,
         "measurement": {

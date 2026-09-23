@@ -41,6 +41,7 @@ def main() -> int:
     parser.add_argument("--timed", type=int, default=3)
     parser.add_argument("--output", default=None)
     parser.add_argument("--native", action="store_true")
+    parser.add_argument("--pruning", action="store_true", help="Label the launcher's one-step warm-start configuration.")
     parser.add_argument("--task", default="pick up the cup from table and place it in the bowl carefully")
     args = parser.parse_args()
     addr = args.addr or discover_addr()
@@ -59,8 +60,11 @@ def main() -> int:
         command.extend(["--output", args.output])
     if args.native:
         command.extend(["--native", "--task", args.task])
+    if args.pruning:
+        command.append("--pruning")
     print("Pi0.5 OmniInfer VLA Runtime benchmark", flush=True)
-    print("request: 3 images, 48-token target, 10-step fixed noise; params/vision dtype set by server (README launcher: BF16/BF16)", flush=True)
+    flow = "1-step warm-start (lossy), t=0.5, alpha=0.5, replan=5" if args.pruning else "10-step fixed noise"
+    print(f"request: 3 images, 48-token target, {flow}; params/vision dtype set by server (README launcher: BF16/BF16)", flush=True)
     print(f"endpoint: {addr}", flush=True)
     return subprocess.run(command).returncode
 
