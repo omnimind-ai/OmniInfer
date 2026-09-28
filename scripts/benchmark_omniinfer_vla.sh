@@ -5,6 +5,7 @@
 #   ./benchmark_omniinfer_vla.sh             # run Pi0.5 and GR00T
 #   ./benchmark_omniinfer_vla.sh pi05
 #   PI05_NUM_IMAGES=2 WARMUP=20 TIMED=10 ./benchmark_omniinfer_vla.sh pi05
+#   PI05_TASK='pick up the cup' WARMUP=10 TIMED=10 ./benchmark_omniinfer_vla.sh pi05
 #   PRUNING=1 WARMUP=10 TIMED=10 ./benchmark_omniinfer_vla.sh pi05
 #   ./benchmark_omniinfer_vla.sh gr00t
 #   ./benchmark_omniinfer_vla.sh           # native Processor by default
@@ -202,6 +203,9 @@ run_model() {
     )
     if [[ "$arch" == "pi05" ]]; then
         benchmark_args+=(--num-images "$num_images" --lang-len "$PI05_LANG_LEN")
+        if [[ "$NATIVE" == "1" && -n "${PI05_TASK:-}" ]]; then
+            benchmark_args+=(--task "$PI05_TASK")
+        fi
         if [[ "${SAVE_ACTION:-0}" == "1" ]]; then
             benchmark_args+=(--save-action)
         fi
