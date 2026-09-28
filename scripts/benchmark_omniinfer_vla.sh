@@ -46,6 +46,7 @@ MODE="${1:-both}"
 NATIVE="${NATIVE:-1}"
 PRUNING="${PRUNING:-0}"
 PI05_NUM_IMAGES="${PI05_NUM_IMAGES:-3}"
+PI05_LANG_LEN="${PI05_LANG_LEN:-48}"
 
 PI_CHECKPOINT="${PI_CHECKPOINT:-$HOME/models/pi05_libero_finetuned_v044}"
 PI05_TOKENIZER="${PI05_TOKENIZER:-$HOME/models/paligemma-3b-pt-224}"
@@ -200,7 +201,7 @@ run_model() {
         --output "$result"
     )
     if [[ "$arch" == "pi05" ]]; then
-        benchmark_args+=(--num-images "$num_images")
+        benchmark_args+=(--num-images "$num_images" --lang-len "$PI05_LANG_LEN")
         if [[ "${SAVE_ACTION:-0}" == "1" ]]; then
             benchmark_args+=(--save-action)
         fi

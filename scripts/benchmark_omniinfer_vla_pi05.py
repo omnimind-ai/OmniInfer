@@ -39,6 +39,7 @@ def main() -> int:
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--timed", type=int, default=3)
     parser.add_argument("--num-images", type=int, default=3)
+    parser.add_argument("--lang-len", type=int, default=48, help="Prepared-input token count; native mode uses the tokenizer instead.")
     parser.add_argument("--output", default=None)
     parser.add_argument("--save-action", action="store_true")
     parser.add_argument("--native", action="store_true")
@@ -53,7 +54,7 @@ def main() -> int:
         "--arch", "pi05",
         "--num-images", str(args.num_images),
         "--image-size", "224",
-        "--lang-len", "48",
+        "--lang-len", str(args.lang_len),
         "--warmup", str(args.warmup),
         "--timed", str(args.timed),
     ]
@@ -67,7 +68,8 @@ def main() -> int:
         command.append("--pruning")
     print("Pi0.5 OmniInfer VLA Runtime benchmark", flush=True)
     flow = "1-step warm-start (lossy), t=0.5, alpha=0.5, replan=5" if args.pruning else "10-step fixed noise"
-    print(f"request: {args.num_images} images, 48-token target, {flow}; params/vision dtype set by server (README launcher: BF16/BF16)", flush=True)
+    token_label = "native tokenizer" if args.native else f"{args.lang_len} prepared tokens"
+    print(f"request: {args.num_images} images, {token_label}, {flow}; params/vision dtype set by server (README launcher: BF16/BF16)", flush=True)
     print(f"endpoint: {addr}", flush=True)
     return subprocess.run(command, check=False).returncode
 
