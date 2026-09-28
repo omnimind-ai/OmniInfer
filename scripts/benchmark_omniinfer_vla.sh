@@ -4,6 +4,7 @@
 # Usage:
 #   ./benchmark_omniinfer_vla.sh             # run Pi0.5 and GR00T
 #   ./benchmark_omniinfer_vla.sh pi05
+#   PI05_NUM_IMAGES=2 WARMUP=20 TIMED=10 ./benchmark_omniinfer_vla.sh pi05
 #   PRUNING=1 WARMUP=10 TIMED=10 ./benchmark_omniinfer_vla.sh pi05
 #   ./benchmark_omniinfer_vla.sh gr00t
 #   ./benchmark_omniinfer_vla.sh           # native Processor by default
@@ -44,6 +45,7 @@ MODE="${1:-both}"
 # engine-only prepared-input comparison is explicitly desired.
 NATIVE="${NATIVE:-1}"
 PRUNING="${PRUNING:-0}"
+PI05_NUM_IMAGES="${PI05_NUM_IMAGES:-3}"
 
 PI_CHECKPOINT="${PI_CHECKPOINT:-$HOME/models/pi05_libero_finetuned_v044}"
 PI05_TOKENIZER="${PI05_TOKENIZER:-$HOME/models/paligemma-3b-pt-224}"
@@ -197,6 +199,12 @@ run_model() {
         --timed "$TIMED"
         --output "$result"
     )
+    if [[ "$arch" == "pi05" ]]; then
+        benchmark_args+=(--num-images "$num_images")
+        if [[ "${SAVE_ACTION:-0}" == "1" ]]; then
+            benchmark_args+=(--save-action)
+        fi
+    fi
     if [[ "$NATIVE" == "1" ]]; then
         benchmark_args+=(--native)
     fi
@@ -211,7 +219,7 @@ run_model() {
 
 case "$MODE" in
     pi05)
-        run_model "Pi0.5" "pi05" "$PI_CHECKPOINT" 3 \
+        run_model "Pi0.5" "pi05" "$PI_CHECKPOINT" "$PI05_NUM_IMAGES" \
             "--vision-dtype bfloat16" \
             "$SCRIPTS/benchmark_omniinfer_vla_pi05.py"
         ;;
@@ -221,7 +229,7 @@ case "$MODE" in
             "$SCRIPTS/benchmark_omniinfer_vla_gr00t.py"
         ;;
     both)
-        run_model "Pi0.5" "pi05" "$PI_CHECKPOINT" 3 \
+        run_model "Pi0.5" "pi05" "$PI_CHECKPOINT" "$PI05_NUM_IMAGES" \
             "--vision-dtype bfloat16" \
             "$SCRIPTS/benchmark_omniinfer_vla_pi05.py"
         run_model "GR00T" "gr00t_n17" "$GROOT_CHECKPOINT" 2 \
@@ -254,7 +262,7 @@ print(
 print("-" * 92)
 for path in files:
     data = json.loads(path.read_text())
-    name = "Pi0.5" if data["num_images"] == 3 else "GR00T N1.7"
+    name = "Pi0.5" if path.name.startswith("pi0.5-") else "GR00T N1.7"
     print(
         f"{name:<12} "
         f"{data['processor_mean_ms']:>10.2f} ms "

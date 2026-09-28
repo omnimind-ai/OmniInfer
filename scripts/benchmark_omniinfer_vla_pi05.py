@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the fixed 3-view Pi0.5 OmniInfer VLA Runtime latency benchmark."""
+"""Run the Pi0.5 OmniInfer VLA Runtime latency benchmark."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
-
 
 SCRIPT = Path(__file__).with_name("benchmark_omniinfer_vla_zmq.py")
 LOG_DIR = Path.home() / "OmniInfer/.local/runtime/linux/omniinfer-vla-linux-cuda/logs"
@@ -39,7 +38,9 @@ def main() -> int:
     parser.add_argument("--addr", default=None)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--timed", type=int, default=3)
+    parser.add_argument("--num-images", type=int, default=3)
     parser.add_argument("--output", default=None)
+    parser.add_argument("--save-action", action="store_true")
     parser.add_argument("--native", action="store_true")
     parser.add_argument("--pruning", action="store_true", help="Label the launcher's one-step warm-start configuration.")
     parser.add_argument("--task", default="pick up the cup from table and place it in the bowl carefully")
@@ -50,7 +51,7 @@ def main() -> int:
         str(SCRIPT),
         "--addr", addr,
         "--arch", "pi05",
-        "--num-images", "3",
+        "--num-images", str(args.num_images),
         "--image-size", "224",
         "--lang-len", "48",
         "--warmup", str(args.warmup),
@@ -58,15 +59,17 @@ def main() -> int:
     ]
     if args.output:
         command.extend(["--output", args.output])
+    if args.save_action:
+        command.append("--save-action")
     if args.native:
         command.extend(["--native", "--task", args.task])
     if args.pruning:
         command.append("--pruning")
     print("Pi0.5 OmniInfer VLA Runtime benchmark", flush=True)
     flow = "1-step warm-start (lossy), t=0.5, alpha=0.5, replan=5" if args.pruning else "10-step fixed noise"
-    print(f"request: 3 images, 48-token target, {flow}; params/vision dtype set by server (README launcher: BF16/BF16)", flush=True)
+    print(f"request: {args.num_images} images, 48-token target, {flow}; params/vision dtype set by server (README launcher: BF16/BF16)", flush=True)
     print(f"endpoint: {addr}", flush=True)
-    return subprocess.run(command).returncode
+    return subprocess.run(command, check=False).returncode
 
 
 if __name__ == "__main__":

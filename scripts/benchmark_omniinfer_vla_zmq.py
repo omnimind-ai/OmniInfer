@@ -10,10 +10,9 @@ import subprocess
 import sys
 import tempfile
 import time
-
-import numpy as np
 from pathlib import Path
 
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-height", type=int, default=None)
     parser.add_argument("--image-width", type=int, default=None)
     parser.add_argument("--output", default=None)
+    parser.add_argument("--save-action", action="store_true", help="Include the final timed action chunk in the result JSON for numerical comparisons.")
     parser.add_argument("--pruning", action="store_true",
                         help="Record the launcher's Pi0.5 one-step warm-start settings; does not configure the server.")
     return parser.parse_args()
@@ -117,6 +117,8 @@ def main() -> int:
             args.lang_len = args.num_images * 64 + 28
     if args.num_images < 1 or args.lang_len < 1:
         raise SystemExit("--num-images and --lang-len must be positive")
+    if args.native and args.arch == "pi05" and args.num_images not in (2, 3):
+        raise SystemExit("native Pi0.5 benchmark supports 2 or 3 image views")
     if args.warmup < 0 or args.timed < 1:
         raise SystemExit("--warmup must be >= 0 and --timed must be >= 1")
 
@@ -128,8 +130,6 @@ def main() -> int:
         args.image_height = 480 if args.native and args.arch == "pi05" else args.image_size
     if args.image_width is None:
         args.image_width = 640 if args.native and args.arch == "pi05" else args.image_size
-    if args.native and args.arch == "pi05" and args.num_images != 3:
-        raise SystemExit("native Pi0.5 benchmark requires exactly 3 image views")
     # Match pi05_fair_benchmark.py's raw input construction exactly for the
     # native Pi0.5 path.  Its fair engine-only benchmark times after this
     # processing stage; here the server intentionally runs that stage so an
@@ -138,10 +138,12 @@ def main() -> int:
         import torch
 
         torch.manual_seed(20260827)
+        # Keep the subsequent state draw identical to the standard 3-view
+        # case while sending only the requested leading camera views.
         raw_images = torch.rand(1, 3, 3, 480, 640, dtype=torch.float32)
         native_images = [
             np.ascontiguousarray(raw_images[0, view].permute(1, 2, 0).numpy())
-            for view in range(3)
+            for view in range(args.num_images)
         ]
         native_state = (torch.rand(1, 8, dtype=torch.float32) * 2.0 - 1.0)[0]
         state_payload = native_state.tolist()
@@ -149,6 +151,8 @@ def main() -> int:
             (50, 32), dtype=np.float32
         ).reshape(-1).tolist()
         input_source = "pi05_fair_benchmark.py seed=20260827"
+        if args.num_images != 3:
+            input_source += ", first 2 of 3 views"
     else:
         native_images = None
         state_payload = [0.0] * state_dim
@@ -166,6 +170,7 @@ def main() -> int:
     postprocess_values: list[float] = []
     wall_values: list[float] = []
     total = args.warmup + args.timed
+    last_action: list[float] | None = None
     try:
         for index in range(total):
             if args.native:
@@ -222,6 +227,8 @@ def main() -> int:
                 flush=True,
             )
             if index >= args.warmup:
+                if args.save_action:
+                    last_action = list(response.action_chunk)
                 server_values.append(float(response.latency_ms_total))
                 processor_values.append(float(response.latency_ms_processor))
                 engine_values.append(float(response.latency_ms_inference))
@@ -265,6 +272,8 @@ def main() -> int:
         "wall_mean_ms": statistics.fmean(wall_values),
         "wall_median_ms": statistics.median(wall_values),
     }
+    if args.save_action:
+        result["last_action"] = last_action
     print(f"server_mean={result['server_mean_ms']:.2f} ms")
     print(f"server_median={result['server_median_ms']:.2f} ms")
     print(f"processor_mean={result['processor_mean_ms']:.2f} ms")
