@@ -196,6 +196,7 @@ WARMUP=10 TIMED=10 \
 | `PI05_NUM_IMAGES=2` | 改为两路图像；默认三路 |
 | `NATIVE=0 PI05_LANG_LEN=48` | 改测 prepared 输入，并指定 48 个 token；不包含完整 Processor |
 | `SAVE_ACTION=1` | 在结果 JSON 中保存最后一次计时的动作，便于数值对照 |
+| `OMNIINFER_VLA_PI05_EXPERT_DOWN_TCGEMM=1` | 启用 FlashRT 风格的 Thor TCGEN05 动作专家下投影；约可减少 3% Engine 延迟，但会引入 BF16 GEMM 累加顺序差异，须单独核对动作误差 |
 
 默认固定输入：
 
