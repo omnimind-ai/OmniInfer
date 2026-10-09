@@ -122,7 +122,16 @@ def main() -> int:
     if args.warmup < 0 or args.timed < 1:
         raise SystemExit("--warmup must be >= 0 and --timed must be >= 1")
 
-    os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+    # Prefer the upb C backend (pure Python adds ~2.5 ms per request on Thor);
+    # fall back only when the compiled backend is not installed.
+    import importlib.util
+
+    try:
+        upb_available = importlib.util.find_spec("google._upb._message") is not None
+    except (ImportError, ValueError):
+        upb_available = False
+    if not upb_available:
+        os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
     import zmq
 
     pb = load_proto()
