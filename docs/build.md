@@ -64,17 +64,34 @@ Example:
 git submodule update --init --recursive framework/llama.cpp
 ```
 
+### Pinned framework sources
+
+The 2026-11-10 source update pins these upstream revisions:
+
+| Submodule | Upstream reference | Commit |
+|---|---|---|
+| `framework/llama.cpp` | `master` snapshot | `203b5f404c913972d21ff8e42b550569907803a7` |
+| `framework/ik_llama.cpp` | `main` snapshot | `c2785c01b84588425175348e8a8d46899091f0d9` |
+| `framework/vllm` | `main` snapshot | `4e3463c87493ebd2c5d5fbe4be6469911e23e2bf` |
+| `framework/mlx` | `main` snapshot | `fc344c986c4169d99f76b5d95ae6b4a58a359a63` |
+| `framework/ComfyUI` | stable `v0.44.0` | `2c75dc1b379a59e0880619d029607af5169a62ef` |
+| `framework/vla.cpp` | `main` snapshot | `28b66537f435855bd38b42476c7db6d3669a38a1` |
+
+These pins apply to source checkouts. Updating submodules does not replace an
+installed runtime, change the validated prebuilt catalog, or upgrade the Python
+packages pinned by backend installers.
+
 ### ComfyUI source submodule
 
 The official [Comfy-Org/ComfyUI](https://github.com/Comfy-Org/ComfyUI) source is
-available at `framework/ComfyUI`, pinned to stable release `v0.42.1`, commit
-`63be2f9b82ad0dac88a7ceaa28a9cf3154125a18`.
+available at `framework/ComfyUI`, pinned to stable release `v0.44.0`, commit
+`2c75dc1b379a59e0880619d029607af5169a62ef`.
 
 Initialize only this framework from the repository root on Linux, macOS, or Windows:
 
 ```bash
 git submodule update --init --recursive --depth 1 framework/ComfyUI
-git -C framework/ComfyUI fetch --depth 1 origin tag v0.42.1
+git -C framework/ComfyUI fetch --depth 1 origin tag v0.44.0
 git -C framework/ComfyUI describe --tags --exact-match
 git -C framework/ComfyUI rev-parse HEAD
 ```
@@ -86,10 +103,10 @@ updates restore the commit recorded by OmniInfer. When upgrading ComfyUI,
 select a stable upstream release, validate it, and commit the new gitlink and
 this version reference together; avoid `git submodule update --remote` during setup.
 
-Follow the [pinned upstream installation guide](https://github.com/Comfy-Org/ComfyUI/tree/v0.42.1#installing)
+Follow the [pinned upstream installation guide](https://github.com/Comfy-Org/ComfyUI/tree/v0.44.0#installing)
 for a separate Python environment, accelerator-specific PyTorch, models, and
 custom nodes. Submodule initialization downloads source only. ComfyUI retains
-its upstream [GPL-3.0 license](https://github.com/Comfy-Org/ComfyUI/blob/v0.42.1/LICENSE).
+its upstream [GPL-3.0 license](https://github.com/Comfy-Org/ComfyUI/blob/v0.44.0/LICENSE).
 
 This is source-checkout support. ComfyUI is not yet an OmniInfer-managed backend:
 `backend install`, `model load`, and the gateway do not install, launch, or route
@@ -181,7 +198,9 @@ release publishes a complete, portable dependency closure. A future official
 archive must pass checksum, extraction, launcher, dependency, real action, and
 cleanup validation before it becomes an installable catalog entry.
 
-The source checkout currently pins llama.cpp `b10665` (`ca3d5a3e`) for Qwen3.8-Flash-Next support, while the validated prebuilt catalog remains on `b10280`. Build a llama.cpp backend with `--from-source` when the newer model architecture is required.
+The source checkout currently pins llama.cpp commit `203b5f40`, while the
+validated prebuilt catalog remains on `b10280`. Build a llama.cpp backend with
+`--from-source` to use the updated source revision.
 
 Validate catalog structure, URL/tag consistency, and complete SHA256 coverage before committing:
 
@@ -408,12 +427,12 @@ Linux backend script behavior:
 
 | Backend | Default action | Source build action |
 |---|---|---|
-| `llama.cpp-linux` | Downloads official `b10280` Linux CPU archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with CPU settings |
-| `llama.cpp-linux-rocm` | Downloads official `b10280` ROCm archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with ROCm settings |
-| `llama.cpp-linux-vulkan` | Downloads official `b10280` Vulkan archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with Vulkan settings |
-| `llama.cpp-linux-s390x` | Downloads official `b10280` s390x archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) for s390x |
-| `llama.cpp-linux-openvino` | Downloads official `b10280` OpenVINO archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with OpenVINO settings |
-| `llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message because upstream `b10280` has no Linux CUDA archive | `--from-source` builds pinned `framework/llama.cpp` tag `b10665` (`ca3d5a3e`) with CUDA settings |
+| `llama.cpp-linux` | Downloads official `b10280` Linux CPU archive | `--from-source` builds pinned `framework/llama.cpp` commit `203b5f40` with CPU settings |
+| `llama.cpp-linux-rocm` | Downloads official `b10280` ROCm archive | `--from-source` builds pinned `framework/llama.cpp` commit `203b5f40` with ROCm settings |
+| `llama.cpp-linux-vulkan` | Downloads official `b10280` Vulkan archive | `--from-source` builds pinned `framework/llama.cpp` commit `203b5f40` with Vulkan settings |
+| `llama.cpp-linux-s390x` | Downloads official `b10280` s390x archive | `--from-source` builds pinned `framework/llama.cpp` commit `203b5f40` for s390x |
+| `llama.cpp-linux-openvino` | Downloads official `b10280` OpenVINO archive | `--from-source` builds pinned `framework/llama.cpp` commit `203b5f40` with OpenVINO settings |
+| `llama.cpp-linux-cuda` | Fails with a clear "no prebuilt configured" message because upstream `b10280` has no Linux CUDA archive | `--from-source` builds pinned `framework/llama.cpp` commit `203b5f40` with CUDA settings |
 | `vllm-linux-cuda` | Creates an OmniInfer-managed venv and installs vLLM wheels | Not a C++ source build path |
 | `freetoken-linux-cuda` | Installs pinned FreeToken v0.1.2 CUDA 13 wheels | Not a C++ source build path |
 | `ds4-linux-cuda` | Fails with a clear "no prebuilt configured" message because ds4 publishes no release binaries | `--from-source` builds Entrpi/ds4 v0.6.5 (`addc0c4`) with `make cuda-spark` |
